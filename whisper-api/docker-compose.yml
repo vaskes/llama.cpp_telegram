@@ -1,0 +1,15 @@
+services:
+  whisper-api:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: whisper-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Дистиллированная версия. Быстрая и точная, идеальна для CPU.
+      # Если вдруг захочешь оригинальную большую, замени на: Systran/faster-whisper-large-v3
+      - WHISPER_MODEL=Systran/faster-distil-whisper-large-v3
+    volumes:
+      # Сюда будет скачана и сохранена модель (около 1.5 ГБ)
+      - ./cache:/root/.cache
+
