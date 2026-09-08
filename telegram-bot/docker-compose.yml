@@ -1,0 +1,16 @@
+services:
+  telegram-bot:
+    build: .
+    container_name: telegram-bot
+    restart: unless-stopped
+    # host network: container sees the host's localhost — needed when llama-server
+    # and whisper-api are bound to 127.0.0.1 or 192.168.x.x on the host.
+    # If you put the bot on a docker network and reach the LLM/whisper via
+    # 127.0.0.1 on a Linux host, host networking is the simplest setup.
+    network_mode: "host"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./files:/app/files

@@ -1,0 +1,29 @@
+# Never commit real .env files
+.env
+*.env
+!.env.example
+
+# Telegram bot user state
+files/*
+!files/.gitkeep
+
+# Whisper downloaded model weights
+whisper-api/cache/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
