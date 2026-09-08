@@ -1,49 +1,49 @@
-# Agent Guide — для AI-агентов
+# Agent Guide — for AI agents
 
-Короткий справочник по эксплуатации этого репо. Если ты — AI-агент и тебя
-попросили что-то сделать с ботом, начни с этого файла.
+Short reference for operating this repo. If you are an AI agent and someone
+asked you to do something with the bot, start from this file.
 
-## Где что лежит
+## Where things live
 
 ```
-/opt/telegram-bot/          ← рабочая копия (создаётся install.sh)
-├── bot.py                  ← весь код бота
+/opt/telegram-bot/          ← live copy (created by install.sh)
+├── bot.py                  ← all bot code
 ├── Dockerfile              ← python:3.11-slim + pip install
 ├── docker-compose.yml      ← network_mode: host
-├── .env                    ← credentials (НЕ коммитить)
+├── .env                    ← credentials (DO NOT commit)
 ├── requirements.txt        ← python-telegram-bot, httpx
-└── files/                  ← статика (сейчас пусто)
+└── files/                  ← static assets (currently empty)
 
 /opt/whisper-api/
 ├── docker-compose.yml      ← fedirz/faster-whisper-server
-└── cache/                  ← скачанные модели
+└── cache/                  ← downloaded models
 
 /etc/systemd/system/
 ├── telegram-bot-compose.service
 └── whisper-api-compose.service
 ```
 
-## Частые операции
+## Common operations
 
-### Узнать, что бот живой
+### Check the bot is alive
 ```bash
 sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(telegram|whisper|llama)"
 sudo docker logs telegram-bot --tail 20
 sudo docker logs whisper-api --tail 20
 ```
 
-### Проверить llama-server
+### Check llama-server
 ```bash
 curl -s -m 5 http://localhost:8080/health        # → {"status":"ok"}
 curl -s -m 5 http://localhost:8080/v1/models | head -c 400
 ```
 
-### Проверить SearXNG
+### Check SearXNG
 ```bash
 curl -s -m 5 "http://localhost:8888/search?q=test&format=json" | head -c 200
 ```
 
-### Перезапустить бот (например, после правки bot.py)
+### Restart the bot (e.g. after editing bot.py)
 ```bash
 cd /opt/telegram-bot
 sudo docker compose build telegram-bot
@@ -51,79 +51,78 @@ sudo docker compose up -d --no-deps --force-recreate telegram-bot
 sudo docker logs telegram-bot --tail 10
 ```
 
-### Добавить нового юзера в whitelist
+### Add a new user to the whitelist
 ```bash
 sudo $EDITOR /opt/telegram-bot/.env
-# → добавьте user_id в ALLOWED_USER_IDS=через_запятую
+# → add the user_id to ALLOWED_USER_IDS=comma_separated
 sudo systemctl restart telegram-bot-compose
 ```
 
-### Узнать Telegram user_id человека
-- попросите человека написать `/start` **нашему** боту
-- бот его не пустит (LOCKDOWN если user_id не в whitelist), но в логах:
+### Find a user's Telegram id
+- ask them to send `/start` to **our** bot
+- the bot will reject them (LOCKDOWN if user_id is not in whitelist), but in the logs:
   ```
   [SECURITY] rejected id=XXXXXXXXX @username msg='/start'
   ```
-- или пусть человек напишет `/start` боту **@userinfobot** в Telegram
+- or ask them to send `/start` to **@userinfobot** in Telegram
 
-### Посмотреть, кого бот отверг (security log)
+### See who the bot has rejected (security log)
 ```bash
 sudo docker logs telegram-bot 2>&1 | grep "SECURITY" | tail -30
 ```
 
-### Обновить до последней версии
+### Update to the latest version
 ```bash
 cd /path/to/llama.cpp_telegram
 ./scripts/update.sh
 ```
 
-## Что НЕЛЬЗЯ делать
+## What you MUST NOT do
 
-1. ❌ Коммитить `.env` — там токены. Проверьте `git status` перед `git add`.
-2. ❌ Менять `network_mode: "host"` без понимания последствий — это дыра в сеть.
-3. ❌ Включать `parallel_tool_calls: true` без тестирования — текущая реализация
-   рассчитана на последовательные вызовы.
-4. ❌ Прописывать реальные credentials в `docker-compose.yml` — только env vars.
-5. ❌ Удалять `DISABLED_TOOLS` из `bot.py` без re-аудита. `read_file`,
-   `write_file`, `exec_shell_command` отключены не случайно — это значит
-   **любой** авторизованный юзер мог бы через tool-calling выполнить
-   произвольный shell на хосте. НЕ включайте их.
+1. ❌ Commit `.env` — it has tokens. Run `git status` before `git add`.
+2. ❌ Change `network_mode: "host"` without understanding the implications — it punches through to the host network.
+3. ❌ Enable `parallel_tool_calls: true` without testing — the current implementation assumes sequential calls.
+4. ❌ Hardcode real credentials in `docker-compose.yml` — only env vars.
+5. ❌ Remove `DISABLED_TOOLS` from `bot.py` without a re-audit. `read_file`,
+   `write_file`, `exec_shell_command` are disabled for a reason — it means
+   **any** whitelisted user could run arbitrary shell on the host via tool-calling.
+   Do NOT enable them.
 
-## Если юзер жалуется, что бот «не отвечает»
+## If a user complains the bot "doesn't reply"
 
-Сначала проверь по чек-листу:
+Run this checklist first:
 
 ```bash
-# 1) бот вообще запущен?
+# 1) is the bot running at all?
 sudo docker ps | grep telegram
 
-# 2) контейнер свежий? что в логах?
+# 2) is the container fresh? what is in the logs?
 sudo docker logs telegram-bot --tail 50 | tail -30
 
-# 3) в LOCKDOWN ли?
+# 3) is it in LOCKDOWN?
 sudo docker logs telegram-bot --tail 200 | grep -E "(LOCKDOWN|whitelist)"
 
-# 4) есть ли отказы по этому юзеру?
-sudo docker logs telegram-bot --tail 200 | grep "rejected id=ТОТ_ЖЕ_ID"
+# 4) any rejections for this user?
+sudo docker logs telegram-bot --tail 200 | grep "rejected id=THAT_SAME_ID"
 
-# 5) llama-server живой?
+# 5) is the llama-server alive?
 curl -s -m 5 http://localhost:8080/health
 ```
 
-Если `LOCKDOWN` — у юзера не в whitelist. Проверь `ALLOWED_USER_IDS` в `.env`.
+If `LOCKDOWN` — that user is not in the whitelist. Check `ALLOWED_USER_IDS` in `.env`.
 
-Если `rejected id=...` — бот его знает, но не пускает. Добавь в whitelist.
+If `rejected id=...` — the bot knows them but does not allow them. Add to whitelist.
 
-Если llama-server не отвечает — это **отдельная задача**, не относится к этому репо.
+If the llama-server does not respond — that is a **separate task**, not related to this repo.
 
-## Техдолг, который я знаю
+## Known tech debt
 
-- В `bot.py` лежат хардкод-ссылки на `192.168.10.7:8080` в комментариях, но
-  в коде используются env vars `LLAMA_URL` и `WHISPER_URL`. Так и задумано.
-- SearXNG engines на cloud IP часто CAPTCHA-ятся. `get_weather` через wttr.in
-  работает всегда. Если юзер спрашивает «почему гугл не ищет» — это
-  [известная проблема](https://github.com/searxng/searxng/issues/...)
-  с user-agent detection, не код бага.
-- Docker network mode `host` означает, что бот не имеет своего IP —
-  `0.0.0.0` биндинги в контейнере занимают порты хоста. Если что-то
-  начнёт конфликтовать — переход на bridge-сеть + явные порты.
+- `bot.py` has hardcoded `192.168.10.7:8080` references in comments, but
+  in code it uses env vars `LLAMA_URL` and `WHISPER_URL`. Intentional.
+- SearXNG engines on cloud IPs often CAPTCHA-out. `get_weather` via wttr.in
+  always works. If a user asks "why is Google not searching" — this is
+  a [known issue](https://github.com/searxng/searxng/issues) with
+  user-agent detection, not a code bug.
+- Docker `network_mode: host` means the bot has no IP of its own —
+  `0.0.0.0` bindings in the container occupy host ports. If something
+  starts conflicting, switch to a bridge network + explicit ports.

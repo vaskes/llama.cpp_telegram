@@ -23,7 +23,7 @@ def _ipv4_only_getaddrinfo(host, *args, **kwargs):
     return results
 socket.getaddrinfo = _ipv4_only_getaddrinfo
 
-# Конфигурация
+# Configuration
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 LLAMA_URL = os.environ.get('LLAMA_URL', 'http://192.168.10.7:8080/v1')
 WHISPER_URL = os.environ.get('WHISPER_URL', 'http://192.168.10.7:8000')
@@ -76,10 +76,10 @@ async def reject_if_unauthorized(update: Update, context: ContextTypes.DEFAULT_T
     print(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}')
     return True
 
-# Хранилище контекста диалогов
+# Conversation context storage
 conversations = {}
 
-# Tools которые бот НЕ умеет исполнять (security, или не реализовано)
+# Tools the bot does NOT execute (security, or not implemented)
 DISABLED_TOOLS = {
     'read_file', 'write_file', 'edit_file', 'exec_shell_command',
     'file_glob_search', 'grep_search', 'get_info',
@@ -97,12 +97,12 @@ DISABLED_TOOLS = {
     'playwright_browser_tabs', 'playwright_browser_wait_for',
 }
 
-# Кеш tools (загружаются один раз)
+# Tools cache (loaded once)
 _TOOLS_CACHE = None
 
 
 async def fetch_tools_from_llama():
-    """Получить список tools с llama-server и отфильтровать доступные."""
+    """Fetch tools list from llama-server and filter to the ones we can handle."""
     global _TOOLS_CACHE
     if _TOOLS_CACHE is not None:
         return _TOOLS_CACHE
@@ -136,7 +136,7 @@ async def fetch_tools_from_llama():
 
 
 async def execute_searxng_search(args):
-    """searxng_search: выполнить HTTP запрос к SearXNG."""
+    """searxng_search: execute an HTTP request to SearXNG."""
     query = args.get('query', '')
     if not query:
         return '[tool error: empty query]'
@@ -172,7 +172,7 @@ async def execute_searxng_search(args):
 
 
 async def execute_searxng_fetch_url(args):
-    """searxng_fetch_url: скачать и вернуть текст URL."""
+    """searxng_fetch_url: download and return the text of a URL."""
     url = args.get('url', '')
     if not url:
         return '[tool error: empty url]'
@@ -191,7 +191,7 @@ async def execute_searxng_fetch_url(args):
 
 
 async def execute_searxng_engines(args):
-    """searxng_engines: вернуть список доступных engines."""
+    """searxng_engines: return the list of available engines."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(f"{SEARXNG_URL}/engines")
@@ -204,7 +204,7 @@ async def execute_searxng_engines(args):
 
 
 async def get_weather(args):
-    """Custom tool: wttr.in для погоды. Работает всегда, не зависит от SearXNG."""
+    """Custom tool: wttr.in for weather. Always works, does not depend on SearXNG."""
     location = args.get('location', '') or args.get('city', '')
     if not location:
         return '[weather error: empty location]'
@@ -241,7 +241,7 @@ SEARXNG_TOOLS = {
 
 
 async def call_llama(messages, max_tokens=4096, user_text=''):
-    """Вызов llama.cpp с tool-calling loop (max 5 iterations)."""
+    """Call llama.cpp with a tool-calling loop (max 5 iterations)."""
     tools = await fetch_tools_from_llama()
     custom_weather_tool = {
         'type': 'function',
@@ -334,15 +334,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     await update.message.reply_text(
-        '🤖 **LlamaBot v2 запущен!**\n\n'
-        'Я могу:\n'
-        '• Отвечать на вопросы (с tool-calling)\n'
-        '• Искать в интернете (SearXNG) 🌐\n'
-        '• Узнавать погоду (wttr.in) ☀️\n'
-        '• Анализировать изображения (отправьте фото)\n'
-        '• Расшифровывать голосовые 🎤\n'
-        '• Читать документы (TXT, PDF)\n\n'
-        'Команды: /reset, /stats'
+        '🤖 **LlamaBot v2 started!**\n\n'
+        'I can:\n'
+        '• Answer questions (with tool-calling)\n'
+        '• Search the web (SearXNG) 🌐\n'
+        '• Get weather (wttr.in) ☀️\n'
+        '• Analyze images (send a photo)\n'
+        '• Transcribe voice messages 🎤\n'
+        '• Read documents (TXT, PDF)\n\n'
+        'Commands: /reset, /stats'
     )
 
 
@@ -352,7 +352,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in conversations:
         del conversations[user_id]
-    await update.message.reply_text('🔄 Контекст очищен.')
+    await update.message.reply_text('🔄 Context cleared.')
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -362,9 +362,9 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_count = len(conversations.get(user_id, []))
     tools = await fetch_tools_from_llama()
     await update.message.reply_text(
-        f'📊 **Статистика:**\n'
-        f'Сообщений: {msg_count}\n'
-        f'Модель: {MODEL}\n'
+        f'📊 **Stats:**\n'
+        f'Messages: {msg_count}\n'
+        f'Model: {MODEL}\n'
         f'Tools: {len(tools)} searxng + 1 weather'
     )
 

@@ -1,25 +1,25 @@
-# Setup — для людей
+# Setup — for humans
 
-Пошаговая инструкция для голой Ubuntu 24.04 (или похожей).
-Предполагается, что вы работаете от пользователя с `sudo` без пароля.
+Step-by-step guide for a fresh Ubuntu 24.04 (or similar) install.
+Assumes you work as a user with passwordless `sudo`.
 
-## 0. Предусловия
+## 0. Prerequisites
 
-Проверьте, что у вас есть:
+Check that you have:
 
 ```bash
 docker --version          # Docker 24+
-docker compose version    # v2 (compose — подкоманда, не бинарь)
+docker compose version    # v2 (compose is a subcommand, not a binary)
 git --version
-sudo -n true              # sudo без пароля (или замените на sudo -v)
+sudo -n true              # passwordless sudo (or replace with sudo -v)
 ```
 
-Если `docker compose` отдельно не установлен, поставьте плагин:
+If `docker compose` is not installed, install the plugin:
 ```bash
 sudo apt-get install -y docker-compose-plugin
 ```
 
-## 1. Клонируем
+## 1. Clone
 
 ```bash
 sudo mkdir -p /opt
@@ -28,55 +28,55 @@ git clone https://github.com/vaskes/llama.cpp_telegram.git
 cd llama.cpp_telegram
 ```
 
-## 2. Запускаем install.sh
+## 2. Run install.sh
 
 ```bash
 sudo ./scripts/install.sh
 ```
 
-Скрипт:
-- копирует файлы в `/opt/telegram-bot/` и `/opt/whisper-api/`
-- создаёт `.env` из `.env.example` если его нет
-- регистрирует systemd-юниты `telegram-bot-compose.service` и `whisper-api-compose.service`
-- включает их (но не запускает — сначала настройте `.env`)
+The script will:
+- copy files to `/opt/telegram-bot/` and `/opt/whisper-api/`
+- create `.env` from `.env.example` if it does not exist yet
+- register systemd units `telegram-bot-compose.service` and `whisper-api-compose.service`
+- enable them (but not start — configure `.env` first)
 
-## 3. Узнаём свой Telegram user_id
+## 3. Find your Telegram user_id
 
-Напишите любому боту, который умеет показывать user_id (например **@userinfobot**).
-Скопируйте число.
+Message any bot that can show your user_id (e.g. **@userinfobot**).
+Copy the number.
 
-## 4. Заполняем `.env`
+## 4. Fill in `.env`
 
 ```bash
 sudo $EDITOR /opt/telegram-bot/.env
 ```
 
-Минимум, что нужно поставить:
-- `BOT_TOKEN` — от @BotFather (создайте бота командой `/newbot`)
-- `ALLOWED_USER_IDS=ВАШЕ_ЧИСЛО` — иначе бот будет в LOCKDOWN и никого не пустит
-- `LLAMA_URL=http://localhost:8080/v1` — адрес вашего llama-server
+Minimum required:
+- `BOT_TOKEN` — from @BotFather (create a bot with `/newbot`)
+- `ALLOWED_USER_IDS=YOUR_NUMBER` — otherwise the bot stays in LOCKDOWN and refuses everyone
+- `LLAMA_URL=http://localhost:8080/v1` — address of your llama-server
 
-Опционально:
-- `MODEL` — должно совпадать с `--alias` на llama-server
-- `ALLOWED_USERNAMES` — второй способ (по `@username`, case-insensitive)
-- `SEARXNG_URL` — если поднят SearXNG
+Optional:
+- `MODEL` — must match the `--alias` on the llama-server
+- `ALLOWED_USERNAMES` — secondary auth by `@username` (case-insensitive)
+- `SEARXNG_URL` — if you have SearXNG up
 
-## 5. Поднимаем зависимости
+## 5. Bring up dependencies
 
-Этот репозиторий **не** запускает llama-server — это ваша задача.
-Минимально нужно:
+This repo does **not** run llama-server — that is your job.
+At minimum, you need:
 
-### Вариант A: у вас уже есть llama-server
-Ничего не делайте. Бот подключится на `LLAMA_URL`.
+### Option A: you already have a llama-server
+Do nothing. The bot will connect to `LLAMA_URL`.
 
-### Вариант B: ставим с нуля на Radeon 780M
-Следуйте инструкциям в [vaskes/llama.cpp-rocm-780m](https://github.com/vaskes/llama.cpp-rocm-780m).
+### Option B: setting up from scratch on Radeon 780M
+Follow the instructions in [vaskes/llama.cpp-rocm-780m](https://github.com/vaskes/llama.cpp-rocm-780m).
 
-### Вариант C: для tool-calling (SearXNG)
-Следуйте инструкциям в [vaskes/llama.cpp_search](https://github.com/vaskes/llama.cpp_search)
-— там готовый SearXNG + Playwright MCP, и `--mcp-servers-config` для llama-server.
+### Option C: for tool-calling (SearXNG)
+Follow the instructions in [vaskes/llama.cpp_search](https://github.com/vaskes/llama.cpp_search)
+— it includes a ready SearXNG + Playwright MCP, plus the `--mcp-servers-config` flag for llama-server.
 
-## 6. Стартуем
+## 6. Start the services
 
 ```bash
 sudo systemctl start whisper-api-compose
@@ -85,38 +85,38 @@ sudo systemctl status telegram-bot-compose
 sudo docker logs telegram-bot --tail 30
 ```
 
-Если в логах `🤖 LlamaBot v2 (with tool-calling) started...` — бот живой.
+If you see `🤖 LlamaBot v2 (with tool-calling) started...` in the logs, the bot is alive.
 
-## 7. Проверяем
+## 7. Verify
 
-Откройте Telegram, найдите бота, напишите `/start`.
-Должен прийти приветственный текст.
+Open Telegram, find your bot, send `/start`.
+You should get the welcome text.
 
-Затем:
-- «погода в Ялте» — бот вызовет `get_weather` и вернёт реальную температуру
-- «что нового в AI» — если есть SearXNG, бот вызовет `searxng_search`
-- голосовое — бот расшифрует через Whisper и ответит на текст
+Then:
+- "weather in Yalta" — bot will call `get_weather` and return the real temperature
+- "what's new in AI" — if SearXNG is up, bot will call `searxng_search`
+- voice message — bot will transcribe via Whisper and reply to the text
 
-## 8. Логи и обновления
+## 8. Logs and updates
 
 ```bash
-# логи
+# logs
 sudo docker logs -f telegram-bot
 sudo docker logs -f whisper-api
 
-# обновить бот до последней версии
+# update bot to the latest version
 cd llama.cpp_telegram
 ./scripts/update.sh
 ```
 
-## 9. Бэкап перед обновлением
+## 9. Backup before update
 
-`scripts/update.sh` НЕ трогает `.env`, но если хотите перестраховаться:
+`scripts/update.sh` does NOT touch `.env`, but if you want to be safe:
 
 ```bash
 sudo cp /opt/telegram-bot/.env /opt/telegram-bot/.env.bak
 ```
 
-## Что делать, если бот молчит
+## What to do if the bot is silent
 
-См. [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
