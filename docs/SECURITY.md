@@ -1,8 +1,8 @@
 # Security
 
-## Whitelist (главное)
+## Whitelist (the main thing)
 
-Бот отвечает **только** тем, кто в `ALLOWED_USER_IDS` или `ALLOWED_USERNAMES`.
+The bot only replies to users in `ALLOWED_USER_IDS` or `ALLOWED_USERNAMES`.
 
 ```bash
 # /opt/telegram-bot/.env
@@ -10,58 +10,57 @@ ALLOWED_USER_IDS=123456789,987654321
 ALLOWED_USERNAMES=myfriend,myotherfriend
 ```
 
-**Если обе переменные пустые — LOCKDOWN.** Бот отвергает все сообщения.
-Это безопасный дефолт: если вы забыли настроить whitelist, бот не
-станет публичным.
+**If both are empty — LOCKDOWN.** The bot rejects all messages. This is
+a safe default: if you forgot to set up the whitelist, the bot will not
+become public.
 
-### Как узнать свой Telegram user_id
+### How to find your Telegram user_id
 
-1. Напишите `/start` **@userinfobot** — он ответит вашим ID.
-2. Или напишите `/start` **нашему** боту — он не ответит, но в
-   `docker logs telegram-bot` появится `[SECURITY] rejected id=XXXXX`.
+1. Send `/start` to **@userinfobot** — it will reply with your ID.
+2. Or send `/start` to **our** bot — it will not reply, but in
+   `docker logs telegram-bot` you will see `[SECURITY] rejected id=XXXXX`.
 
-## Credentials — что ГДЕ лежит
+## Credentials — what is WHERE
 
-| Что | Где | Как защищено |
+| What | Where | How protected |
 |---|---|---|
-| `BOT_TOKEN` | `/opt/telegram-bot/.env` | `chmod 600`, **не в git** |
-| `API_KEY` (LLM) | `/opt/telegram-bot/.env` | Обычно `sk-no-key` для localhost — не секрет |
-| `WHISPER_MODEL` | `/opt/whisper-api/.env` | Публичное имя модели, не секрет |
-| SearXNG URL | `/opt/telegram-bot/.env` | Не секрет |
+| `BOT_TOKEN` | `/opt/telegram-bot/.env` | `chmod 600`, **not in git** |
+| `API_KEY` (LLM) | `/opt/telegram-bot/.env` | Usually `sk-no-key` for localhost — not a secret |
+| `WHISPER_MODEL` | `/opt/whisper-api/.env` | Public model name, not a secret |
+| SearXNG URL | `/opt/telegram-bot/.env` | Not a secret |
 
-## Что НЕ должно попасть в git
+## What MUST NOT end up in git
 
-В этом репозитории `.env` файлы **никогда** не коммитятся — `.gitignore`
-защищает. Если вы форкаете и пере-используете код, проверьте:
+In this repository `.env` files are **never** committed — `.gitignore`
+protects you. If you fork and re-use the code, verify:
 
 ```bash
 git status
-# → ничего не должно показывать .env или files/ с данными
+# → nothing should show .env or files/ with data
 ```
 
-`.env.example` — это шаблон, его коммитить **можно и нужно**.
+`.env.example` is a template, you can and should commit it.
 
 ## Sandbox tools
 
-В `bot.py` есть `DISABLED_TOOLS`. Сейчас в нём:
+In `bot.py` there is a `DISABLED_TOOLS` set. Currently:
 
 ```python
 DISABLED_TOOLS = {
     # Filesystem / shell — SECURITY RISK
     'read_file', 'write_file', 'edit_file', 'exec_shell_command',
     'file_glob_search', 'grep_search', 'get_info',
-    # Playwright — НЕ РЕАЛИЗОВАНО в боте
+    # Playwright — NOT IMPLEMENTED in the bot
     'playwright_*',
 }
 ```
 
-**Не удаляйте** `read_file` / `write_file` / `exec_shell_command` из
-`DISABLED_TOOLS` без re-аудита безопасности. Через `exec_shell_command`
-авторизованный юзер мог бы выполнить **любую** команду на хосте от имени
-пользователя, под которым работает llama-server. Это эквивалент
-`sudo` без пароля.
+**Do not remove** `read_file` / `write_file` / `exec_shell_command` from
+`DISABLED_TOOLS` without a security re-audit. Through `exec_shell_command`
+any whitelisted user could execute **any** command on the host as the user
+running llama-server. This is equivalent to passwordless `sudo`.
 
-Если очень нужно — добавьте **whitelist команд**:
+If you really need it, add a **command allowlist**:
 
 ```python
 ALLOWED_COMMANDS = {'ls', 'cat', 'grep'}
@@ -74,18 +73,18 @@ def safe_exec_shell(args):
 
 ## `network_mode: "host"`
 
-Контейнер бота видит всю сеть хоста. Это удобно, но:
+The bot container sees the entire host network. This is convenient, but:
 
-- Бот может просканировать порты хоста (`127.0.0.1`)
-- Бот может достучаться до `192.168.x.x` (LAN)
-- Любая уязвимость в `python-telegram-bot` = удалённое выполнение на хосте
+- The bot can port-scan the host (`127.0.0.1`)
+- The bot can reach `192.168.x.x` (LAN)
+- Any vulnerability in `python-telegram-bot` = remote code execution on the host
 
-Если это критично, переходите на `bridge` с явными линками (см.
+If this is critical, switch to `bridge` with explicit links (see
 ARCHITECTURE.md).
 
 ## `RestrictToSpecificChats`
 
-Если бот работает в группе, а не в личке, добавьте проверку:
+If the bot runs in a group rather than in private chat, add a check:
 
 ```python
 ALLOWED_CHAT_IDS = {int(x) for x in os.environ.get('ALLOWED_CHAT_IDS','').split(',') if x}
@@ -97,11 +96,12 @@ def is_authorized(update):
     ...
 ```
 
-Сейчас бот **предполагает** работу в личке. Для групп нужен этот доп. фильтр.
+Currently the bot **assumes** private-chat operation. For groups, this
+extra filter is required.
 
-## Ротация BOT_TOKEN
+## Rotating BOT_TOKEN
 
-Если токен утёк:
+If the token leaks:
 1. `@BotFather` → `/revoke`
-2. Обновите `BOT_TOKEN` в `/opt/telegram-bot/.env`
+2. Update `BOT_TOKEN` in `/opt/telegram-bot/.env`
 3. `sudo systemctl restart telegram-bot-compose`

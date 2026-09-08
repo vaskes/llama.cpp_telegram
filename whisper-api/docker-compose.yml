@@ -6,10 +6,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Дистиллированная версия. Быстрая и точная, идеальна для CPU.
-      # Если вдруг захочешь оригинальную большую, замени на: Systran/faster-whisper-large-v3
+      # Distilled version: fast and accurate, ideal for CPU.
+      # If you want the original large model, replace with: Systran/faster-whisper-large-v3
       - WHISPER_MODEL=Systran/faster-distil-whisper-large-v3
     volumes:
-      # Сюда будет скачана и сохранена модель (около 1.5 ГБ)
+      # The model (~1.5 GB) is downloaded here on first start
       - ./cache:/root/.cache
-

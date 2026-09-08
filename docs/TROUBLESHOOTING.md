@@ -1,34 +1,34 @@
 # Troubleshooting
 
-## Бот молчит / отвечает только на `/start`
+## Bot is silent / only replies to `/start`
 
-### 1. Проверьте whitelist
+### 1. Check the whitelist
 ```bash
 sudo docker logs telegram-bot --tail 200 | grep "whitelist\|LOCKDOWN\|rejected"
 ```
 
-Если `LOCKDOWN` — у вас пустые `ALLOWED_USER_IDS` и `ALLOWED_USERNAMES`.
-Откройте `/opt/telegram-bot/.env` и добавьте свой user_id.
+If `LOCKDOWN` — your `ALLOWED_USER_IDS` and `ALLOWED_USERNAMES` are empty.
+Open `/opt/telegram-bot/.env` and add your user_id.
 
-### 2. Проверьте llama-server
+### 2. Check llama-server
 ```bash
 curl -s -m 5 http://localhost:8080/health
 # → {"status":"ok"}
 ```
 
-Если не отвечает — бот **не виноват**. Запускайте llama-server (см.
+If it does not reply, the bot is **not at fault**. Start llama-server (see
 [vaskes/llama.cpp-rocm-780m](https://github.com/vaskes/llama.cpp-rocm-780m)).
 
-## `httpx.ConnectError` в логах
+## `httpx.ConnectError` in the logs
 
-Типовые причины:
+Typical causes:
 
-### a) llama-server не запущен
-См. выше.
+### a) llama-server is not running
+See above.
 
-### b) IPv6 vs IPv4 (редко, но бывает в docker)
-В `bot.py` есть monkey-patch, фильтрующий IPv6. Если вы видите эту
-ошибку после правки — проверьте, что monkey-patch **не** удалён:
+### b) IPv6 vs IPv4 (rare, but happens in docker)
+There is a monkey-patch in `bot.py` that filters IPv6. If you see this
+error after editing, verify the monkey-patch is **not** removed:
 
 ```python
 import socket
@@ -42,80 +42,78 @@ def _ipv4_only_getaddrinfo(host, *args, **kwargs):
 socket.getaddrinfo = _ipv4_only_getaddrinfo
 ```
 
-### c) Bot token отозван / невалидный
-`@BotFather` → проверьте токен.
+### c) Bot token revoked / invalid
+`@BotFather` → verify the token.
 
-## Бот пишет `❌ Ошибка: ...`
+## Bot writes `❌ Error: ...`
 
 ```bash
 sudo docker logs telegram-bot --tail 50
 ```
 
-Типичные ошибки:
+Common errors:
 
-- `Connection refused` к `localhost:8080` — llama-server не на том порту
-  или вообще не запущен
-- `name resolution failed` — DNS в контейнере, пропишите `network_mode: host`
-  (по дефолту так) или добавьте `dns: [8.8.8.8]` в compose
-- `Model not found` — модель в `MODEL` env не совпадает с `--alias` на сервере
+- `Connection refused` to `localhost:8080` — llama-server is on a different port or not running
+- `name resolution failed` — DNS inside the container, set `network_mode: host`
+  (default), or add `dns: [8.8.8.8]` in compose
+- `Model not found` — the model in `MODEL` env does not match the `--alias` on the server
 
-## SearXNG возвращает 0 результатов
+## SearXNG returns 0 results
 
-Это **известная проблема** на cloud IP — `DuckDuckGo`, `Brave`, `Startpage`
-отдают CAPTCHA. На localhost (домашний IP) работает.
+This is a **known issue** on cloud IPs — `DuckDuckGo`, `Brave`, `Startpage`
+return CAPTCHA. On a localhost (home IP) it works.
 
-Workaround:
-- Используйте только `get_weather` для вопросов про погоду
-- Используйте `searxng_engines` чтобы увидеть список доступных
-- Для русского поиска попробуйте `searxng_fetch_url` к конкретному сайту
-  (например, к `https://www.google.com/search?q=...`)
+Workarounds:
+- Use only `get_weather` for weather questions
+- Use `searxng_engines` to see the available list
+- For Russian search, try `searxng_fetch_url` to a specific site
+  (e.g. `https://www.google.com/search?q=...`)
 
-## Whisper не распознаёт голосовое
+## Whisper does not recognize voice
 
 ```bash
 sudo docker logs whisper-api --tail 20
 ```
 
-- Модель ещё скачивается — первый запуск 1.5 GB, ~5-10 мин
-- Голосовое слишком тихое / шумное — faster-whisper справляется плохо
-- Язык — если `language: 'ru'` в `bot.py` стоит, а голосовое на английском,
-  распознавание будет кривое. Поменяйте на `language: 'auto'` (если
-  upstream поддерживает) или уберите `language` совсем
+- Model is still downloading — first start pulls 1.5 GB, ~5-10 min
+- Voice is too quiet / noisy — faster-whisper handles it poorly
+- Language — if `language: 'ru'` is hardcoded in `bot.py` and the voice
+  is in English, recognition will be off. Change to `language: 'auto'`
+  (if upstream supports) or remove `language` entirely
 
-## `docker compose build` падает с ошибкой pip
+## `docker compose build` fails with a pip error
 
 ```bash
-# Очистить кеш
+# clear cache
 sudo docker builder prune
 
-# Или явно подтянуть свежий python:3.11-slim
+# or explicitly pull a fresh python:3.11-slim
 sudo docker pull python:3.11-slim
 ```
 
-## Контейнер не стартует / уходит в ребут
+## Container does not start / goes into a restart loop
 
 ```bash
 sudo docker logs telegram-bot --tail 100
 ```
 
-Если видите `Restarting` loop — скорее всего, невалидный `BOT_TOKEN`
-или llama-server недоступен **во время инициализации** (бот делает
-`get_me()` при старте).
+If you see `Restarting` — likely an invalid `BOT_TOKEN` or llama-server
+unreachable **at init time** (the bot does `get_me()` at startup).
 
-## Сеть между контейнерами не работает
+## Networking between containers does not work
 
-Убедитесь, что `network_mode: "host"` в `docker-compose.yml`. Без него
-контейнер изолирован, и `localhost:8080` ≠ хостовый `localhost:8080`.
+Make sure `network_mode: "host"` is in `docker-compose.yml`. Without it,
+the container is isolated, and `localhost:8080` ≠ host `localhost:8080`.
 
-## Системные лимиты
+## System limits
 
-Если бот перестаёт отвечать после N сообщений:
+If the bot stops replying after N messages:
 
 ```bash
-ulimit -n          # fd лимит
-df -h /opt         # диск
-free -h            # память
+ulimit -n          # fd limit
+df -h /opt         # disk
+free -h            # memory
 ```
 
-llama-server с большой моделью и 8B контекстом может съесть всю RAM.
-Следите за `MEM%` в `docker stats`.
+A llama-server with a large model and 8K context can eat all RAM. Watch
+`MEM%` in `docker stats`.

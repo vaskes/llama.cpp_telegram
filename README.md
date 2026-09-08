@@ -1,28 +1,28 @@
 # llama.cpp_telegram
 
-Telegram-бот-обёртка над [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-совместимым API
-+ локальный Whisper для распознавания голосовых.
+A Telegram bot wrapper around the [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-compatible API
+plus a local Whisper server for voice transcription.
 
-## Что это
+## What is this
 
-Готовый к развёртыванию набор из двух контейнеров:
+A ready-to-deploy bundle of two containers:
 
-| Сервис | Порт | Назначение |
+| Service | Port | Purpose |
 |---|---|---|
-| `telegram-bot` | (нет) | Опрашивает Telegram, общается с LLM, поддерживает tool-calling |
-| `whisper-api` | 8000 | Распознаёт голосовые через faster-whisper, отдаёт транскрипт боту |
+| `telegram-bot` | (none) | Polls Telegram, talks to the LLM, supports tool-calling |
+| `whisper-api` | 8000 | Transcribes voice messages via faster-whisper, returns the transcript to the bot |
 
-Бот умеет:
+The bot can:
 
-- 💬 Текст, контекст диалога (20 последних сообщений на юзера)
-- 🖼 Анализ изображений (vision-модели llama.cpp)
-- 🎤 Голосовые через Whisper (русский)
-- 📄 Чтение документов (TXT, PDF — текстовый слой)
+- 💬 Text, conversation context (last 20 messages per user)
+- 🖼 Image analysis (vision models in llama.cpp)
+- 🎤 Voice messages via Whisper
+- 📄 Document reading (TXT, PDF — text layer)
 - 🛠 **Tool-calling**: `get_weather` (wttr.in) + `searxng_search` / `searxng_fetch_url` / `searxng_engines`
-  если поднят [llama.cpp_search](https://github.com/vaskes/llama.cpp_search) рядом
-- 🔒 **Whitelist** по Telegram `user_id` / `@username` (env-переменные, LOCKDOWN по дефолту)
+  if [llama.cpp_search](https://github.com/vaskes/llama.cpp_search) is running nearby
+- 🔒 **Whitelist** by Telegram `user_id` / `@username` (env vars, LOCKDOWN by default)
 
-## Архитектура
+## Architecture
 
 ```
 ┌──────────┐    HTTP     ┌──────────────┐   chat/completions   ┌─────────────┐
@@ -39,14 +39,14 @@ Telegram-бот-обёртка над [llama.cpp](https://github.com/ggml-org/ll
                                                                └─────────────┘
 ```
 
-`network_mode: host` — бот видит llama/whisper/searxng как localhost.
-Это самое простое для standalone-машины, где все три сервиса на одном хосте.
+`network_mode: host` — the bot sees llama / whisper / searxng as localhost.
+That is the simplest setup for a single host running all three services.
 
-## Быстрый старт
+## Quick start
 
-См. [docs/SETUP.md](docs/SETUP.md) — там пошагово.
+See [docs/SETUP.md](docs/SETUP.md) for step-by-step.
 
-Короткая версия:
+Short version:
 
 ```bash
 git clone https://github.com/vaskes/llama.cpp_telegram.git
@@ -57,32 +57,32 @@ sudo systemctl start whisper-api-compose
 sudo systemctl start telegram-bot-compose
 ```
 
-## Документация
+## Documentation
 
-- **[docs/SETUP.md](docs/SETUP.md)** — как установить на чистый хост (для людей)
-- **[docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)** — короткий справочник команд для AI-агентов
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — что внутри bot.py, как устроен tool-calling loop
-- **[docs/SECURITY.md](docs/SECURITY.md)** — whitelist, env vars, что НЕ коммитить
-- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — типовые проблемы
+- **[docs/SETUP.md](docs/SETUP.md)** — installing on a fresh host (for humans)
+- **[docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)** — short command reference for AI agents
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — what's inside bot.py, how the tool-calling loop works
+- **[docs/SECURITY.md](docs/SECURITY.md)** — whitelist, env vars, what NOT to commit
+- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common issues
 
-## Требования
+## Requirements
 
-- Linux с Docker + Docker Compose v2
-- `sudo` без пароля (для systemd)
-- llama.cpp-совместимый сервер на порту 8080 (или своё значение в `.env`)
-- Опционально: SearXNG (для web-search tool), Whisper (для голосовых)
+- Linux with Docker + Docker Compose v2
+- Passwordless `sudo` (for systemd)
+- Any llama.cpp-compatible server on port 8080 (or your value in `.env`)
+- Optional: SearXNG (for the web-search tool), Whisper (for voice messages)
 
-## Где взять llama-server
+## Where to get llama-server
 
-Этот репозиторий **не** включает llama.cpp. Подойдёт любой OpenAI-совместимый endpoint.
-Рекомендации для Radeon 780M:
+This repository does **not** include llama.cpp itself. Any OpenAI-compatible
+endpoint will work. Recommended for Radeon 780M:
 **[vaskes/llama.cpp-rocm-780m](https://github.com/vaskes/llama.cpp-rocm-780m)** —
-готовая Docker-сборка с нативной поддержкой gfx1103.
+a ready Docker build with native gfx1103 support.
 
-Для SearXNG + tool-calling:
+For SearXNG + tool-calling:
 **[vaskes/llama.cpp_search](https://github.com/vaskes/llama.cpp_search)** —
-SearXNG + Playwright MCP + готовый `--mcp-servers-config` для llama-server.
+SearXNG + Playwright MCP + a ready `--mcp-servers-config` for llama-server.
 
-## Лицензия
+## License
 
 MIT
