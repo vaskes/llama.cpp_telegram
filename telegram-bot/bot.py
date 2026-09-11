@@ -23,7 +23,7 @@ def _ipv4_only_getaddrinfo(host, *args, **kwargs):
     return results
 socket.getaddrinfo = _ipv4_only_getaddrinfo
 
-# Configuration
+# Конфигурация
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 LLAMA_URL = os.environ.get('LLAMA_URL', 'http://192.168.10.7:8080/v1')
 WHISPER_URL = os.environ.get('WHISPER_URL', 'http://192.168.10.7:8000')
@@ -76,10 +76,10 @@ async def reject_if_unauthorized(update: Update, context: ContextTypes.DEFAULT_T
     print(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}')
     return True
 
-# Conversation context storage
+# Хранилище контекста диалогов
 conversations = {}
 
-# Tools the bot does NOT execute (security, or not implemented)
+# Tools которые бот НЕ умеет исполнять (security, или не реализовано)
 DISABLED_TOOLS = {
     'read_file', 'write_file', 'edit_file', 'exec_shell_command',
     'file_glob_search', 'grep_search', 'get_info',
@@ -97,12 +97,12 @@ DISABLED_TOOLS = {
     'playwright_browser_tabs', 'playwright_browser_wait_for',
 }
 
-# Tools cache (loaded once)
+# Кеш tools (загружаются один раз)
 _TOOLS_CACHE = None
 
 
 async def fetch_tools_from_llama():
-    """Fetch tools list from llama-server and filter to the ones we can handle."""
+    """Получить список tools с llama-server и отфильтровать доступные."""
     global _TOOLS_CACHE
     if _TOOLS_CACHE is not None:
         return _TOOLS_CACHE
@@ -136,7 +136,7 @@ async def fetch_tools_from_llama():
 
 
 async def execute_searxng_search(args):
-    """searxng_search: execute an HTTP request to SearXNG."""
+    """searxng_search: выполнить HTTP запрос к SearXNG."""
     query = args.get('query', '')
     if not query:
         return '[tool error: empty query]'
@@ -172,7 +172,7 @@ async def execute_searxng_search(args):
 
 
 async def execute_searxng_fetch_url(args):
-    """searxng_fetch_url: download and return the text of a URL."""
+    """searxng_fetch_url: скачать и вернуть текст URL."""
     url = args.get('url', '')
     if not url:
         return '[tool error: empty url]'
@@ -191,7 +191,7 @@ async def execute_searxng_fetch_url(args):
 
 
 async def execute_searxng_engines(args):
-    """searxng_engines: return the list of available engines."""
+    """searxng_engines: вернуть список доступных engines."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(f"{SEARXNG_URL}/engines")
@@ -204,7 +204,7 @@ async def execute_searxng_engines(args):
 
 
 async def get_weather(args):
-    """Custom tool: wttr.in for weather. Always works, does not depend on SearXNG."""
+    """Custom tool: wttr.in для погоды. Работает всегда, не зависит от SearXNG."""
     location = args.get('location', '') or args.get('city', '')
     if not location:
         return '[weather error: empty location]'
@@ -241,7 +241,7 @@ SEARXNG_TOOLS = {
 
 
 async def call_llama(messages, max_tokens=4096, user_text=''):
-    """Call llama.cpp with a tool-calling loop (max 5 iterations)."""
+    """Call llama.cpp with a tool-calling loop (max 10 iterations, with early-exit on no-progress)."""
     tools = await fetch_tools_from_llama()
     custom_weather_tool = {
         'type': 'function',
@@ -266,13 +266,21 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
             'ALWAYS call the relevant tool, do not say "I have no access". '
             'For weather questions use get_weather (it always works via wttr.in). '
             'For web search — searxng_search. '
-            'If SearXNG returns 0 results, try searxng_fetch_url to a specific site or tell the user search is currently unavailable. '
+            'If SearXNG returns 0 results or "engines unavailable", stop searching and tell the user '
+            'that web search is currently down (SearXNG engines are blocked by CAPTCHA on this host IP). '
+            'Do NOT keep retrying searxng_search with different queries or languages — it will keep failing. '
+            'If the question requires current data you cannot get (flight prices, live news, stock prices) '
+            'and SearXNG is unavailable, SAY SO HONESTLY and suggest where the user can find it '
+            '(e.g. "try Aviasales / Google Flights directly"). '
             'After getting tool result, give a clear, concise answer in natural language. '
             'Answer in the language of the user (Russian by default).'
         )
     }
     msgs = [sys_prompt] + messages
-    max_iter = 5
+    max_iter = 10
+    last_empty = 0       # count of consecutive "empty / no progress" iterations
+    final_fallback = None  # partial content from the very last assistant turn
+
     for iteration in range(max_iter):
         async with httpx.AsyncClient(timeout=180.0) as client:
             r = await client.post(
@@ -294,7 +302,12 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
         tool_calls = msg.get('tool_calls') or []
         if not tool_calls:
             return msg.get('content') or ''
+        # remember any partial reasoning/content for fallback
+        if msg.get('content'):
+            final_fallback = msg.get('content')
         msgs.append(msg)
+
+        iter_had_real_result = False
         for tc in tool_calls:
             fn_name = tc.get('function', {}).get('name', '')
             raw_args = tc.get('function', {}).get('arguments', '{}')
@@ -310,12 +323,71 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
                 result = await SEARXNG_TOOLS[fn_name](args)
             else:
                 result = f'[tool {fn_name} unavailable in this mode. Bot supports: get_weather, searxng_search, searxng_fetch_url, searxng_engines.]'
+            # Detect "empty / no progress" — SearXNG 0 results or repeated fetch failures
+            r_str = str(result)
+            is_empty = (
+                '0 results' in r_str.lower() or
+                '0 results' in r_str or
+                'engines unavailable' in r_str.lower() or
+                r_str.startswith('[searxng: 0') or
+                r_str.startswith('[searxng error') or
+                r_str.startswith('[fetch error') or
+                r_str.startswith('[tool')
+            )
+            if not is_empty:
+                iter_had_real_result = True
             msgs.append({
                 'role': 'tool',
                 'tool_call_id': tc_id,
-                'content': str(result)[:12000],
+                'content': r_str[:12000],
             })
-    return '[bot: exceeded tool-calling iteration limit]'
+
+        # Early-exit: 2 consecutive no-progress iterations -> give up gracefully
+        if iter_had_real_result:
+            last_empty = 0
+        else:
+            last_empty += 1
+            if last_empty >= 2:
+                # Inject a final user nudge asking the model to summarize with what it has
+                msgs.append({
+                    'role': 'user',
+                    'content': (
+                        'The previous tool calls returned no useful data. '
+                        'Please stop searching and give your final answer now — '
+                        'if you cannot find the requested information, say so honestly '
+                        'and suggest where the user can find it themselves.'
+                    ),
+                })
+                # one more iteration to summarize and exit
+                async with httpx.AsyncClient(timeout=180.0) as client:
+                    r2 = await client.post(
+                        f"{LLAMA_URL}/chat/completions",
+                        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                        json={
+                            "model": MODEL,
+                            "messages": msgs,
+                            "tools": all_tools,
+                            "tool_choice": "none",
+                            "max_tokens": max_tokens,
+                            "stream": False,
+                        }
+                    )
+                    r2.raise_for_status()
+                    data2 = r2.json()
+                msg2 = data2['choices'][0]['message']
+                return msg2.get('content') or (
+                    '[bot: search returned no useful data. The current web search backend '
+                    '(SearXNG) is unavailable on this host (CAPTCHA on cloud IP). '
+                    'For live data (flight prices, news, stocks), please use a direct service '
+                    'like Aviasales, Google Flights, or your browser.]'
+                )
+
+    # Hard cap reached — return best partial we have, or honest message
+    if final_fallback:
+        return final_fallback
+    return ('[bot: exceeded tool-calling iteration limit. '
+            'Web search is currently unavailable on this host (SearXNG CAPTCHA-blocked). '
+            'Please use a direct service like Aviasales or Google Flights for live data.]')
 
 
 async def transcribe_voice(voice_bytes):
@@ -334,15 +406,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     await update.message.reply_text(
-        '🤖 **LlamaBot v2 started!**\n\n'
-        'I can:\n'
-        '• Answer questions (with tool-calling)\n'
-        '• Search the web (SearXNG) 🌐\n'
-        '• Get weather (wttr.in) ☀️\n'
-        '• Analyze images (send a photo)\n'
-        '• Transcribe voice messages 🎤\n'
-        '• Read documents (TXT, PDF)\n\n'
-        'Commands: /reset, /stats'
+        '🤖 **LlamaBot v2 запущен!**\n\n'
+        'Я могу:\n'
+        '• Отвечать на вопросы (с tool-calling)\n'
+        '• Искать в интернете (SearXNG) 🌐\n'
+        '• Узнавать погоду (wttr.in) ☀️\n'
+        '• Анализировать изображения (отправьте фото)\n'
+        '• Расшифровывать голосовые 🎤\n'
+        '• Читать документы (TXT, PDF)\n\n'
+        'Команды: /reset, /stats'
     )
 
 
@@ -352,7 +424,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in conversations:
         del conversations[user_id]
-    await update.message.reply_text('🔄 Context cleared.')
+    await update.message.reply_text('🔄 Контекст очищен.')
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -362,9 +434,9 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_count = len(conversations.get(user_id, []))
     tools = await fetch_tools_from_llama()
     await update.message.reply_text(
-        f'📊 **Stats:**\n'
-        f'Messages: {msg_count}\n'
-        f'Model: {MODEL}\n'
+        f'📊 **Статистика:**\n'
+        f'Сообщений: {msg_count}\n'
+        f'Модель: {MODEL}\n'
         f'Tools: {len(tools)} searxng + 1 weather'
     )
 
