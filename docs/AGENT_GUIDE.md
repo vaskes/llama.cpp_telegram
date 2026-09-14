@@ -38,9 +38,10 @@ curl -s -m 5 http://localhost:8080/health        # → {"status":"ok"}
 curl -s -m 5 http://localhost:8080/v1/models | head -c 400
 ```
 
-### Check SearXNG
+### Check donsetch-http
 ```bash
-curl -s -m 5 "http://localhost:8888/search?q=test&format=json" | head -c 200
+curl -s -m 5 http://localhost:8765/health
+# or list tools (depends on donsetch version)
 ```
 
 ### Restart the bot (e.g. after editing bot.py)
@@ -119,10 +120,10 @@ If the llama-server does not respond — that is a **separate task**, not relate
 
 - `bot.py` has hardcoded `192.168.10.7:8080` references in comments, but
   in code it uses env vars `LLAMA_URL` and `WHISPER_URL`. Intentional.
-- SearXNG engines on cloud IPs often CAPTCHA-out. `get_weather` via wttr.in
-  always works. If a user asks "why is Google not searching" — this is
-  a [known issue](https://github.com/searxng/searxng/issues) with
-  user-agent detection, not a code bug.
+- Donsetch-http aggregates Bing, DDG, Mojeek, Yahoo, Brave, Google via
+  Playwright headless Chrome, so CAPTCHA-blocked engines are bypassed.
+  `get_weather` via wttr.in always works as a fallback for weather
+  queries even when donsetch is down.
 - Docker `network_mode: host` means the bot has no IP of its own —
   `0.0.0.0` bindings in the container occupy host ports. If something
   starts conflicting, switch to a bridge network + explicit ports.
