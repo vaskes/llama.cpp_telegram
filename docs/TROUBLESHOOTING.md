@@ -58,16 +58,21 @@ Common errors:
   (default), or add `dns: [8.8.8.8]` in compose
 - `Model not found` — the model in `MODEL` env does not match the `--alias` on the server
 
-## SearXNG returns 0 results
+## donsetch-http is not responding
 
-This is a **known issue** on cloud IPs — `DuckDuckGo`, `Brave`, `Startpage`
-return CAPTCHA. On a localhost (home IP) it works.
+```bash
+curl -s -m 5 http://localhost:8765/health
+sudo -n docker logs donsetch-http --tail 20
+```
 
-Workarounds:
-- Use only `get_weather` for weather questions
-- Use `searxng_engines` to see the available list
-- For Russian search, try `searxng_fetch_url` to a specific site
-  (e.g. `https://www.google.com/search?q=...`)
+Donsetch routes searches through real Chromium via Playwright. Common issues:
+- Donsetch container not running: `sudo -n docker ps | grep donsetch`
+- Chromium not installed inside the container (rebuild with Playwright deps)
+- `DONSETCH_URL` in bot's `.env` is wrong (must end in `/mcp`,
+  e.g. `http://localhost:8765/mcp`)
+
+The bot falls back to plain `reply` if donsetch is unreachable, so users
+still get answers to non-search questions.
 
 ## Whisper does not recognize voice
 

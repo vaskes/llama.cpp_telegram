@@ -27,12 +27,12 @@ The cycle:
 
 | Tool | Implementation | Available when |
 |---|---|---|
-| `get_weather` | HTTP GET `https://wttr.in/{location}?format=j1&lang=ru` | Always (custom, added in code) |
-| `searxng_search` | HTTP GET `http://SEARXNG_URL/search?q=...&format=json` | SearXNG is up |
-| `searxng_fetch_url` | HTTP GET to URL + HTML strip | Always (if the internet is up) |
-| `searxng_engines` | HTTP GET `http://SEARXNG_URL/engines` | SearXNG is up |
+| `get_weather` | HTTP GET `https://wttr.in/{location}?format=j1` | Always (custom, added in code) |
+| `web_search` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up |
+| `web_fetch` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up |
+| `web_crawl` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up |
+| `web_screenshot` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up |
 | `read_file`, `write_file`, `edit_file`, `exec_shell_command` | — | **DISABLED** in `DISABLED_TOOLS` |
-| `playwright_browser_*` | — | **DISABLED** in `DISABLED_TOOLS` (needs Playwright MCP) |
 | `file_glob_search`, `grep_search`, `get_info` | — | **DISABLED** (security + not implemented) |
 
 ### IPv4 monkey-patch
@@ -43,8 +43,8 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 **Why:** the docker container has no IPv6 routing, but `api.telegram.org`
 resolves to IPv6 (AAAA) first. `httpx`-based clients (Telegram Bot API,
-SearXNG) fail with `Network is unreachable` on outbound. The monkey-patch
-filters IPv6 out of `getaddrinfo` results, leaving only IPv4.
+donsetch MCP) fail with `Network is unreachable` on outbound. The
+monkey-patch filters IPv6 out of `getaddrinfo` results, leaving only IPv4.
 
 **When to remove:** once the host has IPv6 routing, or once upstream
 fixes the A-record for `api.telegram.org`.
@@ -92,7 +92,7 @@ If you need better accuracy, set `WHISPER_MODEL` in `.env` to
 `network_mode: "host"` in `telegram-bot/docker-compose.yml`.
 
 **Pros:**
-- Bot sees `localhost:8080` (llama), `localhost:8000` (whisper), `localhost:8888` (searxng)
+- Bot sees `localhost:8080` (llama), `localhost:8000` (whisper), `localhost:8765` (donsetch-http)
   without any extra DNS or links
 - Easier to debug (`netstat`, `ss` on the host = what the bot sees)
 

@@ -59,7 +59,8 @@ Minimum required:
 Optional:
 - `MODEL` — must match the `--alias` on the llama-server
 - `ALLOWED_USERNAMES` — secondary auth by `@username` (case-insensitive)
-- `SEARXNG_URL` — if you have SearXNG up
+- `DONSETCH_URL` — if you have [donsetch-http](https://github.com/dondai44423/donsetch)
+  running (default `http://localhost:8765/mcp`)
 
 ## 5. Bring up dependencies
 
@@ -72,9 +73,16 @@ Do nothing. The bot will connect to `LLAMA_URL`.
 ### Option B: setting up from scratch on Radeon 780M
 Follow the instructions in [vaskes/llama.cpp-rocm-780m](https://github.com/vaskes/llama.cpp-rocm-780m).
 
-### Option C: for tool-calling (SearXNG)
-Follow the instructions in [vaskes/llama.cpp_search](https://github.com/vaskes/llama.cpp_search)
-— it includes a ready SearXNG + Playwright MCP, plus the `--mcp-servers-config` flag for llama-server.
+### Option C: for tool-calling (web search via donsetch)
+Deploy [dondai44423/donsetch](https://github.com/dondai44423/donsetch)
+on port 8765 (Rust MCP server with headless Chrome). Point the bot at it
+by setting `DONSETCH_URL=http://localhost:8765/mcp` in `/opt/telegram-bot/.env`.
+The bot will then have `web_search`, `web_fetch`, `web_crawl`, and
+`web_screenshot` available.
+
+The historical SearXNG-based stack in [vaskes/llama.cpp_search](https://github.com/vaskes/llama.cpp_search)
+is deprecated — all major engines CAPTCHA-block Russian IPs. Use donsetch
+instead.
 
 ## 6. Start the services
 
@@ -94,7 +102,7 @@ You should get the welcome text.
 
 Then:
 - "weather in Yalta" — bot will call `get_weather` and return the real temperature
-- "what's new in AI" — if SearXNG is up, bot will call `searxng_search`
+- "what's new in AI" — if donsetch-http is up, bot will call `web_search`
 - voice message — bot will transcribe via Whisper and reply to the text
 
 ## 8. Logs and updates

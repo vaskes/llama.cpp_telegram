@@ -27,7 +27,7 @@ become public.
 | `BOT_TOKEN` | `/opt/telegram-bot/.env` | `chmod 600`, **not in git** |
 | `API_KEY` (LLM) | `/opt/telegram-bot/.env` | Usually `sk-no-key` for localhost — not a secret |
 | `WHISPER_MODEL` | `/opt/whisper-api/.env` | Public model name, not a secret |
-| SearXNG URL | `/opt/telegram-bot/.env` | Not a secret |
+| Donsetch URL | `/opt/telegram-bot/.env` | Not a secret |
 
 ## What MUST NOT end up in git
 
