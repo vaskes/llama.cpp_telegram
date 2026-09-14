@@ -282,7 +282,7 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
     final_fallback = None  # partial content from the very last assistant turn
 
     for iteration in range(max_iter):
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:
             r = await client.post(
                 f"{LLAMA_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -359,7 +359,7 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
                     ),
                 })
                 # one more iteration to summarize and exit
-                async with httpx.AsyncClient(timeout=180.0) as client:
+                async with httpx.AsyncClient(timeout=600.0) as client:
                     r2 = await client.post(
                         f"{LLAMA_URL}/chat/completions",
                         headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -462,6 +462,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_response = await call_llama(messages, max_tokens=2048)
         await update.message.reply_text(bot_response)
     except Exception as e:
+        print(f"[ERR photo] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
 
 
@@ -489,6 +490,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(bot_response)
     except Exception as e:
+        print(f"[ERR voice] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
 
 
@@ -512,6 +514,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_response = await call_llama(messages, max_tokens=4096)
         await update.message.reply_text(bot_response)
     except Exception as e:
+        print(f"[ERR doc] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -538,6 +541,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(bot_response)
     except Exception as e:
+        print(f"[ERR text] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
         if conversations[user_id]:
             conversations[user_id].pop()
