@@ -292,11 +292,11 @@ async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None)
     accumulated_reasoning = ""
     last_thinking_push = [0.0]  # mutable closure for throttling
 
-    async def push_thinking(reasoning_text: str):
+    async def push_thinking(reasoning_text: str, force: bool = False):
         if thinking_msg is None or not reasoning_text:
             return
         now = time.monotonic()
-        if now - last_thinking_push[0] < 10.0:
+        if not force and now - last_thinking_push[0] < 3.0:
             return
         last_thinking_push[0] = now
         # Truncate to fit Telegram's 4096-char message limit; keep the tail
@@ -368,6 +368,9 @@ async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None)
                                     tool_calls_buf[idx]["arguments"] += fn["arguments"]
                             if choice.get("finish_reason"):
                                 finish_reason = choice["finish_reason"]
+                    # Final flush: ensure the latest reasoning text is on Telegram
+                    if reasoning_buf:
+                        await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
             except httpx.HTTPError as e:
                 print(f"[stream err iter={iteration}] {type(e).__name__}: {e}")
                 # Fall back to non-streaming request
