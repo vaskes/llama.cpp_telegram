@@ -402,6 +402,27 @@ async def transcribe_voice(voice_bytes):
         return response.json()['text']
 
 
+EMPTY_RESPONSE_FALLBACK = (
+    '[model returned an empty response. This usually means the LLM '
+    'spent all its tokens on internal reasoning without writing a reply. '
+    'Try /reset to clear context, or switch to a less reasoning-heavy model.]'
+)
+
+
+async def send_reply(update: Update, text: str):
+    """Reply to a Telegram message, falling back to a helpful message if the model returned nothing.
+
+    Telegram rejects empty messages with `Message text is empty`. Some models
+    (Ornith-Uncensored in particular) spend the whole token budget on reasoning
+    and return content='' for short prompts. We don't want the user to see a
+    cryptic API error in that case.
+    """
+    text = (text or '').strip()
+    if not text:
+        text = EMPTY_RESPONSE_FALLBACK
+    await update.message.reply_text(text)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
@@ -460,7 +481,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         }]
         bot_response = await call_llama(messages, max_tokens=2048)
-        await update.message.reply_text(bot_response)
+        await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR photo] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
@@ -488,7 +509,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i in range(0, len(bot_response), 4000):
                 await update.message.reply_text(bot_response[i:i+4000])
         else:
-            await update.message.reply_text(bot_response)
+            await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR voice] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
@@ -512,7 +533,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = update.message.caption or 'Read the document and answer questions.'
         messages = [{"role": "user", "content": f"{caption}\n\n--- Document ---\n{doc_text}"}]
         bot_response = await call_llama(messages, max_tokens=4096)
-        await update.message.reply_text(bot_response)
+        await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR doc] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
@@ -539,7 +560,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i in range(0, len(bot_response), 4000):
                 await update.message.reply_text(bot_response[i:i+4000])
         else:
-            await update.message.reply_text(bot_response)
+            await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR text] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
