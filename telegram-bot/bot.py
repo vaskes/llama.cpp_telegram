@@ -29,9 +29,10 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 LLAMA_URL = os.environ.get('LLAMA_URL', 'http://192.168.10.7:8080/v1')
 WHISPER_URL = os.environ.get('WHISPER_URL', 'http://192.168.10.7:8000')
-SEARXNG_URL = os.environ.get('SEARXNG_URL', 'http://localhost:8888')
 API_KEY = os.environ.get('API_KEY', 'sk-no-key')
 MODEL = os.environ.get('MODEL', 'Qwen3.6-35B-A3B-Heretic')
+
+
 
 # === Security: whitelist ===
 # ALLOWED_USER_IDS — comma-separated numeric Telegram user IDs, e.g. "123456789,987654321"
@@ -78,10 +79,10 @@ async def reject_if_unauthorized(update: Update, context: ContextTypes.DEFAULT_T
     print(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}')
     return True
 
-# Хранилище контекста диалогов
+# Conversation context storage (in-memory, lost on restart)
 conversations = {}
 
-# Tools которые бот НЕ умеет исполнять (security, или не реализовано)
+# Tools the bot does NOT execute (security or not implemented)
 DISABLED_TOOLS = {
     'read_file', 'write_file', 'edit_file', 'exec_shell_command',
     'file_glob_search', 'grep_search', 'get_info',
@@ -137,76 +138,8 @@ async def fetch_tools_from_llama():
         return []
 
 
-async def execute_searxng_search(args):
-    """searxng_search: выполнить HTTP запрос к SearXNG."""
-    query = args.get('query', '')
-    if not query:
-        return '[tool error: empty query]'
-    max_results = int(args.get('max_results', 8))
-    engines = args.get('engines', '')
-    params = {
-        'q': query,
-        'format': 'json',
-        'language': 'ru',
-    }
-    if engines:
-        params['engines'] = engines
-    url = f"{SEARXNG_URL}/search?{urllib.parse.urlencode(params)}"
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            data = r.json()
-        results = data.get('results', [])
-        if not results:
-            return f'[searxng: 0 results for "{query}". SearXNG engines may be blocked (CAPTCHA) on this IP.]'
-        lines = [f'Found {len(results)} results for "{query}":']
-        for i, res in enumerate(results[:max_results], 1):
-            title = res.get('title', '(no title)')[:120]
-            snippet = (res.get('content') or res.get('snippet') or '')[:400]
-            link = res.get('url', '')
-            lines.append(f'\n{i}. {title}\n   {snippet}\n   {link}')
-        if data.get('unresponsive_engines'):
-            lines.append(f"\n[unavailable engines: {data['unresponsive_engines']}]")
-        return '\n'.join(lines)
-    except Exception as e:
-        return f'[searxng error: {e}]'
-
-
-async def execute_searxng_fetch_url(args):
-    """searxng_fetch_url: скачать и вернуть текст URL."""
-    url = args.get('url', '')
-    if not url:
-        return '[tool error: empty url]'
-    try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            r = await client.get(url, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'})
-            r.raise_for_status()
-            text = r.text
-            text = re.sub(r'<script[^>]*>.*?</script>', ' ', text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r'<style[^>]*>.*?</style>', ' ', text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r'<[^>]+>', ' ', text)
-            text = re.sub(r'\s+', ' ', text).strip()
-            return text[:8000]
-    except Exception as e:
-        return f'[fetch error: {e}]'
-
-
-async def execute_searxng_engines(args):
-    """searxng_engines: вернуть список доступных engines."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(f"{SEARXNG_URL}/engines")
-            r.raise_for_status()
-            data = r.json()
-        names = sorted([e.get('name', '?') for e in data])
-        return f'Available SearXNG engines ({len(names)}): ' + ', '.join(names)
-    except Exception as e:
-        return f'[engines error: {e}]'
-
-
 async def get_weather(args):
-    """Custom tool: wttr.in для погоды. Работает всегда, не зависит от SearXNG."""
+    """Custom tool: wttr.in для погоды. Always works, no CAPTCHA."""
     location = args.get('location', '') or args.get('city', '')
     if not location:
         return '[weather error: empty location]'
@@ -235,10 +168,144 @@ CUSTOM_TOOLS = {
     'get_weather': get_weather,
 }
 
-SEARXNG_TOOLS = {
-    'searxng_search': execute_searxng_search,
-    'searxng_fetch_url': execute_searxng_fetch_url,
-    'searxng_engines': execute_searxng_engines,
+# === Donsetch-http MCP client ===
+# Donsetch replaces the old SearXNG-based stack (which is CAPTCHA-blocked on cloud IPs).
+# It exposes 4 tools via MCP/JSON-RPC on http://localhost:8765/mcp. llama-server prefixes
+# them with `donsetch_` (e.g. `donsetch_web_search`); we strip that prefix when calling.
+
+DONSETCH_URL = os.environ.get('DONSETCH_URL', 'http://localhost:8765/mcp')
+_donsetch_session_id = None
+_donsetch_session_lock = asyncio.Lock()
+
+
+async def _donsetch_init():
+    """Initialize MCP session with donsetch-http. Returns session id."""
+    global _donsetch_session_id
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            DONSETCH_URL,
+            headers={"Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"},
+            json={
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "llama.cpp_telegram_bot", "version": "1.0"},
+                },
+                "id": "init",
+            },
+        )
+        r.raise_for_status()
+        sid = r.headers.get("mcp-session-id")
+        if not sid:
+            raise RuntimeError(f"donsetch initialize did not return session id (status {r.status_code}, body {r.text[:200]})")
+        _donsetch_session_id = sid
+        # Send the initialized notification as required by MCP spec
+        await client.post(
+            DONSETCH_URL,
+            headers={"Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream",
+                     "Mcp-Session-Id": sid},
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        )
+        return sid
+
+
+async def donsetch_call(tool_name: str, arguments: dict) -> str:
+    """Call a tool on donsetch-http via MCP JSON-RPC.
+
+    tool_name: the bare name (e.g. 'web_search') or the prefixed name
+               ('donsetch_web_search'). Prefix is stripped automatically.
+    Returns the tool output as a string (may be markdown).
+    """
+    global _donsetch_session_id
+    bare = tool_name
+    if bare.startswith("donsetch_"):
+        bare = bare[len("donsetch_"):]
+    async with _donsetch_session_lock:
+        if _donsetch_session_id is None:
+            try:
+                await _donsetch_init()
+            except Exception as e:
+                return f'[donsetch init error: {e}]'
+        for attempt in range(2):
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                try:
+                    r = await client.post(
+                        DONSETCH_URL,
+                        headers={"Content-Type": "application/json",
+                                 "Accept": "application/json, text/event-stream",
+                                 "Mcp-Session-Id": _donsetch_session_id},
+                        json={
+                            "jsonrpc": "2.0",
+                            "method": "tools/call",
+                            "params": {"name": bare, "arguments": arguments},
+                            "id": "call",
+                        },
+                    )
+                    if r.status_code == 404 or 'session' in (r.text or '').lower() and 'unknown' in (r.text or '').lower():
+                        # session expired — re-init and retry once
+                        _donsetch_session_id = None
+                        await _donsetch_init()
+                        continue
+                    r.raise_for_status()
+                    data = r.json()
+                    if 'error' in data:
+                        return f'[donsetch error {data["error"].get("code","?")}: {data["error"].get("message","?")}]'
+                    result = data.get('result', {})
+                    # MCP tool result: {"content": [{"type":"text","text":"..."}, ...], "isError": false}
+                    content = result.get('content', [])
+                    parts = []
+                    for block in content:
+                        if isinstance(block, dict):
+                            if block.get('type') == 'text':
+                                parts.append(block.get('text', ''))
+                            elif block.get('type') == 'image':
+                                parts.append(f'[image: {block.get("mimeType","?")}, {len(block.get("data",""))} bytes]')
+                            else:
+                                parts.append(str(block))
+                        else:
+                            parts.append(str(block))
+                    if not parts:
+                        return result.get('text') or '[donsetch: empty result]'
+                    text = '\n'.join(parts)
+                    if result.get('isError'):
+                        return f'[donsetch tool error: {text}]'
+                    return text[:24000]
+                except Exception as e:
+                    if attempt == 1:
+                        return f'[donsetch call error: {e}]'
+                    _donsetch_session_id = None
+        return '[donsetch: failed after retry]'
+
+
+async def execute_donsetch_web_search(args):
+    """Tool: donsetch_web_search — search the web."""
+    return await donsetch_call('web_search', args)
+
+
+async def execute_donsetch_web_fetch(args):
+    """Tool: donsetch_web_fetch — fetch a URL as markdown."""
+    return await donsetch_call('web_fetch', args)
+
+
+async def execute_donsetch_web_crawl(args):
+    """Tool: donsetch_web_crawl — crawl a site."""
+    return await donsetch_call('web_crawl', args)
+
+
+async def execute_donsetch_web_screenshot(args):
+    """Tool: donsetch_web_screenshot — capture URL as PNG."""
+    return await donsetch_call('web_screenshot', args)
+
+
+DONSETCH_TOOLS = {
+    'donsetch_web_search': execute_donsetch_web_search,
+    'donsetch_web_fetch': execute_donsetch_web_fetch,
+    'donsetch_web_crawl': execute_donsetch_web_crawl,
+    'donsetch_web_screenshot': execute_donsetch_web_screenshot,
 }
 
 
@@ -272,13 +339,12 @@ async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None)
             'When the user asks about weather, news, current events, or anything requiring fresh data — '
             'ALWAYS call the relevant tool, do not say "I have no access". '
             'For weather questions use get_weather (it always works via wttr.in). '
-            'For web search — searxng_search. '
-            'If SearXNG returns 0 results or "engines unavailable", stop searching and tell the user '
-            'that web search is currently down (SearXNG engines are blocked by CAPTCHA on this host IP). '
-            'Do NOT keep retrying searxng_search with different queries or languages — it will keep failing. '
-            'If the question requires current data you cannot get (flight prices, live news, stock prices) '
-            'and SearXNG is unavailable, SAY SO HONESTLY and suggest where the user can find it '
-            '(e.g. "try Aviasales / Google Flights directly"). '
+            'For web search use donsetch_web_search / donsetch_web_fetch / donsetch_web_crawl / '
+            'donsetch_web_screenshot (powered by donsetch-http MCP server, aggregates 6 search engines '
+            'via real Chromium browser, no CAPTCHA blocking). '
+            'If donsetch returns no useful data, say so honestly and suggest where the user can find '
+            'the information directly (e.g. "try Aviasales / Google Flights directly"). '
+            'Do NOT keep retrying the same search with different languages or queries. '
             'After getting tool result, give a clear, concise answer in natural language. '
             'Answer in the language of the user (Russian by default).'
         )
@@ -439,16 +505,15 @@ async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None)
             print(f"[tool] iter={iteration} call {fn_name}({args})")
             if fn_name in CUSTOM_TOOLS:
                 result = await CUSTOM_TOOLS[fn_name](args)
-            elif fn_name in SEARXNG_TOOLS:
-                result = await SEARXNG_TOOLS[fn_name](args)
+            elif fn_name in DONSETCH_TOOLS:
+                result = await DONSETCH_TOOLS[fn_name](args)
             else:
-                result = f'[tool {fn_name} unavailable in this mode. Bot supports: get_weather, searxng_search, searxng_fetch_url, searxng_engines.]'
+                result = f'[tool {fn_name} unavailable in this mode. Bot supports: get_weather, donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot.]'
             r_str = str(result)
             is_empty = (
                 '0 results' in r_str.lower() or
                 'engines unavailable' in r_str.lower() or
-                r_str.startswith('[searxng: 0') or
-                r_str.startswith('[searxng error') or
+                r_str.startswith('[donsetch') or
                 r_str.startswith('[fetch error') or
                 r_str.startswith('[tool')
             )
@@ -492,8 +557,7 @@ async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None)
                     data3 = r3.json()
                 msg3 = data3['choices'][0]['message']
                 return msg3.get('content') or (
-                    '[bot: search returned no useful data. The current web search backend '
-                    '(SearXNG) is unavailable on this host (CAPTCHA on cloud IP). '
+                    '[bot: search returned no useful data. '
                     'For live data (flight prices, news, stocks), please use a direct service '
                     'like Aviasales, Google Flights, or your browser.]'
                 )
@@ -501,8 +565,7 @@ async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None)
     if final_fallback:
         return final_fallback
     return ('[bot: exceeded tool-calling iteration limit. '
-            'Web search is currently unavailable on this host (SearXNG CAPTCHA-blocked). '
-            'Please use a direct service like Aviasales or Google Flights for live data.]')
+            'Please try a simpler question, /reset, or a different model.]')
 
 
 async def transcribe_voice(voice_bytes):
@@ -573,7 +636,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f'📊 **Статистика:**\n'
         f'Сообщений: {msg_count}\n'
         f'Модель: {MODEL}\n'
-        f'Tools: {len(tools)} searxng + 1 weather'
+        f'Tools: {len(tools)} from llama-server + 1 weather (custom)'
     )
 
 
