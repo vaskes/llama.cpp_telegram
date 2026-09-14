@@ -1,10 +1,12 @@
 import os
 import json
 import re
+import time
 import base64
 import tempfile
 import urllib.parse
 import socket
+import asyncio
 import httpx
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -240,8 +242,13 @@ SEARXNG_TOOLS = {
 }
 
 
-async def call_llama(messages, max_tokens=4096, user_text=''):
-    """Call llama.cpp with a tool-calling loop (max 10 iterations, with early-exit on no-progress)."""
+async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None):
+    """Call llama.cpp with a tool-calling loop and live reasoning stream.
+
+    thinking_msg: optional Telegram Message to update with reasoning text as it streams
+                  (throttled internally). Pass None to skip the live reasoning feed.
+    Returns the final assistant content (or fallback message if exhausted).
+    """
     tools = await fetch_tools_from_llama()
     custom_weather_tool = {
         'type': 'function',
@@ -278,35 +285,145 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
     }
     msgs = [sys_prompt] + messages
     max_iter = 10
-    last_empty = 0       # count of consecutive "empty / no progress" iterations
-    final_fallback = None  # partial content from the very last assistant turn
+    last_empty = 0
+    final_fallback = None
+
+    # Accumulated reasoning across iterations (for the live feed)
+    accumulated_reasoning = ""
+    last_thinking_push = [0.0]  # mutable closure for throttling
+
+    async def push_thinking(reasoning_text: str):
+        if thinking_msg is None or not reasoning_text:
+            return
+        now = time.monotonic()
+        if now - last_thinking_push[0] < 10.0:
+            return
+        last_thinking_push[0] = now
+        # Truncate to fit Telegram's 4096-char message limit; keep the tail
+        prefix = "💭 _"
+        suffix = "_"
+        max_payload = 3800
+        body = reasoning_text
+        if len(body) > max_payload:
+            body = "…" + body[-(max_payload - 1):]
+        try:
+            await thinking_msg.edit_text(f"{prefix}{body}{suffix}", parse_mode='Markdown')
+        except Exception as e:
+            # ignore "message is not modified" and similar
+            err = str(e).lower()
+            if 'not modified' not in err and 'flood' not in err:
+                print(f"[thinking edit err] {e}")
 
     for iteration in range(max_iter):
+        # --- streaming POST ---
         async with httpx.AsyncClient(timeout=600.0) as client:
-            r = await client.post(
-                f"{LLAMA_URL}/chat/completions",
-                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": MODEL,
-                    "messages": msgs,
-                    "tools": all_tools,
-                    "tool_choice": "auto",
-                    "parallel_tool_calls": False,
-                    "max_tokens": max_tokens,
-                    "stream": False,
-                }
-            )
-            r.raise_for_status()
-            data = r.json()
-        msg = data['choices'][0]['message']
-        tool_calls = msg.get('tool_calls') or []
+            req_body = {
+                "model": MODEL,
+                "messages": msgs,
+                "tools": all_tools,
+                "tool_choice": "auto",
+                "parallel_tool_calls": False,
+                "max_tokens": max_tokens,
+                "stream": True,
+            }
+            reasoning_buf = ""
+            content_buf = ""
+            tool_calls_buf = {}
+            finish_reason = None
+            try:
+                async with client.stream("POST", f"{LLAMA_URL}/chat/completions",
+                                          headers={"Authorization": f"Bearer {API_KEY}",
+                                                   "Content-Type": "application/json"},
+                                          json=req_body) as r:
+                    r.raise_for_status()
+                    async for line in r.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        payload = line[6:]
+                        if payload.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        for choice in chunk.get("choices", []):
+                            delta = choice.get("delta", {})
+                            rc = delta.get("reasoning_content")
+                            if rc:
+                                reasoning_buf += rc
+                                await push_thinking(accumulated_reasoning + reasoning_buf)
+                            cc = delta.get("content")
+                            if cc:
+                                content_buf += cc
+                            for tc_delta in delta.get("tool_calls") or []:
+                                idx = tc_delta.get("index", 0)
+                                if idx not in tool_calls_buf:
+                                    tool_calls_buf[idx] = {"id": "", "name": "", "arguments": ""}
+                                if tc_delta.get("id"):
+                                    tool_calls_buf[idx]["id"] = tc_delta["id"]
+                                fn = tc_delta.get("function") or {}
+                                if fn.get("name"):
+                                    tool_calls_buf[idx]["name"] += fn["name"]
+                                if fn.get("arguments"):
+                                    tool_calls_buf[idx]["arguments"] += fn["arguments"]
+                            if choice.get("finish_reason"):
+                                finish_reason = choice["finish_reason"]
+            except httpx.HTTPError as e:
+                print(f"[stream err iter={iteration}] {type(e).__name__}: {e}")
+                # Fall back to non-streaming request
+                async with httpx.AsyncClient(timeout=600.0) as client2:
+                    r2 = await client2.post(
+                        f"{LLAMA_URL}/chat/completions",
+                        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                        json={**req_body, "stream": False},
+                    )
+                    r2.raise_for_status()
+                    data = r2.json()
+                msg = data["choices"][0]["message"]
+                tool_calls = msg.get("tool_calls") or []
+                if not tool_calls:
+                    return msg.get("content") or ""
+                msgs.append(msg)
+                if msg.get("content"):
+                    final_fallback = msg["content"]
+                # jump into tool execution below by reusing local var
+                reasoning_buf = msg.get("reasoning_content") or ""
+                content_buf = msg.get("content") or ""
+
+        # commit accumulated reasoning for next-iteration display
+        accumulated_reasoning += reasoning_buf
+
+        # assemble final message
+        msg = {
+            "role": "assistant",
+            "content": content_buf or None,
+            "reasoning_content": reasoning_buf or None,
+        }
+        tool_calls = []
+        for idx, tc in tool_calls_buf.items():
+            if tc["name"]:
+                args_str = tc["arguments"]
+                try:
+                    args_obj = json.loads(args_str) if args_str else {}
+                except Exception:
+                    args_obj = {}
+                tool_calls.append({
+                    "id": tc["id"] or f"call_{idx}",
+                    "type": "function",
+                    "function": {"name": tc["name"],
+                                  "arguments": json.dumps(args_obj) if args_obj else args_str},
+                })
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+        tool_calls = msg.get("tool_calls") or []
+
         if not tool_calls:
-            return msg.get('content') or ''
-        # remember any partial reasoning/content for fallback
-        if msg.get('content'):
-            final_fallback = msg.get('content')
+            return content_buf or ''
+        if content_buf:
+            final_fallback = content_buf
         msgs.append(msg)
 
+        # --- execute tool calls ---
         iter_had_real_result = False
         for tc in tool_calls:
             fn_name = tc.get('function', {}).get('name', '')
@@ -323,11 +440,9 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
                 result = await SEARXNG_TOOLS[fn_name](args)
             else:
                 result = f'[tool {fn_name} unavailable in this mode. Bot supports: get_weather, searxng_search, searxng_fetch_url, searxng_engines.]'
-            # Detect "empty / no progress" — SearXNG 0 results or repeated fetch failures
             r_str = str(result)
             is_empty = (
                 '0 results' in r_str.lower() or
-                '0 results' in r_str or
                 'engines unavailable' in r_str.lower() or
                 r_str.startswith('[searxng: 0') or
                 r_str.startswith('[searxng error') or
@@ -342,13 +457,11 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
                 'content': r_str[:12000],
             })
 
-        # Early-exit: 2 consecutive no-progress iterations -> give up gracefully
         if iter_had_real_result:
             last_empty = 0
         else:
             last_empty += 1
             if last_empty >= 2:
-                # Inject a final user nudge asking the model to summarize with what it has
                 msgs.append({
                     'role': 'user',
                     'content': (
@@ -358,9 +471,9 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
                         'and suggest where the user can find it themselves.'
                     ),
                 })
-                # one more iteration to summarize and exit
-                async with httpx.AsyncClient(timeout=600.0) as client:
-                    r2 = await client.post(
+                # Final non-streamed summarize call
+                async with httpx.AsyncClient(timeout=600.0) as client3:
+                    r3 = await client3.post(
                         f"{LLAMA_URL}/chat/completions",
                         headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
                         json={
@@ -372,17 +485,16 @@ async def call_llama(messages, max_tokens=4096, user_text=''):
                             "stream": False,
                         }
                     )
-                    r2.raise_for_status()
-                    data2 = r2.json()
-                msg2 = data2['choices'][0]['message']
-                return msg2.get('content') or (
+                    r3.raise_for_status()
+                    data3 = r3.json()
+                msg3 = data3['choices'][0]['message']
+                return msg3.get('content') or (
                     '[bot: search returned no useful data. The current web search backend '
                     '(SearXNG) is unavailable on this host (CAPTCHA on cloud IP). '
                     'For live data (flight prices, news, stocks), please use a direct service '
                     'like Aviasales, Google Flights, or your browser.]'
                 )
 
-    # Hard cap reached — return best partial we have, or honest message
     if final_fallback:
         return final_fallback
     return ('[bot: exceeded tool-calling iteration limit. '
@@ -492,6 +604,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     await update.message.chat.send_action(action='typing')
+    thinking = None
     try:
         voice = update.message.voice
         file = await context.bot.get_file(voice.file_id)
@@ -503,7 +616,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conversations[user_id].append({"role": "user", "content": transcript})
         if len(conversations[user_id]) > 20:
             conversations[user_id] = conversations[user_id][-20:]
-        bot_response = await call_llama(conversations[user_id], max_tokens=4096, user_text=transcript)
+        thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
+        bot_response = await call_llama(conversations[user_id], max_tokens=4096, user_text=transcript, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
@@ -513,6 +627,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[ERR voice] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
+    finally:
+        if thinking is not None:
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -553,8 +673,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conversations[user_id].append({"role": "user", "content": user_message})
     if len(conversations[user_id]) > 20:
         conversations[user_id] = conversations[user_id][-20:]
+    thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
     try:
-        bot_response = await call_llama(conversations[user_id], max_tokens=4096, user_text=user_message)
+        bot_response = await call_llama(conversations[user_id], max_tokens=4096, user_text=user_message, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
@@ -566,6 +687,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f'❌ Error: {e}')
         if conversations[user_id]:
             conversations[user_id].pop()
+    finally:
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
 
 
 def main():
