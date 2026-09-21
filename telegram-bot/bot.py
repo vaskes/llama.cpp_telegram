@@ -645,24 +645,45 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     await update.message.chat.send_action(action='typing')
+    thinking = None
     try:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
         photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
         caption = update.message.caption or 'Describe the image in detail.'
-        messages = [{
+        photo_message = {
             "role": "user",
             "content": [
                 {"type": "text", "text": caption},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{photo_base64}"}}
             ]
-        }]
-        bot_response = await call_llama(messages, max_tokens=2048)
+        }
+        # Persist into per-user conversation context so follow-ups remember the image
+        if user_id not in conversations:
+            conversations[user_id] = []
+        conversations[user_id].append(photo_message)
+        if len(conversations[user_id]) > 20:
+            conversations[user_id] = conversations[user_id][-20:]
+        # Send a textual stub to the model when recalling image-only turns in
+        # later text-only messages — images themselves cannot be re-sent from
+        # history (no id retained), so the model will fall back to its own
+        # description if asked again.
+        thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
+        bot_response = await call_llama(conversations[user_id], max_tokens=2048, user_text=caption, thinking_msg=thinking)
+        conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR photo] {type(e).__name__}: {e}")
         await update.message.reply_text(f'❌ Error: {e}')
+        if user_id in conversations and conversations[user_id]:
+            conversations[user_id].pop()
+    finally:
+        if thinking is not None:
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -704,11 +725,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
+    user_id = update.effective_user.id
     await update.message.chat.send_action(action='typing')
     doc = update.message.document
     file = await context.bot.get_file(doc.file_id)
     doc_bytes = await file.download_as_bytearray()
     tmp_path = None
+    thinking = None
     try:
         ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
         with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
@@ -717,15 +740,28 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
             doc_text = f.read()[:16000]
         caption = update.message.caption or 'Read the document and answer questions.'
-        messages = [{"role": "user", "content": f"{caption}\n\n--- Document ---\n{doc_text}"}]
-        bot_response = await call_llama(messages, max_tokens=4096)
+        # Persist into per-user conversation context
+        if user_id not in conversations:
+            conversations[user_id] = []
+        conversations[user_id].append({"role": "user", "content": f"{caption}\n\n--- Document ---\n{doc_text}"})
+        if len(conversations[user_id]) > 20:
+            conversations[user_id] = conversations[user_id][-20:]
+        thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
+        bot_response = await call_llama(conversations[user_id], max_tokens=4096, thinking_msg=thinking)
+        conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR doc] {type(e).__name__}: {e}")
-        await update.message.reply_text(f'❌ Error: {e}')
+        if user_id in conversations and conversations[user_id]:
+            conversations[user_id].pop()
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+        if thinking is not None:
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
