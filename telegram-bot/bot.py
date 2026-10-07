@@ -309,7 +309,7 @@ DONSETCH_TOOLS = {
 }
 
 
-async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None):
+async def call_llama(messages, max_tokens=8192, user_text='', thinking_msg=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
@@ -487,7 +487,23 @@ async def call_llama(messages, max_tokens=4096, user_text='', thinking_msg=None)
         tool_calls = msg.get("tool_calls") or []
 
         if not tool_calls:
-            return content_buf or ''
+            if content_buf:
+                return content_buf
+            # Empty content but reasoning exists (Ornith burned the whole token budget on
+            # reasoning). Surface the reasoning as the answer rather than the generic
+            # fallback message — it's still useful info, and tells the user why the bot
+            # couldn't reply normally.
+            if reasoning_buf:
+                tail = reasoning_buf[-3500:]
+                return (
+                    f'_(модель потратила все токены на размышления, не оставив на сам ответ; '
+                    f'finish_reason={finish_reason}; reasoning_chars={len(reasoning_buf)})_\n\n'
+                    f'{tail}'
+                )
+            return (
+                f'[model returned an empty response. finish_reason={finish_reason}, '
+                f'reasoning_chars={len(reasoning_buf)}, content_chars=0]'
+            )
         if content_buf:
             final_fallback = content_buf
         msgs.append(msg)
