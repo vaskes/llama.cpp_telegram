@@ -309,7 +309,7 @@ DONSETCH_TOOLS = {
 }
 
 
-async def call_llama(messages, max_tokens=8192, user_text='', thinking_msg=None):
+async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
