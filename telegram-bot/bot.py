@@ -352,7 +352,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         )
     }
     msgs = [sys_prompt] + messages
-    max_iter = 10
+    max_iter = 15
     last_empty = 0
     final_fallback = None
 
