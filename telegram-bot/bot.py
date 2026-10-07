@@ -309,11 +309,13 @@ DONSETCH_TOOLS = {
 }
 
 
-async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None):
+async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
                   (throttled internally). Pass None to skip the live reasoning feed.
+    use_stream:    if False, do a plain non-streaming POST (better for vision tasks
+                  and other cases where streaming may truncate reasoning).
     Returns the final assistant content (or fallback message if exhausted).
     """
     tools = await fetch_tools_from_llama()
@@ -365,23 +367,24 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         if not force and now - last_thinking_push[0] < 3.0:
             return
         last_thinking_push[0] = now
-        # Truncate to fit Telegram's 4096-char message limit; keep the tail
-        prefix = "💭 _"
-        suffix = "_"
-        max_payload = 3800
+        # Truncate to fit Telegram's 4096-char message limit; keep the tail.
+        # We deliberately avoid parse_mode='Markdown' — reasoning can contain
+        # _, *, [, ] that would crash the parser and slow the stream with
+        # BadRequest retries; plain text is safer and still readable.
+        prefix = "💭 "
+        max_payload = 3900
         body = reasoning_text
         if len(body) > max_payload:
             body = "…" + body[-(max_payload - 1):]
         try:
-            await thinking_msg.edit_text(f"{prefix}{body}{suffix}", parse_mode='Markdown')
+            await thinking_msg.edit_text(f"{prefix}{body}")
         except Exception as e:
-            # ignore "message is not modified" and similar
             err = str(e).lower()
             if 'not modified' not in err and 'flood' not in err:
                 print(f"[thinking edit err] {e}")
 
     for iteration in range(max_iter):
-        # --- streaming POST ---
+        # --- request body ---
         async with httpx.AsyncClient(timeout=600.0) as client:
             req_body = {
                 "model": MODEL,
@@ -390,12 +393,43 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 "tool_choice": "auto",
                 "parallel_tool_calls": False,
                 "max_tokens": max_tokens,
-                "stream": True,
+                "stream": use_stream,
             }
             reasoning_buf = ""
             content_buf = ""
             tool_calls_buf = {}
             finish_reason = None
+
+            if not use_stream:
+                # --- non-streaming POST (vision tasks, slow-reasoning models) ---
+                try:
+                    r = await client.post(
+                        f"{LLAMA_URL}/chat/completions",
+                        headers={"Authorization": f"Bearer {API_KEY}",
+                                 "Content-Type": "application/json"},
+                        json=req_body,
+                    )
+                    r.raise_for_status()
+                    data = r.json()
+                except Exception as e:
+                    print(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}")
+                    return f'[llama-server request failed: {e}]'
+                msg = data["choices"][0]["message"]
+                reasoning_buf = msg.get("reasoning_content") or ""
+                content_buf = msg.get("content") or ""
+                finish_reason = data["choices"][0].get("finish_reason")
+                # Build tool_calls list from non-streaming response
+                for tc in msg.get("tool_calls") or []:
+                    idx = len(tool_calls_buf)
+                    tool_calls_buf[idx] = {
+                        "id": tc.get("id", ""),
+                        "name": tc.get("function", {}).get("name", ""),
+                        "arguments": tc.get("function", {}).get("arguments", ""),
+                    }
+                # push reasoning to Telegram if we have a thinking message
+                if reasoning_buf:
+                    await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
+                continue  # skip the streaming parser block below
             try:
                 async with client.stream("POST", f"{LLAMA_URL}/chat/completions",
                                           headers={"Authorization": f"Bearer {API_KEY}",
@@ -438,26 +472,39 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     if reasoning_buf:
                         await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
             except httpx.HTTPError as e:
-                print(f"[stream err iter={iteration}] {type(e).__name__}: {e}")
+                print(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming")
                 # Fall back to non-streaming request
-                async with httpx.AsyncClient(timeout=600.0) as client2:
-                    r2 = await client2.post(
-                        f"{LLAMA_URL}/chat/completions",
-                        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-                        json={**req_body, "stream": False},
-                    )
-                    r2.raise_for_status()
-                    data = r2.json()
-                msg = data["choices"][0]["message"]
-                tool_calls = msg.get("tool_calls") or []
-                if not tool_calls:
-                    return msg.get("content") or ""
-                msgs.append(msg)
-                if msg.get("content"):
-                    final_fallback = msg["content"]
-                # jump into tool execution below by reusing local var
-                reasoning_buf = msg.get("reasoning_content") or ""
-                content_buf = msg.get("content") or ""
+                try:
+                    async with httpx.AsyncClient(timeout=600.0) as client2:
+                        r2 = await client2.post(
+                            f"{LLAMA_URL}/chat/completions",
+                            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                            json={**req_body, "stream": False},
+                        )
+                        r2.raise_for_status()
+                        data = r2.json()
+                    msg = data["choices"][0]["message"]
+                    tool_calls = msg.get("tool_calls") or []
+                    if not tool_calls:
+                        if msg.get("content"):
+                            return msg["content"]
+                        if msg.get("reasoning_content"):
+                            tail = msg["reasoning_content"][-3500:]
+                            return (
+                                f'_(fallback non-stream: content пустой, '
+                                f'reasoning_chars={len(msg["reasoning_content"])})_\n\n'
+                                f'{tail}'
+                            )
+                        return f'[fallback empty: finish_reason={msg.get("finish_reason")}]'
+                    msgs.append(msg)
+                    if msg.get("content"):
+                        final_fallback = msg["content"]
+                    # jump into tool execution below by reusing local var
+                    reasoning_buf = msg.get("reasoning_content") or ""
+                    content_buf = msg.get("content") or ""
+                except Exception as e2:
+                    print(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}")
+                    return f'[both streaming and non-streaming failed: stream_err={e!r}, fallback_err={e2!r}]'
 
         # commit accumulated reasoning for next-iteration display
         accumulated_reasoning += reasoning_buf
@@ -686,7 +733,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # history (no id retained), so the model will fall back to its own
         # description if asked again.
         thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
-        bot_response = await call_llama(conversations[user_id], max_tokens=2048, user_text=caption, thinking_msg=thinking)
+        bot_response = await call_llama(conversations[user_id], max_tokens=2048, user_text=caption, thinking_msg=thinking, use_stream=False)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
     except Exception as e:
