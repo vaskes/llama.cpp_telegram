@@ -871,11 +871,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(f"[handle_text] ENTRY user_id={update.effective_user.id} text={update.message.text!r}", flush=True)
     if await reject_if_unauthorized(update, context):
+        print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)
         return
     user_id = update.effective_user.id
     user_message = update.message.text
-    await update.message.chat.send_action(action='typing')
+    try:
+        await update.message.chat.send_action(action='typing')
+    except Exception as e:
+        print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
     if user_id not in conversations:
         conversations[user_id] = []
     conversations[user_id].append({"role": "user", "content": user_message})
@@ -903,16 +908,158 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print('🤖 LlamaBot v2 (with tool-calling) started...')
-    app.run_polling()
+    # === Pure-httpx polling loop, no PTB Updater, no app.start() ===
+    # Rationale: with `app.initialize()` or `app.start()` PTB holds a
+    # second keep-alive connection open to api.telegram.org, which makes
+    # Telegram see a "duplicate long-poll" and 409 every other cycle.
+    # Solution: never use PTB's HTTP client. Hit the Bot API directly
+    # with a single dedicated httpx.AsyncClient, de_json() into Update
+    # objects, then call handler functions ourselves (not via dispatcher,
+    # to skip process_update's internal queue/worker logic).
+    print('🤖 LlamaBot v2 (no-PTB-poll) started...', flush=True)
+
+    TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+    async def _run():
+        # Drop any pending updates before starting our own polling.
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            try:
+                r = await c.get(f"{TELEGRAM_API}/getUpdates", params={"offset": -1, "timeout": 0})
+                print(f"[poll] drop_pending: {r.json().get('ok')}", flush=True)
+            except Exception as e:
+                print(f"[poll] drop_pending failed (ok): {e!r}", flush=True)
+
+        # Self-test: if LLAMABOT_SELFTEST=1, push a fake Update through
+        # the dispatcher so we can verify handlers actually fire even when
+        # we can't easily test with a real user.
+        await _selftest()
+
+        offset = 0
+        backoff = 1.0
+        n_polls = 0
+        n_updates = 0
+        # Use a single dedicated httpx client. max_keepalive_connections=0
+        # means no keep-alive — every request opens a fresh connection.
+        # This guarantees only one open connection at a time.
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=35.0, write=10.0, pool=10.0),
+            limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        ) as client:
+            while True:
+                try:
+                    r = await client.get(
+                        f"{TELEGRAM_API}/getUpdates",
+                        params={
+                            "offset": offset,
+                            "timeout": 25,            # long-poll
+                            "allowed_updates": '["message","edited_message"]',
+                        },
+                    )
+                    data = r.json()
+                    if not data.get("ok"):
+                        raise RuntimeError(f"getUpdates not ok: {data}")
+                    updates_raw = data.get("result", [])
+                    n_polls += 1
+                    if updates_raw:
+                        n_updates += len(updates_raw)
+                        backoff = 1.0
+                        print(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})", flush=True)
+                        for upd_dict in updates_raw:
+                            offset = upd_dict["update_id"] + 1
+                            try:
+                                # Dispatch via PTB's Application so handlers
+                                # get a real Context with .bot, .user_data, etc.
+                                # We construct an Application lazily here, only
+                                # for this single Update, to avoid keeping
+                                # any persistent state.
+                                await _dispatch_update(upd_dict)
+                            except Exception as e:
+                                print(f"[poll] dispatch error: {type(e).__name__}: {e!r}", flush=True)
+                                import traceback
+                                traceback.print_exc()
+                    elif n_polls <= 5 or n_polls % 20 == 0:
+                        print(f"[poll] cycle={n_polls} no updates", flush=True)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    print(f"[poll] error: {type(e).__name__}: {e!r} (backoff {backoff}s)", flush=True)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30.0)
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        print('[main] KeyboardInterrupt', flush=True)
+
+
+# Lazy global app used only for the dispatcher. Built once on first
+# dispatch. We never call .start() on it; the dispatcher works fine
+# without start() for one-shot process_update.
+_dispatcher = None
+_dispatcher_lock = asyncio.Lock() if hasattr(asyncio, 'Lock') else None
+
+
+async def _dispatch_update(upd_dict):
+    global _dispatcher
+    if _dispatcher is None:
+        app = Application.builder().token(BOT_TOKEN).build()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("reset", reset))
+        app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+        app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+        async def log_error(update, context):
+            err = context.error
+            print(f"[handler error] {type(err).__name__}: {err!r}", flush=True)
+
+        app.add_error_handler(log_error)
+        await app.initialize()
+        _dispatcher = app
+        print("[dispatch] Application initialized (lazy)", flush=True)
+
+    upd = Update.de_json(upd_dict, _dispatcher.bot)
+    if upd is None:
+        print(f"[dispatch] de_json returned None for {upd_dict}", flush=True)
+        return
+    txt = upd.message.text if (upd.message and upd.message.text) else None
+    print(f"[dispatch] update_id={upd.update_id} msg={txt!r}", flush=True)
+    await _dispatcher.process_update(upd)
+    print(f"[dispatch] processed update_id={upd.update_id}", flush=True)
+
+
+# === Self-test: inject a fake Update to verify handlers actually fire ===
+async def _selftest():
+    """Skip in production — only used via env LLAMABOT_SELFTEST=1."""
+    if os.environ.get('LLAMABOT_SELFTEST') != '1':
+        return
+    import time
+    print('[selftest] starting', flush=True)
+    fake = {
+        "update_id": 999_999_001,
+        "message": {
+            "message_id": 1,
+            "date": int(time.time()),
+            "chat": {"id": 286293081, "type": "private"},
+            "from": {"id": 286293081, "is_bot": False, "first_name": "VL"},
+            "text": "/start",
+        },
+    }
+    await _dispatch_update(fake)
+    fake2 = {
+        "update_id": 999_999_002,
+        "message": {
+            "message_id": 2,
+            "date": int(time.time()),
+            "chat": {"id": 286293081, "type": "private"},
+            "from": {"id": 286293081, "is_bot": False, "first_name": "VL"},
+            "text": "hello from selftest",
+        },
+    }
+    await _dispatch_update(fake2)
+    print('[selftest] done', flush=True)
 
 
 if __name__ == '__main__':
