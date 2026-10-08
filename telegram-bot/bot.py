@@ -355,6 +355,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     max_iter = 15
     last_empty = 0
     final_fallback = None
+    prev_calls = []  # detect identical-call loops
 
     # Accumulated reasoning across iterations (for the live feed)
     accumulated_reasoning = ""
@@ -558,6 +559,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         # --- execute tool calls ---
         iter_had_real_result = False
         saw_unavailable_tool = False
+        current_calls = []
         print(f"[loop] iter={iteration} tool_calls={len(tool_calls)} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)}")
         for tc in tool_calls:
             fn_name = tc.get('function', {}).get('name', '')
@@ -567,6 +569,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             except Exception:
                 args = {}
             tc_id = tc.get('id', '')
+            current_calls.append((fn_name, json.dumps(args, sort_keys=True) if isinstance(args, dict) else str(args)))
             print(f"[tool] iter={iteration} call {fn_name}({args})")
             if fn_name in CUSTOM_TOOLS:
                 result = await CUSTOM_TOOLS[fn_name](args)
@@ -602,6 +605,17 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 f'llama-server configuration. Try a different question, /reset, or restart '
                 f'the bot if this is unexpected.]'
             )
+
+        # If the model is asking for the same tool+args as in the previous
+        # iteration, it has looped — return whatever we have and stop.
+        if current_calls == prev_calls:
+            print(f"[loop] iter={iteration} same tool calls as previous iter; aborting")
+            return (
+                f'[bot: the model asked for the same tool call twice in a row '
+                f'({current_calls[0][0]}). It is stuck in a loop. '
+                f'Final answer so far: {final_fallback or "(none)"}]'
+            )
+        prev_calls = current_calls
 
         if iter_had_real_result:
             last_empty = 0
