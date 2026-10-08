@@ -1203,17 +1203,6 @@ async def _selftest():
         },
     }
     await _dispatch_update(fake)
-    fake2 = {
-        "update_id": 999_999_002,
-        "message": {
-            "message_id": 2,
-            "date": int(time.time()),
-            "chat": {"id": 286293081, "type": "private"},
-            "from": {"id": 286293081, "is_bot": False, "first_name": "VL"},
-            "text": "hello from selftest",
-        },
-    }
-    await _dispatch_update(fake2)
     print('[selftest] done', flush=True)
 
 
