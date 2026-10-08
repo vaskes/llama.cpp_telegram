@@ -1118,6 +1118,8 @@ def main():
                         backoff = 1.0
                         print(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})", flush=True)
                         for upd_dict in updates_raw:
+                            # FULL dump so we can see exactly what Telegram sent.
+                            print(f"[poll] RAW update: {json.dumps(upd_dict, ensure_ascii=False)[:600]}", flush=True)
                             offset = upd_dict["update_id"] + 1
                             try:
                                 # Dispatch via PTB's Application so handlers
