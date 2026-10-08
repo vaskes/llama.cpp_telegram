@@ -356,6 +356,8 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     last_empty = 0
     final_fallback = None
     prev_calls = []  # detect identical-call loops
+    loop_start = time.monotonic()
+    LOOP_BUDGET_SEC = 600  # 10 min total wall-clock, then bail regardless of iter count
 
     # Accumulated reasoning across iterations (for the live feed)
     accumulated_reasoning = ""
@@ -616,6 +618,18 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 f'Final answer so far: {final_fallback or "(none)"}]'
             )
         prev_calls = current_calls
+
+        # Hard wall-clock budget so the bot cannot burn 30+ minutes in
+        # slow-reasoning loops even when every iteration produces different
+        # tool calls (which defeats the identical-call detector above).
+        elapsed = time.monotonic() - loop_start
+        if elapsed > LOOP_BUDGET_SEC:
+            print(f"[loop] iter={iteration} time budget exceeded ({elapsed:.0f}s > {LOOP_BUDGET_SEC}s); aborting")
+            return (
+                f'[bot: time budget exceeded after {int(elapsed/60)} min and {iteration+1} iterations. '
+                f'The model is reasoning too slowly for this question. '
+                f'Try a simpler question, /reset, or a different model.]'
+            )
 
         if iter_had_real_result:
             last_empty = 0
