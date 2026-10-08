@@ -319,21 +319,93 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     Returns the final assistant content (or fallback message if exhausted).
     """
     tools = await fetch_tools_from_llama()
-    custom_weather_tool = {
-        'type': 'function',
-        'function': {
-            'name': 'get_weather',
-            'description': 'Get current weather in a given city. Uses wttr.in, always works, no CAPTCHA. Use this for any questions about current weather, temperature, precipitation, wind.',
-            'parameters': {
-                'type': 'object',
-                'properties': {
-                    'location': {'type': 'string', 'description': 'City name (e.g. "Yalta", "Moscow", "Yalta")'}
-                },
-                'required': ['location']
+    # custom_weather_tool is now in bot_side_tool_defs below; see "Add our
+    # bot-side tool implementations" comment. Keeping the legacy variable
+    # name as alias so other call sites still work.
+    custom_weather_tool = None  # placeholder, see bot_side_tool_defs
+    # Add our bot-side tool implementations (get_weather, donsetch_web_*).
+    # get_weather is a local call; donsetch_web_* talk directly to
+    # donsetch-http at 127.0.0.1:8765/mcp. We do NOT rely on llama.cpp's
+    # own MCP integration — that path has been broken (playwright works
+    # but donsetch doesn't load, see llama.cpp #13845 or similar). Adding
+    # the tools here means the model can call them via tool_calls and we
+    # dispatch in this Python process.
+    bot_side_tool_defs = [
+        {
+            'type': 'function',
+            'function': {
+                'name': 'get_weather',
+                'description': 'Get current weather in a given city. Uses wttr.in, always works, no CAPTCHA. Use this for any questions about current weather, temperature, precipitation, wind.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'location': {'type': 'string', 'description': 'City name (e.g. "Yalta", "Moscow")'}
+                    },
+                    'required': ['location']
+                }
             }
-        }
-    }
-    all_tools = tools + [custom_weather_tool]
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'donsetch_web_search',
+                'description': 'Web search: aggregated results from 10+ keyless engines (DuckDuckGo, Brave, Startpage, etc.), reranked. Use when the user asks about news, current events, prices, anything requiring fresh data. Returns titles + snippets + URLs. Follow up with donsetch_web_fetch to read a specific URL.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'query': {'type': 'string', 'description': 'Search query, e.g. "bitcoin price today"'},
+                        'max_results': {'type': 'integer', 'description': 'Max results to return (default 7, max 12). Use only when default is insufficient.'},
+                    },
+                    'required': ['query']
+                }
+            }
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'donsetch_web_fetch',
+                'description': 'Read one URL as clean markdown. Use after web_search to read a specific page. Returns title, body text, and source URL.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'url': {'type': 'string', 'description': 'http(s) URL to read'},
+                        'max_chars': {'type': 'integer', 'description': 'Max markdown chars (default 16000). Lower for previews.'},
+                    },
+                    'required': ['url']
+                }
+            }
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'donsetch_web_crawl',
+                'description': 'Read multiple pages from one site. Use when you need breadth (e.g. all docs, all products). Slower than fetch.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'url': {'type': 'string', 'description': 'Seed URL to crawl from'},
+                        'max_pages': {'type': 'integer', 'description': 'Max pages (default 10, cap 200)'},
+                    },
+                    'required': ['url']
+                }
+            }
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'donsetch_web_screenshot',
+                'description': 'Capture a URL as a rendered PNG (headless browser). Use when you need to see a page visually.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'url': {'type': 'string', 'description': 'http(s) URL to capture'},
+                    },
+                    'required': ['url']
+                }
+            }
+        },
+    ]
+    all_tools = tools + bot_side_tool_defs
     sys_prompt = {
         'role': 'system',
         'content': (
@@ -362,29 +434,41 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     # Accumulated reasoning across iterations (for the live feed)
     accumulated_reasoning = ""
     last_thinking_push = [0.0]  # mutable closure for throttling
+    last_flood_at = [0.0]       # back off edit_text for a while after Telegram flood
 
     async def push_thinking(reasoning_text: str, force: bool = False):
         if thinking_msg is None or not reasoning_text:
             return
         now = time.monotonic()
-        if not force and now - last_thinking_push[0] < 3.0:
+        # If we hit a Telegram flood in the last 30s, lay off (skip edits).
+        if now - last_flood_at[0] < 30.0 and not force:
+            return
+        if not force and now - last_thinking_push[0] < 5.0:
             return
         last_thinking_push[0] = now
-        # Truncate to fit Telegram's 4096-char message limit; keep the tail.
-        # We deliberately avoid parse_mode='Markdown' — reasoning can contain
-        # _, *, [, ] that would crash the parser and slow the stream with
-        # BadRequest retries; plain text is safer and still readable.
-        prefix = "💭 "
-        max_payload = 3900
+        # Telegram message body limit is 4096 chars. Show the TAIL of the
+        # reasoning so the user always sees what the model is currently
+        # thinking. No leading "…" — just a one-line status + last 1800
+        # chars. Reasoning from earlier iterations is preserved in the
+        # final answer.
+        prefix = "💭 думаю…\n"
+        max_payload = 3800
         body = reasoning_text
+        truncated_marker = ""
         if len(body) > max_payload:
-            body = "…" + body[-(max_payload - 1):]
+            body = body[-max_payload:]
+            truncated_marker = "\n[…earlier reasoning omitted…]\n"
         try:
-            await thinking_msg.edit_text(f"{prefix}{body}")
+            await thinking_msg.edit_text(f"{prefix}{truncated_marker}{body}")
         except Exception as e:
             err = str(e).lower()
-            if 'not modified' not in err and 'flood' not in err:
-                print(f"[thinking edit err] {e}")
+            if 'not modified' in err:
+                pass  # no-op, the message is already up to date
+            elif 'flood' in err or 'too many requests' in err:
+                last_flood_at[0] = now
+                print(f"[thinking edit] flood; backing off edits for 30s", flush=True)
+            else:
+                print(f"[thinking edit err] {type(e).__name__}: {e}", flush=True)
 
     for iteration in range(max_iter):
         # --- request body ---
@@ -635,6 +719,18 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             last_empty = 0
         else:
             last_empty += 1
+            # Hard abort: 3 iterations in a row with no real tool result
+            # (either no tools called, or every tool returned a placeholder
+            # like "[unavailable]" or "0 results"). Bail with what we have.
+            if last_empty >= 3:
+                tail = (accumulated_reasoning or reasoning_buf)[-3500:]
+                print(f"[loop] iter={iteration} 3 empty iters in a row; aborting", flush=True)
+                return (
+                    f'_(модель 3 итерации подряд не получила полезных данных от инструментов; '
+                    f'останавливаю, чтобы не сжигать токены. '
+                    f'finish_reason={finish_reason}, reasoning_chars={len(accumulated_reasoning + reasoning_buf)})\n\n'
+                    f'{tail}'
+                )
             if last_empty >= 2:
                 msgs.append({
                     'role': 'user',
@@ -775,7 +871,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # later text-only messages — images themselves cannot be re-sent from
         # history (no id retained), so the model will fall back to its own
         # description if asked again.
-        thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
+        thinking = await update.message.reply_text('💭 думаю…')
         bot_response = await call_llama(conversations[user_id], max_tokens=2048, user_text=caption, thinking_msg=thinking, use_stream=False)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
@@ -809,7 +905,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conversations[user_id].append({"role": "user", "content": transcript})
         if len(conversations[user_id]) > 20:
             conversations[user_id] = conversations[user_id][-20:]
-        thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
+        thinking = await update.message.reply_text('💭 думаю…')
         bot_response = await call_llama(conversations[user_id], max_tokens=4096, user_text=transcript, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         if len(bot_response) > 4000:
@@ -852,7 +948,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conversations[user_id].append({"role": "user", "content": f"{caption}\n\n--- Document ---\n{doc_text}"})
         if len(conversations[user_id]) > 20:
             conversations[user_id] = conversations[user_id][-20:]
-        thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
+        thinking = await update.message.reply_text('💭 думаю…')
         bot_response = await call_llama(conversations[user_id], max_tokens=4096, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
@@ -886,9 +982,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conversations[user_id].append({"role": "user", "content": user_message})
     if len(conversations[user_id]) > 20:
         conversations[user_id] = conversations[user_id][-20:]
-    thinking = await update.message.reply_text('💭 _Думаю..._', parse_mode='Markdown')
+    thinking = await update.message.reply_text('💭 думаю…')
     try:
-        bot_response = await call_llama(conversations[user_id], max_tokens=4096, user_text=user_message, thinking_msg=thinking)
+        bot_response = await call_llama(conversations[user_id], max_tokens=8192, user_text=user_message, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
