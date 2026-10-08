@@ -557,6 +557,8 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
 
         # --- execute tool calls ---
         iter_had_real_result = False
+        saw_unavailable_tool = False
+        print(f"[loop] iter={iteration} tool_calls={len(tool_calls)} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)}")
         for tc in tool_calls:
             fn_name = tc.get('function', {}).get('name', '')
             raw_args = tc.get('function', {}).get('arguments', '{}')
@@ -572,6 +574,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 result = await DONSETCH_TOOLS[fn_name](args)
             else:
                 result = f'[tool {fn_name} unavailable in this mode. Bot supports: get_weather, donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot.]'
+                saw_unavailable_tool = True
             r_str = str(result)
             is_empty = (
                 '0 results' in r_str.lower() or
@@ -587,6 +590,18 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 'tool_call_id': tc_id,
                 'content': r_str[:12000],
             })
+
+        # If the model asked for a tool we don't have, stop right away — it
+        # will keep asking forever otherwise (each iteration costs ~2 min of
+        # reasoning and the bot will burn 30+ min before max_iter triggers).
+        if saw_unavailable_tool:
+            print(f"[loop] iter={iteration} unhandled tool called; aborting")
+            return (
+                f'[bot: the model requested a tool ({tool_calls[0]["function"].get("name","?")}) '
+                f'that this bot mode does not support. The tool is not installed in this '
+                f'llama-server configuration. Try a different question, /reset, or restart '
+                f'the bot if this is unexpected.]'
+            )
 
         if iter_had_real_result:
             last_empty = 0
