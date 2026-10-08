@@ -138,6 +138,36 @@ async def fetch_tools_from_llama():
         return []
 
 
+# Keywords (RU + EN) that signal the user actually wants a tool call.
+# If the user message contains any of these, we expose tools; otherwise
+# we send a plain system prompt and skip the tool definitions so Ornith
+# just answers in a single turn (verified: 1 turn no tools = 17s and a
+# clean response; 3 turns with tools = 30s+ stuck in tool_calls loop).
+_TOOL_KEYWORDS = (
+    # RU
+    'погод', 'температур', 'осадк', 'дожд', 'снег', 'ветер',
+    'новост', 'что слышно', 'что нового', 'что в мире', 'свеж',
+    'найди', 'поищи', 'погугли', 'загугли', 'поиск',
+    'прочитай', 'открой сайт', 'перейди на', 'скачай страниц',
+    'скриншот', 'сделай скрин', 'сфоткай сайт',
+    'проверь ссылк', 'fetch', 'crawl',
+    # EN
+    'weather', 'temperature', 'rain', 'snow', 'wind',
+    'news', 'latest', 'breaking',
+    'search', 'google', 'look up', 'find me',
+    'read this', 'open this url', 'fetch the page', 'crawl the site',
+    'screenshot', 'capture the page',
+)
+
+
+def _detect_tool_intent(text: str) -> bool:
+    """True if the user message looks like it actually needs a tool."""
+    if not text:
+        return False
+    t = text.lower()
+    return any(kw in t for kw in _TOOL_KEYWORDS)
+
+
 async def get_weather(args):
     """Custom tool: wttr.in для погоды. Always works, no CAPTCHA."""
     location = args.get('location', '') or args.get('city', '')
@@ -406,24 +436,51 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         },
     ]
     all_tools = tools + bot_side_tool_defs
-    sys_prompt = {
-        'role': 'system',
-        'content': (
-            'You are a smart assistant with access to tools. '
-            'When the user asks about weather, news, current events, or anything requiring fresh data — '
-            'ALWAYS call the relevant tool, do not say "I have no access". '
-            'For weather questions use get_weather (it always works via wttr.in). '
-            'For web search use donsetch_web_search / donsetch_web_fetch / donsetch_web_crawl / '
-            'donsetch_web_screenshot (powered by donsetch-http MCP server, aggregates 6 search engines '
-            'via real Chromium browser, no CAPTCHA blocking). '
-            'If donsetch returns no useful data, say so honestly and suggest where the user can find '
-            'the information directly (e.g. "try Aviasales / Google Flights directly"). '
-            'Do NOT keep retrying the same search with different languages or queries. '
-            'After getting tool result, give a clear, concise answer in natural language. '
-            'Answer in the language of the user (Russian by default).'
-        )
-    }
-    msgs = [sys_prompt] + messages
+
+    # === Detect whether this turn actually needs tools ===
+    # Reason: with tools always present, Ornith on a 2nd+ turn tends to
+    # hallucinate a tool_call even for math/text tasks (we verified via
+    # direct curl: 1 turn = 17s finish_reason=stop, no tool_calls; 3 turns
+    # with tools = 30s+ finish_reason=tool_calls, 30 tool_call chunks, then
+    # loop until max_iter). open-webui works for the same questions because
+    # it doesn't pass tools by default.
+    #
+    # Heuristic: if the user's current message mentions web/weather/news/
+    # search/fetch/crawl in any language we support, treat it as a tool
+    # turn. Otherwise omit tools entirely so the model just answers.
+    tool_intent = _detect_tool_intent(user_text)
+    if not tool_intent:
+        # No tool intent: hand the model a plain system prompt and skip
+        # the tool definitions. Reasoning and content come back clean.
+        sys_prompt = {
+            'role': 'system',
+            'content': (
+                'You are a helpful assistant. '
+                'Answer in the language of the user. '
+                'Be direct and concise.'
+            )
+        }
+        msgs = [sys_prompt] + messages
+        req_tools = None
+    else:
+        sys_prompt = {
+            'role': 'system',
+            'content': (
+                'You are a helpful assistant with access to tools. '
+                'When the user asks about weather, news, current events, '
+                'or anything requiring fresh data — call the relevant tool. '
+                'For weather: use get_weather (wttr.in, always works). '
+                'For web: use donsetch_web_search / donsetch_web_fetch / '
+                'donsetch_web_crawl / donsetch_web_screenshot. '
+                'If a tool returns no useful data, say so honestly and '
+                'suggest where the user can find the info themselves. '
+                'Do NOT keep retrying the same query with variations. '
+                'After getting a tool result, give a clear, concise '
+                'answer in the user\'s language.'
+            )
+        }
+        msgs = [sys_prompt] + messages
+        req_tools = all_tools
     max_iter = 15
     last_empty = 0
     final_fallback = None
@@ -476,12 +533,13 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             req_body = {
                 "model": MODEL,
                 "messages": msgs,
-                "tools": all_tools,
-                "tool_choice": "auto",
-                "parallel_tool_calls": False,
                 "max_tokens": max_tokens,
                 "stream": use_stream,
             }
+            if req_tools is not None:
+                req_body["tools"] = req_tools
+                req_body["tool_choice"] = "auto"
+                req_body["parallel_tool_calls"] = False
             reasoning_buf = ""
             content_buf = ""
             tool_calls_buf = {}
@@ -741,7 +799,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                         'and suggest where the user can find it themselves.'
                     ),
                 })
-                # Final non-streamed summarize call
+                # Final non-streamed summarize call (no tools — we want a plain answer)
                 async with httpx.AsyncClient(timeout=600.0) as client3:
                     r3 = await client3.post(
                         f"{LLAMA_URL}/chat/completions",
@@ -749,7 +807,6 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                         json={
                             "model": MODEL,
                             "messages": msgs,
-                            "tools": all_tools,
                             "tool_choice": "none",
                             "max_tokens": max_tokens,
                             "stream": False,
@@ -984,7 +1041,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conversations[user_id] = conversations[user_id][-20:]
     thinking = await update.message.reply_text('💭 думаю…')
     try:
-        bot_response = await call_llama(conversations[user_id], max_tokens=8192, user_text=user_message, thinking_msg=thinking)
+        bot_response = await call_llama(conversations[user_id], max_tokens=32768, user_text=user_message, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
