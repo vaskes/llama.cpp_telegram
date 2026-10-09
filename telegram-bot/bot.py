@@ -1029,13 +1029,13 @@ async def send_reply(update: Update, text: str):
     text = (text or '').strip()
     if not text:
         text = EMPTY_RESPONSE_FALLBACK
-    await update.message.reply_text(text)
+    await _reply(update, text)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
-    await update.message.reply_text(
+    await _reply(update, 
         '🤖 **LlamaBot v2 запущен!**\n\n'
         'Я могу:\n'
         '• Отвечать на вопросы (с tool-calling)\n'
@@ -1050,6 +1050,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Clear the messages in the current sub-talk (not delete the sub-talk itself)."""
+    if await _reject_in_group(update):
+        return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
@@ -1059,7 +1061,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # (empty) and keep it active. The user can still /subs to see it.
     await asyncio.to_thread(store.create_thread, user_id, thread_id)
     await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
-    await update.message.reply_text(
+    await _reply(update, 
         f'🔄 Cleared {n} message(s) in sub-talk "{thread_id}".\n'
         f'Sub-talk is preserved. Use /delsub to remove the whole thread.'
     )
@@ -1080,7 +1082,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [KeyboardButton("/newsub research"), KeyboardButton("/sub research")],
         [KeyboardButton("/reset"), KeyboardButton("/stats")],
     ]
-    await update.message.reply_text(
+    await _reply(update, 
         '🤖 **LlamaBot — help**\n\n'
         '**Sub-talks** — named conversation threads. The bot keeps a '
         'separate history for each one and only the active thread is in '
@@ -1106,6 +1108,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _reject_in_group(update):
+        return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
@@ -1118,7 +1122,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else f'    "{s["thread_id"]}" ({s["msg_count"]} msgs)'
         for s in subs
     ) or "    (no sub-talks yet)"
-    await update.message.reply_text(
+    await _reply(update, 
         f'📊 **Статистика:**\n'
         f'Активный sub-talk: "{thread_id}" — {current_count} сообщений\n'
         f'Всего sub-talks: {len(subs)}\n'
@@ -1165,12 +1169,14 @@ async def _reply_active(update: Update, user_id: int) -> str:
 
 
 async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _reject_in_group(update):
+        return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
     thread_id = _parse_subtalk_arg(update.message.text)
     if not thread_id:
-        await update.message.reply_text(
+        await _reply(update, 
             '❌ Usage: /newsub <thread_id>\n'
             'Name: 1-32 chars, must start with a letter or digit, '
             'may contain letters/digits/underscore/dash/dot.\n'
@@ -1181,12 +1187,12 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not created:
         # Already exists — just switch to it.
         await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
-        await update.message.reply_text(
+        await _reply(update, 
             f'ℹ Sub-talk "{thread_id}" already existed. Now active.'
         )
         return
     await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
-    await update.message.reply_text(
+    await _reply(update, 
         f'✅ Created sub-talk "{thread_id}" — now active.\n'
         f'Send any message to add to this thread. '
         f'Use /sub to switch, /subs to list, /delsub to remove.'
@@ -1194,6 +1200,8 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _reject_in_group(update):
+        return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
@@ -1201,7 +1209,7 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not thread_id:
         # /sub with no arg: show current
         current = await _reply_active(update, user_id)
-        await update.message.reply_text(
+        await _reply(update, 
             f'You are in sub-talk "{current}".\n'
             f'Use /sub <thread_id> to switch, /subs to list all.'
         )
@@ -1212,10 +1220,12 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # asking the user to /newsub first.
         await asyncio.to_thread(store.create_thread, user_id, thread_id)
     await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
-    await update.message.reply_text(f'✅ Switched to sub-talk "{thread_id}".')
+    await _reply(update, f'✅ Switched to sub-talk "{thread_id}".')
 
 
 async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _reject_in_group(update):
+        return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
@@ -1235,7 +1245,7 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
             snippet = f'{role_emoji} {text}' if text else '(non-text message)'
         except Exception:
             snippet = "(unreadable)"
-    await update.message.reply_text(
+    await _reply(update, 
         f'📍 Current sub-talk: "{current}"\n'
         f'Last message: {snippet}\n\n'
         f'Use /subs to list, /sub <name> to switch, /newsub <name> to create.'
@@ -1243,13 +1253,15 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _reject_in_group(update):
+        return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
     subs = await asyncio.to_thread(store.list_threads, user_id)
     active = await _reply_active(update, user_id)
     if not subs:
-        await update.message.reply_text(
+        await _reply(update, 
             'You have no sub-talks yet. Send any message to start '
             'the default "main" sub-talk, or /newsub <name> to create one.'
         )
@@ -1271,7 +1283,7 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons.append([
         InlineKeyboardButton("➕ New sub-talk", callback_data="newsub:prompt"),
     ])
-    await update.message.reply_text(
+    await _reply(update, 
         f'📚 **Your sub-talks** (active marked ✅)\n\n'
         f'Tap a button to switch. Use /delsub <name> to remove one.',
         reply_markup=InlineKeyboardMarkup(buttons),
@@ -1279,23 +1291,25 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _reject_in_group(update):
+        return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
     thread_id = _parse_subtalk_arg(update.message.text)
     if not thread_id:
-        await update.message.reply_text(
+        await _reply(update, 
             '❌ Usage: /delsub <thread_id>\n'
             'Removes the sub-talk AND all its messages. Cannot be undone.'
         )
         return
     n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
     if n == 0:
-        await update.message.reply_text(f'❌ Sub-talk "{thread_id}" not found.')
+        await _reply(update, f'❌ Sub-talk "{thread_id}" not found.')
         return
     # If we just deleted the active one, the next get_active will
     # fall back to most-recent or to 'main'.
-    await update.message.reply_text(
+    await _reply(update, 
         f'🗑 Deleted sub-talk "{thread_id}" and {n} message(s).'
     )
 
@@ -1310,8 +1324,105 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # column. That way text-only and multimodal (text + image_url) messages
 # round-trip through SQLite without any translation layer.
 
+# Two deployment modes share the same storage layer:
+#
+#   Private chat mode (legacy)
+#     chat_id   = user_id (1:1 chat, same int)
+#     thread_id = active sub-talk name from DB (or 'main' default)
+#     whitelist = ALLOWED_USER_IDS
+#
+#   Group with Telegram Topics mode (new)
+#     chat_id   = group chat id (negative number)
+#     thread_id = str(update.message.message_thread_id)  -- the Telegram topic
+#     whitelist = NONE (any group member can use the bot)
+#
+# Both modes are auto-detected from the incoming Update: if
+# message_thread_id is not None, it's a group; otherwise it's a
+# private chat. The dispatching helper below applies the right
+# rules for each.
+
+_group_mode: bool = False  # module-level flag, set on first group message
+
+
+async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
+    """Resolve the (chat_id, thread_id) for the current message.
+
+    Returns a tuple (chat_id, thread_id, is_group) on success, or
+    None if the user is not authorized (only in private mode).
+
+    Private mode (update.message.message_thread_id is None):
+      - Enforces ALLOWED_USER_IDS whitelist via reject_if_unauthorized.
+      - chat_id = effective_user.id (== chat_id for 1:1 chats).
+      - thread_id = active sub-talk name from DB, or 'main' default
+        auto-created on first message.
+
+    Group mode (update.message.message_thread_id is not None):
+      - No whitelist check. Any member of the group can use the bot.
+      - chat_id = effective_chat.id (the group id, negative).
+      - thread_id = str(message_thread_id) -- the Telegram topic id.
+    """
+    global _group_mode
+    msg = update.message
+    if msg.message_thread_id is not None:
+        # Group mode. Telegram is the source of truth for thread
+        # existence; we do not need a DB row to know it exists.
+        _group_mode = True
+        return update.effective_chat.id, str(msg.message_thread_id), True
+    # Private mode
+    if await reject_if_unauthorized(update, context):
+        return None
+    user_id = update.effective_user.id
+    active = await asyncio.to_thread(store.get_active_thread, user_id)
+    if active is not None:
+        return user_id, active, False
+    # No sub-talks at all yet — auto-create 'main' so the user's first
+    # message lands somewhere sensible without them needing to /newsub.
+    await asyncio.to_thread(store.create_thread, user_id, 'main')
+    await asyncio.to_thread(store.set_active_thread, user_id, 'main')
+    return user_id, 'main', False
+
+
+async def _reply(update, text, **kwargs):
+    """Reply to update.message, preserving message_thread_id in group mode.
+
+    PTB's Message.reply_text() does NOT pass message_thread_id
+    through to sendMessage, so replies in group mode would land
+    in the General topic instead of staying in the user's topic.
+    This helper fixes that.
+    """
+    if update.message.message_thread_id is not None:
+        kwargs.setdefault('message_thread_id', update.message.message_thread_id)
+    return await update.message.reply_text(text, **kwargs)
+
+
+async def _reject_in_group(update) -> bool:
+    """Sub-talk commands (/newsub, /sub, /subs, /delsub, /here, /reset, /stats)
+    only make sense in private chat mode — they manage the user's own
+    sub-talks in the bot's DB. In group mode, the equivalent is to use
+    Telegram's native forum-topic controls (createForumTopic, etc.),
+    which are wired in commit 3 of the group-mode migration.
+
+    Returns True if the message is in a group and we sent a notice,
+    False otherwise (i.e. the caller should continue processing).
+    """
+    if update.message.message_thread_id is not None:
+        await _reply(
+            update,
+            'ℹ In group mode, sub-talk commands are replaced by Telegram\n'
+            'forum topics. Use the chat\'s "Create topic" button or\n'
+            'the /forumtopic /topics /deltopic commands instead.\n'
+            'See docs/SETUP.md for the group deployment pattern.'
+        )
+        return True
+    return False
+
+
 async def _resolve_active(user_id: int) -> str:
-    """Return the user's active sub-talk, auto-creating 'main' if none exists."""
+    """Deprecated. Use _route_to_thread() in handlers.
+
+    Kept for backward compatibility with any external code that
+    imports it. New code should call _route_to_thread() instead.
+    """
     active = await asyncio.to_thread(store.get_active_thread, user_id)
     if active is not None:
         return active
@@ -1322,8 +1433,8 @@ async def _resolve_active(user_id: int) -> str:
     return 'main'
 
 
-async def _load_history(user_id: int, thread_id: str) -> list:
-    """Return up to CONTEXT_MESSAGES messages for the sub-talk, in chronological
+async def _load_history(chat_id: int, thread_id: str) -> list:
+    """Return up to CONTEXT_MESSAGES messages for the thread, in chronological
     order, as the full OpenAI message dicts ({"role", "content"}) that
     call_llama expects.
 
@@ -1332,7 +1443,7 @@ async def _load_history(user_id: int, thread_id: str) -> list:
     same shape that call_llama forwards to llama-server.
     """
     rows = await asyncio.to_thread(
-        store.get_messages, user_id, thread_id, CONTEXT_MESSAGES
+        store.get_messages, chat_id, thread_id, CONTEXT_MESSAGES
     )
     out = []
     for r in rows:
@@ -1346,25 +1457,26 @@ async def _load_history(user_id: int, thread_id: str) -> list:
     return out
 
 
-async def _persist_message(user_id: int, thread_id: str, role: str, content):
-    """Append a message to the sub-talk's history in the DB.
+async def _persist_message(chat_id: int, thread_id: str, role: str, content):
+    """Append a message to the thread's history in the DB.
 
     `content` is whatever the message has — a string for text, a list
     of content parts for multimodal. json.dumps it for storage.
     """
     msg = {"role": role, "content": content}
     await asyncio.to_thread(
-        store.add_message, user_id, thread_id, role, json.dumps(msg, ensure_ascii=False)
+        store.add_message, chat_id, thread_id, role, json.dumps(msg, ensure_ascii=False)
     )
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"[handle_photo] ENTRY user_id={update.effective_user.id} caption={update.message.caption!r}", flush=True)
-    if await reject_if_unauthorized(update, context):
-        print(f"[handle_photo] REJECTED", flush=True)
+    print(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}", flush=True)
+    result = await _route_to_thread(update, context)
+    if result is None:
+        print("[handle_photo] REJECTED", flush=True)
         return
-    user_id = update.effective_user.id
-    print(f"[handle_photo] user_id={user_id}", flush=True)
+    chat_id, thread_id, is_group = result
+    print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}", flush=True)
     await update.message.chat.send_action(action='typing')
     thinking = None
     try:
@@ -1381,7 +1493,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # not prevent — by the time you have the bytearray, you
         # already have the whole file in RAM.
         if photo.file_size and photo.file_size > MAX_PHOTO_BYTES:
-            await update.message.reply_text(
+            await _reply(update, 
                 f'❌ Photo too large ({photo.file_size/1e6:.1f} MB > '
                 f'{MAX_PHOTO_BYTES/1e6:.0f} MB).'
             )
@@ -1410,24 +1522,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"type": "text", "text": caption},
             {"type": "image_url", "image_url": {"url": photo_data_url}}
         ]
-        thread_id = await _resolve_active(user_id)
-        await _persist_message(user_id, thread_id, 'user', photo_content)
-        history = await _load_history(user_id, thread_id)
+        thread_id = thread_id  # already resolved by _route_to_thread
+        await _persist_message(chat_id, thread_id, 'user', photo_content)
+        history = await _load_history(chat_id, thread_id)
         # When recalling image turns in later text-only messages, the
         # images themselves cannot be re-sent from history (no id
         # retained), so the model falls back to its own description.
-        thinking = await update.message.reply_text('💭 думаю…')
-        print(f"[handle_photo] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        thinking = await _reply(update, '💭 думаю…')
+        print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
-        await _persist_message(user_id, thread_id, 'assistant', bot_response)
+        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
         await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR photo] {type(e).__name__}: {e}", flush=True)
         import traceback
         traceback.print_exc()
         try:
-            await update.message.reply_text(f'❌ Error: {e}')
+            await _reply(update, f'❌ Error: {e}')
         except Exception:
             pass
     finally:
@@ -1451,20 +1563,22 @@ async def _stream_with_limit(file, max_bytes: int, kind: str, update: Update):
         async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
             buf.extend(chunk)
             if len(buf) > max_bytes:
-                await update.message.reply_text(
+                await _reply(update, 
                     f'❌ {kind} too large (>{max_bytes/1e6:.0f} MB during download).'
                 )
                 return None
     except Exception as e:
-        await update.message.reply_text(f'❌ Failed to download {kind.lower()}: {e}')
+        await _reply(update, f'❌ Failed to download {kind.lower()}: {e}')
         return None
     return buf
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await reject_if_unauthorized(update, context):
+    result = await _route_to_thread(update, context)
+    if result is None:
         return
-    user_id = update.effective_user.id
+    chat_id, thread_id, is_group = result
+    user_id = chat_id  # alias for log lines below
     await update.message.chat.send_action(action='typing')
     thinking = None
     try:
@@ -1485,7 +1599,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Pre-check; media.file_size is usually populated. The real
         # guard is the chunk counter in the helper.
         if media.file_size and media.file_size > max_bytes:
-            await update.message.reply_text(
+            await _reply(update, 
                 f'❌ {media_kind} too large ({media.file_size/1e6:.1f} MB > '
                 f'{max_bytes/1e6:.0f} MB).'
             )
@@ -1497,22 +1611,21 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         transcript = await transcribe_voice(voice_bytes)
         # No parse_mode — transcript is user-generated and may contain
         # '*', '_', '[', '`', which would break Markdown rendering.
-        await update.message.reply_text(f'🎤 Transcript:\n{transcript}')
-        thread_id = await _resolve_active(user_id)
-        await _persist_message(user_id, thread_id, 'user', transcript)
-        history = await _load_history(user_id, thread_id)
+        await _reply(update, f'🎤 Transcript:\n{transcript}')
+        await _persist_message(chat_id, thread_id, 'user', transcript)
+        history = await _load_history(chat_id, thread_id)
         print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
-        thinking = await update.message.reply_text('💭 думаю…')
+        thinking = await _reply(update, '💭 думаю…')
         bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking)
-        await _persist_message(user_id, thread_id, 'assistant', bot_response)
+        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
-                await update.message.reply_text(bot_response[i:i+4000])
+                await _reply(update, bot_response[i:i+4000])
         else:
             await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR voice] {type(e).__name__}: {e}", flush=True)
-        await update.message.reply_text(f'❌ Error: {e}')
+        await _reply(update, f'❌ Error: {e}')
     finally:
         if thinking is not None:
             try:
@@ -1522,16 +1635,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await reject_if_unauthorized(update, context):
+    result = await _route_to_thread(update, context)
+    if result is None:
         return
-    user_id = update.effective_user.id
+    chat_id, thread_id, is_group = result
+    user_id = chat_id  # alias for log lines below
     await update.message.chat.send_action(action='typing')
     doc = update.message.document
     # Reject oversized documents before downloading. We will only ever
     # read the first 16 KB of text from the file, so anything bigger is
     # almost certainly a mistake or an attempt to OOM the bot.
     if doc.file_size and doc.file_size > MAX_DOC_BYTES:
-        await update.message.reply_text(
+        await _reply(update, 
             f'❌ Document too large ({doc.file_size/1e6:.1f} MB > '
             f'{MAX_DOC_BYTES/1e6:.0f} MB).'
         )
@@ -1550,14 +1665,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
             doc_text = f.read()[:16000]
         caption = update.message.caption or 'Read the document and answer questions.'
-        thread_id = await _resolve_active(user_id)
         user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
-        await _persist_message(user_id, thread_id, 'user', user_content)
-        history = await _load_history(user_id, thread_id)
+        await _persist_message(chat_id, thread_id, 'user', user_content)
+        history = await _load_history(chat_id, thread_id)
         print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
-        thinking = await update.message.reply_text('💭 думаю…')
+        thinking = await _reply(update, '💭 думаю…')
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking)
-        await _persist_message(user_id, thread_id, 'assistant', bot_response)
+        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
         await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR doc] {type(e).__name__}: {e}", flush=True)
@@ -1573,31 +1687,32 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"[handle_text] ENTRY user_id={update.effective_user.id} text={update.message.text!r}", flush=True)
-    if await reject_if_unauthorized(update, context):
+    result = await _route_to_thread(update, context)
+    if result is None:
         print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)
         return
-    user_id = update.effective_user.id
+    chat_id, thread_id, is_group = result
+    user_id = chat_id  # alias for log lines below
     user_message = update.message.text
     try:
         await update.message.chat.send_action(action='typing')
     except Exception as e:
         print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
-    thread_id = await _resolve_active(user_id)
-    await _persist_message(user_id, thread_id, 'user', user_message)
-    history = await _load_history(user_id, thread_id)
+    await _persist_message(chat_id, thread_id, 'user', user_message)
+    history = await _load_history(chat_id, thread_id)
     print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
-    thinking = await update.message.reply_text('💭 думаю…')
+    thinking = await _reply(update, '💭 думаю…')
     try:
         bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking)
-        await _persist_message(user_id, thread_id, 'assistant', bot_response)
+        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
-                await update.message.reply_text(bot_response[i:i+4000])
+                await _reply(update, bot_response[i:i+4000])
         else:
             await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR text] {type(e).__name__}: {e}", flush=True)
-        await update.message.reply_text(f'❌ Error: {e}')
+        await _reply(update, f'❌ Error: {e}')
     finally:
         try:
             await thinking.delete()
