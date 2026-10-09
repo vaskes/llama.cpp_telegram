@@ -1053,14 +1053,28 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === Group mode: clear history in the current topic ===
     if _is_group_chat(update):
         chat_id = update.effective_chat.id
-        thread_id = str(update.message.message_thread_id)
+        # Use "general" sentinel for the General topic so the DB
+        # key is consistent with _route_to_thread.
+        msg_thread_id = update.message.message_thread_id
+        thread_id = str(msg_thread_id) if msg_thread_id is not None else _general_thread_id()
         n = await asyncio.to_thread(
             store.delete_thread, chat_id, thread_id
         )
+        # Look up the topic name for a friendlier message
+        if msg_thread_id is not None:
+            entry = await asyncio.to_thread(
+                store.find_known_topic_by_id, chat_id, msg_thread_id
+            )
+            topic_label = f"#{msg_thread_id} — {entry['name']}" if entry else f"#{msg_thread_id}"
+        else:
+            topic_label = "General"
         await _reply(update,
-            f'🗑 Cleared {n} message(s) in this topic.\n'
-            f'Note: the topic itself is unchanged — only the LLM\'s '
-            f'memory of past messages in it is wiped.'
+            f'🗑 Cleared {n} message(s) in {topic_label}.\n'
+            f'The Telegram topic itself is unchanged — only the '
+            f"bot's memory of past messages in it is wiped.\n"
+            f'In private mode the active sub-talk is re-created; in '
+            f'group mode the topic is owned by Telegram and just '
+            f'loses its conversation history.'
         )
         return
     if await reject_if_unauthorized(update, context):
@@ -1072,7 +1086,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # (empty) and keep it active. The user can still /subs to see it.
     await asyncio.to_thread(store.create_thread, user_id, thread_id)
     await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
-    await _reply(update, 
+    await _reply(update,
         f'🔄 Cleared {n} message(s) in sub-talk "{thread_id}".\n'
         f'Sub-talk is preserved. Use /delsub to remove the whole thread.'
     )
@@ -1443,9 +1457,12 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(label, callback_data=f"sub:{s['thread_id']}")]
         )
     # New thread / cancel row
-    buttons.append([
-        InlineKeyboardButton("➕ New sub-talk", callback_data="newsub:prompt"),
-    ])
+    # No "New sub-talk" button: the previous one triggered a
+    # ForceReply hint that the user had to then type the name
+    # into, but the bot would just process it as a regular
+    # question. Better to just use /newsub directly. See
+    # cmd_callback's "newsub:prompt" branch for the redirect
+    # message.
     await _reply(update,
         f'📚 **Your sub-talks** (active marked ✅)\n\n'
         f'Tap a button to switch. Use /delsub <name> to remove one.',
@@ -1631,10 +1648,9 @@ def _should_mute_in_group(update) -> bool:
     The is_bot check is still applied (defensive — a real user
     cannot have is_bot=True, so this is a no-op in practice).
 
-    The [llm] marker is case-insensitive and substring-matched;
-    false positives are possible ("the [llm] model is great") but
-    rare and harmless (the bot just doesn't reply to that one
-    message).
+    The [llm] marker is case-insensitive and word-boundary matched
+    (see _LLM_TOKEN_RE). Substring matches like "[llm]s" or
+    "[llm] model" do not trigger.
     """
     msg = update.message
     if msg is None or msg.from_user is None:
@@ -1649,6 +1665,53 @@ def _should_mute_in_group(update) -> bool:
     if _LLM_TOKEN_RE.search(text):
         return True
     return False
+
+
+# Per-(chat_id, user_id) concurrency cap. Without this, one
+# user in a group can flood the bot with messages and
+# monopolise the call_llama queue (up to 10 min per request
+# via LOOP_BUDGET_SEC). The semaphore caps each user's
+# concurrent in-flight LLM calls at 2, with a friendly
+# "busy with your earlier request" reply if the cap is hit.
+#
+# Private mode: keyed on user_id (chat_id is the same int).
+# Group mode: keyed on (chat_id, user_id) so users in
+# different groups don't affect each other.
+_PER_USER_SEMAPHORE_LIMIT = 2
+_user_semaphores: dict = {}
+
+
+def _user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
+    """Return the per-(chat_id, user_id) asyncio.Semaphore, creating
+    it on first use. Lazy init because we cannot create asyncio
+    primitives at module-import time (no running event loop)."""
+    key = (chat_id, user_id)
+    sem = _user_semaphores.get(key)
+    if sem is None:
+        sem = asyncio.Semaphore(_PER_USER_SEMAPHORE_LIMIT)
+        _user_semaphores[key] = sem
+    return sem
+
+
+async def _check_user_slot(chat_id: int, user_id: int, update):
+    """Try to claim one of the user's concurrency slots. If all
+    slots are taken, sends a 'busy' reply and returns None.
+    Otherwise returns the semaphore which the caller MUST release
+    in a `finally` block.
+
+    Private mode: chat_id == user_id (1:1 chat), so the slot is
+    effectively per-user. Group mode: keyed on (chat_id, user_id)
+    so a user active in two groups has separate budgets per group.
+    """
+    sem = _user_semaphore(chat_id, user_id)
+    if sem.locked():
+        await _reply(update,
+            f"⏳ Бот уже обрабатывает {_PER_USER_SEMAPHORE_LIMIT} твоих "
+            f"запросов параллельно. Подожди пока один из них завершится."
+        )
+        return None
+    await sem.acquire()
+    return sem
 
 
 def _general_thread_id() -> str:
@@ -1799,6 +1862,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id, thread_id, is_group = result
     print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}", flush=True)
+    sem = await _check_user_slot(chat_id, update.effective_user.id, update)
+    if sem is None:
+        return
     await update.message.chat.send_action(action='typing')
     thinking = None
     try:
@@ -1870,6 +1936,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
+        sem.release()
 
 
 async def _stream_with_limit(file, max_bytes: int, kind: str, update: Update):
@@ -1901,6 +1968,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id, thread_id, is_group = result
     user_id = chat_id  # alias for log lines below
+    sem = await _check_user_slot(chat_id, user_id, update)
+    if sem is None:
+        return
     await update.message.chat.send_action(action='typing')
     thinking = None
     try:
@@ -1954,6 +2024,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
+        sem.release()
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1962,6 +2033,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id, thread_id, is_group = result
     user_id = chat_id  # alias for log lines below
+    sem = await _check_user_slot(chat_id, user_id, update)
+    if sem is None:
+        return
     await update.message.chat.send_action(action='typing')
     doc = update.message.document
     # Reject oversized documents before downloading. We will only ever
@@ -2005,6 +2079,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
+        sem.release()
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2015,6 +2090,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id, thread_id, is_group = result
     user_id = chat_id  # alias for log lines below
+    sem = await _check_user_slot(chat_id, user_id, update)
+    if sem is None:
+        return
     user_message = update.message.text
     try:
         await update.message.chat.send_action(action='typing')
@@ -2040,6 +2118,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await thinking.delete()
         except Exception:
             pass
+        sem.release()
 
 
 def main():
@@ -2356,11 +2435,14 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'✅ Switched to sub-talk "{thread_id}".'
         )
     elif data == "newsub:prompt":
-        from telegram import ForceReply
+        # The button used to fire a ForceReply that asked the user
+        # to "send the new sub-talk name" — but the next text
+        # message the user typed would be routed through
+        # handle_text as a regular question, not a name. The
+        # button was confusing (review P2-4). Drop it; the user
+        # can just type /newsub <name> directly.
         await update.effective_message.reply_text(
-            'Send the new sub-talk name (letters, digits, _-. only, '
-            'max 32 chars).',
-            reply_markup=ForceReply(selective=True),
+            'Use /newsub <name> to create a new sub-talk.'
         )
     elif data.startswith("delsub:"):
         thread_id = data[7:]
@@ -2733,6 +2815,43 @@ async def _selftest():
         print(f"  [{'OK' if ok else 'FAIL'}] {label}: mute={got} (expected {expected})", flush=True)
     all_ok &= mute_ok
     print(f"[selftest] noise-filter tests: {'all pass' if mute_ok else 'FAILED'}", flush=True)
+
+    # === Per-user semaphore ===
+    # Verifies that _check_user_slot returns None when all
+    # permits are taken. We hold N=2 permits, then try a 3rd.
+    print('[selftest] running per-user semaphore test...', flush=True)
+    sem_ok = True
+    try:
+        sem = _b._user_semaphore(123, 456)
+        # Manually lock it to simulate 2 in-flight requests
+        for _ in range(_b._PER_USER_SEMAPHORE_LIMIT):
+            await sem.acquire()
+        # Third call should report locked
+        if not sem.locked():
+            print(f"  [FAIL] semaphore not locked after {_b._PER_USER_SEMAPHORE_LIMIT} acquires", flush=True)
+            sem_ok = False
+        else:
+            print(f"  [OK] semaphore locked at limit", flush=True)
+        # Release them
+        for _ in range(_b._PER_USER_SEMAPHORE_LIMIT):
+            sem.release()
+        if sem.locked():
+            print(f"  [FAIL] semaphore still locked after release", flush=True)
+            sem_ok = False
+        else:
+            print(f"  [OK] semaphore unlocked after release", flush=True)
+        # Distinct (chat_id, user_id) gets a distinct semaphore
+        sem_a = _b._user_semaphore(1, 1)
+        sem_b = _b._user_semaphore(1, 2)
+        if sem_a is sem_b:
+            print(f"  [FAIL] (1,1) and (1,2) share the same semaphore", flush=True)
+            sem_ok = False
+        else:
+            print(f"  [OK] (1,1) and (1,2) have distinct semaphores", flush=True)
+    except Exception as e:
+        print(f"  [FAIL] semaphore test crashed: {type(e).__name__}: {e}", flush=True)
+        sem_ok = False
+    all_ok &= sem_ok
     print('[selftest] done', flush=True)
     print('[selftest] done', flush=True)
 
