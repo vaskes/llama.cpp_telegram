@@ -1049,8 +1049,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Clear the messages in the current sub-talk (not delete the sub-talk itself)."""
-    if await _reject_in_group(update):
+    """Clear the messages in the current sub-talk / topic."""
+    # === Group mode: clear history in the current topic ===
+    if update.message.message_thread_id is not None:
+        chat_id = update.effective_chat.id
+        thread_id = str(update.message.message_thread_id)
+        n = await asyncio.to_thread(
+            store.delete_thread, chat_id, thread_id
+        )
+        await _reply(update,
+            f'🗑 Cleared {n} message(s) in this topic.\n'
+            f'Note: the topic itself is unchanged — only the LLM\'s '
+            f'memory of past messages in it is wiped.'
+        )
         return
     if await reject_if_unauthorized(update, context):
         return
@@ -1108,7 +1119,32 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await _reject_in_group(update):
+    # === Group mode: show topic count + total stored messages ===
+    if update.message.message_thread_id is not None:
+        chat_id = update.effective_chat.id
+        thread_id = str(update.message.message_thread_id)
+        try:
+            topics = []
+            async for t in context.bot.get_forum_topics(chat_id=chat_id):
+                topics.append(t)
+        except Exception as e:
+            print(f"[ERR stats-group] {type(e).__name__}: {e}", flush=True)
+            await _reply(update, f'❌ getForumTopics failed: {e}')
+            return
+        # Per-topic message count from local DB
+        all_subs = await asyncio.to_thread(store.list_threads, chat_id)
+        msg_total = sum(s["msg_count"] for s in all_subs)
+        cur_count = next(
+            (s["msg_count"] for s in all_subs if s["thread_id"] == thread_id),
+            0
+        )
+        await _reply(update,
+            f'📊 Group stats\n'
+            f' • Topics: {len(topics)}\n'
+            f' • Current topic: #{update.message.message_thread_id} '
+            f'({cur_count} stored message(s))\n'
+            f' • Total stored messages across topics: {msg_total}'
+        )
         return
     if await reject_if_unauthorized(update, context):
         return
@@ -1169,30 +1205,49 @@ async def _reply_active(update: Update, user_id: int) -> str:
 
 
 async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await _reject_in_group(update):
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
     thread_id = _parse_subtalk_arg(update.message.text)
     if not thread_id:
-        await _reply(update, 
-            '❌ Usage: /newsub <thread_id>\n'
-            'Name: 1-32 chars, must start with a letter or digit, '
-            'may contain letters/digits/underscore/dash/dot.\n'
+        await _reply(update,
+            '❌ Usage: /newsub <name>\n'
+            'Name rules:\n'
+            ' • private mode: 1-32 chars, A-Za-z0-9_.-, must start with letter/digit\n'
+            ' • group mode:  1-128 chars, any non-empty non-whitespace string\n'
             'Example: /newsub research'
         )
         return
+    # === Group mode: create a forum topic via createForumTopic ===
+    if update.message.message_thread_id is not None:
+        if len(thread_id) > 128 or not thread_id.strip():
+            await _reply(update, '❌ Forum topic name must be 1-128 non-whitespace chars.')
+            return
+        try:
+            topic = await context.bot.create_forum_topic(
+                chat_id=update.effective_chat.id,
+                name=thread_id,
+            )
+        except Exception as e:
+            print(f"[ERR newsub-group] {type(e).__name__}: {e}", flush=True)
+            await _reply(update, f'❌ createForumTopic failed: {e}')
+            return
+        await _reply(update,
+            f'✅ Created topic "{thread_id}" (id={topic.message_thread_id}).\n'
+            f'Send any message in the new topic to start the conversation.'
+        )
+        return
+    # === Private mode: sub-talk in DB ===
+    if await reject_if_unauthorized(update, context):
+        return
+    user_id = update.effective_user.id
     created = await asyncio.to_thread(store.create_thread, user_id, thread_id)
     if not created:
         # Already exists — just switch to it.
         await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
-        await _reply(update, 
+        await _reply(update,
             f'ℹ Sub-talk "{thread_id}" already existed. Now active.'
         )
         return
     await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
-    await _reply(update, 
+    await _reply(update,
         f'✅ Created sub-talk "{thread_id}" — now active.\n'
         f'Send any message to add to this thread. '
         f'Use /sub to switch, /subs to list, /delsub to remove.'
@@ -1200,7 +1255,15 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await _reject_in_group(update):
+    # === Group mode: navigate-by-name is not really a thing in
+    # Telegram forum topics (the user just taps the topic in the
+    # sidebar). Best we can do is show the current topic. ===
+    if update.message.message_thread_id is not None:
+        await _reply(update,
+            f'📍 You are in topic #{update.message.message_thread_id}.\n\n'
+            f'In group mode, just tap a topic in the sidebar to switch —\n'
+            f'there is no command to "navigate" between topics programmatically.'
+        )
         return
     if await reject_if_unauthorized(update, context):
         return
@@ -1209,7 +1272,7 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not thread_id:
         # /sub with no arg: show current
         current = await _reply_active(update, user_id)
-        await _reply(update, 
+        await _reply(update,
             f'You are in sub-talk "{current}".\n'
             f'Use /sub <thread_id> to switch, /subs to list all.'
         )
@@ -1224,7 +1287,30 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await _reject_in_group(update):
+    # === Group mode: show the current topic's name + last snippet ===
+    if update.message.message_thread_id is not None:
+        chat_id = update.effective_chat.id
+        thread_id = str(update.message.message_thread_id)
+        # We don't have a name lookup helper for forum topics here, but
+        # getForumTopics is async. For a quick "where am I" hint, just
+        # show the numeric id; the user sees the topic name in the UI.
+        last = await asyncio.to_thread(store.get_last_message, chat_id, thread_id)
+        if last is None:
+            snippet = '(empty)'
+        else:
+            try:
+                content = json.loads(last["content"])
+                text = content.get("text", "")
+                if len(text) > 200:
+                    text = text[:200] + "…"
+                role_emoji = "🧑" if last["role"] == "user" else "🤖"
+                snippet = f'{role_emoji} {text}' if text else '(non-text message)'
+            except Exception:
+                snippet = '(unreadable)'
+        await _reply(update,
+            f'📍 Current topic: #{update.message.message_thread_id}\n'
+            f'Last message in this topic: {snippet}'
+        )
         return
     if await reject_if_unauthorized(update, context):
         return
@@ -1245,7 +1331,7 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
             snippet = f'{role_emoji} {text}' if text else '(non-text message)'
         except Exception:
             snippet = "(unreadable)"
-    await _reply(update, 
+    await _reply(update,
         f'📍 Current sub-talk: "{current}"\n'
         f'Last message: {snippet}\n\n'
         f'Use /subs to list, /sub <name> to switch, /newsub <name> to create.'
@@ -1253,7 +1339,35 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await _reject_in_group(update):
+    # === Group mode: list Telegram forum topics (no inline buttons) ===
+    if update.message.message_thread_id is not None:
+        try:
+            # getForumTopics is a generator. PTB 21 yields ForumTopic objects
+            # with .message_thread_id, .name, .icon_custom_emoji_id (optional).
+            topics = []
+            async for t in context.bot.get_forum_topics(
+                chat_id=update.effective_chat.id,
+            ):
+                topics.append(t)
+        except Exception as e:
+            print(f"[ERR subs-group] {type(e).__name__}: {e}", flush=True)
+            await _reply(update, f'❌ getForumTopics failed: {e}')
+            return
+        # General topic (id == update.message.message_thread_id) is the
+        # "always-on" admin topic that Telegram creates with every
+        # supergroup. Filter it out unless the user is in it.
+        cur = update.message.message_thread_id
+        topics = [t for t in topics if t.message_thread_id != 1 or t.message_thread_id == cur]
+        if not topics:
+            await _reply(update,
+                'No topics yet. Use /newsub <name> to create one.'
+            )
+            return
+        lines = ['📚 **Topics in this group** (active marked ✅):\n']
+        for t in topics:
+            mark = '✅ ' if t.message_thread_id == cur else '  '
+            lines.append(f'{mark}#{t.message_thread_id} — {t.name}')
+        await _reply(update, '\n'.join(lines))
         return
     if await reject_if_unauthorized(update, context):
         return
@@ -1261,7 +1375,7 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     subs = await asyncio.to_thread(store.list_threads, user_id)
     active = await _reply_active(update, user_id)
     if not subs:
-        await _reply(update, 
+        await _reply(update,
             'You have no sub-talks yet. Send any message to start '
             'the default "main" sub-talk, or /newsub <name> to create one.'
         )
@@ -1277,13 +1391,13 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # callback_data must be <=64 bytes; thread_id names already
         # match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/ so this is safe.
         buttons.append(
-            [InlineKeyboardButton(label, callback_data=f"sub:{s['name']}")]
+            [InlineKeyboardButton(label, callback_data=f"sub:{s['thread_id']}")]
         )
     # New thread / cancel row
     buttons.append([
         InlineKeyboardButton("➕ New sub-talk", callback_data="newsub:prompt"),
     ])
-    await _reply(update, 
+    await _reply(update,
         f'📚 **Your sub-talks** (active marked ✅)\n\n'
         f'Tap a button to switch. Use /delsub <name> to remove one.',
         reply_markup=InlineKeyboardMarkup(buttons),
@@ -1291,25 +1405,57 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await _reject_in_group(update):
+    thread_id = _parse_subtalk_arg(update.message.text)
+    if not thread_id:
+        await _reply(update,
+            '❌ Usage: /delsub <name>\n'
+            'Removes the sub-talk/topic AND all its messages. Cannot be undone.'
+        )
+        return
+    # === Group mode: find the topic by name, then deleteForumTopic ===
+    if update.message.message_thread_id is not None:
+        try:
+            target_id = None
+            async for t in context.bot.get_forum_topics(
+                chat_id=update.effective_chat.id,
+            ):
+                if t.name == thread_id:
+                    target_id = t.message_thread_id
+                    break
+        except Exception as e:
+            print(f"[ERR delsub-group-list] {type(e).__name__}: {e}", flush=True)
+            await _reply(update, f'❌ getForumTopics failed: {e}')
+            return
+        if target_id is None:
+            await _reply(update, f'❌ No topic named "{thread_id}" in this group.')
+            return
+        try:
+            await context.bot.delete_forum_topic(
+                chat_id=update.effective_chat.id,
+                message_thread_id=target_id,
+            )
+        except Exception as e:
+            print(f"[ERR delsub-group-delete] {type(e).__name__}: {e}", flush=True)
+            await _reply(update, f'❌ deleteForumTopic failed: {e}')
+            return
+        # Also wipe the local message history for that topic.
+        n = await asyncio.to_thread(
+            store.delete_thread, update.effective_chat.id, str(target_id)
+        )
+        await _reply(update,
+            f'🗑 Deleted topic "{thread_id}" and {n} locally-stored message(s).'
+        )
         return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    thread_id = _parse_subtalk_arg(update.message.text)
-    if not thread_id:
-        await _reply(update, 
-            '❌ Usage: /delsub <thread_id>\n'
-            'Removes the sub-talk AND all its messages. Cannot be undone.'
-        )
-        return
     n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
     if n == 0:
         await _reply(update, f'❌ Sub-talk "{thread_id}" not found.')
         return
     # If we just deleted the active one, the next get_active will
     # fall back to most-recent or to 'main'.
-    await _reply(update, 
+    await _reply(update,
         f'🗑 Deleted sub-talk "{thread_id}" and {n} message(s).'
     )
 
@@ -1943,21 +2089,27 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
       sub:<name>     — switch to sub-talk <name>
       newsub:prompt  — show a one-time reply keyboard asking for the new name
       delsub:<name>  — confirm-then-delete (we delete immediately; no confirm step)
+
+    Group mode: callback_data is only emitted by the private-mode
+    /subs inline keyboard, so any callback here is a stale/private
+    state leak. Just answer and ignore.
     """
+    await update.callback_query.answer()
+    # Group mode: chat id is negative, no inline buttons exist there.
+    if update.effective_chat.id < 0:
+        return
     if await reject_if_unauthorized(update, context):
-        await update.callback_query.answer()
         return
     user_id = update.effective_user.id
     data = update.callback_query.data or ""
-    await update.callback_query.answer()  # dismiss the "loading" tick
     if data.startswith("sub:"):
-        name = data[4:]
+        thread_id = data[4:]
         existing = await asyncio.to_thread(store.get_thread, user_id, thread_id)
         if existing is None:
             await asyncio.to_thread(store.create_thread, user_id, thread_id)
         await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
         await update.callback_query.edit_message_text(
-            f'✅ Switched to sub-talk "{name}".'
+            f'✅ Switched to sub-talk "{thread_id}".'
         )
     elif data == "newsub:prompt":
         from telegram import ForceReply
@@ -1967,10 +2119,10 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ForceReply(selective=True),
         )
     elif data.startswith("delsub:"):
-        name = data[7:]
+        thread_id = data[7:]
         n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
         await update.callback_query.edit_message_text(
-            f'🗑 Deleted "{name}" and {n} message(s).'
+            f'🗑 Deleted "{thread_id}" and {n} message(s).'
         )
     else:
         await update.callback_query.edit_message_text(
