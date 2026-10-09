@@ -1051,7 +1051,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Clear the messages in the current sub-talk / topic."""
     # === Group mode: clear history in the current topic ===
-    if update.message.message_thread_id is not None:
+    if _is_group_chat(update):
         chat_id = update.effective_chat.id
         thread_id = str(update.message.message_thread_id)
         n = await asyncio.to_thread(
@@ -1120,7 +1120,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === Group mode: show topic count + total stored messages ===
-    if update.message.message_thread_id is not None:
+    if _is_group_chat(update):
         chat_id = update.effective_chat.id
         thread_id = str(update.message.message_thread_id)
         try:
@@ -1181,14 +1181,27 @@ import re as _re
 # may contain letters, digits, dash, underscore, dot. Spaces, slashes,
 # and other shell-meta characters are not allowed so the name is safe
 # to log and never collides with command arguments.
-_SUBTALK_NAME_RE = _re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]{0,31}$')
+# Sub-talk names: 1-32 chars, no whitespace. We previously used
+# the ASCII-only regex ^[A-Za-z0-9][A-Za-z0-9_.\-]{0,31}$ but
+# Russian users want to call their sub-talks "Болталка", so we
+# accept any non-whitespace string instead. The limit is 32 chars
+# to keep storage keys short and inline-keyboard callback_data
+# under 64 bytes.
+_SUBTALK_NAME_RE = _re.compile(r'^[^\s]{1,32}$')
+
+# Forum topic names: 1-128 chars (Telegram's limit), no whitespace.
+# Forum topic names are also used as the display name in the topic
+# header, so we don't enforce a stricter charset here.
+_TOPIC_NAME_RE = _re.compile(r'^[^\s]{1,128}$')
 
 
 def _parse_subtalk_arg(text: str) -> str | None:
     """Extract a single sub-talk name from a /command arg string.
 
     Returns the first whitespace-separated token, or None if absent
-    or invalid.
+    or invalid. For sub-talks we use the strict 32-char limit; for
+    forum-topic names (group mode) see _parse_topic_arg() which
+    accepts up to 128 chars.
     """
     parts = text.strip().split(None, 1)
     if len(parts) < 2:
@@ -1199,42 +1212,61 @@ def _parse_subtalk_arg(text: str) -> str | None:
     return name
 
 
+def _parse_topic_arg(text: str) -> str | None:
+    """Like _parse_subtalk_arg but for Telegram forum topic names.
+
+    Telegram's createForumTopic accepts topic names up to 128 chars,
+    any non-empty non-whitespace string. Used in group mode by
+    /newsub, /delsub.
+    """
+    parts = text.strip().split(None, 1)
+    if len(parts) < 2:
+        return None
+    name = parts[1].strip()
+    if not _TOPIC_NAME_RE.match(name):
+        return None
+    return name
+
+
 async def _reply_active(update: Update, user_id: int) -> str:
     """Returns the user's active sub-talk name (resolving to 'main' default)."""
     return await asyncio.to_thread(store.get_active_thread, user_id) or 'main'
 
 
 async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    thread_id = _parse_subtalk_arg(update.message.text)
-    if not thread_id:
-        await _reply(update,
-            '❌ Usage: /newsub <name>\n'
-            'Name rules:\n'
-            ' • private mode: 1-32 chars, A-Za-z0-9_.-, must start with letter/digit\n'
-            ' • group mode:  1-128 chars, any non-empty non-whitespace string\n'
-            'Example: /newsub research'
-        )
-        return
     # === Group mode: create a forum topic via createForumTopic ===
-    if update.message.message_thread_id is not None:
-        if len(thread_id) > 128 or not thread_id.strip():
-            await _reply(update, '❌ Forum topic name must be 1-128 non-whitespace chars.')
+    if _is_group_chat(update):
+        topic_name = _parse_topic_arg(update.message.text)
+        if not topic_name:
+            await _reply(update,
+                '❌ Usage: /newsub <name>\n'
+                'Name: 1-128 chars, no whitespace. Any UTF-8 ok.\n'
+                'Example: /newsub research'
+            )
             return
         try:
             topic = await context.bot.create_forum_topic(
                 chat_id=update.effective_chat.id,
-                name=thread_id,
+                name=topic_name,
             )
         except Exception as e:
             print(f"[ERR newsub-group] {type(e).__name__}: {e}", flush=True)
             await _reply(update, f'❌ createForumTopic failed: {e}')
             return
         await _reply(update,
-            f'✅ Created topic "{thread_id}" (id={topic.message_thread_id}).\n'
-            f'Send any message in the new topic to start the conversation.'
+            f'✅ Created topic "{topic_name}" (id={topic.message_thread_id}).\n'
+            f'Switch to it in the sidebar to start the conversation.'
         )
         return
     # === Private mode: sub-talk in DB ===
+    thread_id = _parse_subtalk_arg(update.message.text)
+    if not thread_id:
+        await _reply(update,
+            '❌ Usage: /newsub <name>\n'
+            'Name: 1-32 chars, no whitespace. Any UTF-8 ok.\n'
+            'Example: /newsub research'
+        )
+        return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
@@ -1258,7 +1290,7 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === Group mode: navigate-by-name is not really a thing in
     # Telegram forum topics (the user just taps the topic in the
     # sidebar). Best we can do is show the current topic. ===
-    if update.message.message_thread_id is not None:
+    if _is_group_chat(update):
         await _reply(update,
             f'📍 You are in topic #{update.message.message_thread_id}.\n\n'
             f'In group mode, just tap a topic in the sidebar to switch —\n'
@@ -1288,7 +1320,7 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === Group mode: show the current topic's name + last snippet ===
-    if update.message.message_thread_id is not None:
+    if _is_group_chat(update):
         chat_id = update.effective_chat.id
         thread_id = str(update.message.message_thread_id)
         # We don't have a name lookup helper for forum topics here, but
@@ -1340,7 +1372,7 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === Group mode: list Telegram forum topics (no inline buttons) ===
-    if update.message.message_thread_id is not None:
+    if _is_group_chat(update):
         try:
             # getForumTopics is a generator. PTB 21 yields ForumTopic objects
             # with .message_thread_id, .name, .icon_custom_emoji_id (optional).
@@ -1405,21 +1437,21 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    thread_id = _parse_subtalk_arg(update.message.text)
-    if not thread_id:
-        await _reply(update,
-            '❌ Usage: /delsub <name>\n'
-            'Removes the sub-talk/topic AND all its messages. Cannot be undone.'
-        )
-        return
     # === Group mode: find the topic by name, then deleteForumTopic ===
-    if update.message.message_thread_id is not None:
+    if _is_group_chat(update):
+        topic_name = _parse_topic_arg(update.message.text)
+        if not topic_name:
+            await _reply(update,
+                '❌ Usage: /delsub <name>\n'
+                'Removes the topic AND all its messages. Cannot be undone.'
+            )
+            return
         try:
             target_id = None
             async for t in context.bot.get_forum_topics(
                 chat_id=update.effective_chat.id,
             ):
-                if t.name == thread_id:
+                if t.name == topic_name:
                     target_id = t.message_thread_id
                     break
         except Exception as e:
@@ -1427,7 +1459,7 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _reply(update, f'❌ getForumTopics failed: {e}')
             return
         if target_id is None:
-            await _reply(update, f'❌ No topic named "{thread_id}" in this group.')
+            await _reply(update, f'❌ No topic named "{topic_name}" in this group.')
             return
         try:
             await context.bot.delete_forum_topic(
@@ -1443,7 +1475,15 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             store.delete_thread, update.effective_chat.id, str(target_id)
         )
         await _reply(update,
-            f'🗑 Deleted topic "{thread_id}" and {n} locally-stored message(s).'
+            f'🗑 Deleted topic "{topic_name}" and {n} locally-stored message(s).'
+        )
+        return
+    # === Private mode ===
+    thread_id = _parse_subtalk_arg(update.message.text)
+    if not thread_id:
+        await _reply(update,
+            '❌ Usage: /delsub <name>\n'
+            'Removes the sub-talk AND all its messages. Cannot be undone.'
         )
         return
     if await reject_if_unauthorized(update, context):
@@ -1490,6 +1530,35 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _group_mode: bool = False  # module-level flag, set on first group message
 
 
+
+def _is_group_chat(update) -> bool:
+    """True if the message is in a forum-enabled supergroup (or any non-private chat).
+
+    Telegram Bot API quirk: in a forum-enabled supergroup, messages in
+    the General topic have message_thread_id == None (not set), while
+    messages in regular topics have it set to the topic id. So
+    "message_thread_id is not None" is NOT a reliable way to detect
+    group mode. The reliable signal is `chat.is_forum` (PTB attribute
+    on Chat) or, failing that, `chat.type != 'private'`.
+    """
+    chat = update.effective_chat
+    if chat is None:
+        return False
+    if getattr(chat, "is_forum", False):
+        return True
+    return chat.type != "private"
+
+
+def _general_thread_id() -> str:
+    """Sentinel thread id for the General topic of a forum-enabled
+    supergroup. The General topic is real (it has messages, history,
+    notifications) but the Bot API does not assign it a numeric
+    message_thread_id; instead, messages in it have message_thread_id
+    == None. We use a stable string sentinel so that conversation
+    history persists per-(chat_id, "general") key.
+    """
+    return "general"
+
 async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
     """Resolve the (chat_id, thread_id) for the current message.
 
@@ -1509,11 +1578,18 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
     """
     global _group_mode
     msg = update.message
-    if msg.message_thread_id is not None:
+    if _is_group_chat(update):
         # Group mode. Telegram is the source of truth for thread
         # existence; we do not need a DB row to know it exists.
+        # For messages in the General topic, message_thread_id is None
+        # by Bot API design — use the "general" sentinel so the DB key
+        # is stable and conversation history persists.
         _group_mode = True
-        return update.effective_chat.id, str(msg.message_thread_id), True
+        if msg.message_thread_id is not None:
+            thread_id = str(msg.message_thread_id)
+        else:
+            thread_id = _general_thread_id()
+        return update.effective_chat.id, thread_id, True
     # Private mode
     if await reject_if_unauthorized(update, context):
         return None
@@ -1536,7 +1612,7 @@ async def _reply(update, text, **kwargs):
     in the General topic instead of staying in the user's topic.
     This helper fixes that.
     """
-    if update.message.message_thread_id is not None:
+    if _is_group_chat(update):
         kwargs.setdefault('message_thread_id', update.message.message_thread_id)
     return await update.message.reply_text(text, **kwargs)
 
@@ -1551,7 +1627,7 @@ async def _reject_in_group(update) -> bool:
     Returns True if the message is in a group and we sent a notice,
     False otherwise (i.e. the caller should continue processing).
     """
-    if update.message.message_thread_id is not None:
+    if _is_group_chat(update):
         await _reply(
             update,
             'ℹ In group mode, sub-talk commands are replaced by Telegram\n'
@@ -1832,7 +1908,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"[handle_text] ENTRY user_id={update.effective_user.id} text={update.message.text!r}", flush=True)
+    print(f"[handle_text] ENTRY user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text={update.message.text!r}", flush=True)
     result = await _route_to_thread(update, context)
     if result is None:
         print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)
@@ -2095,8 +2171,8 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state leak. Just answer and ignore.
     """
     await update.callback_query.answer()
-    # Group mode: chat id is negative, no inline buttons exist there.
-    if update.effective_chat.id < 0:
+    # Group mode: no inline buttons exist there.
+    if _is_group_chat(update):
         return
     if await reject_if_unauthorized(update, context):
         return
