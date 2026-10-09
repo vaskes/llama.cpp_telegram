@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# update.sh — pull the latest from this repo and redeploy the bot.
+# update.sh — pull the latest from this repo and redeploy both services.
 # Run from inside a clone of llama.cpp_telegram.
 set -euo pipefail
 
 BOT_DIR="${BOT_DIR:-/opt/telegram-bot}"
+WHISPER_DIR="${WHISPER_DIR:-/opt/whisper-api}"
 
 echo ">>> git pull"
 git pull --rebase --autostash
@@ -21,8 +22,19 @@ if ! sudo diff -q "$BOT_DIR/.env" "$BOT_DIR/.env.example" >/dev/null; then
   sudo diff "$BOT_DIR/.env" "$BOT_DIR/.env.example" || true
 fi
 
-echo ">>> rebuild & restart"
+echo ">>> copy updated files into $WHISPER_DIR"
+sudo cp whisper-api/docker-compose.yml "$WHISPER_DIR/docker-compose.yml"
+# We do NOT touch whisper-api/.env either; the same reasoning.
+
+echo ">>> rebuild & restart telegram-bot"
 cd "$BOT_DIR"
 sudo docker compose build telegram-bot
 sudo docker compose up -d --no-deps --force-recreate telegram-bot
-echo "  [OK] done. Tail logs with: sudo docker logs -f telegram-bot"
+
+echo ">>> restart whisper-api (it doesn't need a rebuild unless the image changed)"
+cd "$WHISPER_DIR"
+sudo docker compose up -d --no-deps --force-recreate whisper-api
+
+echo "  [OK] done. Tail logs with:"
+echo "    sudo docker logs -f telegram-bot"
+echo "    sudo docker logs -f whisper-api"
