@@ -2081,22 +2081,50 @@ def main():
                                 # FULL dump so we can see exactly what Telegram sent.
                                 print(f"[poll] RAW update: {json.dumps(upd_dict, ensure_ascii=False)[:600]}", flush=True)
                                 offset = upd_dict["update_id"] + 1
-                                # Skip edited_message updates. The bot only
-                                # processes the original send; re-running a
-                                # command because the user edited its text
-                                # would be surprising and (more importantly)
-                                # the handler signatures assume update.message
-                                # is set, which is False for edited_message
-                                # updates (the text lives in
-                                # update.edited_message.text). Silently drop
-                                # them — Telegram does not re-deliver the
-                                # original message to bots.
+                                # edited_message handling:
+                                #
+                                # Telegram re-delivers edited messages as
+                                # `edited_message` updates (separate from
+                                # the original `message`). The bot used to
+                                # skip them entirely, but the UX was bad:
+                                # users press up-arrow + Send in the
+                                # Telegram input, and that produces an
+                                # edited_message (not a fresh `message`).
+                                # The bot's silence looked like a bug.
+                                #
+                                # Compromise: only process edited_message
+                                # if the new text is a command (starts with
+                                # `/`). Edits of regular text are dropped
+                                # (we already answered the original; a
+                                # follow-up would be confusing or duplicate
+                                # work). Commands, by contrast, are
+                                # idempotent enough that re-running them
+                                # is fine.
                                 if "edited_message" in upd_dict and "message" not in upd_dict:
-                                    print(f"[poll] skipping edited_message update_id={upd_dict['update_id']}", flush=True)
-                                    continue
-                                # Also: edited channel_post, callback_query from
-                                # non-message interactions, etc. We keep the
-                                # rest of the allowed_updates list for now.
+                                    em = upd_dict["edited_message"]
+                                    em_text = (em.get("text") or "").lstrip()
+                                    if em_text.startswith("/"):
+                                        # Normalise: rewrite the update so
+                                        # the dispatcher's handlers see a
+                                        # regular `message` field. This way
+                                        # every handler continues to read
+                                        # `update.message.text` and friends
+                                        # without per-handler branching.
+                                        upd_dict["message"] = em
+                                        print(
+                                            f"[poll] treating edited_message as new command "
+                                            f"update_id={upd_dict['update_id']} cmd={em_text[:32]!r}",
+                                            flush=True,
+                                        )
+                                    else:
+                                        # Edit of a non-command message —
+                                        # already handled when first sent.
+                                        print(
+                                            f"[poll] skipping edited non-command "
+                                            f"update_id={upd_dict['update_id']}",
+                                            flush=True,
+                                        )
+                                        continue
                                 try:
                                     # Dispatch via PTB's Application so handlers
                                     # get a real Context with .bot, .user_data, etc.
