@@ -541,6 +541,26 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 req_body["tools"] = req_tools
                 req_body["tool_choice"] = "auto"
                 req_body["parallel_tool_calls"] = False
+            # Log what we're about to send — without the image bytes
+            safe_body = {**req_body}
+            if "messages" in safe_body:
+                for m in safe_body["messages"]:
+                    if isinstance(m.get("content"), list):
+                        for item in m["content"]:
+                            if isinstance(item, dict) and "image_url" in item:
+                                url = item["image_url"].get("url", "")
+                                item["image_url"] = {"url": f"data:image/jpeg;base64,...[{len(url)} chars]"}
+            print(f"[LLAMA] iter={iteration} req_body_keys={list(req_body.keys())} tools={'yes ('+str(len(req_tools))+' defs)' if req_tools else 'no'} msgs_count={len(req_body.get('messages',[]))}", flush=True)
+            if iteration == 0:
+                # On first iter, also print the first user message structure
+                for m in req_body.get("messages", []):
+                    if m.get("role") == "user":
+                        c = m.get("content")
+                        if isinstance(c, list):
+                            print(f"[LLAMA]   first user msg content types: {[item.get('type') for item in c if isinstance(item, dict)]}", flush=True)
+                        else:
+                            print(f"[LLAMA]   first user msg content head: {str(c)[:150]!r}", flush=True)
+                        break
             reasoning_buf = ""
             content_buf = ""
             tool_calls_buf = {}
