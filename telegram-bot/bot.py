@@ -1714,6 +1714,124 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
     return sem
 
 
+# === Rating mode ===
+# In a group with RATING_MODE=1, every user message is classified
+# by the LLM into one of: question, request, confirmation, info,
+# statement, bloat. The action depends on the type:
+#
+#   - question / request / confirmation → normal text reply
+#   - info / statement                  → rate 1-10, apply a
+#                                          Telegram reaction
+#                                          (1=💩 ... 10=🔥), persist
+#                                          the rating, no text
+#   - bloat                             → one neutral reaction,
+#                                          no text
+#
+# The LLM embeds its decision in the response as a structured
+# prefix: `[[TYPE:<type>]] [[RATE:<1-10>]]` or `[[TYPE:bloat]] <emoji>`.
+# For [llm]-marked messages the rating path is skipped — the
+# bot always replies normally to other LLM participants.
+
+import re as _rating_re
+
+RATING_MODE: bool = os.environ.get("RATING_MODE", "0") == "1"
+
+# 1-10 score → Telegram reaction emoji. Standard set accepted
+# by setMessageReaction. 1=💩 (spam), 10=🔥 (insightful). Mid
+# values step through facial reactions so the spread is visible
+# in chat without needing the rating column to be displayed.
+RATING_EMOJI = {
+    1: "💩", 2: "🤮", 3: "😡", 4: "😢", 5: "😐",
+    6: "🤔", 7: "👍", 8: "👏", 9: "❤", 10: "🔥",
+}
+
+# Default emoji for bloat messages (no rating, just acknowledge).
+BLOAT_EMOJI = "😐"
+
+# The prefix grammar. Matches at the start of the LLM response.
+# We keep the parser simple: only TYPE and optional RATE are
+# captured; everything after is "rest" (the answer or reason).
+# For bloat, the LLM is expected to put a single emoji in rest
+# and we extract it; for info/statement rest is an optional reason.
+_RATING_PREFIX_RE = _rating_re.compile(
+    r"^\s*\[\[TYPE:(?P<type>question|request|confirmation|info|statement|bloat)\]\]"
+    r"(?:\s*\[\[RATE:(?P<rate>[1-9]|10)\]\])?"
+    r"(?:\s*(?P<rest>.*))?$",
+    _rating_re.DOTALL,
+)
+
+# Single-emoji-char regex for extracting the emoji from a bloat
+# rest like "🤔" or "🤔 some text". Used only when TYPE is bloat.
+_EMOJI_CHAR_RE = _rating_re.compile(
+    r"^(\S{1,4})\b"
+)
+
+
+def _parse_rating_response(text: str) -> dict:
+    """Parse the LLM response for a RATING_MODE prefix.
+
+    Returns a dict with:
+      - 'type': one of question/request/confirmation/info/statement/bloat
+      - 'rating': int 1-10 if type is info/statement, else None
+      - 'emoji': one emoji char (for bloat) or the rating-mapped
+        emoji (for info/statement), or None
+      - 'rest': trailing text after the prefix (for question/
+        request/confirmation this is the answer; for info/statement
+        the optional reason; for bloat empty)
+
+    If the response does not match the prefix grammar, returns
+    `{'type': 'question', 'rating': None, 'emoji': None,
+    'rest': text}` — i.e. assumes the LLM wanted to answer
+    normally. This is the safe default in case the LLM
+    misformats.
+    """
+    m = _RATING_PREFIX_RE.match(text)
+    if m is None:
+        return {"type": "question", "rating": None, "emoji": None, "rest": text.strip()}
+    type_ = m.group("type")
+    rating_raw = m.group("rate")
+    rating = int(rating_raw) if rating_raw else None
+    rest = (m.group("rest") or "").strip()
+    if type_ == "bloat":
+        # bloat: the LLM may put one emoji in rest (e.g. "🤔")
+        # followed by an optional reaction. Extract the first
+        # non-whitespace token if it looks like a single emoji.
+        m2 = _EMOJI_CHAR_RE.match(rest) if rest else None
+        emoji = m2.group(1) if m2 else BLOAT_EMOJI
+        return {
+            "type": "bloat",
+            "rating": None,
+            "emoji": emoji,
+            "rest": "",
+        }
+    if type_ in ("info", "statement") and rating is not None:
+        return {
+            "type": type_,
+            "rating": rating,
+            "emoji": RATING_EMOJI.get(rating, BLOAT_EMOJI),
+            "rest": rest,
+        }
+    # question / request / confirmation, OR info/statement
+    # without a rating (LLM forgot [[RATE:N]]): treat as text
+    # answer with the full rest.
+    return {"type": type_, "rating": None, "emoji": None, "rest": rest}
+
+
+async def _apply_reaction(context, chat_id: int, message_id: int, emoji: str) -> None:
+    """Set a single-emoji reaction on a Telegram message. Best-effort:
+    if the API rejects (e.g. emoji not in the allowed set, or bot
+    lacks permission), the error is logged but does not propagate."""
+    try:
+        from telegram import ReactionTypeEmoji
+        await context.bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+        )
+    except Exception as e:
+        print(f"[rating] set_message_reaction failed: {type(e).__name__}: {e}", flush=True)
+
+
 def _general_thread_id() -> str:
     """Sentinel thread id for the General topic of a forum-enabled
     supergroup. The General topic is real (it has messages, history,
@@ -1920,8 +2038,51 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
-        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
-        await send_reply(update, bot_response)
+        # === RATING_MODE dispatch ===
+        # In a group with RATING_MODE=1, the LLM prefixes its
+        # response with [[TYPE:...]] [[RATE:N]]. We parse the
+        # type and take one of three actions:
+        #   question / request / confirmation → text reply
+        #   info / statement with rating        → emoji reaction, persist rating
+        #   bloat                               → emoji reaction, no text
+        # Private mode and [llm]-marked messages always get a
+        # plain text reply (rating path is group-only).
+        rating_active = (
+            RATING_MODE
+            and _is_group_chat(update)
+            and not _should_mute_in_group(update)
+        )
+        if rating_active:
+            parsed = _parse_rating_response(bot_response)
+            if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
+                await _apply_reaction(
+                    context, update.effective_chat.id,
+                    update.message.message_id, parsed['emoji'],
+                )
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', '',
+                    rating=parsed['rating'],
+                )
+                bot_response = ''  # signal: no text reply
+            elif parsed['type'] == 'bloat':
+                await _apply_reaction(
+                    context, update.effective_chat.id,
+                    update.message.message_id, parsed['emoji'],
+                )
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', '',
+                )
+                bot_response = ''
+            else:
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', bot_response
+                )
+        else:
+            await _persist_message(
+                chat_id, thread_id, 'assistant', bot_response
+            )
+        if bot_response:
+            await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR photo] {type(e).__name__}: {e}", flush=True)
         import traceback
@@ -2009,12 +2170,51 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…')
         bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking)
-        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
-        if len(bot_response) > 4000:
-            for i in range(0, len(bot_response), 4000):
-                await _reply(update, bot_response[i:i+4000])
+        # === RATING_MODE dispatch === (see handle_photo for full comment)
+        rating_active = (
+            RATING_MODE
+            and _is_group_chat(update)
+            and not _should_mute_in_group(update)
+        )
+        if rating_active:
+            parsed = _parse_rating_response(bot_response)
+            if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
+                await _apply_reaction(
+                    context, update.effective_chat.id,
+                    update.message.message_id, parsed['emoji'],
+                )
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', '',
+                    rating=parsed['rating'],
+                )
+                bot_response = ''
+            elif parsed['type'] == 'bloat':
+                await _apply_reaction(
+                    context, update.effective_chat.id,
+                    update.message.message_id, parsed['emoji'],
+                )
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', '',
+                )
+                bot_response = ''
+            else:
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', bot_response
+                )
         else:
-            await send_reply(update, bot_response)
+            await _persist_message(
+                chat_id, thread_id, 'assistant', bot_response
+            )
+        if bot_response:
+            # In rating mode the response is short (no chunking needed).
+            # The original 4000-char chunking applied to voice transcripts
+            # which are unlikely to exceed 4k after going through the LLM
+            # in this mode.
+            if len(bot_response) > 4000:
+                for i in range(0, len(bot_response), 4000):
+                    await _reply(update, bot_response[i:i+4000])
+            else:
+                await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR voice] {type(e).__name__}: {e}", flush=True)
         await _reply(update, f'❌ Error: {e}')
@@ -2067,8 +2267,51 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…')
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking)
-        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
-        await send_reply(update, bot_response)
+        # === RATING_MODE dispatch ===
+        # In a group with RATING_MODE=1, the LLM prefixes its
+        # response with [[TYPE:...]] [[RATE:N]]. We parse the
+        # type and take one of three actions:
+        #   question / request / confirmation → text reply
+        #   info / statement with rating        → emoji reaction, persist rating
+        #   bloat                               → emoji reaction, no text
+        # Private mode and [llm]-marked messages always get a
+        # plain text reply (rating path is group-only).
+        rating_active = (
+            RATING_MODE
+            and _is_group_chat(update)
+            and not _should_mute_in_group(update)
+        )
+        if rating_active:
+            parsed = _parse_rating_response(bot_response)
+            if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
+                await _apply_reaction(
+                    context, update.effective_chat.id,
+                    update.message.message_id, parsed['emoji'],
+                )
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', '',
+                    rating=parsed['rating'],
+                )
+                bot_response = ''  # signal: no text reply
+            elif parsed['type'] == 'bloat':
+                await _apply_reaction(
+                    context, update.effective_chat.id,
+                    update.message.message_id, parsed['emoji'],
+                )
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', '',
+                )
+                bot_response = ''
+            else:
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', bot_response
+                )
+        else:
+            await _persist_message(
+                chat_id, thread_id, 'assistant', bot_response
+            )
+        if bot_response:
+            await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR doc] {type(e).__name__}: {e}", flush=True)
     finally:
@@ -2104,12 +2347,47 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking = await _reply(update, '💭 думаю…')
     try:
         bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking)
-        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
-        if len(bot_response) > 4000:
-            for i in range(0, len(bot_response), 4000):
-                await _reply(update, bot_response[i:i+4000])
+        # === RATING_MODE dispatch === (see handle_photo for full comment)
+        rating_active = (
+            RATING_MODE
+            and _is_group_chat(update)
+            and not _should_mute_in_group(update)
+        )
+        if rating_active:
+            parsed = _parse_rating_response(bot_response)
+            if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
+                await _apply_reaction(
+                    context, update.effective_chat.id,
+                    update.message.message_id, parsed['emoji'],
+                )
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', '',
+                    rating=parsed['rating'],
+                )
+                bot_response = ''
+            elif parsed['type'] == 'bloat':
+                await _apply_reaction(
+                    context, update.effective_chat.id,
+                    update.message.message_id, parsed['emoji'],
+                )
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', '',
+                )
+                bot_response = ''
+            else:
+                await _persist_message(
+                    chat_id, thread_id, 'assistant', bot_response
+                )
         else:
-            await send_reply(update, bot_response)
+            await _persist_message(
+                chat_id, thread_id, 'assistant', bot_response
+            )
+        if bot_response:
+            if len(bot_response) > 4000:
+                for i in range(0, len(bot_response), 4000):
+                    await _reply(update, bot_response[i:i+4000])
+            else:
+                await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR text] {type(e).__name__}: {e}", flush=True)
         await _reply(update, f'❌ Error: {e}')
@@ -2756,6 +3034,49 @@ async def _selftest():
         print(f"  [FAIL] lazy-trim test crashed: {type(e).__name__}: {e}", flush=True)
         all_ok = False
 
+    # === Storage: rating column (v3 schema) ===
+    # add_message with rating=N must persist N; get_messages
+    # must return it. Round-trip.
+    print('[selftest] running rating round-trip...', flush=True)
+    RATING_CHAT = -1003
+    RATING_THREAD = "rating-test"
+    try:
+        await asyncio.to_thread(_b.store.delete_thread, RATING_CHAT, RATING_THREAD)
+        await asyncio.to_thread(
+            _b.store.add_message, RATING_CHAT, RATING_THREAD,
+            "user", '{"role":"user","content":"x"}',
+        )
+        await asyncio.to_thread(
+            _b.store.add_message, RATING_CHAT, RATING_THREAD,
+            "assistant", '{"role":"assistant","content":""}',
+            rating=7,
+        )
+        await asyncio.to_thread(
+            _b.store.add_message, RATING_CHAT, RATING_THREAD,
+            "assistant", '{"role":"assistant","content":"hi"}',
+            rating=None,  # no rating for normal text response
+        )
+        msgs = await asyncio.to_thread(
+            _b.store.get_messages, RATING_CHAT, RATING_THREAD, 10
+        )
+        # ms2_msgs[0] is oldest, [1] is rated, [2] is unrated
+        if len(msgs) != 3:
+            print(f"  [FAIL] expected 3 rows, got {len(msgs)}", flush=True)
+            all_ok = False
+        elif msgs[1].get("rating") != 7:
+            print(f"  [FAIL] rated message has rating={msgs[1].get('rating')!r}, expected 7", flush=True)
+            all_ok = False
+        elif msgs[2].get("rating") is not None:
+            print(f"  [FAIL] unrated message has rating={msgs[2].get('rating')!r}, expected None", flush=True)
+            all_ok = False
+        else:
+            print(f"  [OK] rating 7 persisted on row 1, None on row 2", flush=True)
+        # Cleanup
+        await asyncio.to_thread(_b.store.delete_thread, RATING_CHAT, RATING_THREAD)
+    except Exception as e:
+        print(f"  [FAIL] lazy-trim test crashed: {type(e).__name__}: {e}", flush=True)
+        all_ok = False
+
     print(f"[selftest] group-mode tests: {'all pass' if all_ok else 'FAILED'}", flush=True)
 
     # === Group-mode noise filter: _should_mute_in_group ===
@@ -2852,6 +3173,58 @@ async def _selftest():
         print(f"  [FAIL] semaphore test crashed: {type(e).__name__}: {e}", flush=True)
         sem_ok = False
     all_ok &= sem_ok
+
+    # === Rating-mode parser ===
+    # Verifies that _parse_rating_response correctly extracts
+    # the type, rating, and rest text from LLM responses.
+    print('[selftest] running rating-parser test...', flush=True)
+    parse_cases = [
+        # (input, expected_type, expected_rating, expected_rest_substr)
+        # Default: no prefix → treated as question with full text as answer
+        ('plain answer',                  'question',                      None, 'plain answer'),
+        ('[[TYPE:question]] hello',       'question',                      None, 'hello'),
+        ('[[TYPE:request]] done, recipe', 'request',                       None, 'done, recipe'),
+        ('[[TYPE:confirmation]] yes',     'confirmation',                  None, 'yes'),
+        ('[[TYPE:info]] [[RATE:7]]',      'info',                          7, ''),
+        ('[[TYPE:info]] [[RATE:10]] good', 'info',                         10, 'good'),
+        ('[[TYPE:statement]] [[RATE:3]]', 'statement',                     3, ''),
+        ('[[TYPE:bloat]] 🤔',             'bloat',                          None, ''),
+        ('[[TYPE:bloat]]',                'bloat',                          None, ''),  # no emoji → default
+        # Invalid type → fall back to "question" with whole text
+        ('[[TYPE:unknown]]',              'question',                      None, '[[TYPE:unknown]]'),
+    ]
+    parse_ok = True
+    for text, exp_type, exp_rating, exp_rest in parse_cases:
+        got = _b._parse_rating_response(text)
+        if got['type'] != exp_type or got['rating'] != exp_rating:
+            print(f"  [FAIL] {text!r}: type={got['type']!r} rating={got['rating']!r} rest={got['rest']!r} "
+                  f"(expected type={exp_type!r}, rating={exp_rating!r})", flush=True)
+            parse_ok = False
+        elif exp_rest and exp_rest not in got['rest']:
+            print(f"  [FAIL] {text!r}: rest={got['rest']!r} doesn't contain {exp_rest!r}", flush=True)
+            parse_ok = False
+    if parse_ok:
+        print(f"  [OK] all {len(parse_cases)} parse cases passed", flush=True)
+    all_ok &= parse_ok
+
+    # === RATING_EMOJI map ===
+    # All 10 ratings must map to a non-empty string and be
+    # distinct. Sanity check.
+    print('[selftest] running rating-emoji map test...', flush=True)
+    emoji_ok = True
+    if len(_b.RATING_EMOJI) != 10:
+        print(f"  [FAIL] RATING_EMOJI has {len(_b.RATING_EMOJI)} entries, expected 10", flush=True)
+        emoji_ok = False
+    elif len(set(_b.RATING_EMOJI.values())) != 10:
+        print(f"  [FAIL] RATING_EMOJI has duplicate emoji", flush=True)
+        emoji_ok = False
+    elif any(not e for e in _b.RATING_EMOJI.values()):
+        print(f"  [FAIL] RATING_EMOJI has empty emoji", flush=True)
+        emoji_ok = False
+    else:
+        print(f"  [OK] 10 distinct ratings, all map to non-empty emoji", flush=True)
+    all_ok &= emoji_ok
+
     print('[selftest] done', flush=True)
     print('[selftest] done', flush=True)
 
