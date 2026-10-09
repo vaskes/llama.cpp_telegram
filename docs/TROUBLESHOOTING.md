@@ -122,3 +122,105 @@ free -h            # memory
 
 A llama-server with a large model and 8K context can eat all RAM. Watch
 `MEM%` in `docker stats`.
+
+---
+
+## Group mode (Telegram Topics) issues
+
+### `/newsub <name>` says "Created sub-talk" instead of "Created topic"
+
+This is a **stale toast from a prior bot version** (before commit
+`326ca48`). The current code branches on `chat.is_forum` and creates a
+real Telegram topic in group mode. The old "Created sub-talk" string
+came from the private-mode fallback that was incorrectly triggered
+when `message_thread_id is None` (which is the case for the General
+topic of every forum-enabled supergroup).
+
+To clean up the chat: long-press the old bot message → Delete.
+
+### `/newsub Болталка` rejected with "Name rules..."
+
+Old bot version (pre-`326ca48`). Names like Cyrillic / emoji are
+allowed by the current `^[^\s]{1,128}$` regex. Update the bot
+(`cd llama.cpp_telegram && git pull && sudo ./scripts/update.sh`).
+
+### `/delsub <name>` returns "❌ No topic named ..."
+
+The `known_topics` table only has topics **created via `/newsub`**.
+Topics created manually in the Telegram UI, or by another bot,
+are not in the table.
+
+Options:
+  - Use the Telegram UI to delete: open the topic → tap the topic
+    name in the header → "Delete topic".
+  - Re-create via `/newsub <same name>`. The new topic will be
+    tracked. Then delete the old one via UI.
+  - Try `/delsub <numeric_id>` if you happen to know the
+    `message_thread_id` (visible in the URL of a topic in
+    Telegram web).
+
+### Bot in group, but `/subs` shows nothing even after `/newsub X`
+
+Two possibilities:
+
+  - The container was restarted AFTER the topic was created
+    but BEFORE commit `0dce580`. Pre-`0dce580` had no
+    `known_topics` table; topics created then were not
+    persisted. Solution: delete the topic via UI, recreate
+    via `/newsub`.
+
+  - The `data/conversations.db` bind-mount on the host is
+    wrong (the bot's data dir is not actually bind-mounted
+    from the host). Verify:
+    ```bash
+    docker exec telegram-bot ls -la /app/data/
+    # → conversations.db, etc.
+    ```
+    If empty: check `docker-compose.yml` for the
+    `./data:/app/data` line under the bot service.
+
+### Bot crashes on every command with `AttributeError: 'NoneType'`
+
+Old bot version (pre-`cf96920`). Triggered when the user edited
+a command message (Telegram sends an `edited_message` update
+where `update.message is None`). The current code branches
+in the polling loop: edited commands are normalised into a
+fresh `message` and re-processed; edited text is dropped.
+
+### `is_forum=True` in the log but bot still uses private-mode strings
+
+`is_forum` is the **chat** attribute (set by Telegram when the
+group is a forum-enabled supergroup). It does NOT change per
+message. If you see `is_forum=True` but the bot says "Created
+sub-talk", the bot is running an old build. Pull, rebuild, restart:
+
+```bash
+cd /opt/llama.cpp_telegram
+git pull
+sudo ./scripts/update.sh
+```
+
+### Topic `delete_forum_topic` returns 400 "Topic not found"
+
+You tried to delete a topic that the bot never created (or that
+was already deleted). The `known_topics` table still has the row;
+clean it up by deleting the row directly:
+
+```bash
+docker exec telegram-bot sqlite3 /app/data/conversations.db \
+    "DELETE FROM known_topics WHERE message_thread_id = <id>"
+```
+
+### Topic `create_forum_topic` returns 400 "Topics must be first enabled"
+
+The group is not (yet) a forum-enabled supergroup. Settings:
+1. Convert group to supergroup if it's still a basic group
+   (Group Info → Edit → "Chat Type" → Public/Private)
+2. Settings → Topics → Enable
+3. Re-promote the bot to admin with "Manage Topics"
+
+### Bot cannot delete a message: "message can't be deleted"
+
+The bot can only delete messages that are < 48 hours old
+(Telegram's limit on `deleteMessage` for non-service messages).
+For older messages: delete via UI.
