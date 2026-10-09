@@ -13,15 +13,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Create an unprivileged user for the bot process. Combined with
 # `network_mode: host` in docker-compose.yml, a RCE in python-telegram-bot
 # or httpx would otherwise drop the attacker to root on the host.
+#
+# /app/data is the bind-mount point for the SQLite conversation store
+# (see docker-compose.yml). bot.py creates the file on first run
+# with default mode 0644 owned by `bot` via umask; the bind-mount
+# gives the operator a stable path on the host.
 RUN useradd --create-home --uid 1000 --shell /bin/false bot \
-    && mkdir -p /app/files \
+    && mkdir -p /app/files /app/data \
     && chown -R bot:bot /app
 
-# Then copy bot.py
-COPY bot.py .
+# Then copy bot.py and storage.py
+COPY bot.py storage.py ./
 
 # Drop privileges. Anything that needs to write here must be writable
-# by uid 1000, which is fine because we only write to /app/files.
+# by uid 1000, which is fine because we only write to /app/files
+# and /app/data.
 USER bot
 
 CMD ["python", "bot.py"]
