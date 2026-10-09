@@ -2,12 +2,14 @@ import os
 import json
 import time
 import base64
+import copy
 import signal
 import tempfile
 import urllib.parse
 import socket
 import asyncio
 import httpx
+from typing import Optional
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -78,10 +80,10 @@ ALLOWED_USER_IDS = {int(x) for x in ALLOWED_USER_IDS_RAW.split(',') if x.strip()
 ALLOWED_USERNAMES = {x.lstrip('@').lower() for x in ALLOWED_USERNAMES_RAW.split(',') if x.strip()}
 if not ALLOWED_USER_IDS and not ALLOWED_USERNAMES:
     LOCKDOWN = True
-    print('[SECURITY] ALLOWED_USER_IDS and ALLOWED_USERNAMES both empty -> LOCKDOWN (reject all).')
+    print('[SECURITY] ALLOWED_USER_IDS and ALLOWED_USERNAMES both empty -> LOCKDOWN (reject all).', flush=True)
 else:
     LOCKDOWN = False
-    print(f'[SECURITY] whitelist: {len(ALLOWED_USER_IDS)} ids, {len(ALLOWED_USERNAMES)} usernames')
+    print(f'[SECURITY] whitelist: {len(ALLOWED_USER_IDS)} ids, {len(ALLOWED_USERNAMES)} usernames', flush=True)
     # Username-based access is fragile: users can change their @username
     # at any time and silently lose access. Prefer IDs. Warn if usernames
     # are configured without any IDs to anchor on.
@@ -89,7 +91,7 @@ else:
         print('[SECURITY] WARNING: ALLOWED_USERNAMES is set but ALLOWED_USER_IDS is empty. '
               'Username-based access can break if a user changes their @username. '
               'Prefer numeric IDs (find yours via @userinfobot or by reading '
-              '"rejected id=..." in the logs).')
+              '"rejected id=..." in the logs).', flush=True)
 
 
 # === Size limits ===
@@ -97,6 +99,12 @@ else:
 # could OOM the bot process. We reject upfront, before downloading.
 MAX_PHOTO_BYTES = int(os.environ.get('MAX_PHOTO_BYTES', '10000000'))   # 10 MB
 MAX_DOC_BYTES = int(os.environ.get('MAX_DOC_BYTES', '5000000'))       # 5 MB
+MAX_VOICE_BYTES = int(os.environ.get('MAX_VOICE_BYTES', '20000000'))  # 20 MB
+# Video notes (round video messages) go through the same handler as voice
+# via filters.VOICE | filters.AUDIO, and can be hundreds of MB. We
+# stream-download voice/video bytes too, so a chunk counter is the real
+# guard. 20 MB is the same as Telegram's documented client-side cap for
+# voice, so in practice this only ever fires on video notes.
 
 
 def is_authorized(update: Update) -> bool:
@@ -125,7 +133,7 @@ async def reject_if_unauthorized(update: Update, context: ContextTypes.DEFAULT_T
             snippet = update.message.text[:80]
         elif update.message.caption:
             snippet = f'[cap] {update.message.caption[:60]}'
-    print(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}')
+    print(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}', flush=True)
     return True
 
 # Conversation context storage (in-memory, lost on restart)
@@ -157,7 +165,7 @@ _TOOLS_CACHE = None
 # polling loop does not have a way to pass per-update context into the
 # PTB handlers; threading it through handler signatures would touch
 # every dispatcher, which is out of scope for the current review wave.
-SHUTDOWN_EVENT: asyncio.Event = None  # type: ignore[assignment]
+SHUTDOWN_EVENT: Optional[asyncio.Event] = None
 
 
 async def fetch_tools_from_llama():
@@ -194,14 +202,14 @@ async def fetch_tools_from_llama():
                     }
                 })
             _TOOLS_CACHE = openai_tools
-            print(f"[tools] loaded {len(openai_tools)} enabled tools (from {len(all_tools)} total) on attempt {attempt}")
+            print(f"[tools] loaded {len(openai_tools)} enabled tools (from {len(all_tools)} total) on attempt {attempt}", flush=True)
             return openai_tools
         except Exception as e:
             last_err = e
-            print(f"[tools] attempt {attempt}/3 failed: {type(e).__name__}: {e}")
+            print(f"[tools] attempt {attempt}/3 failed: {type(e).__name__}: {e}", flush=True)
             if attempt < 3:
                 await asyncio.sleep(backoff)
-    print(f"[tools] giving up after 3 attempts, last error: {last_err}")
+    print(f"[tools] giving up after 3 attempts, last error: {last_err}", flush=True)
     return []
 
 
@@ -646,8 +654,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             # CRITICAL: build a deep-copy for the log so we don't mutate
             # req_body (the bug we just hit: this replaced real image_url
             # with a truncated fake and llama-server 400'd on it).
-            import copy as _copy
-            safe_body = _copy.deepcopy(req_body)
+            safe_body = copy.deepcopy(req_body)
             if "messages" in safe_body:
                 for m in safe_body["messages"]:
                     if isinstance(m.get("content"), list):
@@ -751,7 +758,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     if reasoning_buf:
                         await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
             except httpx.HTTPError as e:
-                print(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming")
+                print(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming", flush=True)
                 # Fall back to non-streaming request
                 try:
                     async with httpx.AsyncClient(timeout=600.0) as client2:
@@ -782,7 +789,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     reasoning_buf = msg.get("reasoning_content") or ""
                     content_buf = msg.get("content") or ""
                 except Exception as e2:
-                    print(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}")
+                    print(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}", flush=True)
                     return f'[both streaming and non-streaming failed: stream_err={e!r}, fallback_err={e2!r}]'
 
         # commit accumulated reasoning for next-iteration display
@@ -854,7 +861,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         iter_had_real_result = False
         saw_unavailable_tool = False
         current_calls = []
-        print(f"[loop] iter={iteration} tool_calls={len(tool_calls)} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)}")
+        print(f"[loop] iter={iteration} tool_calls={len(tool_calls)} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)}", flush=True)
         for tc in tool_calls:
             fn_name = tc.get('function', {}).get('name', '')
             raw_args = tc.get('function', {}).get('arguments', '{}')
@@ -864,7 +871,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 args = {}
             tc_id = tc.get('id', '')
             current_calls.append((fn_name, json.dumps(args, sort_keys=True) if isinstance(args, dict) else str(args)))
-            print(f"[tool] iter={iteration} call {fn_name}({args})")
+            print(f"[tool] iter={iteration} call {fn_name}({args})", flush=True)
             if fn_name in CUSTOM_TOOLS:
                 result = await CUSTOM_TOOLS[fn_name](args)
             elif fn_name in DONSETCH_TOOLS:
@@ -892,7 +899,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         # will keep asking forever otherwise (each iteration costs ~2 min of
         # reasoning and the bot will burn 30+ min before max_iter triggers).
         if saw_unavailable_tool:
-            print(f"[loop] iter={iteration} unhandled tool called; aborting")
+            print(f"[loop] iter={iteration} unhandled tool called; aborting", flush=True)
             return (
                 f'[bot: the model requested a tool ({tool_calls[0]["function"].get("name","?")}) '
                 f'that this bot mode does not support. The tool is not installed in this '
@@ -903,7 +910,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         # If the model is asking for the same tool+args as in the previous
         # iteration, it has looped — return whatever we have and stop.
         if current_calls == prev_calls:
-            print(f"[loop] iter={iteration} same tool calls as previous iter; aborting")
+            print(f"[loop] iter={iteration} same tool calls as previous iter; aborting", flush=True)
             return (
                 f'[bot: the model asked for the same tool call twice in a row '
                 f'({current_calls[0][0]}). It is stuck in a loop. '
@@ -916,7 +923,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         # tool calls (which defeats the identical-call detector above).
         elapsed = time.monotonic() - loop_start
         if elapsed > LOOP_BUDGET_SEC:
-            print(f"[loop] iter={iteration} time budget exceeded ({elapsed:.0f}s > {LOOP_BUDGET_SEC}s); aborting")
+            print(f"[loop] iter={iteration} time budget exceeded ({elapsed:.0f}s > {LOOP_BUDGET_SEC}s); aborting", flush=True)
             return (
                 f'[bot: time budget exceeded after {int(elapsed/60)} min and {iteration+1} iterations. '
                 f'The model is reasoning too slowly for this question. '
@@ -1064,8 +1071,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # that is still useful (index 0 = 90x90 thumbnail is too small,
         # we usually take the last = largest). But cap it: a 50-MP photo
         # at Q8_0 base64 inflates to >30 MB and OOMs the bot.
-        # Note: photo.file_size is not always populated by Telegram; if
-        # missing, we download and check the byte length.
+        # Note: photo.file_size is not always populated by Telegram. We
+        # cannot trust it as the only guard, so we also stream-download
+        # with a chunk counter that aborts if the cumulative size
+        # exceeds MAX_PHOTO_BYTES. This avoids the OOM that the post-
+        # download check (which only looks at len(bytearray)) could
+        # not prevent — by the time you have the bytearray, you
+        # already have the whole file in RAM.
         if photo.file_size and photo.file_size > MAX_PHOTO_BYTES:
             await update.message.reply_text(
                 f'❌ Photo too large ({photo.file_size/1e6:.1f} MB > '
@@ -1073,12 +1085,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         file = await context.bot.get_file(photo.file_id)
-        photo_bytes = await file.download_as_bytearray()
-        if len(photo_bytes) > MAX_PHOTO_BYTES:
-            await update.message.reply_text(
-                f'❌ Photo too large ({len(photo_bytes)/1e6:.1f} MB > '
-                f'{MAX_PHOTO_BYTES/1e6:.0f} MB).'
-            )
+        photo_bytes = bytearray()
+        try:
+            async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
+                photo_bytes.extend(chunk)
+                if len(photo_bytes) > MAX_PHOTO_BYTES:
+                    await update.message.reply_text(
+                        f'❌ Photo too large (>{MAX_PHOTO_BYTES/1e6:.0f} MB during download).'
+                    )
+                    return
+        except Exception as e:
+            await update.message.reply_text(f'❌ Failed to download photo: {e}')
             return
         # Telegram photos are often WebP (especially from Android), not JPEG.
         # Detect actual MIME from magic bytes — we were hardcoding image/jpeg
@@ -1145,8 +1162,30 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking = None
     try:
         voice = update.message.voice
+        # Pre-check; voice.file_size is usually populated. The real
+        # guard is the chunk counter below.
+        if voice.file_size and voice.file_size > MAX_VOICE_BYTES:
+            await update.message.reply_text(
+                f'❌ Voice too large ({voice.file_size/1e6:.1f} MB > '
+                f'{MAX_VOICE_BYTES/1e6:.0f} MB).'
+            )
+            return
         file = await context.bot.get_file(voice.file_id)
-        voice_bytes = await file.download_as_bytearray()
+        # Stream-download with chunk counter to bound RAM. Voice is
+        # typically <1 MB but video_note (round video) coming through
+        # filters.AUDIO can be hundreds of MB.
+        voice_bytes = bytearray()
+        try:
+            async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
+                voice_bytes.extend(chunk)
+                if len(voice_bytes) > MAX_VOICE_BYTES:
+                    await update.message.reply_text(
+                        f'❌ Voice too large (>{MAX_VOICE_BYTES/1e6:.0f} MB during download).'
+                    )
+                    return
+        except Exception as e:
+            await update.message.reply_text(f'❌ Failed to download voice: {e}')
+            return
         transcript = await transcribe_voice(voice_bytes)
         # No parse_mode — transcript is user-generated and may contain
         # '*', '_', '[', '`', which would break Markdown rendering.
@@ -1165,7 +1204,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await send_reply(update, bot_response)
     except Exception as e:
-        print(f"[ERR voice] {type(e).__name__}: {e}")
+        print(f"[ERR voice] {type(e).__name__}: {e}", flush=True)
         await update.message.reply_text(f'❌ Error: {e}')
     finally:
         if thinking is not None:
@@ -1191,12 +1230,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     file = await context.bot.get_file(doc.file_id)
-    doc_bytes = await file.download_as_bytearray()
-    if len(doc_bytes) > MAX_DOC_BYTES:
-        await update.message.reply_text(
-            f'❌ Document too large ({len(doc_bytes)/1e6:.1f} MB > '
-            f'{MAX_DOC_BYTES/1e6:.0f} MB).'
-        )
+    # Stream-download with a chunk counter; abort if the cumulative
+    # size exceeds MAX_DOC_BYTES. This is the real guard: doc.file_size
+    # is almost always set for documents (it's a Telegram Bot API
+    # requirement), but if it ever isn't, we still won't OOM.
+    doc_bytes = bytearray()
+    try:
+        async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
+            doc_bytes.extend(chunk)
+            if len(doc_bytes) > MAX_DOC_BYTES:
+                await update.message.reply_text(
+                    f'❌ Document too large (>{MAX_DOC_BYTES/1e6:.0f} MB during download).'
+                )
+                return
+    except Exception as e:
+        await update.message.reply_text(f'❌ Failed to download document: {e}')
         return
     tmp_path = None
     thinking = None
@@ -1219,7 +1267,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
     except Exception as e:
-        print(f"[ERR doc] {type(e).__name__}: {e}")
+        print(f"[ERR doc] {type(e).__name__}: {e}", flush=True)
         if user_id in conversations and conversations[user_id]:
             conversations[user_id].pop()
     finally:
@@ -1258,7 +1306,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await send_reply(update, bot_response)
     except Exception as e:
-        print(f"[ERR text] {type(e).__name__}: {e}")
+        print(f"[ERR text] {type(e).__name__}: {e}", flush=True)
         await update.message.reply_text(f'❌ Error: {e}')
         if conversations[user_id]:
             conversations[user_id].pop()
@@ -1330,64 +1378,73 @@ def main():
         # Use a single dedicated httpx client. max_keepalive_connections=0
         # means no keep-alive — every request opens a fresh connection.
         # This guarantees only one open connection at a time.
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=35.0, write=10.0, pool=10.0),
-            limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
-        ) as client:
-            while True:
-                if shutdown_event.is_set():
-                    print(f"[poll] shutdown_event set, exiting loop (after {n_polls} cycles, {n_updates} updates)", flush=True)
-                    return
+        # try/finally around the whole block ensures the PTB dispatcher
+        # gets shut down on every exit path: normal `break` (graceful
+        # shutdown), CancelledError (asyncio.run() cancel), or any
+        # unexpected exception. Without the finally, the httpx client
+        # held by app.bot leaks and prints "RuntimeWarning: unclosed
+        # client" on interpreter shutdown.
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=10.0, read=35.0, write=10.0, pool=10.0),
+                limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+            ) as client:
+                while True:
+                    if shutdown_event.is_set():
+                        print(f"[poll] shutdown_event set, exiting loop (after {n_polls} cycles, {n_updates} updates)", flush=True)
+                        break
+                    try:
+                        r = await client.get(
+                            f"{TELEGRAM_API}/getUpdates",
+                            params={
+                                "offset": offset,
+                                "timeout": 25,            # long-poll
+                                "allowed_updates": '["message","edited_message"]',
+                            },
+                        )
+                        data = r.json()
+                        if not data.get("ok"):
+                            raise RuntimeError(f"getUpdates not ok: {data}")
+                        updates_raw = data.get("result", [])
+                        n_polls += 1
+                        if updates_raw:
+                            n_updates += len(updates_raw)
+                            backoff = 1.0
+                            print(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})", flush=True)
+                            for upd_dict in updates_raw:
+                                # FULL dump so we can see exactly what Telegram sent.
+                                print(f"[poll] RAW update: {json.dumps(upd_dict, ensure_ascii=False)[:600]}", flush=True)
+                                offset = upd_dict["update_id"] + 1
+                                try:
+                                    # Dispatch via PTB's Application so handlers
+                                    # get a real Context with .bot, .user_data, etc.
+                                    # We construct an Application lazily here, only
+                                    # for this single Update, to avoid keeping
+                                    # any persistent state.
+                                    await _dispatch_update(upd_dict)
+                                except Exception as e:
+                                    print(f"[poll] dispatch error: {type(e).__name__}: {e!r}", flush=True)
+                                    import traceback
+                                    traceback.print_exc()
+                        elif n_polls <= 5 or n_polls % 20 == 0:
+                            print(f"[poll] cycle={n_polls} no updates", flush=True)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        print(f"[poll] error: {type(e).__name__}: {e!r} (backoff {backoff}s)", flush=True)
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2, 30.0)
+        finally:
+            # Cleanly close the PTB Application if it was ever built.
+            # Runs on every exit path: normal `break` (graceful
+            # shutdown), CancelledError, or any exception. Without
+            # this, the httpx client held by app.bot leaks and prints
+            # "RuntimeWarning: unclosed client" on interpreter shutdown.
+            if _dispatcher is not None:
                 try:
-                    r = await client.get(
-                        f"{TELEGRAM_API}/getUpdates",
-                        params={
-                            "offset": offset,
-                            "timeout": 25,            # long-poll
-                            "allowed_updates": '["message","edited_message"]',
-                        },
-                    )
-                    data = r.json()
-                    if not data.get("ok"):
-                        raise RuntimeError(f"getUpdates not ok: {data}")
-                    updates_raw = data.get("result", [])
-                    n_polls += 1
-                    if updates_raw:
-                        n_updates += len(updates_raw)
-                        backoff = 1.0
-                        print(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})", flush=True)
-                        for upd_dict in updates_raw:
-                            # FULL dump so we can see exactly what Telegram sent.
-                            print(f"[poll] RAW update: {json.dumps(upd_dict, ensure_ascii=False)[:600]}", flush=True)
-                            offset = upd_dict["update_id"] + 1
-                            try:
-                                # Dispatch via PTB's Application so handlers
-                                # get a real Context with .bot, .user_data, etc.
-                                # We construct an Application lazily here, only
-                                # for this single Update, to avoid keeping
-                                # any persistent state.
-                                await _dispatch_update(upd_dict)
-                            except Exception as e:
-                                print(f"[poll] dispatch error: {type(e).__name__}: {e!r}", flush=True)
-                                import traceback
-                                traceback.print_exc()
-                    elif n_polls <= 5 or n_polls % 20 == 0:
-                        print(f"[poll] cycle={n_polls} no updates", flush=True)
-                except asyncio.CancelledError:
-                    raise
+                    await _dispatcher.shutdown()
                 except Exception as e:
-                    print(f"[poll] error: {type(e).__name__}: {e!r} (backoff {backoff}s)", flush=True)
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, 30.0)
-
-        # Cleanly close the PTB Application if it was ever built. Without
-        # this, the underlying httpx client held by app.bot emits a
-        # "RuntimeWarning: unclosed client" on interpreter shutdown.
-        if _dispatcher is not None:
-            try:
-                await _dispatcher.shutdown()
-            except Exception as e:
-                print(f"[main] dispatcher shutdown error: {e!r}", flush=True)
+                    print(f"[main] dispatcher shutdown error: {e!r}", flush=True)
 
     try:
         asyncio.run(_run())
@@ -1433,6 +1490,17 @@ async def _dispatch_update(upd_dict):
 
 
 # === Self-test: inject a fake Update to verify handlers actually fire ===
+# Conversation key for the selftest. Deliberately NOT a real user_id:
+#   - avoids leaking test data into a whitelisted user's history
+#   - avoids matching any real Telegram account that might exist
+#   - bypasses reject_if_unauthorized() (the smoke test is about
+#     infrastructure, not authorization)
+SELFTEST_KEY = 'selftest:'
+# Fake Telegram user_id for the synthetic /start. id=0 is reserved by
+# Telegram and not a real account.
+SELFTEST_USER_ID = 0
+
+
 async def _selftest():
     """Skip in production — only used via env LLAMABOT_SELFTEST=1."""
     if os.environ.get('LLAMABOT_SELFTEST') != '1':
@@ -1444,12 +1512,18 @@ async def _selftest():
         "message": {
             "message_id": 1,
             "date": int(time.time()),
-            "chat": {"id": 286293081, "type": "private"},
-            "from": {"id": 286293081, "is_bot": False, "first_name": "VL"},
+            "chat": {"id": SELFTEST_USER_ID, "type": "private"},
+            "from": {"id": SELFTEST_USER_ID, "is_bot": False, "first_name": "selftest"},
             "text": "/start",
         },
     }
     await _dispatch_update(fake)
+    # Note: in LOCKDOWN (no ALLOWED_USER_IDS) or when SELFTEST_USER_ID
+    # is not whitelisted, reject_if_unauthorized() silently no-ops the
+    # /start. That is the expected behaviour for a non-LOCKDOWN
+    # deploy with the bot operator's id not in the whitelist; the
+    # /start smoke is informational only. The vision test below
+    # exercises the LLM path independently of the whitelist.
 
     # === Vision test: call call_llama directly with a real PNG ===
     # Bypasses handle_photo (which needs a real Telegram file_id) but
@@ -1463,7 +1537,8 @@ async def _selftest():
     photo_b64 = base64.b64encode(png_bytes).decode('ascii')
     data_url = f"data:image/png;base64,{photo_b64}"
     import bot as _b
-    # Inject the photo message directly into the conversation
+    # Inject the photo message directly into the SELFTEST conversation,
+    # NOT into a real user's history.
     vision_msg = {
         "role": "user",
         "content": [
@@ -1471,13 +1546,13 @@ async def _selftest():
             {"type": "image_url", "image_url": {"url": data_url}}
         ]
     }
-    _b.conversations.setdefault(286293081, []).append(vision_msg)
+    _b.conversations.setdefault(SELFTEST_KEY, []).append(vision_msg)
     # Diagnostic: dump what we're about to send
     import json as _j
     _b_bytes = _j.dumps(vision_msg, ensure_ascii=False).encode('utf-8')
     print(f"[selftest] vision_msg before call_llama: {len(_b_bytes)} bytes, head={_b_bytes[:200]!r}", flush=True)
     result = await _b.call_llama(
-        _b.conversations[286293081],
+        _b.conversations[SELFTEST_KEY],
         max_tokens=2048,
         user_text="проверь математику",
         thinking_msg=None,

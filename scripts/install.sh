@@ -8,6 +8,16 @@ WHISPER_DIR="${WHISPER_DIR:-/opt/whisper-api}"
 
 echo ">>> Installing to $BOT_DIR and $WHISPER_DIR"
 
+# If the operator has uncommitted local edits in the working copy,
+# the `cp -r` below will silently overwrite them. Warn and give a
+# short window to abort.
+if ! git diff --quiet HEAD 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    echo "  [WARN] Repo has uncommitted changes. install.sh will copy current"
+    echo "         files into $BOT_DIR and $WHISPER_DIR, potentially overwriting"
+    echo "         your edits. Press Ctrl+C within 5 seconds to abort."
+    sleep 5
+fi
+
 # 1) telegram-bot
 sudo mkdir -p "$BOT_DIR/files"
 sudo cp -r telegram-bot/* "$BOT_DIR/"
