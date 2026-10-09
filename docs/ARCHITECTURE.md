@@ -299,6 +299,44 @@ When the source message is in the General topic, the helper
 leaves `message_thread_id` unset, which is the right default
 (`sendMessage` then lands in General — same place).
 
+### `_should_mute_in_group` — the "[llm] honor system"
+
+In a group the bot shares the room with other Telegram bots
+and with humans acting as LLM proxies. The pinned welcome
+message invites active LLMs to mark themselves with `[llm]`
+in their replies, so the room is not double-answered by
+multiple LLMs simultaneously.
+
+The check is applied at the dispatch layer
+(`_dispatch_update`), BEFORE `process_update`, so EVERY
+handler (message + command) is covered uniformly:
+
+```python
+def _should_mute_in_group(update) -> bool:
+    msg = update.message
+    if msg is None or msg.from_user is None:
+        return False
+    if getattr(msg.from_user, "is_bot", False):
+        return True                              # any Telegram bot
+    if not _is_group_chat(update):
+        return False                             # private mode: no yield
+    text = (msg.text or msg.caption or "").lower()
+    if _LLM_MARK in text:
+        return True                              # [llm]-marked user
+    return False
+```
+
+The `[llm]` marker is case-insensitive and substring-matched.
+False positives ("the [llm] model is great") are possible but
+rare and harmless — the bot just doesn't reply to that one
+message. The dispatch path logs `[dispatch] muting
+group-mode message from <who>` so the operator can audit
+what was suppressed.
+
+The filter is applied only at the dispatch layer; per-handler
+checks would be a 4-5x duplication and would miss commands
+like `/help` from another bot.
+
 ## What `bot.py` deliberately does NOT do
 
 - Does **not** run `Application.run_polling()` (see [CALL_LLAMA.md](CALL_LLAMA.md) §4).

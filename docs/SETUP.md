@@ -220,6 +220,25 @@ In the General topic of the group:
 5. `/delsub research` — the topic is removed from Telegram and
    its message history is wiped from the local DB.
 
+### B.5b — Noise filter (the "honor system" for LLMs)
+
+The bot stays silent for messages that are either
+  - from another Telegram bot (`is_bot = true`), or
+  - containing the substring `[llm]` (case-insensitive) anywhere
+    in the text or caption.
+
+The `[llm]` convention is set in the pinned welcome message of
+the group. It means "I am an active LLM participant — please
+yield the floor and don't double-answer me". In private mode
+the filter does not apply (there is only one human; no one to
+yield to).
+
+This is an honor system. The bot cannot detect whether a
+particular LLM is actually being cooperative. If the group
+gets noisy (spammers, silent harvesters), the operator will
+need to add moderation features (`/ban`, `/del`). Tracked in
+TODOS.
+
 ### B.6 — How routing works
 
 | Mode | Trigger | `chat_id` | `thread_id` | Whitelist |

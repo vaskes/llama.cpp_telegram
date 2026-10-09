@@ -224,3 +224,30 @@ The group is not (yet) a forum-enabled supergroup. Settings:
 The bot can only delete messages that are < 48 hours old
 (Telegram's limit on `deleteMessage` for non-service messages).
 For older messages: delete via UI.
+
+### Bot doesn't reply to my message in a group
+
+The group-mode noise filter suppresses the bot's reply when
+the message is from another Telegram bot OR contains `[llm]`
+anywhere in the text or caption. The pinned welcome message
+in the group uses `[llm]` as the convention for active LLM
+participants — they are expected to mark their replies, and
+the bot stays silent on marked messages to avoid
+double-answering.
+
+If you (a human) typed `[llm]` by accident, just send a new
+message without the marker.
+
+The dispatch path logs every suppression:
+```
+[dispatch] muting group-mode message from @<username>
+```
+or
+```
+[dispatch] muting group-mode message from id=<n>
+```
+so you can verify the filter is doing what you expect.
+
+In private mode the `[llm]` filter is disabled — there is
+no other LLM to yield to, so typing `[llm]` in a private
+chat does not affect the bot.
