@@ -2051,6 +2051,22 @@ def main():
                                 # FULL dump so we can see exactly what Telegram sent.
                                 print(f"[poll] RAW update: {json.dumps(upd_dict, ensure_ascii=False)[:600]}", flush=True)
                                 offset = upd_dict["update_id"] + 1
+                                # Skip edited_message updates. The bot only
+                                # processes the original send; re-running a
+                                # command because the user edited its text
+                                # would be surprising and (more importantly)
+                                # the handler signatures assume update.message
+                                # is set, which is False for edited_message
+                                # updates (the text lives in
+                                # update.edited_message.text). Silently drop
+                                # them — Telegram does not re-deliver the
+                                # original message to bots.
+                                if "edited_message" in upd_dict and "message" not in upd_dict:
+                                    print(f"[poll] skipping edited_message update_id={upd_dict['update_id']}", flush=True)
+                                    continue
+                                # Also: edited channel_post, callback_query from
+                                # non-message interactions, etc. We keep the
+                                # rest of the allowed_updates list for now.
                                 try:
                                     # Dispatch via PTB's Application so handlers
                                     # get a real Context with .bot, .user_data, etc.
