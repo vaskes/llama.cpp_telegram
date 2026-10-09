@@ -147,15 +147,16 @@ _TOOL_KEYWORDS = (
     # RU
     'погод', 'температур', 'осадк', 'дожд', 'снег', 'ветер',
     'новост', 'что слышно', 'что нового', 'что в мире', 'свеж',
-    'найди', 'поищи', 'погугли', 'загугли', 'поиск',
-    'прочитай', 'открой сайт', 'перейди на', 'скачай страниц',
+    'найди в интернет', 'найди в сети', 'поищи в интернет', 'поищи в сети',
+    'погугли', 'загугли', 'поиск в гугл', 'web search',
+    'открой сайт', 'перейди на сайт', 'скачай страниц',
     'скриншот', 'сделай скрин', 'сфоткай сайт',
-    'проверь ссылк', 'fetch', 'crawl',
+    'fetch the page', 'crawl the site',
     # EN
-    'weather', 'temperature', 'rain', 'snow', 'wind',
-    'news', 'latest', 'breaking',
-    'search', 'google', 'look up', 'find me',
-    'read this', 'open this url', 'fetch the page', 'crawl the site',
+    'weather forecast', 'current weather', 'temperature in',
+    'news about', 'latest news', 'breaking news',
+    'search the web', 'google this', 'web search',
+    'open this url', 'read this url', 'fetch the page', 'crawl the site',
     'screenshot', 'capture the page',
 )
 
