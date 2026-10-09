@@ -25,12 +25,46 @@ def _ipv4_only_getaddrinfo(host, *args, **kwargs):
     return results
 socket.getaddrinfo = _ipv4_only_getaddrinfo
 
-# Конфигурация
+# Конфигурация.
+#   BOT_TOKEN   — required, no default (без токена бот не работает).
+#   LLAMA_URL   — default http://localhost:8080/v1 (стандартный порт llama-server).
+#   WHISPER_URL — default http://localhost:8000 (стандартный порт whisper-api).
+#   API_KEY     — default sk-no-key (open-source конвенция, не токен;
+#                 llama-server без --api-key принимает любой непустой bearer).
+#   MODEL       — если пусто, бот спросит /v1/models у llama-server при старте
+#                 и возьмёт первое доступное имя. Никаких захардкоженных
+#                 имён конкретных моделей в коде.
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-LLAMA_URL = os.environ.get('LLAMA_URL', 'http://192.168.10.7:8080/v1')
-WHISPER_URL = os.environ.get('WHISPER_URL', 'http://192.168.10.7:8000')
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN env var is required but not set")
+LLAMA_URL = os.environ.get('LLAMA_URL', 'http://localhost:8080/v1')
+WHISPER_URL = os.environ.get('WHISPER_URL', 'http://localhost:8000')
 API_KEY = os.environ.get('API_KEY', 'sk-no-key')
-MODEL = os.environ.get('MODEL', 'Qwen3.6-35B-A3B-Heretic')
+MODEL = os.environ.get('MODEL', '').strip()
+
+# Если MODEL не задан — спросим у llama-server, что реально загружено.
+# Это автоматически подстраивается под любую конфигурацию и не
+# привязывает репо к конкретной модели.
+def _discover_default_model(base_url: str, api_key: str) -> str:
+    """Hit /v1/models, return the first model id. Used only if MODEL is unset."""
+    import urllib.request
+    import json as _json
+    base = base_url.rstrip('/').removesuffix('/v1')
+    req = urllib.request.Request(
+        f"{base}/v1/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = _json.loads(resp.read())
+    models = data.get("data") or data.get("models") or []
+    if not models:
+        raise RuntimeError(f"llama-server at {base}/v1/models returned no models")
+    first = models[0]
+    return first.get("id") or first.get("name") or ""
+
+if not MODEL:
+    MODEL = _discover_default_model(LLAMA_URL, API_KEY)
+    print(f"[config] MODEL not set, auto-discovered from llama-server: {MODEL}", flush=True)
 
 
 
