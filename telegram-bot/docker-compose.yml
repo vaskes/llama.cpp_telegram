@@ -13,4 +13,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     volumes:
+      # Bot working dir for any files the handlers write.
       - ./files:/app/files
+      # Persistent SQLite conversation store. The bind-mount lives on
+      # the host at ./data/ relative to docker-compose.yml, so the DB
+      # survives `docker compose down` and `docker system prune -a`.
+      # bot.py is told where the DB lives via CONVERSATIONS_DB env.
+      - ./data:/app/data

@@ -7,6 +7,12 @@
 files/*
 !files/.gitkeep
 
+# Persistent SQLite conversation store. Lives at ./data/ on the
+# host (via docker-compose bind-mount) and must NEVER be committed —
+# it contains the actual conversation history of every whitelisted user.
+data/*
+!data/.gitkeep
+
 # Whisper downloaded model weights
 whisper-api/cache/
 
