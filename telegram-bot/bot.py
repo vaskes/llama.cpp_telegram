@@ -11,7 +11,7 @@ import asyncio
 import httpx
 from typing import Optional
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # === Force IPv4: docker container has no IPv6 routing, but Telegram DNS returns AAAA first ===
 _orig_getaddrinfo = socket.getaddrinfo
@@ -1065,6 +1065,46 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the full command reference. Same content as the bot menu
+    but with examples and the sub-talk workflow explained in prose."""
+    if await reject_if_unauthorized(update, context):
+        return
+    # Build a ReplyKeyboardMarkup with the most common actions as
+    # one-tap buttons. This is a *custom keyboard* (replaces the
+    # input area) — it stays in the chat until the user dismisses
+    # it. Useful for first-time users; they tap to discover.
+    from telegram import KeyboardButton, ReplyKeyboardMarkup
+    rows = [
+        [KeyboardButton("/here"), KeyboardButton("/subs")],
+        [KeyboardButton("/newsub research"), KeyboardButton("/sub research")],
+        [KeyboardButton("/reset"), KeyboardButton("/stats")],
+    ]
+    await update.message.reply_text(
+        '🤖 **LlamaBot — help**\n\n'
+        '**Sub-talks** — named conversation threads. The bot keeps a '
+        'separate history for each one and only the active thread is in '
+        'the model\'s context window.\n\n'
+        '**Workflow:**\n'
+        '1. /newsub <name>  → create a new sub-talk and switch to it\n'
+        '2. Send messages — they go into the active sub-talk\n'
+        '3. /sub <name>     → switch to a different sub-talk\n'
+        '4. /here           → see what\'s in the current sub-talk\n'
+        '5. /subs           → list all sub-talks (with tap-to-switch buttons)\n'
+        '6. /delsub <name>  → remove a sub-talk and its history\n\n'
+        '**Other commands:**\n'
+        '• /start  — welcome + feature list\n'
+        '• /reset  — clear messages in the current sub-talk (keeps the thread)\n'
+        '• /stats  — model + tool count + sub-talk list\n'
+        '• /help   — this message\n\n'
+        'Send any photo / voice / document and it lands in the active '
+        'sub-talk. Use /sub to switch.',
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=rows, resize_keyboard=True, one_time_keyboard=False,
+        ),
+    )
+
+
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
@@ -1214,27 +1254,27 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'the default "main" sub-talk, or /newsub <name> to create one.'
         )
         return
-    lines = []
+    # Build inline-keyboard rows. One button per sub-talk — tap to
+    # switch. Active sub-talk gets a checkmark prefix. Buttons send
+    # the /sub <name> command as a callback so the user does not
+    # need to type it.
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    buttons = []
     for s in subs:
-        marker = "→ " if s["name"] == active else "  "
-        # Relative time
-        import time as _t
-        age = int(_t.time() - s["last_used"])
-        if age < 60:
-            ago = f'{age}s ago'
-        elif age < 3600:
-            ago = f'{age//60}m ago'
-        elif age < 86400:
-            ago = f'{age//3600}h ago'
-        else:
-            ago = f'{age//86400}d ago'
-        lines.append(
-            f'{marker}"{s["name"]}" — {s["msg_count"]} msgs, last used {ago}'
+        label = f'{"✅ " if s["name"] == active else "↔️ "}{s["name"]}'
+        # callback_data must be <=64 bytes; sub_talk names already
+        # match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/ so this is safe.
+        buttons.append(
+            [InlineKeyboardButton(label, callback_data=f"sub:{s['name']}")]
         )
+    # New thread / cancel row
+    buttons.append([
+        InlineKeyboardButton("➕ New sub-talk", callback_data="newsub:prompt"),
+    ])
     await update.message.reply_text(
-        f'📚 Your sub-talks (active marked with →):\n\n' + "\n".join(lines) +
-        f'\n\nUse /sub <name> to switch, /newsub <name> to create, '
-        f'/delsub <name> to remove.'
+        f'📚 **Your sub-talks** (active marked ✅)\n\n'
+        f'Tap a button to switch. Use /delsub <name> to remove one.',
+        reply_markup=InlineKeyboardMarkup(buttons),
     )
 
 
@@ -1604,6 +1644,17 @@ def main():
         # can read it and bail between iterations.
         global SHUTDOWN_EVENT
         SHUTDOWN_EVENT = shutdown_event
+
+        # Register the bot's command menu with Telegram. Without this,
+        # the chat input / menu shows whatever was last setMyCommands'd
+        # for this bot — usually nothing useful. setMyCommands is the
+        # native way to make commands discoverable in the GUI: they
+        # appear in the "Menu" button on the chat input bar with their
+        # descriptions, and typing / shows the list.
+        try:
+            await _register_bot_menu()
+        except Exception as e:
+            print(f"[main] setMyCommands failed (non-fatal): {e!r}", flush=True)
         # NB: we intentionally do NOT call getUpdates with offset=-1 to
         # drop pending updates. Reasoning:
         #   - in LOCKDOWN, the handler rejects everything anyway, so
@@ -1706,6 +1757,112 @@ def main():
 _dispatcher = None
 
 
+# Telegram bot menu — registered via setMyCommands on startup. This
+# is the native way to make commands discoverable in the Telegram
+# client: they show up in the "Menu" button next to the chat input,
+# and typing "/" suggests them with descriptions.
+#
+# Telegram Bot API limit: 100 commands per bot. We have 9. The list
+# below is also exported as the user-facing help text via /help.
+BOT_COMMANDS = [
+    ("start",   "🏁 Начать работу, показать возможности"),
+    ("help",    "❓ Помощь по командам"),
+    ("here",    "📍 Показать текущий sub-talk"),
+    ("subs",    "📚 Список всех sub-talks (с кнопками)"),
+    ("newsub",  "➕ Создать новый sub-talk: /newsub <имя>"),
+    ("sub",     "↔️ Переключиться на sub-talk: /sub <имя>"),
+    ("delsub",  "🗑 Удалить sub-talk: /delsub <имя>"),
+    ("reset",   "🔄 Очистить сообщения в текущем sub-talk"),
+    ("stats",   "📊 Статистика и список sub-talks"),
+]
+
+
+async def _register_bot_menu():
+    """Register the bot's command menu with Telegram via setMyCommands.
+
+    Called once at startup. Failures are non-fatal — if the network
+    is briefly down at boot, the user can still type /command
+    manually; the menu just won't show until next restart. Once
+    set, the menu persists in Telegram's cache across restarts
+    (re-registering is idempotent and cheap).
+    """
+    from telegram import BotCommand
+    global _dispatcher
+    if _dispatcher is None:
+        # Build the dispatcher eagerly so we can call setMyCommands.
+        # Same construction as _dispatch_update; both call sites
+        # end up at the same Application instance.
+        app = Application.builder().token(BOT_TOKEN).build()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("help", cmd_help))
+        app.add_handler(CommandHandler("reset", reset))
+        app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(CommandHandler("newsub", cmd_newsub))
+        app.add_handler(CommandHandler("sub", cmd_sub))
+        app.add_handler(CommandHandler("subs", cmd_subs))
+        app.add_handler(CommandHandler("delsub", cmd_delsub))
+        app.add_handler(CommandHandler("here", cmd_here))
+        app.add_handler(CommandHandler("help", cmd_help))
+        app.add_handler(CallbackQueryHandler(cmd_callback))
+        app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+        app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+        app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        _dispatcher = app
+        # PTB 21 requires Application.initialize() before process_update.
+        # We do not run app.start() — the hand-rolled polling loop drives
+        # everything — but initialize() sets up the application context.
+        await _dispatcher.initialize()
+    await _dispatcher.bot.set_my_commands(
+        [BotCommand(c, d) for c, d in BOT_COMMANDS],
+        scope=None,  # default scope covers all private chats
+        language_code=None,
+    )
+    print(f"[main] setMyCommands: registered {len(BOT_COMMANDS)} commands", flush=True)
+
+
+async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline-keyboard button presses from /subs and /here.
+
+    callback_data format:
+      sub:<name>     — switch to sub-talk <name>
+      newsub:prompt  — show a one-time reply keyboard asking for the new name
+      delsub:<name>  — confirm-then-delete (we delete immediately; no confirm step)
+    """
+    if await reject_if_unauthorized(update, context):
+        await update.callback_query.answer()
+        return
+    user_id = update.effective_user.id
+    data = update.callback_query.data or ""
+    await update.callback_query.answer()  # dismiss the "loading" tick
+    if data.startswith("sub:"):
+        name = data[4:]
+        existing = await asyncio.to_thread(store.get_sub_talk, user_id, name)
+        if existing is None:
+            await asyncio.to_thread(store.create_sub_talk, user_id, name)
+        await asyncio.to_thread(store.set_active_sub_talk, user_id, name)
+        await update.callback_query.edit_message_text(
+            f'✅ Switched to sub-talk "{name}".'
+        )
+    elif data == "newsub:prompt":
+        from telegram import ForceReply
+        await update.effective_message.reply_text(
+            'Send the new sub-talk name (letters, digits, _-. only, '
+            'max 32 chars).',
+            reply_markup=ForceReply(selective=True),
+        )
+    elif data.startswith("delsub:"):
+        name = data[7:]
+        n = await asyncio.to_thread(store.delete_sub_talk, user_id, name)
+        await update.callback_query.edit_message_text(
+            f'🗑 Deleted "{name}" and {n} message(s).'
+        )
+    else:
+        await update.callback_query.edit_message_text(
+            f'(unknown action: {data!r})'
+        )
+
+
 async def _dispatch_update(upd_dict):
     global _dispatcher
     if _dispatcher is None:
@@ -1718,6 +1875,8 @@ async def _dispatch_update(upd_dict):
         app.add_handler(CommandHandler("subs", cmd_subs))
         app.add_handler(CommandHandler("delsub", cmd_delsub))
         app.add_handler(CommandHandler("here", cmd_here))
+        app.add_handler(CommandHandler("help", cmd_help))
+        app.add_handler(CallbackQueryHandler(cmd_callback))
         app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
         app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
@@ -1731,6 +1890,10 @@ async def _dispatch_update(upd_dict):
         await app.initialize()
         _dispatcher = app
         print("[dispatch] Application initialized (lazy)", flush=True)
+        # PTB 21 requires Application.initialize() before process_update.
+        # We do not call app.start() — the hand-rolled polling loop drives
+        # dispatch. initialize() sets up the application context.
+        await _dispatcher.initialize()
 
     upd = Update.de_json(upd_dict, _dispatcher.bot)
     if upd is None:
