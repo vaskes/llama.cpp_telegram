@@ -1006,7 +1006,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # description if asked again.
         thinking = await update.message.reply_text('💭 думаю…')
         print(f"[handle_photo] calling call_llama, conv_len={len(conversations[user_id])}", flush=True)
-        bot_response = await call_llama(conversations[user_id], max_tokens=2048, user_text=caption, thinking_msg=thinking, use_stream=False)
+        bot_response = await call_llama(conversations[user_id], max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
@@ -1046,7 +1046,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(conversations[user_id]) > 20:
             conversations[user_id] = conversations[user_id][-20:]
         thinking = await update.message.reply_text('💭 думаю…')
-        bot_response = await call_llama(conversations[user_id], max_tokens=4096, user_text=transcript, thinking_msg=thinking)
+        bot_response = await call_llama(conversations[user_id], max_tokens=16384, user_text=transcript, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
@@ -1089,7 +1089,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(conversations[user_id]) > 20:
             conversations[user_id] = conversations[user_id][-20:]
         thinking = await update.message.reply_text('💭 думаю…')
-        bot_response = await call_llama(conversations[user_id], max_tokens=4096, thinking_msg=thinking)
+        bot_response = await call_llama(conversations[user_id], max_tokens=16384, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
     except Exception as e:
