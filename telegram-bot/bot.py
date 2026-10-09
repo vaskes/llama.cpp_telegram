@@ -1552,12 +1552,10 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #     thread_id = str(update.message.message_thread_id)  -- the Telegram topic
 #     whitelist = NONE (any group member can use the bot)
 #
-# Both modes are auto-detected from the incoming Update: if
-# message_thread_id is not None, it's a group; otherwise it's a
-# private chat. The dispatching helper below applies the right
-# rules for each.
-
-_group_mode: bool = False  # module-level flag, set on first group message
+# Both modes are auto-detected from the incoming Update via
+# _is_group_chat() (checks chat.is_forum and chat.type). The
+# actual mode for a given message is decided at dispatch time,
+# not stored as module state.
 
 
 
@@ -1657,7 +1655,6 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
       - chat_id = effective_chat.id (the group id, negative).
       - thread_id = str(message_thread_id) -- the Telegram topic id.
     """
-    global _group_mode
     msg = update.message
     if _is_group_chat(update):
         # Group mode. Telegram is the source of truth for thread
@@ -1665,7 +1662,6 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
         # For messages in the General topic, message_thread_id is None
         # by Bot API design — use the "general" sentinel so the DB key
         # is stable and conversation history persists.
-        _group_mode = True
         if msg.message_thread_id is not None:
             thread_id = str(msg.message_thread_id)
         else:
@@ -2560,6 +2556,50 @@ async def _selftest():
             print(f"  [OK] remove_known_topic worked", flush=True)
     except Exception as e:
         print(f"  [FAIL] known_topics round-trip crashed: {type(e).__name__}: {e}", flush=True)
+        all_ok = False
+
+    # === Storage: lazy trim in get_messages ===
+    # Verifies that the row count per (chat_id, thread_id) is
+    # bounded — adding > TRIM_HIGH messages and then reading
+    # should leave the table at TRIM_LOW, not unbounded.
+    print('[selftest] running lazy-trim test...', flush=True)
+    # storage.py sits next to bot.py in the container (/app/storage.py
+    # per the Dockerfile `COPY bot.py storage.py ./`); module name
+    # "storage" would clash with stdlib's `storage` if we ever need
+    # to import it normally. Use spec_from_file_location to load it
+    # under a private name without touching sys.modules globally.
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        "_selftest_storage", "/app/storage.py"
+    )
+    _storage_mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_storage_mod)
+    TRIM_HIGH = _storage_mod.TRIM_HIGH
+    TRIM_LOW = _storage_mod.TRIM_LOW
+    LAZY_CHAT = -1002
+    LAZY_THREAD = "lazy-test"
+    try:
+        # Wipe any leftover rows
+        await asyncio.to_thread(_b.store.delete_thread, LAZY_CHAT, LAZY_THREAD)
+        # Insert TRIM_HIGH + 50 rows
+        for i in range(TRIM_HIGH + 50):
+            await asyncio.to_thread(
+                _b.store.add_message, LAZY_CHAT, LAZY_THREAD,
+                "user", f'{{"role":"user","content":"msg {i}"}}'
+            )
+        # Count before read
+        n_before = (
+            await asyncio.to_thread(_b.store.get_messages, LAZY_CHAT, LAZY_THREAD, 100000)
+        )
+        if len(n_before) != TRIM_LOW:
+            print(f"  [FAIL] after add: row count is {len(n_before)}, expected TRIM_LOW={TRIM_LOW}", flush=True)
+            all_ok = False
+        else:
+            print(f"  [OK] lazy trim kept {len(n_before)} rows (== TRIM_LOW)", flush=True)
+        # Cleanup
+        await asyncio.to_thread(_b.store.delete_thread, LAZY_CHAT, LAZY_THREAD)
+    except Exception as e:
+        print(f"  [FAIL] lazy-trim test crashed: {type(e).__name__}: {e}", flush=True)
         all_ok = False
 
     print(f"[selftest] group-mode tests: {'all pass' if all_ok else 'FAILED'}", flush=True)

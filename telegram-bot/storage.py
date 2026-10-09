@@ -124,6 +124,20 @@ CREATE INDEX IF NOT EXISTS idx_known_topics_name
 # the DB but are not sent to llama-server. Env-overridable; see bot.py.
 DEFAULT_CONTEXT_MESSAGES = 20
 
+# Lazy-trim thresholds. The messages table grows without bound if
+# nothing prunes it; with 20 topics in a busy group that's tens of
+# thousands of rows per day. Rather than call a separate
+# trim_messages() after every add_message (extra round-trip), we
+# check the row count lazily in get_messages and trim if it
+# exceeds TRIM_HIGH. The post-trim count is TRIM_LOW.
+#
+# Both values are conservative: keep ~200 messages per thread,
+# trim when above 500. The model's context window is 20 messages,
+# so the over-trim doesn't affect what the bot sends to the LLM;
+# it only keeps the DB small.
+TRIM_HIGH = 500
+TRIM_LOW = 200
+
 
 def _migrate_v1_to_v2(c: sqlite3.Connection) -> None:
     """Rename legacy (user_id, sub_talk) columns to (chat_id, thread_id).
@@ -407,8 +421,34 @@ class Storage:
         Completions format (`{"role", "content"}`) round-trips
         because both text-only and multimodal messages are stored
         as JSON.
+
+        Lazy trim: if the row count for (chat_id, thread_id)
+        exceeds TRIM_HIGH, prune down to TRIM_LOW before reading.
+        Self-throttling — bursts of activity do one trim and
+        then no extra work until the count climbs again. Bounded
+        DB growth without a per-insert round-trip.
         """
         c = self._conn()
+        # Lazy trim: cap the per-(chat_id, thread_id) row count.
+        n = c.execute(
+            "SELECT COUNT(*) FROM messages WHERE chat_id = ? AND thread_id = ?",
+            (chat_id, thread_id),
+        ).fetchone()[0]
+        if n > TRIM_HIGH:
+            c.execute(
+                """
+                DELETE FROM messages
+                WHERE chat_id = ? AND thread_id = ?
+                  AND id NOT IN (
+                      SELECT id FROM messages
+                      WHERE chat_id = ? AND thread_id = ?
+                      ORDER BY id DESC
+                      LIMIT ?
+                  )
+                """,
+                (chat_id, thread_id, chat_id, thread_id, TRIM_LOW),
+            )
+            c.commit()
         rows = c.execute(
             """
             SELECT role, content FROM (
@@ -431,22 +471,3 @@ class Storage:
             (chat_id, thread_id),
         ).fetchone()
         return dict(row) if row else None
-
-    def trim_messages(self, chat_id: int, thread_id: str, keep: int = 100) -> int:
-        """Delete old messages, keeping the most recent `keep`."""
-        c = self._conn()
-        cur = c.execute(
-            """
-            DELETE FROM messages
-            WHERE chat_id = ? AND thread_id = ?
-              AND id NOT IN (
-                  SELECT id FROM messages
-                  WHERE chat_id = ? AND thread_id = ?
-                  ORDER BY id DESC
-                  LIMIT ?
-              )
-            """,
-            (chat_id, thread_id, chat_id, thread_id, keep),
-        )
-        c.commit()
-        return cur.rowcount
