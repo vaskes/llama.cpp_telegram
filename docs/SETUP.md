@@ -136,3 +136,125 @@ sudo cp /opt/telegram-bot/.env /opt/telegram-bot/.env.bak
 ## What to do if the bot is silent
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+---
+
+## Deployment mode A: Private chat (default)
+
+The default mode. The bot serves one user in a 1:1 chat. All
+sub-talks are stored in the local SQLite DB, identified by
+`(user_id, sub_talk_name)`. Whitelist via `ALLOWED_USER_IDS` /
+`ALLOWED_USERNAMES` is enforced.
+
+This is the mode the bot has been running in since the beginning.
+The setup steps above are for this mode.
+
+---
+
+## Deployment mode B: Group with Telegram Topics (multi-user)
+
+In this mode the bot is a member of a Telegram supergroup with
+**Topics** enabled. Each topic is an independent conversation
+stream; the bot reads `message_thread_id` from every incoming
+message to know which topic (and therefore which history) to use.
+
+### B.1 — Create the supergroup
+
+In Telegram:
+1. Create a new group.
+2. **Group Settings → Topics → Enable** (you must convert it to a
+   supergroup first; this happens automatically when you enable
+   Topics, or via `Group Info → Edit → Chat Type → Public/Private`).
+
+If Topics cannot be enabled, the bot will not be able to create
+topics and `/newsub` will fail with `400 Bad Request: topics must
+be first enabled`.
+
+### B.2 — Add the bot to the group and promote it
+
+1. Add the bot by `@username`.
+2. Open the member list, long-press the bot → **Promote to Admin**.
+3. Enable **Manage Topics**. The other admin permissions are not
+   required for normal operation.
+
+Without `Manage Topics`, `createForumTopic` and `deleteForumTopic`
+will return 403.
+
+### B.3 — Configure the bot
+
+In `/opt/telegram-bot/.env`, **do not** put anything in
+`ALLOWED_USER_IDS` for the people who should be able to use the
+bot — group mode skips the whitelist check entirely. (You can
+still set the whitelist for a private-chat fallback, but
+group members do not need to be in it.)
+
+```bash
+BOT_TOKEN=...
+LLAMA_URL=http://localhost:8080/v1
+# Leave ALLOWED_USER_IDS empty in group-only deployments.
+# In mixed deployments (private + group), list private users here.
+```
+
+### B.4 — Start the bot
+
+```bash
+sudo systemctl restart telegram-bot-compose
+sudo docker logs telegram-bot --tail 30
+```
+
+You should see `is_forum=True` in the log when a topic message
+arrives, and `chat_type=supergroup` for any group message.
+
+### B.5 — Try it
+
+In the General topic of the group:
+1. `/newsub research` — a new topic "research" appears in the
+   sidebar. Switch to it.
+2. Send "what's the capital of France?" — the bot replies
+   **inside the "research" topic**, not in General.
+3. Send another question — the bot's context is per-topic.
+   The "research" topic remembers your first question; a separate
+   "main" topic does not.
+4. `/subs` — list all topics. No inline keyboard (Telegram's
+   sidebar is the switcher).
+5. `/delsub research` — the topic is removed from Telegram and
+   its message history is wiped from the local DB.
+
+### B.6 — How routing works
+
+| Mode | Trigger | `chat_id` | `thread_id` | Whitelist |
+|------|---------|-----------|-------------|-----------|
+| Private | `chat.type == "private"` and `is_forum` is False | `user_id` | active sub-talk name from DB | enforced |
+| Group General | `chat.is_forum == true` and `message_thread_id is None` | `chat_id` (negative) | `"general"` (sentinel) | skipped |
+| Group Topic | `chat.is_forum == true` and `message_thread_id` is set | `chat_id` (negative) | `str(message_thread_id)` | skipped |
+
+The bot decides which mode a message belongs to by inspecting
+`chat.is_forum` and `message_thread_id`. The same SQLite store
+serves both modes — keys are `(chat_id, thread_id)` either way.
+
+### B.7 — Security model for group mode
+
+Group mode **does not** check the `ALLOWED_USER_IDS` whitelist.
+Any member of the supergroup can use the bot. Access control is
+delegated to Telegram itself (group membership, topic-specific
+permissions, admin status). If you need finer-grained control,
+lock the group to invite-only and add users manually.
+
+See [SECURITY.md](SECURITY.md) §"Group mode security" for the
+full model.
+
+### B.8 — Limitations
+
+- `/sub <name>` in group mode is informational only — you cannot
+  "navigate" to a topic programmatically; users tap topics in
+  the sidebar.
+- Bot commands in a topic only affect that topic (and the bot
+  replies in the same topic via `_reply`'s `message_thread_id`
+  pass-through).
+- `getForumTopics` is a generator with a 1-second hard limit per
+  call; with thousands of topics the first call may need retries.
+  The retry loop in `cmd_subs` / `cmd_delsub` handles this.
+- Mixed private+group deployments: a user in both `ALLOWED_USER_IDS`
+  AND a group with the bot will be served by the private mode
+  if they message the bot directly, and by group mode if they
+  post in a group topic. Their conversations are isolated.
