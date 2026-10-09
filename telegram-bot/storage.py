@@ -202,7 +202,25 @@ class Storage:
             # WAL gives concurrent readers while a writer is active,
             # which matters once the polling loop and the handler
             # are both touching the DB on the same process.
+            # `synchronous=NORMAL` is the standard trade-off for a
+            # single-writer chat bot: 1 fsync instead of 2; we can
+            # lose ~the last transaction on power loss but not on
+            # app crash (the in-memory log is preserved on restart).
             c.execute("PRAGMA journal_mode=WAL")
+            # Verify the PRAGMA actually stuck. WAL may silently
+            # fall back to "truncate" on filesystems without shared
+            # memory support (some FUSE mounts, NAS). If it didn't,
+            # concurrent readers would block writers — the user would
+            # see a slow `journal_mode=...` checkpoint.
+            got = c.execute("PRAGMA journal_mode").fetchone()[0]
+            if got.lower() != "wal":
+                print(
+                    f"[storage] WARN: journal_mode={got}, expected WAL; "
+                    f"concurrent reads may block writers on this "
+                    f"filesystem. Mount with shared memory support or "
+                    f"move the DB to a local volume.",
+                    flush=True,
+                )
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA foreign_keys=ON")
             self._local.conn = c
@@ -378,6 +396,26 @@ class Storage:
             "SELECT message_thread_id, name, created_at FROM known_topics "
             "WHERE chat_id = ? AND name = ?",
             (chat_id, name),
+        )
+        r = cur.fetchone()
+        if r is None:
+            return None
+        return {"message_thread_id": r[0], "name": r[1], "created_at": r[2]}
+
+    def find_known_topic_by_id(
+        self, chat_id: int, message_thread_id: int
+    ) -> dict | None:
+        """Look up a topic by its Telegram message_thread_id. Returns
+        dict with message_thread_id, name, created_at; or None if
+        not found. Used by `/delsub <id>` to resolve a numeric
+        argument without scanning the full topic list, and by
+        `/here` in group mode to display the topic name alongside
+        the id."""
+        c = self._conn()
+        cur = c.execute(
+            "SELECT message_thread_id, name, created_at FROM known_topics "
+            "WHERE chat_id = ? AND message_thread_id = ?",
+            (chat_id, message_thread_id),
         )
         r = cur.fetchone()
         if r is None:
