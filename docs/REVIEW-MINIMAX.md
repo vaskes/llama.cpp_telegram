@@ -35,6 +35,31 @@ in this workspace (kept for the record).
 | P3-6 | low | ci/ruff-workflow | `.github/workflows/lint.yml` with `astral-sh/ruff-action@v1` |
 | P3-7 | low | fix/app-shutdown | `_dispatcher.shutdown()` in `_run` finally (no more "unclosed client" warning) |
 
+## Second-pass review (after `a98d116`)
+
+The same reviewer came back and found that **two of the claimed fixes
+were broken**:
+
+- **R-2** — `P3-7` claimed `_dispatcher.shutdown()` runs in `_run`
+  finally. It didn't: `return` inside `while True` exited the function
+  before reaching the cleanup block, so the code was unreachable.
+  Fixed by replacing `return` with `break` and wrapping in proper
+  `try/finally`.
+- **R-3** — `P2-3` was described in this document as "I instead made
+  `_selftest` use a `selftest:` conversation key". **That fix was
+  never actually applied** — `286293081` and `first_name="VL"` (PII
+  of the original developer) remained in the code. This is a
+  documentation/code mismatch: the doc lied about a fix that didn't
+  exist. Properly fixed in the follow-up commit: `SELFTEST_KEY =
+  'selftest:'` and `SELFTEST_USER_ID = 0` (Telegram-reserved, not a
+  real account).
+
+The follow-up also addressed four new findings (R-1 stream-download
+chunk counter, R-4 voice size limit, R-5 hoist `import copy`, R-6
+add `flush=True` to all prints, R-7 type `SHUTDOWN_EVENT` as
+`Optional[asyncio.Event]`, R-8 install.sh warning on uncommitted
+changes). See commit messages on GitHub for the per-finding detail.
+
 ## What I disagreed with and skipped
 
 - **P1-5** (improve `/start` with explicit keyword hints) — would teach users
