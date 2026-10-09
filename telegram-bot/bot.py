@@ -1600,7 +1600,17 @@ def _is_group_chat(update) -> bool:
 #
 # In private mode this filter is a no-op (the bot talks to one
 # human, no other LLM can interject). Applied only in group mode.
-_LLM_MARK = "[llm]"
+#
+# The match is a standalone token, not a substring. The previous
+# substring check had a small but real false-positive class: a
+# user discussing "the [llm] model", typing "[llm]s are bad at
+# math", or a URL containing [llm] in the path. Word-boundary
+# match avoids all of those.
+import re as _llm_re
+_LLM_TOKEN_RE = _llm_re.compile(
+    r"(?:^|\b|\s)\[llm\](?=$|[\s.,!?;:])",
+    _llm_re.IGNORECASE,
+)
 
 
 def _should_mute_in_group(update) -> bool:
@@ -1635,8 +1645,8 @@ def _should_mute_in_group(update) -> bool:
     # to other LLM participants).
     if not _is_group_chat(update):
         return False
-    text = (msg.text or msg.caption or "").lower()
-    if _LLM_MARK in text:
+    text = msg.text or msg.caption or ""
+    if _LLM_TOKEN_RE.search(text):
         return True
     return False
 
@@ -2138,8 +2148,32 @@ def main():
                             backoff = 1.0
                             print(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})", flush=True)
                             for upd_dict in updates_raw:
-                                # FULL dump so we can see exactly what Telegram sent.
-                                print(f"[poll] RAW update: {json.dumps(upd_dict, ensure_ascii=False)[:600]}", flush=True)
+                                # PII-safe dump. The previous version
+                                # printed the full JSON including
+                                # first_name, last_name, chat.title, and
+                                # the message text — all of which are
+                                # PII in journald. The new line logs
+                                # only structural fields plus a short
+                                # content hash for cross-correlating
+                                # with later log lines.
+                                upd_id = upd_dict.get("update_id", "?")
+                                upd_msg = upd_dict.get("message") or upd_dict.get("edited_message") or {}
+                                upd_chat = upd_msg.get("chat") or {}
+                                upd_from = upd_msg.get("from") or {}
+                                upd_text = (upd_msg.get("text") or upd_msg.get("caption") or "")[:60]
+                                import hashlib
+                                text_hash = hashlib.sha1(upd_text.encode("utf-8", errors="replace")).hexdigest()[:10] if upd_text else "-"
+                                print(
+                                    f"[poll] update_id={upd_id} "
+                                    f"chat_type={upd_chat.get('type', '?')} "
+                                    f"chat_id={upd_chat.get('id', '?')} "
+                                    f"is_forum={upd_chat.get('is_forum', '?')} "
+                                    f"from_id={upd_from.get('id', '?')} "
+                                    f"from_is_bot={upd_from.get('is_bot', '?')} "
+                                    f"thread_id={upd_msg.get('message_thread_id', '-')} "
+                                    f"text_hash={text_hash}",
+                                    flush=True,
+                                )
                                 offset = upd_dict["update_id"] + 1
                                 # edited_message handling:
                                 #
@@ -2678,6 +2712,13 @@ async def _selftest():
         ('group: other Telegram bot',       _FakeFromUser(True,  'ClaudeBot'), 'whatever',          group_chat,   True),
         ('group: bot with [llm] too',       _FakeFromUser(True,  'GPTBot'),   '[llm] answer',      group_chat,   True),
         ('group: case-insensitive',         _FakeFromUser(False, 'human'),    'this is [LLM] here',group_chat,   True),
+        # --- word-boundary: must NOT mute non-token occurrences ---
+        ('group: [llm] inside word "x[llm]s"',     _FakeFromUser(False, 'human'), 'x[llm]s are bad',  group_chat,   False),
+        ('group: [llm] in URL "https://x/[llm]"',  _FakeFromUser(False, 'human'), 'see https://x/[llm] page',  group_chat, False),
+        ('group: [llm] glued to period "done.[llm]."',  _FakeFromUser(False, 'human'), 'done.[llm].',  group_chat,   False),
+        ('group: [llm] at start, period after "[llm]."', _FakeFromUser(False, 'human'), '[llm].',     group_chat,   True),
+        ('group: [llm] with spaces',                _FakeFromUser(False, 'human'), 'hello. [llm] bye', group_chat, True),
+        ('group: [llm] at end of string',           _FakeFromUser(False, 'human'), 'bye [llm]',     group_chat,   True),
         # --- private mode ([llm] should NOT mute) ---
         ('private: human, contains [llm]',  _FakeFromUser(False, 'human'),    '[llm] playing',     private_chat, False),
         # --- defensive: no from_user ---
