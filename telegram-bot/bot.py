@@ -677,6 +677,9 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         if tool_calls:
             msg["tool_calls"] = tool_calls
         tool_calls = msg.get("tool_calls") or []
+        print(f"[LLAMA] iter={iteration} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)} tool_calls={len(tool_calls)} req_tools={'yes' if req_tools else 'no'}", flush=True)
+        for tc in tool_calls:
+            print(f"[LLAMA]   call: {tc.get('function',{}).get('name','')}({tc.get('function',{}).get('arguments','')[:200]})", flush=True)
 
         if not tool_calls:
             if content_buf:
@@ -900,9 +903,12 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(f"[handle_photo] ENTRY user_id={update.effective_user.id} caption={update.message.caption!r}", flush=True)
     if await reject_if_unauthorized(update, context):
+        print(f"[handle_photo] REJECTED", flush=True)
         return
     user_id = update.effective_user.id
+    print(f"[handle_photo] user_id={user_id} conv_len(before)={len(conversations.get(user_id, []))}", flush=True)
     await update.message.chat.send_action(action='typing')
     thinking = None
     try:
@@ -911,6 +917,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_bytes = await file.download_as_bytearray()
         photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
         caption = update.message.caption or 'Describe the image in detail.'
+        print(f"[handle_photo] downloaded {len(photo_bytes)} bytes, caption={caption!r}", flush=True)
         photo_message = {
             "role": "user",
             "content": [
@@ -929,12 +936,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # history (no id retained), so the model will fall back to its own
         # description if asked again.
         thinking = await update.message.reply_text('💭 думаю…')
+        print(f"[handle_photo] calling call_llama, conv_len={len(conversations[user_id])}", flush=True)
         bot_response = await call_llama(conversations[user_id], max_tokens=2048, user_text=caption, thinking_msg=thinking, use_stream=False)
+        print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
     except Exception as e:
-        print(f"[ERR photo] {type(e).__name__}: {e}")
-        await update.message.reply_text(f'❌ Error: {e}')
+        print(f"[ERR photo] {type(e).__name__}: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        try:
+            await update.message.reply_text(f'❌ Error: {e}')
+        except Exception:
+            pass
         if user_id in conversations and conversations[user_id]:
             conversations[user_id].pop()
     finally:
