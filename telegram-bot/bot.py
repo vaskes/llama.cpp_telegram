@@ -2416,8 +2416,89 @@ async def _selftest():
         print(f"[selftest] FAILED: {type(e).__name__}: {e}", flush=True)
         import traceback
         traceback.print_exc()
-    finally:
-        print('[selftest] done', flush=True)
+
+    # === Group-mode routing smoke test ===
+    # Pure-Python check that _is_group_chat() correctly classifies
+    # the three cases that drove commit 4 (the chat.is_forum hotfix):
+    #   - private chat, no forum: False
+    #   - forum-enabled supergroup, message in General: True
+    #   - forum-enabled supergroup, message in a regular topic: True
+    # We mock the minimum amount of PTB structure to feed _is_group_chat.
+    print('[selftest] running group-mode routing test...', flush=True)
+    class _FakeChat:
+        def __init__(self, type_, is_forum=None, chat_id=0):
+            self.type = type_
+            self.id = chat_id
+            if is_forum is not None:
+                self.is_forum = is_forum
+    class _FakeMessage:
+        def __init__(self, chat, message_thread_id=None):
+            self.chat = chat
+            self.message_thread_id = message_thread_id
+    class _FakeUpdate:
+        def __init__(self, chat, message):
+            self.effective_chat = chat
+            self.message = message
+
+    cases = [
+        # (label, chat_type, is_forum, message_thread_id, expected_is_group)
+        ('private 1:1',             'private',    None, None, False),
+        ('private with message_id', 'private',    None, None, False),
+        ('group (legacy, no forum)', 'group',      None, None, True),
+        ('supergroup, no forum',    'supergroup', False, None, True),
+        ('supergroup + forum + General',  'supergroup', True, None, True),
+        ('supergroup + forum + topic 42', 'supergroup', True, 42,   True),
+    ]
+    all_ok = True
+    for label, chat_type, is_forum, thread_id, expected in cases:
+        chat = _FakeChat(chat_type, is_forum, chat_id=-1001 if chat_type != 'private' else 1)
+        msg = _FakeMessage(chat, thread_id)
+        upd = _FakeUpdate(chat, msg)
+        got = _b._is_group_chat(upd)
+        ok = (got == expected)
+        all_ok &= ok
+        print(f"  [{'OK' if ok else 'FAIL'}] {label}: is_group={got} (expected {expected})", flush=True)
+
+    # === Storage: known_topics round-trip ===
+    # Add a topic, list it, find it by name, remove it. Catches
+    # typos in the SQL and the new known_topics methods (commit 8).
+    print('[selftest] running known_topics round-trip...', flush=True)
+    SELFTEST_CHAT = -1001
+    SELFTEST_TOPIC_ID = 999999
+    try:
+        await asyncio.to_thread(
+            _b.store.add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
+        )
+        topics = await asyncio.to_thread(_b.store.list_known_topics, SELFTEST_CHAT)
+        names = sorted(t["name"] for t in topics)
+        if 'selftest-topic' not in names:
+            print(f"  [FAIL] add_known_topic didn't persist (got {names})", flush=True)
+            all_ok = False
+        else:
+            print(f"  [OK] add_known_topic persisted", flush=True)
+        found = await asyncio.to_thread(
+            _b.store.find_known_topic_by_name, SELFTEST_CHAT, 'selftest-topic'
+        )
+        if found is None or found["message_thread_id"] != SELFTEST_TOPIC_ID:
+            print(f"  [FAIL] find_known_topic_by_name returned {found}", flush=True)
+            all_ok = False
+        else:
+            print(f"  [OK] find_known_topic_by_name returned id={found['message_thread_id']}", flush=True)
+        await asyncio.to_thread(
+            _b.store.remove_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID
+        )
+        topics_after = await asyncio.to_thread(_b.store.list_known_topics, SELFTEST_CHAT)
+        if any(t["name"] == 'selftest-topic' for t in topics_after):
+            print(f"  [FAIL] remove_known_topic didn't remove (got {[t['name'] for t in topics_after]})", flush=True)
+            all_ok = False
+        else:
+            print(f"  [OK] remove_known_topic worked", flush=True)
+    except Exception as e:
+        print(f"  [FAIL] known_topics round-trip crashed: {type(e).__name__}: {e}", flush=True)
+        all_ok = False
+
+    print(f"[selftest] group-mode tests: {'all pass' if all_ok else 'FAILED'}", flush=True)
+    print('[selftest] done', flush=True)
 
 
 if __name__ == '__main__':
