@@ -1053,14 +1053,14 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    sub_talk = await _resolve_active(user_id)
-    n = await asyncio.to_thread(store.delete_sub_talk, user_id, sub_talk)
-    # delete_sub_talk removes the sub_talks row too, so re-create it
+    thread_id = await _resolve_active(user_id)
+    n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
+    # delete_thread removes the thread row too, so re-create it
     # (empty) and keep it active. The user can still /subs to see it.
-    await asyncio.to_thread(store.create_sub_talk, user_id, sub_talk)
-    await asyncio.to_thread(store.set_active_sub_talk, user_id, sub_talk)
+    await asyncio.to_thread(store.create_thread, user_id, thread_id)
+    await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
     await update.message.reply_text(
-        f'🔄 Cleared {n} message(s) in sub-talk "{sub_talk}".\n'
+        f'🔄 Cleared {n} message(s) in sub-talk "{thread_id}".\n'
         f'Sub-talk is preserved. Use /delsub to remove the whole thread.'
     )
 
@@ -1109,18 +1109,18 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    subs = await asyncio.to_thread(store.list_sub_talks, user_id)
-    sub_talk = await _resolve_active(user_id)
-    current_count = next((s["msg_count"] for s in subs if s["name"] == sub_talk), 0)
+    subs = await asyncio.to_thread(store.list_threads, user_id)
+    thread_id = await _resolve_active(user_id)
+    current_count = next((s["msg_count"] for s in subs if s["thread_id"] == thread_id), 0)
     tools = await fetch_tools_from_llama()
     sub_lines = "\n".join(
-        f'  → "{s["name"]}" ({s["msg_count"]} msgs)' if s["name"] == sub_talk
-        else f'    "{s["name"]}" ({s["msg_count"]} msgs)'
+        f'  → "{s["thread_id"]}" ({s["msg_count"]} msgs)' if s["thread_id"] == thread_id
+        else f'    "{s["thread_id"]}" ({s["msg_count"]} msgs)'
         for s in subs
     ) or "    (no sub-talks yet)"
     await update.message.reply_text(
         f'📊 **Статистика:**\n'
-        f'Активный sub-talk: "{sub_talk}" — {current_count} сообщений\n'
+        f'Активный sub-talk: "{thread_id}" — {current_count} сообщений\n'
         f'Всего sub-talks: {len(subs)}\n'
         f'{sub_lines}\n'
         f'Модель: {MODEL}\n'
@@ -1161,33 +1161,33 @@ def _parse_subtalk_arg(text: str) -> str | None:
 
 async def _reply_active(update: Update, user_id: int) -> str:
     """Returns the user's active sub-talk name (resolving to 'main' default)."""
-    return await asyncio.to_thread(store.get_active_sub_talk, user_id) or 'main'
+    return await asyncio.to_thread(store.get_active_thread, user_id) or 'main'
 
 
 async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    name = _parse_subtalk_arg(update.message.text)
-    if not name:
+    thread_id = _parse_subtalk_arg(update.message.text)
+    if not thread_id:
         await update.message.reply_text(
-            '❌ Usage: /newsub <name>\n'
+            '❌ Usage: /newsub <thread_id>\n'
             'Name: 1-32 chars, must start with a letter or digit, '
             'may contain letters/digits/underscore/dash/dot.\n'
             'Example: /newsub research'
         )
         return
-    created = await asyncio.to_thread(store.create_sub_talk, user_id, name)
+    created = await asyncio.to_thread(store.create_thread, user_id, thread_id)
     if not created:
         # Already exists — just switch to it.
-        await asyncio.to_thread(store.set_active_sub_talk, user_id, name)
+        await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
         await update.message.reply_text(
-            f'ℹ Sub-talk "{name}" already existed. Now active.'
+            f'ℹ Sub-talk "{thread_id}" already existed. Now active.'
         )
         return
-    await asyncio.to_thread(store.set_active_sub_talk, user_id, name)
+    await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
     await update.message.reply_text(
-        f'✅ Created sub-talk "{name}" — now active.\n'
+        f'✅ Created sub-talk "{thread_id}" — now active.\n'
         f'Send any message to add to this thread. '
         f'Use /sub to switch, /subs to list, /delsub to remove.'
     )
@@ -1197,22 +1197,22 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    name = _parse_subtalk_arg(update.message.text)
-    if not name:
+    thread_id = _parse_subtalk_arg(update.message.text)
+    if not thread_id:
         # /sub with no arg: show current
         current = await _reply_active(update, user_id)
         await update.message.reply_text(
             f'You are in sub-talk "{current}".\n'
-            f'Use /sub <name> to switch, /subs to list all.'
+            f'Use /sub <thread_id> to switch, /subs to list all.'
         )
         return
-    existing = await asyncio.to_thread(store.get_sub_talk, user_id, name)
+    existing = await asyncio.to_thread(store.get_thread, user_id, thread_id)
     if existing is None:
-        # Auto-create on /sub to a non-existent name — friendlier than
+        # Auto-create on /sub to a non-existent thread_id — friendlier than
         # asking the user to /newsub first.
-        await asyncio.to_thread(store.create_sub_talk, user_id, name)
-    await asyncio.to_thread(store.set_active_sub_talk, user_id, name)
-    await update.message.reply_text(f'✅ Switched to sub-talk "{name}".')
+        await asyncio.to_thread(store.create_thread, user_id, thread_id)
+    await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
+    await update.message.reply_text(f'✅ Switched to sub-talk "{thread_id}".')
 
 
 async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1220,7 +1220,7 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     current = await _reply_active(update, user_id)
-    # Also show the sub_talk's last message snippet so the user
+    # Also show the thread_id's last message snippet so the user
     # remembers what they were doing here.
     last = await asyncio.to_thread(store.get_last_message, user_id, current)
     if last is None:
@@ -1246,7 +1246,7 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    subs = await asyncio.to_thread(store.list_sub_talks, user_id)
+    subs = await asyncio.to_thread(store.list_threads, user_id)
     active = await _reply_active(update, user_id)
     if not subs:
         await update.message.reply_text(
@@ -1261,8 +1261,8 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     buttons = []
     for s in subs:
-        label = f'{"✅ " if s["name"] == active else "↔️ "}{s["name"]}'
-        # callback_data must be <=64 bytes; sub_talk names already
+        label = f'{"✅ " if s["thread_id"] == active else "↔️ "}{s["thread_id"]}'
+        # callback_data must be <=64 bytes; thread_id names already
         # match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/ so this is safe.
         buttons.append(
             [InlineKeyboardButton(label, callback_data=f"sub:{s['name']}")]
@@ -1282,21 +1282,21 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    name = _parse_subtalk_arg(update.message.text)
-    if not name:
+    thread_id = _parse_subtalk_arg(update.message.text)
+    if not thread_id:
         await update.message.reply_text(
-            '❌ Usage: /delsub <name>\n'
+            '❌ Usage: /delsub <thread_id>\n'
             'Removes the sub-talk AND all its messages. Cannot be undone.'
         )
         return
-    n = await asyncio.to_thread(store.delete_sub_talk, user_id, name)
+    n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
     if n == 0:
-        await update.message.reply_text(f'❌ Sub-talk "{name}" not found.')
+        await update.message.reply_text(f'❌ Sub-talk "{thread_id}" not found.')
         return
     # If we just deleted the active one, the next get_active will
     # fall back to most-recent or to 'main'.
     await update.message.reply_text(
-        f'🗑 Deleted sub-talk "{name}" and {n} message(s).'
+        f'🗑 Deleted sub-talk "{thread_id}" and {n} message(s).'
     )
 
 
@@ -1312,17 +1312,17 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _resolve_active(user_id: int) -> str:
     """Return the user's active sub-talk, auto-creating 'main' if none exists."""
-    active = await asyncio.to_thread(store.get_active_sub_talk, user_id)
+    active = await asyncio.to_thread(store.get_active_thread, user_id)
     if active is not None:
         return active
     # No sub-talks at all yet — auto-create 'main' so the user's first
     # message lands somewhere sensible without them needing to /newsub.
-    await asyncio.to_thread(store.create_sub_talk, user_id, 'main')
-    await asyncio.to_thread(store.set_active_sub_talk, user_id, 'main')
+    await asyncio.to_thread(store.create_thread, user_id, 'main')
+    await asyncio.to_thread(store.set_active_thread, user_id, 'main')
     return 'main'
 
 
-async def _load_history(user_id: int, sub_talk: str) -> list:
+async def _load_history(user_id: int, thread_id: str) -> list:
     """Return up to CONTEXT_MESSAGES messages for the sub-talk, in chronological
     order, as the full OpenAI message dicts ({"role", "content"}) that
     call_llama expects.
@@ -1332,7 +1332,7 @@ async def _load_history(user_id: int, sub_talk: str) -> list:
     same shape that call_llama forwards to llama-server.
     """
     rows = await asyncio.to_thread(
-        store.get_messages, user_id, sub_talk, CONTEXT_MESSAGES
+        store.get_messages, user_id, thread_id, CONTEXT_MESSAGES
     )
     out = []
     for r in rows:
@@ -1346,7 +1346,7 @@ async def _load_history(user_id: int, sub_talk: str) -> list:
     return out
 
 
-async def _persist_message(user_id: int, sub_talk: str, role: str, content):
+async def _persist_message(user_id: int, thread_id: str, role: str, content):
     """Append a message to the sub-talk's history in the DB.
 
     `content` is whatever the message has — a string for text, a list
@@ -1354,7 +1354,7 @@ async def _persist_message(user_id: int, sub_talk: str, role: str, content):
     """
     msg = {"role": role, "content": content}
     await asyncio.to_thread(
-        store.add_message, user_id, sub_talk, role, json.dumps(msg, ensure_ascii=False)
+        store.add_message, user_id, thread_id, role, json.dumps(msg, ensure_ascii=False)
     )
 
 
@@ -1410,17 +1410,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"type": "text", "text": caption},
             {"type": "image_url", "image_url": {"url": photo_data_url}}
         ]
-        sub_talk = await _resolve_active(user_id)
-        await _persist_message(user_id, sub_talk, 'user', photo_content)
-        history = await _load_history(user_id, sub_talk)
+        thread_id = await _resolve_active(user_id)
+        await _persist_message(user_id, thread_id, 'user', photo_content)
+        history = await _load_history(user_id, thread_id)
         # When recalling image turns in later text-only messages, the
         # images themselves cannot be re-sent from history (no id
         # retained), so the model falls back to its own description.
         thinking = await update.message.reply_text('💭 думаю…')
-        print(f"[handle_photo] user_id={user_id} sub_talk={sub_talk!r} history_len={len(history)}", flush=True)
+        print(f"[handle_photo] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
-        await _persist_message(user_id, sub_talk, 'assistant', bot_response)
+        await _persist_message(user_id, thread_id, 'assistant', bot_response)
         await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR photo] {type(e).__name__}: {e}", flush=True)
@@ -1498,13 +1498,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # No parse_mode — transcript is user-generated and may contain
         # '*', '_', '[', '`', which would break Markdown rendering.
         await update.message.reply_text(f'🎤 Transcript:\n{transcript}')
-        sub_talk = await _resolve_active(user_id)
-        await _persist_message(user_id, sub_talk, 'user', transcript)
-        history = await _load_history(user_id, sub_talk)
-        print(f"[handle_voice] user_id={user_id} sub_talk={sub_talk!r} history_len={len(history)}", flush=True)
+        thread_id = await _resolve_active(user_id)
+        await _persist_message(user_id, thread_id, 'user', transcript)
+        history = await _load_history(user_id, thread_id)
+        print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await update.message.reply_text('💭 думаю…')
         bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking)
-        await _persist_message(user_id, sub_talk, 'assistant', bot_response)
+        await _persist_message(user_id, thread_id, 'assistant', bot_response)
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
                 await update.message.reply_text(bot_response[i:i+4000])
@@ -1550,14 +1550,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
             doc_text = f.read()[:16000]
         caption = update.message.caption or 'Read the document and answer questions.'
-        sub_talk = await _resolve_active(user_id)
+        thread_id = await _resolve_active(user_id)
         user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
-        await _persist_message(user_id, sub_talk, 'user', user_content)
-        history = await _load_history(user_id, sub_talk)
-        print(f"[handle_document] user_id={user_id} sub_talk={sub_talk!r} history_len={len(history)}", flush=True)
+        await _persist_message(user_id, thread_id, 'user', user_content)
+        history = await _load_history(user_id, thread_id)
+        print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await update.message.reply_text('💭 думаю…')
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking)
-        await _persist_message(user_id, sub_talk, 'assistant', bot_response)
+        await _persist_message(user_id, thread_id, 'assistant', bot_response)
         await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR doc] {type(e).__name__}: {e}", flush=True)
@@ -1582,14 +1582,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.chat.send_action(action='typing')
     except Exception as e:
         print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
-    sub_talk = await _resolve_active(user_id)
-    await _persist_message(user_id, sub_talk, 'user', user_message)
-    history = await _load_history(user_id, sub_talk)
-    print(f"[handle_text] user_id={user_id} sub_talk={sub_talk!r} history_len={len(history)}", flush=True)
+    thread_id = await _resolve_active(user_id)
+    await _persist_message(user_id, thread_id, 'user', user_message)
+    history = await _load_history(user_id, thread_id)
+    print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
     thinking = await update.message.reply_text('💭 думаю…')
     try:
         bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking)
-        await _persist_message(user_id, sub_talk, 'assistant', bot_response)
+        await _persist_message(user_id, thread_id, 'assistant', bot_response)
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
                 await update.message.reply_text(bot_response[i:i+4000])
@@ -1837,10 +1837,10 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()  # dismiss the "loading" tick
     if data.startswith("sub:"):
         name = data[4:]
-        existing = await asyncio.to_thread(store.get_sub_talk, user_id, name)
+        existing = await asyncio.to_thread(store.get_thread, user_id, thread_id)
         if existing is None:
-            await asyncio.to_thread(store.create_sub_talk, user_id, name)
-        await asyncio.to_thread(store.set_active_sub_talk, user_id, name)
+            await asyncio.to_thread(store.create_thread, user_id, thread_id)
+        await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
         await update.callback_query.edit_message_text(
             f'✅ Switched to sub-talk "{name}".'
         )
@@ -1853,7 +1853,7 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif data.startswith("delsub:"):
         name = data[7:]
-        n = await asyncio.to_thread(store.delete_sub_talk, user_id, name)
+        n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
         await update.callback_query.edit_message_text(
             f'🗑 Deleted "{name}" and {n} message(s).'
         )
@@ -1969,7 +1969,7 @@ async def _selftest():
     # module-level Storage instance) would race with concurrent
     # handler writes. Accessing _b.store guarantees we hit the
     # exact same singleton.
-    await asyncio.to_thread(_b.store.create_sub_talk, 0, SELFTEST_KEY)
+    await asyncio.to_thread(_b.store.create_thread, 0, SELFTEST_KEY)
     await asyncio.to_thread(_b.store.add_message, 0, SELFTEST_KEY, "user", json.dumps(vision_msg, ensure_ascii=False))
     # Diagnostic: dump what we're about to send
     import json as _j
