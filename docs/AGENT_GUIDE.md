@@ -127,3 +127,41 @@ If the llama-server does not respond — that is a **separate task**, not relate
 - Docker `network_mode: host` means the bot has no IP of its own —
   `0.0.0.0` bindings in the container occupy host ports. If something
   starts conflicting, switch to a bridge network + explicit ports.
+
+## Group mode quick reference
+
+If the bot is a member of a Telegram supergroup with Topics:
+
+```
+is_forum=True  in the logs          → group mode is detected
+message_thread_id=<num>              → message is in a specific topic
+message_thread_id=None               → message is in the General topic
+```
+
+Bot commands in group mode:
+  - `/newsub <name>` — creates a Telegram forum topic
+  - `/subs` — lists topics the bot created (from local DB)
+  - `/delsub <name|id>` — deletes a topic
+  - `/reset` — clears the LLM's memory in the current topic
+  - `/here` — shows current topic + last message
+  - `/stats` — group-level stats (topic count, msg totals)
+
+Whitelist: in group mode the `ALLOWED_USER_IDS` env var is
+**skipped entirely**. Access control is delegated to Telegram
+(group membership + per-topic permissions). For details, see
+[docs/SECURITY.md](SECURITY.md) §"Group mode security".
+
+The bot's SQLite store at `./data/conversations.db` (or
+`/app/data/conversations.db` in the container) has three tables:
+  - `chat_threads(chat_id, thread_id, ...)` — known threads
+  - `messages(id, chat_id, thread_id, role, content, ...)` — history
+  - `active_thread(chat_id, thread_id)` — private mode only
+  - `known_topics(chat_id, message_thread_id, name, ...)` — group mode
+
+Inspect / repair:
+  ```bash
+  docker exec telegram-bot sqlite3 /app/data/conversations.db \
+      "SELECT * FROM known_topics"
+  docker exec telegram-bot sqlite3 /app/data/conversations.db \
+      "DELETE FROM known_topics WHERE message_thread_id = <id>"
+  ```
