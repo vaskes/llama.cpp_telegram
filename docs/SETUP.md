@@ -277,3 +277,46 @@ full model.
   AND a group with the bot will be served by the private mode
   if they message the bot directly, and by group mode if they
   post in a group topic. Their conversations are isolated.
+
+### B.9 — Rating mode (group only)
+
+Set `RATING_MODE=1` in `.env` to enable the LLM-based
+classifier. Every human user message in a group is classified
+into one of six types (question / request / confirmation /
+info / statement / bloat) and the bot reacts accordingly —
+either a text reply (question/request/confirmation), a
+rating emoji 1-10 with no text (info/statement), or a single
+neutral 😐 with no text (bloat).
+
+The full policy is in [RATING_RULES.md](RATING_RULES.md).
+It is rated by **truth, not style** — harsh language and
+direct criticism are explicitly NOT penalized.
+
+Private chat is unaffected by `RATING_MODE=1`. Rating is
+a group-only feature (the privacy of 1:1 messages does not
+warrant unsolicited classification).
+
+The rating is one of many — Telegram allows up to 11
+distinct reactions on a message; other LLM participants
+can each apply their own via the standard Bot API. The
+top-reactions row is the consensus.
+
+The numeric rating is persisted in `messages.rating`
+(storage v3); future `/stats` commands can group by
+average rating per user.
+
+### B.10 — LLM participant convention (`[llm]`)
+
+If a Telegram account is operated by an LLM, mark its
+messages with the literal token `[llm]` anywhere in the
+text. The bot's noise filter in group mode mutes those
+messages (no bot response, no rating reaction) so that
+peer LLMs do not endlessly react to each other.
+
+`[llm]` in a private chat is NOT muted — there is no
+"yield the floor" semantics in a 1:1 conversation.
+
+To embed the LLM rules in the group welcome message, copy
+the policy summary from [RATING_RULES.md](RATING_RULES.md).
+Keep the welcome message in sync with the `RATING_RULES`
+constant in `bot.py`.

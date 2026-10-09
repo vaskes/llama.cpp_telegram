@@ -432,7 +432,7 @@ DONSETCH_TOOLS = {
 }
 
 
-async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None):
+async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
@@ -555,6 +555,13 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     # search/fetch/crawl in any language we support, treat it as a tool
     # turn. Otherwise omit tools entirely so the model just answers.
     tool_intent = _detect_tool_intent(user_text)
+    # If the caller asked for rating mode (group mode + RATING_MODE=1),
+    # inject the rating rules as a system message BEFORE the existing
+    # one. The LLM sees its first system message; both are honored.
+    if rating_active:
+        messages = [
+            {"role": "system", "content": RATING_RULES}
+        ] + messages
     if not tool_intent:
         # No tool intent: hand the model a plain system prompt and skip
         # the tool definitions. Reasoning and content come back clean.
@@ -1748,6 +1755,81 @@ RATING_EMOJI = {
 # Default emoji for bloat messages (no rating, just acknowledge).
 BLOAT_EMOJI = "😐"
 
+# === Rating rules ===
+# This string is the system prompt injected when RATING_MODE=1
+# and the chat is group mode. It is the bot's published policy
+# for what the rating means. The same content is in
+# docs/RATING_RULES.md, which the operator is expected to keep
+# in sync with the welcome message of the group.
+#
+# Keep these rules declarative and machine-readable: the LLM
+# is told to follow them literally. Plain English summary
+# follows; the markdown is intentional for the LLM to parse.
+RATING_RULES = """\
+# Rating rules (RATING_MODE=1)
+You are one of several LLM participants in a Telegram group.
+For every human user message, classify the message and act
+accordingly. Multiple LLMs in the group each apply their own
+reaction; the aggregate is the consensus.
+
+## Six message types
+- question:     user is asking something
+- request:      user is requesting an action (may lack "?")
+- confirmation: user wants you to verify and confirm
+- info:         user is sharing a verifiable fact
+- statement:    user is asserting something to evaluate
+- bloat:        stream-of-consciousness, not worth evaluating
+
+## Three actions
+- question / request / confirmation → text reply
+- info / statement                  → rate 1-10, no text
+- bloat                             → single neutral emoji, no text
+
+## Output format
+- text reply: just write the answer
+- rate:      "[[TYPE:info]] [[RATE:1-10]]" or
+             "[[TYPE:statement]] [[RATE:1-10]]"
+- bloat:     "[[TYPE:bloat]] <one emoji>"
+
+## Rating scale (1-10)
+1=spam/junk · 2=misleading · 3=weak · 4=mediocre · 5=average
+6=useful · 7=good · 8=strong · 9=insightful · 10=brilliant
+
+## Rules of judgment (CRITICAL — read carefully)
+
+1. Rate by TRUTH, not by style. A correct claim stated bluntly
+   ("you're wrong, X") is a 7-10. A wrong claim stated politely
+   ("perhaps we could consider that X may not be quite right")
+   is a 1-3. Style is irrelevant; substance is everything.
+
+2. Harsh language, profanity, and direct criticism are NOT
+   penalized. A message calling out a factual error in strong
+   terms can be a 9 if the callout is correct.
+
+3. Mature language is allowed. The group is for serious LLM
+   discussion. We do not police tone.
+
+4. When in doubt, rate LOWER, not higher. A spam or low-effort
+   message that you are not sure about is 1-2, not 5.
+
+5. A message that mixes a correct claim with off-topic ranting
+   rates on the claim, not the ranting. ("the sky is blue, and
+   by the way everyone here is a moron" → 7 for the sky part.)
+
+6. For info and statement, your rating is your honest subjective
+   assessment. Do not be sycophantic. Do not give 7 by default.
+
+## Special cases
+- "[llm]" markers: skip the user. Other LLM participants are
+  peers, not rating subjects.
+- Pure greetings ("hi", "hello", "good morning"): bloat, 😐.
+- Memes / single emoji: bloat.
+- Off-topic / spam / advertisements: 1, 💩.
+- Garbled / nonsensical: 1, 💩.
+
+Apply your reaction directly. Do not explain your rating.
+"""
+
 # The prefix grammar. Matches at the start of the LLM response.
 # We keep the parser simple: only TYPE and optional RATE are
 # captured; everything after is "rest" (the answer or reason).
@@ -2036,7 +2118,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # retained), so the model falls back to its own description.
         thinking = await _reply(update, '💭 думаю…')
         print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
-        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False)
+        # Compute rating_active here (before call_llama) so we
+        # can pass it to the model AND use it in the dispatcher.
+        rating_active = (
+            RATING_MODE
+            and _is_group_chat(update)
+            and not _should_mute_in_group(update)
+        )
+        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
         # === RATING_MODE dispatch ===
         # In a group with RATING_MODE=1, the LLM prefixes its
@@ -2047,11 +2136,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         #   bloat                               → emoji reaction, no text
         # Private mode and [llm]-marked messages always get a
         # plain text reply (rating path is group-only).
-        rating_active = (
-            RATING_MODE
-            and _is_group_chat(update)
-            and not _should_mute_in_group(update)
-        )
+        # rating_active was computed above (before call_llama).
         if rating_active:
             parsed = _parse_rating_response(bot_response)
             if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
@@ -2169,13 +2254,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…')
-        bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking)
-        # === RATING_MODE dispatch === (see handle_photo for full comment)
         rating_active = (
             RATING_MODE
             and _is_group_chat(update)
             and not _should_mute_in_group(update)
         )
+        bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active)
+        # === RATING_MODE dispatch (continuation) ===
+        # rating_active was computed above (before call_llama).
         if rating_active:
             parsed = _parse_rating_response(bot_response)
             if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
@@ -2266,7 +2352,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…')
-        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking)
+        rating_active = (
+            RATING_MODE
+            and _is_group_chat(update)
+            and not _should_mute_in_group(update)
+        )
+        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active)
         # === RATING_MODE dispatch ===
         # In a group with RATING_MODE=1, the LLM prefixes its
         # response with [[TYPE:...]] [[RATE:N]]. We parse the
@@ -2276,11 +2367,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         #   bloat                               → emoji reaction, no text
         # Private mode and [llm]-marked messages always get a
         # plain text reply (rating path is group-only).
-        rating_active = (
-            RATING_MODE
-            and _is_group_chat(update)
-            and not _should_mute_in_group(update)
-        )
+        # rating_active was computed above (before call_llama).
         if rating_active:
             parsed = _parse_rating_response(bot_response)
             if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
@@ -2346,13 +2433,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
     thinking = await _reply(update, '💭 думаю…')
     try:
-        bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking)
-        # === RATING_MODE dispatch === (see handle_photo for full comment)
         rating_active = (
             RATING_MODE
             and _is_group_chat(update)
             and not _should_mute_in_group(update)
         )
+        bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active)
+        # === RATING_MODE dispatch ===
         if rating_active:
             parsed = _parse_rating_response(bot_response)
             if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:

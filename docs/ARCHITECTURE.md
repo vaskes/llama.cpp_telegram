@@ -351,3 +351,48 @@ like `/help` from another bot.
 - Does **not** log the live `req_body` dict — `json.dumps` with the
   default `ensure_ascii=True` mutates the dict in place. See
   [CALL_LLAMA.md](CALL_LLAMA.md) §6.
+
+## Rating mode (group only)
+
+When `RATING_MODE=1` is set, the bot's four message handlers
+(`handle_text`, `handle_photo`, `handle_voice`, `handle_document`)
+inject the `RATING_RULES` constant as an extra system message
+before calling the LLM. The LLM then classifies each user
+message into one of six types and prefixes its response
+accordingly. The dispatcher parses the prefix and takes one
+of three actions:
+
+| Type            | Action                              |
+|-----------------|-------------------------------------|
+| question        | text reply                          |
+| request         | text reply                          |
+| confirmation    | text reply (verify and confirm)     |
+| info            | rate 1-10, setMessageReaction, no text |
+| statement       | rate 1-10, setMessageReaction, no text |
+| bloat           | single 😐 reaction, no text         |
+
+The numeric rating is persisted in `messages.rating` (storage
+v3) so analytics commands can group by score. The full policy
+is in [RATING_RULES.md](RATING_RULES.md); the canonical
+machine-readable version is the `RATING_RULES` constant in
+`bot.py`. The two must be kept in sync.
+
+### Why it's a separate mode (not a feature flag per message)
+
+Telegram's `setMessageReaction` API is a side effect, not a
+return value — once applied, a reaction is visible to all
+group members. So enabling/disabling the classifier must be
+a deliberate operator action, not a per-message decision.
+The `RATING_MODE=1` env var is the operator's "I trust the
+classifier" switch; turning it off reverts to the default
+text-reply-for-everything behavior.
+
+### Why it's only in group mode
+
+In a 1:1 private chat, the user explicitly chose to talk to
+the bot. Classifying their message and silently reacting
+with an emoji (instead of replying) would feel cold and
+unhelpful — the user is asking for engagement, not judgment.
+Group mode has a different social contract: the bot is a
+participant among many, and reactions are a natural way to
+contribute without flooding the thread.
