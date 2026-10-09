@@ -100,11 +100,11 @@ else:
 MAX_PHOTO_BYTES = int(os.environ.get('MAX_PHOTO_BYTES', '10000000'))   # 10 MB
 MAX_DOC_BYTES = int(os.environ.get('MAX_DOC_BYTES', '5000000'))       # 5 MB
 MAX_VOICE_BYTES = int(os.environ.get('MAX_VOICE_BYTES', '20000000'))  # 20 MB
-# Video notes (round video messages) go through the same handler as voice
-# via filters.VOICE | filters.AUDIO, and can be hundreds of MB. We
-# stream-download voice/video bytes too, so a chunk counter is the real
-# guard. 20 MB is the same as Telegram's documented client-side cap for
-# voice, so in practice this only ever fires on video notes.
+MAX_VIDEO_NOTE_BYTES = int(os.environ.get('MAX_VIDEO_NOTE_BYTES', '50000000'))  # 50 MB
+# Voice messages are typically <1 MB and capped client-side at 20 MB.
+# Video notes (round video) go through the same handler via filters.AUDIO
+# and can be 5-50 MB; a separate, higher cap keeps them working without
+# opening the door to a 1 GB upload.
 
 
 def is_authorized(update: Update) -> bool:
@@ -687,6 +687,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 # Return content immediately — no tool-call loop in this path
                 # (vision tasks don't need tools, and the multi-iter loop below
                 # was raising somewhere we couldn't catch on the vision payload).
+                r = None
                 try:
                     payload_bytes = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
                     async with httpx.AsyncClient(
@@ -709,11 +710,11 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                         await push_thinking(accumulated_reasoning + reasoning, force=True)
                     return content
                 except Exception as e:
-                    body = ""
-                    try:
-                        body = r.text[:500] if 'r' in dir() and hasattr(r, 'text') else ''
-                    except Exception:
-                        pass
+                    # r is bound to the httpx Response if we got past
+                    # the .post() call; otherwise it's still None
+                    # (e.g. JSONDecodeError, ConnectionError before
+                    # the response object is constructed).
+                    body = r.text[:500] if r is not None else ''
                     print(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}", flush=True)
                     return f'[llama-server request failed: {e}]'
             try:
@@ -1085,17 +1086,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         file = await context.bot.get_file(photo.file_id)
-        photo_bytes = bytearray()
-        try:
-            async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
-                photo_bytes.extend(chunk)
-                if len(photo_bytes) > MAX_PHOTO_BYTES:
-                    await update.message.reply_text(
-                        f'❌ Photo too large (>{MAX_PHOTO_BYTES/1e6:.0f} MB during download).'
-                    )
-                    return
-        except Exception as e:
-            await update.message.reply_text(f'❌ Failed to download photo: {e}')
+        photo_bytes = await _stream_with_limit(file, MAX_PHOTO_BYTES, 'Photo', update)
+        if photo_bytes is None:
             return
         # Telegram photos are often WebP (especially from Android), not JPEG.
         # Detect actual MIME from magic bytes — we were hardcoding image/jpeg
@@ -1154,6 +1146,29 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
 
+async def _stream_with_limit(file, max_bytes: int, kind: str, update: Update):
+    """Stream-download a Telegram file, aborting if size > max_bytes.
+
+    Returns the accumulated bytes on success, or None if aborted (the
+    user-facing error message has already been sent to `update`).
+    Used by handle_photo, handle_voice, and handle_document so the
+    pre-check + chunk counter + error path live in one place.
+    """
+    buf = bytearray()
+    try:
+        async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
+            buf.extend(chunk)
+            if len(buf) > max_bytes:
+                await update.message.reply_text(
+                    f'❌ {kind} too large (>{max_bytes/1e6:.0f} MB during download).'
+                )
+                return None
+    except Exception as e:
+        await update.message.reply_text(f'❌ Failed to download {kind.lower()}: {e}')
+        return None
+    return buf
+
+
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
@@ -1161,30 +1176,31 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(action='typing')
     thinking = None
     try:
-        voice = update.message.voice
-        # Pre-check; voice.file_size is usually populated. The real
-        # guard is the chunk counter below.
-        if voice.file_size and voice.file_size > MAX_VOICE_BYTES:
+        msg = update.message
+        # filters.AUDIO catches both voice messages and video notes.
+        # Pick the right cap for the kind we got; tell the user which
+        # one if we reject.
+        if msg.voice:
+            max_bytes = MAX_VOICE_BYTES
+            media = msg.voice
+            media_kind = "Voice"
+        elif msg.video_note:
+            max_bytes = MAX_VIDEO_NOTE_BYTES
+            media = msg.video_note
+            media_kind = "Video note"
+        else:
+            return  # should not happen — handler is only registered for these
+        # Pre-check; media.file_size is usually populated. The real
+        # guard is the chunk counter in the helper.
+        if media.file_size and media.file_size > max_bytes:
             await update.message.reply_text(
-                f'❌ Voice too large ({voice.file_size/1e6:.1f} MB > '
-                f'{MAX_VOICE_BYTES/1e6:.0f} MB).'
+                f'❌ {media_kind} too large ({media.file_size/1e6:.1f} MB > '
+                f'{max_bytes/1e6:.0f} MB).'
             )
             return
-        file = await context.bot.get_file(voice.file_id)
-        # Stream-download with chunk counter to bound RAM. Voice is
-        # typically <1 MB but video_note (round video) coming through
-        # filters.AUDIO can be hundreds of MB.
-        voice_bytes = bytearray()
-        try:
-            async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
-                voice_bytes.extend(chunk)
-                if len(voice_bytes) > MAX_VOICE_BYTES:
-                    await update.message.reply_text(
-                        f'❌ Voice too large (>{MAX_VOICE_BYTES/1e6:.0f} MB during download).'
-                    )
-                    return
-        except Exception as e:
-            await update.message.reply_text(f'❌ Failed to download voice: {e}')
+        file = await context.bot.get_file(media.file_id)
+        voice_bytes = await _stream_with_limit(file, max_bytes, media_kind, update)
+        if voice_bytes is None:
             return
         transcript = await transcribe_voice(voice_bytes)
         # No parse_mode — transcript is user-generated and may contain
@@ -1230,21 +1246,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     file = await context.bot.get_file(doc.file_id)
-    # Stream-download with a chunk counter; abort if the cumulative
-    # size exceeds MAX_DOC_BYTES. This is the real guard: doc.file_size
-    # is almost always set for documents (it's a Telegram Bot API
-    # requirement), but if it ever isn't, we still won't OOM.
-    doc_bytes = bytearray()
-    try:
-        async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
-            doc_bytes.extend(chunk)
-            if len(doc_bytes) > MAX_DOC_BYTES:
-                await update.message.reply_text(
-                    f'❌ Document too large (>{MAX_DOC_BYTES/1e6:.0f} MB during download).'
-                )
-                return
-    except Exception as e:
-        await update.message.reply_text(f'❌ Failed to download document: {e}')
+    doc_bytes = await _stream_with_limit(file, MAX_DOC_BYTES, 'Document', update)
+    if doc_bytes is None:
         return
     tmp_path = None
     thinking = None
@@ -1551,16 +1554,25 @@ async def _selftest():
     import json as _j
     _b_bytes = _j.dumps(vision_msg, ensure_ascii=False).encode('utf-8')
     print(f"[selftest] vision_msg before call_llama: {len(_b_bytes)} bytes, head={_b_bytes[:200]!r}", flush=True)
-    result = await _b.call_llama(
-        _b.conversations[SELFTEST_KEY],
-        max_tokens=2048,
-        user_text="проверь математику",
-        thinking_msg=None,
-        use_stream=False,
-    )
-    print(f"[selftest] call_llama result: {len(result)} chars, head={result[:300]!r}", flush=True)
-
-    print('[selftest] done', flush=True)
+    # Best-effort: a smoke test that takes the production process
+    # down with it is not a smoke test. Catch every exception, log
+    # it, keep going. The production bot should be able to start
+    # even if llama-server is unreachable at boot.
+    try:
+        result = await _b.call_llama(
+            _b.conversations[SELFTEST_KEY],
+            max_tokens=2048,
+            user_text="проверь математику",
+            thinking_msg=None,
+            use_stream=False,
+        )
+        print(f"[selftest] call_llama result: {len(result)} chars, head={result[:300]!r}", flush=True)
+    except Exception as e:
+        print(f"[selftest] FAILED: {type(e).__name__}: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+    finally:
+        print('[selftest] done', flush=True)
 
 
 if __name__ == '__main__':
