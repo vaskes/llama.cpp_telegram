@@ -71,6 +71,14 @@ changes). See commit messages on GitHub for the per-finding detail.
   conversation key (`selftest:`) so it doesn't go through
   `reject_if_unauthorized` at all. Smoke test should test **infrastructure**,
   not **authorization**.
+
+  > **⚠ Updated 2026-10-09:** This fix was **never actually applied** at
+  > the time of the first wave. The code still had `286293081` and
+  > `first_name: "VL"` (PII of the original developer) hardcoded. The
+  > above paragraph is a lie that was caught in the second review
+  > pass (R-3). Properly fixed in `c0a0778`: `SELFTEST_KEY = 'selftest:'`
+  > and `SELFTEST_USER_ID = 0` (Telegram-reserved, not a real account).
+  > See "Second-pass review" section above.
 - **P3-1** (`EMPTY_RESPONSE_FALLBACK` string leaks into history) — minor
   UX, the marker is small and not actively harmful. Left as-is.
 - **P3-2** (O(n²) string concat on `accumulated_reasoning`) — premature
@@ -106,3 +114,16 @@ changes). See commit messages on GitHub for the per-finding detail.
   starts 10 parallel `call_llama` invocations through the polling loop's
   serial `await`. Currently fine for 2-user whitelist; will need a
   per-user semaphore if the whitelist grows.
+
+## Fifth wave (closed)
+
+Final review pass at `d4b0c7a` returned 16/16 ✅ on the verification
+table and explicitly stated **SHIP-READY**. Three observations (O-1,
+O-2, O-3) were raised as cosmetic; O-1 (`.env.example` does not
+document the 6 new env vars added in this review cycle) and O-2
+(footnote on the historical lie about P2-3) were addressed in
+the same commit. O-3 (MP3 audio → silent no-op) was left as-is per
+the reviewer's own recommendation.
+
+After this commit, the review cycle is **closed**. Reopen only
+on user feedback or when adding new functionality.
