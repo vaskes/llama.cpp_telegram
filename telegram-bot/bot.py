@@ -1,6 +1,5 @@
 import os
 import json
-import re
 import time
 import base64
 import signal
@@ -93,6 +92,13 @@ else:
               '"rejected id=..." in the logs).')
 
 
+# === Size limits ===
+# Without these, a single user sending a 50-MP photo or a 500-MB PDF
+# could OOM the bot process. We reject upfront, before downloading.
+MAX_PHOTO_BYTES = int(os.environ.get('MAX_PHOTO_BYTES', '10000000'))   # 10 MB
+MAX_DOC_BYTES = int(os.environ.get('MAX_DOC_BYTES', '5000000'))       # 5 MB
+
+
 def is_authorized(update: Update) -> bool:
     if LOCKDOWN:
         return False
@@ -145,6 +151,13 @@ DISABLED_TOOLS = {
 
 # Кеш tools (загружаются один раз)
 _TOOLS_CACHE = None
+# Module-level shutdown signal. Set by main._run() when SIGINT/SIGTERM fires.
+# call_llama() reads it between iterations to bail out fast (faster than
+# docker stop's 10s SIGKILL grace). Kept as a module global because the
+# polling loop does not have a way to pass per-update context into the
+# PTB handlers; threading it through handler signatures would touch
+# every dispatcher, which is out of scope for the current review wave.
+SHUTDOWN_EVENT: asyncio.Event = None  # type: ignore[assignment]
 
 
 async def fetch_tools_from_llama():
@@ -330,7 +343,10 @@ async def donsetch_call(tool_name: str, arguments: dict) -> str:
                             "id": "call",
                         },
                     )
-                    if r.status_code == 404 or 'session' in (r.text or '').lower() and 'unknown' in (r.text or '').lower():
+                    if r.status_code == 404 or (
+                        'session' in (r.text or '').lower()
+                        and 'unknown' in (r.text or '').lower()
+                    ):
                         # session expired — re-init and retry once
                         _donsetch_session_id = None
                         await _donsetch_init()
@@ -394,14 +410,27 @@ DONSETCH_TOOLS = {
 }
 
 
-async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True):
+async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
                   (throttled internally). Pass None to skip the live reasoning feed.
     use_stream:    if False, do a plain non-streaming POST (better for vision tasks
                   and other cases where streaming may truncate reasoning).
+    shutdown_event: optional asyncio.Event; checked at the top of every iteration
+                  so SIGTERM (docker stop) can abort a long call before the 10s
+                  SIGKILL grace runs out. Falls back to the module-level
+                  SHUTDOWN_EVENT if None.
     Returns the final assistant content (or fallback message if exhausted).
+
+    Implementation note: this function is intentionally long (the streaming
+    branch alone is ~400 lines, cyclomatic ~100). The shape is the
+    convergence of: streaming SSE parser, four independent abort guards
+    (max_iter, identical-call, wall-clock, hallucination), tool-execution
+    loop, and reasoning-stream push to Telegram. Splitting it prematurely
+    loses the abort-ladder invariants. DO NOT REFACTOR without reading
+    docs/CALL_LLAMA.md end-to-end and writing a regression test against
+    a captured llama-server response. See also docs/REVIEW-MINIMAX.md §P3-4.
     """
     tools = await fetch_tools_from_llama()
     # custom_weather_tool is now in bot_side_tool_defs below; see "Add our
@@ -583,6 +612,14 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 print(f"[thinking edit err] {type(e).__name__}: {e}", flush=True)
 
     for iteration in range(max_iter):
+        # Honour graceful shutdown between iterations. Without this, a SIGTERM
+        # mid-call_llama is ignored until the current llama-server request
+        # finishes (could be 5-7 min for a hard problem). docker stop
+        # SIGKILLs after 10s, so we MUST bail faster than that.
+        _sd = shutdown_event if shutdown_event is not None else SHUTDOWN_EVENT
+        if _sd is not None and _sd.is_set():
+            print(f"[call_llama] shutdown_event set, aborting tool loop at iteration {iteration}", flush=True)
+            return '[bot: shutdown requested, aborting tool loop]'
         # --- request body ---
         async with httpx.AsyncClient(timeout=600.0) as client:
             req_body = {
@@ -980,7 +1017,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '🤖 **LlamaBot v2 запущен!**\n\n'
         'Я могу:\n'
         '• Отвечать на вопросы (с tool-calling)\n'
-        '• Искать в интернете (SearXNG) 🌐\n'
+        '• Искать в интернете 🌐\n'
         '• Узнавать погоду (wttr.in) ☀️\n'
         '• Анализировать изображения (отправьте фото)\n'
         '• Расшифровывать голосовые 🎤\n'
@@ -1023,8 +1060,26 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking = None
     try:
         photo = update.message.photo[-1]
+        # Telegram sends multiple PhotoSize entries; we want the smallest
+        # that is still useful (index 0 = 90x90 thumbnail is too small,
+        # we usually take the last = largest). But cap it: a 50-MP photo
+        # at Q8_0 base64 inflates to >30 MB and OOMs the bot.
+        # Note: photo.file_size is not always populated by Telegram; if
+        # missing, we download and check the byte length.
+        if photo.file_size and photo.file_size > MAX_PHOTO_BYTES:
+            await update.message.reply_text(
+                f'❌ Photo too large ({photo.file_size/1e6:.1f} MB > '
+                f'{MAX_PHOTO_BYTES/1e6:.0f} MB).'
+            )
+            return
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
+        if len(photo_bytes) > MAX_PHOTO_BYTES:
+            await update.message.reply_text(
+                f'❌ Photo too large ({len(photo_bytes)/1e6:.1f} MB > '
+                f'{MAX_PHOTO_BYTES/1e6:.0f} MB).'
+            )
+            return
         # Telegram photos are often WebP (especially from Android), not JPEG.
         # Detect actual MIME from magic bytes — we were hardcoding image/jpeg
         # which caused llama-server to reject the image with 400.
@@ -1093,7 +1148,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await context.bot.get_file(voice.file_id)
         voice_bytes = await file.download_as_bytearray()
         transcript = await transcribe_voice(voice_bytes)
-        await update.message.reply_text(f'🎤 **Transcript:**\n_{transcript}_', parse_mode='Markdown')
+        # No parse_mode — transcript is user-generated and may contain
+        # '*', '_', '[', '`', which would break Markdown rendering.
+        await update.message.reply_text(f'🎤 Transcript:\n{transcript}')
         if user_id not in conversations:
             conversations[user_id] = []
         conversations[user_id].append({"role": "user", "content": transcript})
@@ -1124,8 +1181,23 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await update.message.chat.send_action(action='typing')
     doc = update.message.document
+    # Reject oversized documents before downloading. We will only ever
+    # read the first 16 KB of text from the file, so anything bigger is
+    # almost certainly a mistake or an attempt to OOM the bot.
+    if doc.file_size and doc.file_size > MAX_DOC_BYTES:
+        await update.message.reply_text(
+            f'❌ Document too large ({doc.file_size/1e6:.1f} MB > '
+            f'{MAX_DOC_BYTES/1e6:.0f} MB).'
+        )
+        return
     file = await context.bot.get_file(doc.file_id)
     doc_bytes = await file.download_as_bytearray()
+    if len(doc_bytes) > MAX_DOC_BYTES:
+        await update.message.reply_text(
+            f'❌ Document too large ({len(doc_bytes)/1e6:.1f} MB > '
+            f'{MAX_DOC_BYTES/1e6:.0f} MB).'
+        )
+        return
     tmp_path = None
     thinking = None
     try:
@@ -1143,7 +1215,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(conversations[user_id]) > 20:
             conversations[user_id] = conversations[user_id][-20:]
         thinking = await update.message.reply_text('💭 думаю…')
-        bot_response = await call_llama(conversations[user_id], max_tokens=16384, thinking_msg=thinking)
+        bot_response = await call_llama(conversations[user_id], max_tokens=16384, user_text=caption, thinking_msg=thinking)
         conversations[user_id].append({"role": "assistant", "content": bot_response})
         await send_reply(update, bot_response)
     except Exception as e:
@@ -1231,13 +1303,20 @@ def main():
                 # Windows or non-main thread: fall back to default behaviour
                 # (KeyboardInterrupt will still abort, just less gracefully).
                 pass
-        # Drop any pending updates before starting our own polling.
-        async with httpx.AsyncClient(timeout=10.0) as c:
-            try:
-                r = await c.get(f"{TELEGRAM_API}/getUpdates", params={"offset": -1, "timeout": 0})
-                print(f"[poll] drop_pending: {r.json().get('ok')}", flush=True)
-            except Exception as e:
-                print(f"[poll] drop_pending failed (ok): {e!r}", flush=True)
+        # Publish to module global so call_llama() (called from PTB handlers
+        # that don't get a context arg from our hand-rolled polling loop)
+        # can read it and bail between iterations.
+        global SHUTDOWN_EVENT
+        SHUTDOWN_EVENT = shutdown_event
+        # NB: we intentionally do NOT call getUpdates with offset=-1 to
+        # drop pending updates. Reasoning:
+        #   - in LOCKDOWN, the handler rejects everything anyway, so
+        #     backlog gets eaten harmlessly;
+        #   - in non-LOCKDOWN, dropping pending messages is a UX bug
+        #     (user sent a message while bot was down, expects to see
+        #     a reply when bot comes back).
+        # The CALL_LLAMA.md §4 paragraph that claimed otherwise is
+        # corrected by this comment.
 
         # Self-test: if LLAMABOT_SELFTEST=1, push a fake Update through
         # the dispatcher so we can verify handlers actually fire even when
@@ -1301,6 +1380,15 @@ def main():
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 30.0)
 
+        # Cleanly close the PTB Application if it was ever built. Without
+        # this, the underlying httpx client held by app.bot emits a
+        # "RuntimeWarning: unclosed client" on interpreter shutdown.
+        if _dispatcher is not None:
+            try:
+                await _dispatcher.shutdown()
+            except Exception as e:
+                print(f"[main] dispatcher shutdown error: {e!r}", flush=True)
+
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
@@ -1311,7 +1399,6 @@ def main():
 # dispatch. We never call .start() on it; the dispatcher works fine
 # without start() for one-shot process_update.
 _dispatcher = None
-_dispatcher_lock = asyncio.Lock() if hasattr(asyncio, 'Lock') else None
 
 
 async def _dispatch_update(upd_dict):
@@ -1399,10 +1486,6 @@ async def _selftest():
     print(f"[selftest] call_llama result: {len(result)} chars, head={result[:300]!r}", flush=True)
 
     print('[selftest] done', flush=True)
-
-
-async def _noop_async(*a, **kw):
-    return None
 
 
 if __name__ == '__main__':
