@@ -61,6 +61,14 @@ Optional:
 - `ALLOWED_USERNAMES` — secondary auth by `@username` (case-insensitive)
 - `DONSETCH_URL` — if you have [donsetch-http](https://github.com/dondai44423/donsetch)
   running (default `http://localhost:8765/mcp`)
+- `CONVERSATIONS_DB` — path to the SQLite conversation store
+  (default `/app/data/conversations.db`, bind-mounted from
+  `./data` on the host by `docker-compose.yml`). The DB is
+  created automatically on first bot start; conversations and
+  sub-talks persist across `docker compose restart`.
+- `CONTEXT_MESSAGES` — how many recent messages per sub-talk
+  to send to the model (default 20). Older messages stay in
+  the DB but are not in the model's context window.
 
 ## 5. Bring up dependencies
 

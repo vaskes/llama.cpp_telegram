@@ -122,6 +122,73 @@ For a production-grade setup, switch to a bridge network + explicit
 internal DNS names (`http://llama:8080/v1`). For a single standalone
 machine, this is overkill.
 
+## Sub-talks and persistent history
+
+A sub-talk is a **named conversation thread** that a user creates
+and switches between. Each user has their own set of sub-talks (no
+sharing across users). The active sub-talk is per-user; new messages
+go into whichever sub-talk the user has currently selected. Sub-talks
+are stored persistently in SQLite so a bot restart does not lose
+history, and so a user can return to "research" after a week of
+working on "main".
+
+### Commands
+
+| Command | Effect |
+|---|---|
+| `/newsub <name>` | Create a new sub-talk and switch to it. If the name exists, just switches. |
+| `/sub <name>` | Switch to the named sub-talk; auto-creates if it does not exist. |
+| `/sub` | Without arg: show the current active sub-talk. |
+| `/here` | Show the current sub-talk AND the last message snippet. |
+| `/subs` | List all sub-talks with message count and last_used; active marked with `→`. |
+| `/delsub <name>` | Delete the sub-talk and all its messages. |
+
+Names match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$` — no spaces, slashes,
+or shell metacharacters. The default sub-talk is `main`, auto-created
+on the user's first message if no sub-talks exist.
+
+### Storage
+
+`telegram-bot/storage.py` provides a `Storage` class wrapping a
+SQLite file (default `/app/data/conversations.db`, persisted via
+the `./data:/app/data` bind-mount in `docker-compose.yml`).
+
+```
+sub_talks(user_id, name, created_at, last_used)  PK(user_id, name)
+messages(id, user_id, sub_talk, role, content, created_at)  idx(user_id, sub_talk, id)
+active_sub_talk(user_id PK, name)
+```
+
+The `content` column stores the message as a JSON-encoded dict
+matching the OpenAI Chat Completions format (`{"role", "content"}`).
+Text-only and multimodal (text + image_url) messages round-trip
+transparently because both are stored as JSON.
+
+### How handlers use the store
+
+Every message handler follows the same shape:
+
+```python
+sub_talk = await _resolve_active(user_id)   # auto-create 'main' if needed
+await _persist_message(user_id, sub_talk, "user", user_content)
+history = await _load_history(user_id, sub_talk)   # up to CONTEXT_MESSAGES
+bot_response = await call_llama(history, ...)
+await _persist_message(user_id, sub_talk, "assistant", bot_response)
+```
+
+The previous in-memory `conversations = {}` dict was removed
+when sub-talks were introduced; SQLite is now the only place
+conversation state lives.
+
+### Why sub-talks at all?
+
+Without sub-talks, conversation history is one undifferentiated
+stream — every topic you ever discussed with the bot bleeds into
+every new conversation's context. With sub-talks, the model sees
+only the recent messages of the active thread, which is what you
+want when you ask it to "проверь математику" inside `research`
+while your casual chat in `main` is unrelated.
+
 ## What `bot.py` deliberately does NOT do
 
 - Does **not** run `Application.run_polling()` (see [CALL_LLAMA.md](CALL_LLAMA.md) §4).

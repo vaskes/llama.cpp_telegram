@@ -442,3 +442,78 @@ reviewer does not "fix" it back:
   See §1.2.
 - **Old PTB 21.0 `Application.run_polling()` call.** Replaced with
   the direct-httpx loop in §4.
+
+## 11. Sub-talks and persistent storage
+
+Sub-talks are **named, per-user conversation threads** that the
+user creates with `/newsub <name>`, switches between with
+`/sub <name>`, lists with `/subs`, and removes with `/delsub <name>`.
+The "active" sub-talk is per-user; a fresh message goes into
+whichever sub-talk the user has currently selected. Default
+sub-talk is `main`, auto-created on the first message.
+
+State lives in SQLite (`telegram-bot/storage.py`, default
+`/app/data/conversations.db`, persisted via the
+`./data:/app/data` bind-mount in `docker-compose.yml`):
+
+```
+sub_talks(user_id, name, created_at, last_used)  PK(user_id, name)
+messages(id, user_id, sub_talk, role, content, created_at)
+active_sub_talk(user_id PK, name)
+```
+
+### Why sub-talks at all
+
+Without sub-talks, conversation history is one undifferentiated
+stream — every topic you ever discussed with the bot bleeds into
+every new conversation's context window. With sub-talks, the
+model sees only the recent messages of the active thread, which
+is what you want when you ask it to "проверь математику" inside
+`research` while your casual chat in `main` is unrelated. Sub-talks
+also give the user a way to keep multiple work-streams in parallel
+without losing context in any of them.
+
+### Storage is sync, handlers are async
+
+`Storage` is a class with sync methods. Callers inside the asyncio
+event loop wrap calls in `asyncio.to_thread(...)` so the DB never
+blocks the loop. Internally `Storage` keeps one SQLite connection
+per thread (`threading.local`); SQLite's own locking serialises
+writes, and `journal_mode=WAL` lets readers proceed while a writer
+is active.
+
+### The four-step handler pattern
+
+Every message handler follows the same shape:
+
+```python
+sub_talk = await _resolve_active(user_id)        # auto-create 'main' if needed
+await _persist_message(user_id, sub_talk, "user", user_content)
+history = await _load_history(user_id, sub_talk)  # up to CONTEXT_MESSAGES
+bot_response = await call_llama(history, ...)
+await _persist_message(user_id, sub_talk, "assistant", bot_response)
+```
+
+This is the entire contract between handlers and storage. Adding
+a new handler (e.g. for stickers) means writing the same four
+steps; no new state, no new locks, no race conditions.
+
+### `reset` semantics
+
+`/reset` clears the **messages** in the current sub-talk and
+keeps the sub-talk itself (re-creates it empty + re-activates).
+It does NOT wipe all sub-talks. To remove a whole thread, the
+user runs `/delsub <name>`.
+
+### What this commit removed
+
+The previous in-memory `conversations = {}` global dict was
+removed in the same commit that wired up the SQLite store. The
+dict had three problems that the new design fixes:
+
+1. Lost on every bot restart (no persistence)
+2. Single conversation per user — no way to separate topics
+3. No way to see the history other than scrolling
+
+`/reset` used to mean "wipe everything for this user"; now it
+means "wipe this sub-talk only, keep the rest".
