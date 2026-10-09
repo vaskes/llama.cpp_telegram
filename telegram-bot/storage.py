@@ -93,6 +93,32 @@ CREATE TABLE IF NOT EXISTS active_thread (
     chat_id     INTEGER PRIMARY KEY,
     thread_id   TEXT NOT NULL
 );
+
+-- known_topics: tracks forum topics the bot has created (or that
+-- were registered via /subs sync). Used to back /subs and /delsub
+-- in group mode, since Telegram Bot API does NOT expose a
+-- "list all topics" method to bots.
+--
+-- Only meaningful in group mode. In private mode this table is
+-- always empty. (We could store the user's "main" sub-talk here
+-- too, but chat_threads already does that for private mode and
+-- the code paths never intersect.)
+--
+-- A topic missing from this table means it was created outside the
+-- bot (manually in Telegram UI, or by another bot). The user can
+-- still see it in the Telegram sidebar; the bot just cannot
+-- enumerate it for /subs. To register such a topic, the user can
+-- delete and recreate it via /newsub.
+CREATE TABLE IF NOT EXISTS known_topics (
+    chat_id           INTEGER NOT NULL,
+    message_thread_id INTEGER NOT NULL,
+    name              TEXT    NOT NULL,
+    created_at        REAL    NOT NULL,
+    PRIMARY KEY (chat_id, message_thread_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_known_topics_name
+    ON known_topics(chat_id, name);
 """
 
 # Default cap for the model's context window. Older messages stay in
@@ -281,6 +307,82 @@ class Storage:
             "UPDATE chat_threads SET last_used = ? "
             "WHERE chat_id = ? AND thread_id = ?",
             (time.time(), chat_id, thread_id),
+        )
+        c.commit()
+
+    # --- known_topics (group mode only) ---
+    # Telegram Bot API does NOT expose a "list all forum topics"
+    # method to bots. So the bot maintains its own index of topics
+    # it has created via /newsub, keyed by (chat_id, message_thread_id).
+    # /subs reads from this table; /delsub looks up here by name,
+    # then calls deleteForumTopic with the recorded message_thread_id.
+
+    def add_known_topic(
+        self, chat_id: int, message_thread_id: int, name: str
+    ) -> None:
+        """Record a topic the bot just created (or that was registered
+        via /subs resync). Idempotent: re-adding an existing (chat_id,
+        message_thread_id) row just updates the name (handles the
+        case where a user renamed a topic via Telegram UI and then
+        re-ran /newsub — though that is rare in practice)."""
+        c = self._conn()
+        c.execute(
+            "INSERT INTO known_topics (chat_id, message_thread_id, name, created_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(chat_id, message_thread_id) DO UPDATE SET name = excluded.name",
+            (chat_id, message_thread_id, name, time.time()),
+        )
+        c.commit()
+
+    def list_known_topics(self, chat_id: int) -> list[dict]:
+        """Return all known topics in this group, sorted by name.
+
+        Returns a list of dicts with keys: message_thread_id (int),
+        name (str), created_at (float, epoch seconds).
+        """
+        c = self._conn()
+        cur = c.execute(
+            "SELECT message_thread_id, name, created_at FROM known_topics "
+            "WHERE chat_id = ? ORDER BY name COLLATE NOCASE",
+            (chat_id,),
+        )
+        return [
+            {"message_thread_id": r[0], "name": r[1], "created_at": r[2]}
+            for r in cur.fetchall()
+        ]
+
+    def find_known_topic_by_name(
+        self, chat_id: int, name: str
+    ) -> dict | None:
+        """Look up a topic by its display name. Returns dict with
+        message_thread_id, name, created_at; or None if not found.
+        Name match is exact (case-sensitive) to avoid accidental
+        collisions; the Telegram UI is the source of truth for
+        what the "current" name is, and a name mismatch is a useful
+        signal that the user typed the wrong thing."""
+        c = self._conn()
+        cur = c.execute(
+            "SELECT message_thread_id, name, created_at FROM known_topics "
+            "WHERE chat_id = ? AND name = ?",
+            (chat_id, name),
+        )
+        r = cur.fetchone()
+        if r is None:
+            return None
+        return {"message_thread_id": r[0], "name": r[1], "created_at": r[2]}
+
+    def remove_known_topic(
+        self, chat_id: int, message_thread_id: int
+    ) -> None:
+        """Drop a known_topic row by message_thread_id.
+
+        Called after deleteForumTopic succeeds, so /subs no longer
+        shows a topic that is no longer there.
+        """
+        c = self._conn()
+        c.execute(
+            "DELETE FROM known_topics WHERE chat_id = ? AND message_thread_id = ?",
+            (chat_id, message_thread_id),
         )
         c.commit()
 

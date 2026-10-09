@@ -1123,14 +1123,9 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_group_chat(update):
         chat_id = update.effective_chat.id
         thread_id = str(update.message.message_thread_id)
-        try:
-            topics = []
-            async for t in context.bot.get_forum_topics(chat_id=chat_id):
-                topics.append(t)
-        except Exception as e:
-            print(f"[ERR stats-group] {type(e).__name__}: {e}", flush=True)
-            await _reply(update, f'❌ getForumTopics failed: {e}')
-            return
+        topics = await asyncio.to_thread(
+            store.list_known_topics, chat_id
+        )
         # Per-topic message count from local DB
         all_subs = await asyncio.to_thread(store.list_threads, chat_id)
         msg_total = sum(s["msg_count"] for s in all_subs)
@@ -1140,7 +1135,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await _reply(update,
             f'📊 Group stats\n'
-            f' • Topics: {len(topics)}\n'
+            f' • Topics (bot-known): {len(topics)}\n'
             f' • Current topic: #{update.message.message_thread_id} '
             f'({cur_count} stored message(s))\n'
             f' • Total stored messages across topics: {msg_total}'
@@ -1253,6 +1248,16 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"[ERR newsub-group] {type(e).__name__}: {e}", flush=True)
             await _reply(update, f'❌ createForumTopic failed: {e}')
             return
+        # Record the topic in our local index so /subs and /delsub
+        # can find it later. Telegram Bot API does NOT expose a
+        # "list topics" method to bots, so the bot's local DB is
+        # the only way to enumerate topics we know about.
+        await asyncio.to_thread(
+            store.add_known_topic,
+            update.effective_chat.id,
+            topic.message_thread_id,
+            topic_name,
+        )
         await _reply(update,
             f'✅ Created topic "{topic_name}" (id={topic.message_thread_id}).\n'
             f'Switch to it in the sidebar to start the conversation.'
@@ -1371,34 +1376,33 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # === Group mode: list Telegram forum topics (no inline buttons) ===
+    # === Group mode: list known topics from local DB ===
+    # Telegram Bot API does NOT expose a "list all forum topics"
+    # method to bots, so we list from our local known_topics table
+    # (populated by /newsub). Topics created outside the bot
+    # (manually in Telegram UI, or by another bot) won't appear
+    # here. The Telegram sidebar is the authoritative list.
     if _is_group_chat(update):
-        try:
-            # getForumTopics is a generator. PTB 21 yields ForumTopic objects
-            # with .message_thread_id, .name, .icon_custom_emoji_id (optional).
-            topics = []
-            async for t in context.bot.get_forum_topics(
-                chat_id=update.effective_chat.id,
-            ):
-                topics.append(t)
-        except Exception as e:
-            print(f"[ERR subs-group] {type(e).__name__}: {e}", flush=True)
-            await _reply(update, f'❌ getForumTopics failed: {e}')
-            return
-        # General topic (id == update.message.message_thread_id) is the
-        # "always-on" admin topic that Telegram creates with every
-        # supergroup. Filter it out unless the user is in it.
-        cur = update.message.message_thread_id
-        topics = [t for t in topics if t.message_thread_id != 1 or t.message_thread_id == cur]
+        topics = await asyncio.to_thread(
+            store.list_known_topics, update.effective_chat.id
+        )
         if not topics:
             await _reply(update,
-                'No topics yet. Use /newsub <name> to create one.'
+                'No topics yet. Use /newsub <name> to create one.\n'
+                '\n'
+                'Note: topics you created via /newsub appear here.\n'
+                'Topics created directly in Telegram UI are not\n'
+                'enumerated by the bot (Telegram does not expose a\n'
+                '"list topics" API to bots).'
             )
             return
+        cur = update.message.message_thread_id
         lines = ['📚 **Topics in this group** (active marked ✅):\n']
         for t in topics:
-            mark = '✅ ' if t.message_thread_id == cur else '  '
-            lines.append(f'{mark}#{t.message_thread_id} — {t.name}')
+            mark = '✅ ' if t["message_thread_id"] == cur else '  '
+            lines.append(
+                f'{mark}#{t["message_thread_id"]} — {t["name"]}'
+            )
         await _reply(update, '\n'.join(lines))
         return
     if await reject_if_unauthorized(update, context):
@@ -1437,30 +1441,50 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # === Group mode: find the topic by name, then deleteForumTopic ===
+    # === Group mode: look up the topic in known_topics, then deleteForumTopic ===
+    # Telegram Bot API does NOT expose a "list all topics" method to
+    # bots, so we look up the topic by name (or numeric id) in our
+    # local known_topics index. The index is populated by /newsub.
     if _is_group_chat(update):
-        topic_name = _parse_topic_arg(update.message.text)
-        if not topic_name:
+        arg = _parse_topic_arg(update.message.text)
+        if not arg:
             await _reply(update,
-                '❌ Usage: /delsub <name>\n'
-                'Removes the topic AND all its messages. Cannot be undone.'
+                '❌ Usage: /delsub <name>   (or /delsub <id>)\n'
+                'Removes the topic AND all its messages. Cannot be undone.\n'
+                'Names match the /subs list; numeric ids also work.'
             )
             return
-        try:
-            target_id = None
-            async for t in context.bot.get_forum_topics(
-                chat_id=update.effective_chat.id,
+        target_id = None
+        target_name = None
+        # Numeric id?
+        if arg.isdigit():
+            tid = int(arg)
+            for t in await asyncio.to_thread(
+                store.list_known_topics, update.effective_chat.id
             ):
-                if t.name == topic_name:
-                    target_id = t.message_thread_id
+                if t["message_thread_id"] == tid:
+                    target_id = tid
+                    target_name = t["name"]
                     break
-        except Exception as e:
-            print(f"[ERR delsub-group-list] {type(e).__name__}: {e}", flush=True)
-            await _reply(update, f'❌ getForumTopics failed: {e}')
-            return
-        if target_id is None:
-            await _reply(update, f'❌ No topic named "{topic_name}" in this group.')
-            return
+            if target_id is None:
+                await _reply(update, f'❌ No topic with id={arg} in this group.')
+                return
+        else:
+            entry = await asyncio.to_thread(
+                store.find_known_topic_by_name,
+                update.effective_chat.id,
+                arg,
+            )
+            if entry is None:
+                await _reply(update,
+                    f'❌ No topic named "{arg}" in this group.\n'
+                    f'(The bot only knows topics created via /newsub;\n'
+                    f'topics created manually in Telegram UI are not\n'
+                    f'enumerated. Use the sidebar\'s "Delete topic".)'
+                )
+                return
+            target_id = entry["message_thread_id"]
+            target_name = entry["name"]
         try:
             await context.bot.delete_forum_topic(
                 chat_id=update.effective_chat.id,
@@ -1470,12 +1494,18 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"[ERR delsub-group-delete] {type(e).__name__}: {e}", flush=True)
             await _reply(update, f'❌ deleteForumTopic failed: {e}')
             return
-        # Also wipe the local message history for that topic.
+        # Remove from known_topics + wipe local message history.
+        await asyncio.to_thread(
+            store.remove_known_topic,
+            update.effective_chat.id,
+            target_id,
+        )
         n = await asyncio.to_thread(
             store.delete_thread, update.effective_chat.id, str(target_id)
         )
         await _reply(update,
-            f'🗑 Deleted topic "{topic_name}" and {n} locally-stored message(s).'
+            f'🗑 Deleted topic "{target_name}" (id={target_id}) '
+            f'and {n} locally-stored message(s).'
         )
         return
     # === Private mode ===
