@@ -2,25 +2,36 @@
 
 ## bot.py — what's inside
 
-### Tool-calling loop
+### Two code paths in `call_llama`
 
-The bot **runs its own** tool-calling loop (up to 5 iterations). This is
-because llama-server with `--mcp-servers-config` only loads the **list
-of tools**, but does **not** execute them — that is the client's job
-(us).
+The function splits internally into a **streaming** path (text, voice,
+document) and a **non-streaming** path (vision). They share only the
+function signature and the return contract. See
+[CALL_LLAMA.md](CALL_LLAMA.md) §1 for the full design.
+
+### Tool-calling loop (streaming path only)
+
+The bot **runs its own** tool-calling loop (up to 15 iterations, with
+a wall-clock cap of 600 s, an identical-call detector, and a
+hallucination abort). This is because llama-server with
+`--mcp-servers-config` only loads the **list of tools**, but does
+**not** execute them — that is the client's job (us).
 
 The cycle:
 
 ```
-1. Fetch tools with GET /tools  (once, cached)
-2. POST /v1/chat/completions with messages + tools
-3. If finish_reason == "tool_calls":
+1. Detect tool intent from user_text (see §2 in CALL_LLAMA.md)
+2. If intent: req_tools = all_tools; else req_tools = None
+3. POST /v1/chat/completions with messages + (optional) tools
+4. If finish_reason == "tool_calls" AND req_tools:
      a. For each tool_call:
         - parse name + arguments
-        - execute (HTTP to SearXNG, wttr.in, etc.)
+        - execute (HTTP to wttr.in / donsetch-http MCP)
         - append to messages: {role: "tool", tool_call_id, content}
-     b. goto 2
-4. Return content as the reply
+     b. goto 3
+5. If finish_reason == "tool_calls" AND NOT req_tools:
+     → hallucination abort, return content or reasoning tail
+6. Return content as the reply
 ```
 
 ### Which tools the bot can execute
@@ -34,6 +45,12 @@ The cycle:
 | `web_screenshot` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up |
 | `read_file`, `write_file`, `edit_file`, `exec_shell_command` | — | **DISABLED** in `DISABLED_TOOLS` |
 | `file_glob_search`, `grep_search`, `get_info` | — | **DISABLED** (security + not implemented) |
+
+### Polling loop
+
+Bypasses `Application.run_polling()` from python-telegram-bot 21.0.
+Hand-rolled `httpx` long-polling loop with `max_keepalive_connections=0`.
+See [CALL_LLAMA.md](CALL_LLAMA.md) §4 for why.
 
 ### IPv4 monkey-patch
 
@@ -104,3 +121,18 @@ If you need better accuracy, set `WHISPER_MODEL` in `.env` to
 For a production-grade setup, switch to a bridge network + explicit
 internal DNS names (`http://llama:8080/v1`). For a single standalone
 machine, this is overkill.
+
+## What `bot.py` deliberately does NOT do
+
+- Does **not** run `Application.run_polling()` (see [CALL_LLAMA.md](CALL_LLAMA.md) §4).
+- Does **not** keep any tool-calling state in llama-server's own
+  MCP layer; the bot executes tools in its own process. This avoids
+  the bug where llama-server loads the **list** of tools but
+  sometimes fails to **execute** them (donsetch in particular never
+  loaded correctly through the server-side MCP).
+- Does **not** hardcode any model name in the code; if `MODEL` env
+  is empty, the bot queries `/v1/models` and uses the first model
+  it finds. See [CALL_LLAMA.md](CALL_LLAMA.md) §7.
+- Does **not** log the live `req_body` dict — `json.dumps` with the
+  default `ensure_ascii=True` mutates the dict in place. See
+  [CALL_LLAMA.md](CALL_LLAMA.md) §6.
