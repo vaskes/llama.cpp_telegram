@@ -3,6 +3,7 @@ import json
 import re
 import time
 import base64
+import signal
 import tempfile
 import urllib.parse
 import socket
@@ -82,6 +83,14 @@ if not ALLOWED_USER_IDS and not ALLOWED_USERNAMES:
 else:
     LOCKDOWN = False
     print(f'[SECURITY] whitelist: {len(ALLOWED_USER_IDS)} ids, {len(ALLOWED_USERNAMES)} usernames')
+    # Username-based access is fragile: users can change their @username
+    # at any time and silently lose access. Prefer IDs. Warn if usernames
+    # are configured without any IDs to anchor on.
+    if ALLOWED_USERNAMES and not ALLOWED_USER_IDS:
+        print('[SECURITY] WARNING: ALLOWED_USERNAMES is set but ALLOWED_USER_IDS is empty. '
+              'Username-based access can break if a user changes their @username. '
+              'Prefer numeric IDs (find yours via @userinfobot or by reading '
+              '"rejected id=..." in the logs).')
 
 
 def is_authorized(update: Update) -> bool:
@@ -139,37 +148,48 @@ _TOOLS_CACHE = None
 
 
 async def fetch_tools_from_llama():
-    """Получить список tools с llama-server и отфильтровать доступные."""
+    """Получить список tools с llama-server и отфильтровать доступные.
+
+    Cold-start retry: llama-server may take a few seconds after `docker
+    compose up` to bind the /tools endpoint. Three attempts with 1s/2s/4s
+    backoff before giving up. Caches the result so we only fetch once.
+    """
     global _TOOLS_CACHE
     if _TOOLS_CACHE is not None:
         return _TOOLS_CACHE
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(f"{LLAMA_URL.replace('/v1', '')}/tools")
-            r.raise_for_status()
-            all_tools = r.json()
-        openai_tools = []
-        for t in all_tools:
-            name = t.get('tool', '')
-            if name in DISABLED_TOOLS:
-                continue
-            defn = t.get('definition', {}).get('function', {})
-            if not defn:
-                continue
-            openai_tools.append({
-                'type': 'function',
-                'function': {
-                    'name': defn.get('name', name),
-                    'description': defn.get('description', '')[:1500],
-                    'parameters': defn.get('parameters', {'type': 'object', 'properties': {}}),
-                }
-            })
-        _TOOLS_CACHE = openai_tools
-        print(f"[tools] loaded {len(openai_tools)} enabled tools (from {len(all_tools)} total)")
-        return openai_tools
-    except Exception as e:
-        print(f"[tools] failed to fetch: {e}")
-        return []
+    last_err = None
+    for attempt, backoff in enumerate((1.0, 2.0, 4.0), start=1):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(f"{LLAMA_URL.replace('/v1', '')}/tools")
+                r.raise_for_status()
+                all_tools = r.json()
+            openai_tools = []
+            for t in all_tools:
+                name = t.get('tool', '')
+                if name in DISABLED_TOOLS:
+                    continue
+                defn = t.get('definition', {}).get('function', {})
+                if not defn:
+                    continue
+                openai_tools.append({
+                    'type': 'function',
+                    'function': {
+                        'name': defn.get('name', name),
+                        'description': defn.get('description', '')[:1500],
+                        'parameters': defn.get('parameters', {'type': 'object', 'properties': {}}),
+                    }
+                })
+            _TOOLS_CACHE = openai_tools
+            print(f"[tools] loaded {len(openai_tools)} enabled tools (from {len(all_tools)} total) on attempt {attempt}")
+            return openai_tools
+        except Exception as e:
+            last_err = e
+            print(f"[tools] attempt {attempt}/3 failed: {type(e).__name__}: {e}")
+            if attempt < 3:
+                await asyncio.sleep(backoff)
+    print(f"[tools] giving up after 3 attempts, last error: {last_err}")
+    return []
 
 
 # Keywords (RU + EN) that signal the user actually wants a tool call.
@@ -575,16 +595,16 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 req_body["tools"] = req_tools
                 req_body["tool_choice"] = "auto"
                 req_body["parallel_tool_calls"] = False
-            # Diagnostic: log the exact bytes we're about to send so we
-            # can compare with a working curl invocation byte-for-byte.
+            # Diagnostic: log request structure only. NEVER dump raw bytes —
+            # for vision requests that includes the base64 image, which is PII
+            # and would land in journald / docker logs.
             if iteration == 0 and not use_stream:
+                # Count the bytes that would be sent (without ever writing them).
                 try:
                     raw = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
-                    with open('/tmp/bot_payload.json', 'wb') as f:
-                        f.write(raw)
-                    print(f"[LLAMA] iter=0 raw_payload_bytes={len(raw)} first_300={raw[:300]!r}", flush=True)
+                    print(f"[LLAMA] iter=0 payload_bytes={len(raw)} (image bytes masked)", flush=True)
                 except Exception as e:
-                    print(f"[LLAMA] iter=0 cannot dump payload: {e}", flush=True)
+                    print(f"[LLAMA] iter=0 cannot size payload: {e}", flush=True)
             # Log what we're about to send — without the image bytes
             # CRITICAL: build a deep-copy for the log so we don't mutate
             # req_body (the bug we just hit: this replaced real image_url
@@ -1190,7 +1210,27 @@ def main():
 
     TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
+    # Graceful shutdown: SIGINT (Ctrl+C) and SIGTERM (docker stop / systemd
+    # stop) set this event; the polling loop checks it at the top of each
+    # iteration. Without this, KeyboardInterrupt aborts the in-flight
+    # httpx call mid-stream and any in-progress handler dies with an
+    # unhandled exception traceback instead of returning cleanly.
+    shutdown_event = asyncio.Event()
+
+    def _on_signal(signame: str) -> None:
+        print(f"[main] received {signame}, initiating shutdown...", flush=True)
+        shutdown_event.set()
+
     async def _run():
+        # Install signal handlers now that we have a running loop.
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _on_signal, sig.name)
+            except (NotImplementedError, RuntimeError):
+                # Windows or non-main thread: fall back to default behaviour
+                # (KeyboardInterrupt will still abort, just less gracefully).
+                pass
         # Drop any pending updates before starting our own polling.
         async with httpx.AsyncClient(timeout=10.0) as c:
             try:
@@ -1216,6 +1256,9 @@ def main():
             limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
         ) as client:
             while True:
+                if shutdown_event.is_set():
+                    print(f"[poll] shutdown_event set, exiting loop (after {n_polls} cycles, {n_updates} updates)", flush=True)
+                    return
                 try:
                     r = await client.get(
                         f"{TELEGRAM_API}/getUpdates",
