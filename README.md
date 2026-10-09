@@ -61,7 +61,8 @@ sudo systemctl start telegram-bot-compose
 
 - **[docs/SETUP.md](docs/SETUP.md)** — installing on a fresh host (for humans)
 - **[docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)** — short command reference for AI agents
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — what's inside bot.py, how the tool-calling loop works
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — what's inside bot.py at a high level
+- **[docs/CALL_LLAMA.md](docs/CALL_LLAMA.md)** — detailed design notes for `call_llama`, polling loop, abort ladder, image MIME detection, config block. The file to read for a code review.
 - **[docs/SECURITY.md](docs/SECURITY.md)** — whitelist, env vars, what NOT to commit
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common issues
 
