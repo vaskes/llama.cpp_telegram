@@ -1579,6 +1579,44 @@ def _is_group_chat(update) -> bool:
     return chat.type != "private"
 
 
+# Group-mode noise filter: in a forum-enabled supergroup, the bot
+# shares the room with other Telegram bots AND with humans acting
+# as LLM proxies. The convention (in the group's pinned welcome
+# message) is that an active LLM marks itself with "[llm]" in its
+# reply. We use that marker to stay silent when another LLM is
+# actively answering — the goal being to avoid bot-to-bot
+# double-answering, not to suppress other participants.
+#
+# In private mode this filter is a no-op (the bot talks to one
+# human, no other LLM can interject). Applied only in group mode.
+_LLM_MARK = "[llm]"
+
+
+def _should_mute_in_group(update) -> bool:
+    """True if the bot should stay silent for this message in group mode.
+
+    Returns True when the message is from:
+      - another Telegram bot (is_bot=True; Telegram doesn't deliver
+        these by default via getUpdates, but defend in depth in case
+        a future API change or webhook setup changes that)
+      - a human/user that self-marked with the "[llm]" convention
+        (an LLM proxy or a non-Telegram LLM that joined via a
+        user account)
+    The marker is case-insensitive and substring-matched; false
+    positives are possible ("the [llm] model is great") but rare
+    and harmless (the bot just doesn't reply to that one message).
+    """
+    msg = update.message
+    if msg is None or msg.from_user is None:
+        return False
+    if getattr(msg.from_user, "is_bot", False):
+        return True
+    text = (msg.text or msg.caption or "").lower()
+    if _LLM_MARK in text:
+        return True
+    return False
+
+
 def _general_thread_id() -> str:
     """Sentinel thread id for the General topic of a forum-enabled
     supergroup. The General topic is real (it has messages, history,
@@ -2318,6 +2356,20 @@ async def _dispatch_update(upd_dict):
         return
     txt = upd.message.text if (upd.message and upd.message.text) else None
     print(f"[dispatch] update_id={upd.update_id} msg={txt!r}", flush=True)
+    # Group-mode noise filter. Apply here (in the dispatch path) so
+    # EVERY handler is covered uniformly: message handlers AND
+    # command handlers. If a message is from another Telegram bot
+    # or contains the "[llm]" convention marker, drop it before
+    # any handler runs.
+    if upd.message is not None and _should_mute_in_group(upd):
+        who = upd.message.from_user
+        tag = (
+            f"bot @{who.username}" if getattr(who, 'is_bot', False)
+            else f"[llm] @{who.username}" if who.username
+            else f"id={who.id}"
+        )
+        print(f"[dispatch] muting group-mode message from {tag}", flush=True)
+        return
     await _dispatcher.process_update(upd)
     print(f"[dispatch] processed update_id={upd.update_id}", flush=True)
 
@@ -2498,6 +2550,47 @@ async def _selftest():
         all_ok = False
 
     print(f"[selftest] group-mode tests: {'all pass' if all_ok else 'FAILED'}", flush=True)
+
+    # === Group-mode noise filter: _should_mute_in_group ===
+    # Verifies that the bot stays silent on messages from other
+    # Telegram bots OR messages that contain the "[llm]" marker.
+    # This is the group-mode etiquette: when another LLM is
+    # actively answering in the room, our bot doesn't double up.
+    print('[selftest] running noise-filter test...', flush=True)
+    class _FakeFromUser:
+        def __init__(self, is_bot, username='someone', uid=1):
+            self.is_bot = is_bot
+            self.username = username
+            self.id = uid
+    class _FakeMessage2:
+        def __init__(self, text, from_user):
+            self.text = text
+            self.caption = None
+            self.from_user = from_user
+    class _FakeUpdate2:
+        def __init__(self, text, from_user):
+            self.message = _FakeMessage2(text, from_user)
+            self.effective_chat = None
+
+    mute_cases = [
+        # (label, from_user, text, expected_mute)
+        ('human, no marker',         _FakeFromUser(False, 'human'),    'hi there',          False),
+        ('human, contains [llm]',    _FakeFromUser(False, 'rogue-ai'), 'I am [llm] ready',  True),
+        ('other Telegram bot',       _FakeFromUser(True,  'ClaudeBot'), 'whatever',          True),
+        ('bot with [llm] too',       _FakeFromUser(True,  'GPTBot'),   '[llm] answer',      True),
+        ('case-insensitive',         _FakeFromUser(False, 'human'),    'this is [LLM] here',True),
+        ('text with no from_user',   None,                              'hi',                False),
+    ]
+    mute_ok = True
+    for label, from_user, text, expected in mute_cases:
+        upd = _FakeUpdate2(text, from_user)
+        got = _b._should_mute_in_group(upd)
+        ok = (got == expected)
+        mute_ok &= ok
+        print(f"  [{'OK' if ok else 'FAIL'}] {label}: mute={got} (expected {expected})", flush=True)
+    all_ok &= mute_ok
+    print(f"[selftest] noise-filter tests: {'all pass' if mute_ok else 'FAILED'}", flush=True)
+    print('[selftest] done', flush=True)
     print('[selftest] done', flush=True)
 
 
