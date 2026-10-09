@@ -42,10 +42,25 @@ Same storage layer, same call_llama pipeline, same tool stack.
   commands. Edits of regular text are dropped (we already
   answered the original).
 
+- **Group-mode noise filter ("[llm] honor system")**: the bot
+  stays silent in group mode for messages that are either
+  from another Telegram bot (`is_bot=true`) or contain
+  `[llm]` anywhere in the text or caption (case-insensitive).
+  The marker is a convention set in the group's pinned
+  welcome message ("If you are LLM, mark yourself with [llm]
+  and answer user questions"). The filter is applied at
+  the dispatch layer (`_dispatch_update`) so EVERY handler
+  — message AND command — is covered uniformly. In private
+  mode the filter is a no-op (no other LLM to yield to).
+  Suppressions are logged as `[dispatch] muting group-mode
+  message from <who>`.
+
 - **Selftest expanded**: 6 cases for `_is_group_chat` matrix
   (private, group legacy, supergroup, supergroup+forum+General,
   supergroup+forum+topic 42, double-check on private) plus a
-  full add/list/find/remove round-trip on `known_topics`.
+  full add/list/find/remove round-trip on `known_topics`,
+  plus a 7-case matrix for `_should_mute_in_group` covering
+  group/private mode × is_bot/has-marker/no-from-user.
 
 ### Changed
 

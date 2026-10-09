@@ -146,6 +146,19 @@ Bot commands in group mode:
   - `/here` — shows current topic + last message
   - `/stats` — group-level stats (topic count, msg totals)
 
+Noise filter (group mode only):
+  - The bot does NOT reply to messages from other Telegram bots
+  - The bot does NOT reply to messages containing `[llm]`
+    (case-insensitive) — the convention for active LLM
+    participants per the group's pinned welcome message
+  - Suppressions are logged as
+    `[dispatch] muting group-mode message from <who>`
+  - The filter is applied at the dispatch layer
+    (`_dispatch_update`), so it covers message AND command
+    handlers uniformly
+  - In private mode the `[llm]` filter is a no-op (no other
+    LLM to yield to in a 1:1 chat)
+
 Whitelist: in group mode the `ALLOWED_USER_IDS` env var is
 **skipped entirely**. Access control is delegated to Telegram
 (group membership + per-topic permissions). For details, see
