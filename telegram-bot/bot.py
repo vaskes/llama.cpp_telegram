@@ -941,14 +941,27 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
-        photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+        # Telegram photos are often WebP (especially from Android), not JPEG.
+        # Detect actual MIME from magic bytes — we were hardcoding image/jpeg
+        # which caused llama-server to reject the image with 400.
+        mime = 'image/jpeg'
+        if photo_bytes[:8].startswith(b'\x89PNG\r\n\x1a\n'):
+            mime = 'image/png'
+        elif photo_bytes[:4] == b'RIFF' and photo_bytes[8:12] == b'WEBP':
+            mime = 'image/webp'
+        elif photo_bytes[:2] == b'\xff\xd8':
+            mime = 'image/jpeg'
+        elif photo_bytes[:6] in (b'GIF87a', b'GIF89a'):
+            mime = 'image/gif'
+        photo_b64 = base64.b64encode(photo_bytes).decode('ascii')
+        photo_data_url = f"data:{mime};base64,{photo_b64}"
         caption = update.message.caption or 'Describe the image in detail.'
         print(f"[handle_photo] downloaded {len(photo_bytes)} bytes, caption={caption!r}", flush=True)
         photo_message = {
             "role": "user",
             "content": [
                 {"type": "text", "text": caption},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{photo_base64}"}}
+                {"type": "image_url", "image_url": {"url": photo_data_url}}
             ]
         }
         # Persist into per-user conversation context so follow-ups remember the image
