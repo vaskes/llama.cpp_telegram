@@ -1602,15 +1602,28 @@ def _should_mute_in_group(update) -> bool:
       - a human/user that self-marked with the "[llm]" convention
         (an LLM proxy or a non-Telegram LLM that joined via a
         user account)
-    The marker is case-insensitive and substring-matched; false
-    positives are possible ("the [llm] model is great") but rare
-    and harmless (the bot just doesn't reply to that one message).
+
+    Filter only applies in group mode. In private mode, the bot
+    is talking to one human and the [llm] marker does not have
+    the "yield the floor" meaning — a private user typing [llm]
+    is being playful, not opting out, and should still be answered.
+    The is_bot check is still applied (defensive — a real user
+    cannot have is_bot=True, so this is a no-op in practice).
+
+    The [llm] marker is case-insensitive and substring-matched;
+    false positives are possible ("the [llm] model is great") but
+    rare and harmless (the bot just doesn't reply to that one
+    message).
     """
     msg = update.message
     if msg is None or msg.from_user is None:
         return False
     if getattr(msg.from_user, "is_bot", False):
         return True
+    # [llm] marker only meaningful in group mode (yield the floor
+    # to other LLM participants).
+    if not _is_group_chat(update):
+        return False
     text = (msg.text or msg.caption or "").lower()
     if _LLM_MARK in text:
         return True
@@ -2553,9 +2566,9 @@ async def _selftest():
 
     # === Group-mode noise filter: _should_mute_in_group ===
     # Verifies that the bot stays silent on messages from other
-    # Telegram bots OR messages that contain the "[llm]" marker.
-    # This is the group-mode etiquette: when another LLM is
-    # actively answering in the room, our bot doesn't double up.
+    # Telegram bots OR messages that contain the "[llm]" marker
+    # (in group mode). In private mode the [llm] marker is a
+    # no-op because there is no "floor" to yield.
     print('[selftest] running noise-filter test...', flush=True)
     class _FakeFromUser:
         def __init__(self, is_bot, username='someone', uid=1):
@@ -2567,23 +2580,34 @@ async def _selftest():
             self.text = text
             self.caption = None
             self.from_user = from_user
+    class _FakeChat2:
+        def __init__(self, type_, is_forum=False):
+            self.type = type_
+            self.is_forum = is_forum
     class _FakeUpdate2:
-        def __init__(self, text, from_user):
+        def __init__(self, text, from_user, chat):
             self.message = _FakeMessage2(text, from_user)
-            self.effective_chat = None
+            self.effective_chat = chat
 
+    # Group mode (chat.is_forum=True so the [llm] check applies)
+    group_chat = _FakeChat2('supergroup', is_forum=True)
+    private_chat = _FakeChat2('private')
     mute_cases = [
-        # (label, from_user, text, expected_mute)
-        ('human, no marker',         _FakeFromUser(False, 'human'),    'hi there',          False),
-        ('human, contains [llm]',    _FakeFromUser(False, 'rogue-ai'), 'I am [llm] ready',  True),
-        ('other Telegram bot',       _FakeFromUser(True,  'ClaudeBot'), 'whatever',          True),
-        ('bot with [llm] too',       _FakeFromUser(True,  'GPTBot'),   '[llm] answer',      True),
-        ('case-insensitive',         _FakeFromUser(False, 'human'),    'this is [LLM] here',True),
-        ('text with no from_user',   None,                              'hi',                False),
+        # (label, from_user, text, chat, expected_mute)
+        # --- group mode ---
+        ('group: human, no marker',         _FakeFromUser(False, 'human'),    'hi there',          group_chat,   False),
+        ('group: human, contains [llm]',    _FakeFromUser(False, 'rogue-ai'), 'I am [llm] ready',  group_chat,   True),
+        ('group: other Telegram bot',       _FakeFromUser(True,  'ClaudeBot'), 'whatever',          group_chat,   True),
+        ('group: bot with [llm] too',       _FakeFromUser(True,  'GPTBot'),   '[llm] answer',      group_chat,   True),
+        ('group: case-insensitive',         _FakeFromUser(False, 'human'),    'this is [LLM] here',group_chat,   True),
+        # --- private mode ([llm] should NOT mute) ---
+        ('private: human, contains [llm]',  _FakeFromUser(False, 'human'),    '[llm] playing',     private_chat, False),
+        # --- defensive: no from_user ---
+        ('group: no from_user',             None,                              'hi',                group_chat,   False),
     ]
     mute_ok = True
-    for label, from_user, text, expected in mute_cases:
-        upd = _FakeUpdate2(text, from_user)
+    for label, from_user, text, chat, expected in mute_cases:
+        upd = _FakeUpdate2(text, from_user, chat)
         got = _b._should_mute_in_group(upd)
         ok = (got == expected)
         mute_ok &= ok
