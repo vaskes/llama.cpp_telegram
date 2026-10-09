@@ -136,8 +136,10 @@ async def reject_if_unauthorized(update: Update, context: ContextTypes.DEFAULT_T
     print(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}', flush=True)
     return True
 
-# Conversation context storage (in-memory, lost on restart)
-conversations = {}
+# Conversation history lives in SQLite (see `store` below). The
+# previous in-memory `conversations = {}` dict was removed when
+# sub-talks were introduced — see docs/CALL_LLAMA.md §7 for the
+# rationale.
 
 # Tools the bot does NOT execute (security or not implemented)
 DISABLED_TOOLS = {
@@ -1047,23 +1049,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear the messages in the current sub-talk (not delete the sub-talk itself)."""
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    if user_id in conversations:
-        del conversations[user_id]
-    await update.message.reply_text('🔄 Контекст очищен.')
+    sub_talk = await _resolve_active(user_id)
+    n = await asyncio.to_thread(store.delete_sub_talk, user_id, sub_talk)
+    # delete_sub_talk removes the sub_talks row too, so re-create it
+    # (empty) and keep it active. The user can still /subs to see it.
+    await asyncio.to_thread(store.create_sub_talk, user_id, sub_talk)
+    await asyncio.to_thread(store.set_active_sub_talk, user_id, sub_talk)
+    await update.message.reply_text(
+        f'🔄 Cleared {n} message(s) in sub-talk "{sub_talk}".\n'
+        f'Sub-talk is preserved. Use /delsub to remove the whole thread.'
+    )
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    msg_count = len(conversations.get(user_id, []))
+    subs = await asyncio.to_thread(store.list_sub_talks, user_id)
+    sub_talk = await _resolve_active(user_id)
+    current_count = next((s["msg_count"] for s in subs if s["name"] == sub_talk), 0)
     tools = await fetch_tools_from_llama()
+    sub_lines = "\n".join(
+        f'  → "{s["name"]}" ({s["msg_count"]} msgs)' if s["name"] == sub_talk
+        else f'    "{s["name"]}" ({s["msg_count"]} msgs)'
+        for s in subs
+    ) or "    (no sub-talks yet)"
     await update.message.reply_text(
         f'📊 **Статистика:**\n'
-        f'Сообщений: {msg_count}\n'
+        f'Активный sub-talk: "{sub_talk}" — {current_count} сообщений\n'
+        f'Всего sub-talks: {len(subs)}\n'
+        f'{sub_lines}\n'
         f'Модель: {MODEL}\n'
         f'Tools: {len(tools)} from llama-server + 1 weather (custom)'
     )
@@ -1241,13 +1260,71 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# === Sub-talk-aware helpers for the message handlers ===
+# Each handler resolves the user's active sub-talk, persists the new
+# user/assistant messages into that sub-talk, and loads the recent
+# history (CONTEXT_MESSAGES messages) for the call_llama call.
+#
+# Messages are stored as full OpenAI-format message dicts
+# ({"role": ..., "content": ...}) JSON-serialized in the messages.content
+# column. That way text-only and multimodal (text + image_url) messages
+# round-trip through SQLite without any translation layer.
+
+async def _resolve_active(user_id: int) -> str:
+    """Return the user's active sub-talk, auto-creating 'main' if none exists."""
+    active = await asyncio.to_thread(store.get_active_sub_talk, user_id)
+    if active is not None:
+        return active
+    # No sub-talks at all yet — auto-create 'main' so the user's first
+    # message lands somewhere sensible without them needing to /newsub.
+    await asyncio.to_thread(store.create_sub_talk, user_id, 'main')
+    await asyncio.to_thread(store.set_active_sub_talk, user_id, 'main')
+    return 'main'
+
+
+async def _load_history(user_id: int, sub_talk: str) -> list:
+    """Return up to CONTEXT_MESSAGES messages for the sub-talk, in chronological
+    order, as the full OpenAI message dicts ({"role", "content"}) that
+    call_llama expects.
+
+    Text-only and multimodal (text + image_url) messages are returned
+    verbatim because both are stored as JSON in the DB and parse to the
+    same shape that call_llama forwards to llama-server.
+    """
+    rows = await asyncio.to_thread(
+        store.get_messages, user_id, sub_talk, CONTEXT_MESSAGES
+    )
+    out = []
+    for r in rows:
+        try:
+            msg = json.loads(r["content"])
+        except Exception:
+            # Defensive: if a row was somehow written with non-JSON
+            # content, fall back to wrapping it as a text message.
+            msg = {"role": r["role"], "content": r["content"]}
+        out.append(msg)
+    return out
+
+
+async def _persist_message(user_id: int, sub_talk: str, role: str, content):
+    """Append a message to the sub-talk's history in the DB.
+
+    `content` is whatever the message has — a string for text, a list
+    of content parts for multimodal. json.dumps it for storage.
+    """
+    msg = {"role": role, "content": content}
+    await asyncio.to_thread(
+        store.add_message, user_id, sub_talk, role, json.dumps(msg, ensure_ascii=False)
+    )
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"[handle_photo] ENTRY user_id={update.effective_user.id} caption={update.message.caption!r}", flush=True)
     if await reject_if_unauthorized(update, context):
         print(f"[handle_photo] REJECTED", flush=True)
         return
     user_id = update.effective_user.id
-    print(f"[handle_photo] user_id={user_id} conv_len(before)={len(conversations.get(user_id, []))}", flush=True)
+    print(f"[handle_photo] user_id={user_id}", flush=True)
     await update.message.chat.send_action(action='typing')
     thinking = None
     try:
@@ -1289,28 +1366,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_data_url = f"data:{mime};base64,{photo_b64}"
         caption = update.message.caption or 'Describe the image in detail.'
         print(f"[handle_photo] downloaded {len(photo_bytes)} bytes, caption={caption!r}", flush=True)
-        photo_message = {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": caption},
-                {"type": "image_url", "image_url": {"url": photo_data_url}}
-            ]
-        }
-        # Persist into per-user conversation context so follow-ups remember the image
-        if user_id not in conversations:
-            conversations[user_id] = []
-        conversations[user_id].append(photo_message)
-        if len(conversations[user_id]) > 20:
-            conversations[user_id] = conversations[user_id][-20:]
-        # Send a textual stub to the model when recalling image-only turns in
-        # later text-only messages — images themselves cannot be re-sent from
-        # history (no id retained), so the model will fall back to its own
-        # description if asked again.
+        photo_content = [
+            {"type": "text", "text": caption},
+            {"type": "image_url", "image_url": {"url": photo_data_url}}
+        ]
+        sub_talk = await _resolve_active(user_id)
+        await _persist_message(user_id, sub_talk, 'user', photo_content)
+        history = await _load_history(user_id, sub_talk)
+        # When recalling image turns in later text-only messages, the
+        # images themselves cannot be re-sent from history (no id
+        # retained), so the model falls back to its own description.
         thinking = await update.message.reply_text('💭 думаю…')
-        print(f"[handle_photo] calling call_llama, conv_len={len(conversations[user_id])}", flush=True)
-        bot_response = await call_llama(conversations[user_id], max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False)
+        print(f"[handle_photo] user_id={user_id} sub_talk={sub_talk!r} history_len={len(history)}", flush=True)
+        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
-        conversations[user_id].append({"role": "assistant", "content": bot_response})
+        await _persist_message(user_id, sub_talk, 'assistant', bot_response)
         await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR photo] {type(e).__name__}: {e}", flush=True)
@@ -1320,8 +1390,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f'❌ Error: {e}')
         except Exception:
             pass
-        if user_id in conversations and conversations[user_id]:
-            conversations[user_id].pop()
     finally:
         if thinking is not None:
             try:
@@ -1390,14 +1458,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # No parse_mode — transcript is user-generated and may contain
         # '*', '_', '[', '`', which would break Markdown rendering.
         await update.message.reply_text(f'🎤 Transcript:\n{transcript}')
-        if user_id not in conversations:
-            conversations[user_id] = []
-        conversations[user_id].append({"role": "user", "content": transcript})
-        if len(conversations[user_id]) > 20:
-            conversations[user_id] = conversations[user_id][-20:]
+        sub_talk = await _resolve_active(user_id)
+        await _persist_message(user_id, sub_talk, 'user', transcript)
+        history = await _load_history(user_id, sub_talk)
+        print(f"[handle_voice] user_id={user_id} sub_talk={sub_talk!r} history_len={len(history)}", flush=True)
         thinking = await update.message.reply_text('💭 думаю…')
-        bot_response = await call_llama(conversations[user_id], max_tokens=16384, user_text=transcript, thinking_msg=thinking)
-        conversations[user_id].append({"role": "assistant", "content": bot_response})
+        bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking)
+        await _persist_message(user_id, sub_talk, 'assistant', bot_response)
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
                 await update.message.reply_text(bot_response[i:i+4000])
@@ -1443,20 +1510,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
             doc_text = f.read()[:16000]
         caption = update.message.caption or 'Read the document and answer questions.'
-        # Persist into per-user conversation context
-        if user_id not in conversations:
-            conversations[user_id] = []
-        conversations[user_id].append({"role": "user", "content": f"{caption}\n\n--- Document ---\n{doc_text}"})
-        if len(conversations[user_id]) > 20:
-            conversations[user_id] = conversations[user_id][-20:]
+        sub_talk = await _resolve_active(user_id)
+        user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
+        await _persist_message(user_id, sub_talk, 'user', user_content)
+        history = await _load_history(user_id, sub_talk)
+        print(f"[handle_document] user_id={user_id} sub_talk={sub_talk!r} history_len={len(history)}", flush=True)
         thinking = await update.message.reply_text('💭 думаю…')
-        bot_response = await call_llama(conversations[user_id], max_tokens=16384, user_text=caption, thinking_msg=thinking)
-        conversations[user_id].append({"role": "assistant", "content": bot_response})
+        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking)
+        await _persist_message(user_id, sub_talk, 'assistant', bot_response)
         await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR doc] {type(e).__name__}: {e}", flush=True)
-        if user_id in conversations and conversations[user_id]:
-            conversations[user_id].pop()
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -1478,15 +1542,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.chat.send_action(action='typing')
     except Exception as e:
         print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
-    if user_id not in conversations:
-        conversations[user_id] = []
-    conversations[user_id].append({"role": "user", "content": user_message})
-    if len(conversations[user_id]) > 20:
-        conversations[user_id] = conversations[user_id][-20:]
+    sub_talk = await _resolve_active(user_id)
+    await _persist_message(user_id, sub_talk, 'user', user_message)
+    history = await _load_history(user_id, sub_talk)
+    print(f"[handle_text] user_id={user_id} sub_talk={sub_talk!r} history_len={len(history)}", flush=True)
     thinking = await update.message.reply_text('💭 думаю…')
     try:
-        bot_response = await call_llama(conversations[user_id], max_tokens=32768, user_text=user_message, thinking_msg=thinking)
-        conversations[user_id].append({"role": "assistant", "content": bot_response})
+        bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking)
+        await _persist_message(user_id, sub_talk, 'assistant', bot_response)
         if len(bot_response) > 4000:
             for i in range(0, len(bot_response), 4000):
                 await update.message.reply_text(bot_response[i:i+4000])
@@ -1495,8 +1558,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"[ERR text] {type(e).__name__}: {e}", flush=True)
         await update.message.reply_text(f'❌ Error: {e}')
-        if conversations[user_id]:
-            conversations[user_id].pop()
     finally:
         try:
             await thinking.delete()
@@ -1738,18 +1799,33 @@ async def _selftest():
             {"type": "image_url", "image_url": {"url": data_url}}
         ]
     }
-    _b.conversations.setdefault(SELFTEST_KEY, []).append(vision_msg)
+    # Persist into the SQLite-backed store under SELFTEST_KEY so the
+    # selftest follows the same code path as a real user. The
+    # self-import dance is intentional — _selftest runs in the
+    # module's own async context, so going through `store` (the
+    # module-level Storage instance) would race with concurrent
+    # handler writes. Accessing _b.store guarantees we hit the
+    # exact same singleton.
+    await asyncio.to_thread(_b.store.create_sub_talk, 0, SELFTEST_KEY)
+    await asyncio.to_thread(_b.store.add_message, 0, SELFTEST_KEY, "user", json.dumps(vision_msg, ensure_ascii=False))
     # Diagnostic: dump what we're about to send
     import json as _j
     _b_bytes = _j.dumps(vision_msg, ensure_ascii=False).encode('utf-8')
     print(f"[selftest] vision_msg before call_llama: {len(_b_bytes)} bytes, head={_b_bytes[:200]!r}", flush=True)
+    history = await asyncio.to_thread(_b.store.get_messages, 0, SELFTEST_KEY, 20)
+    parsed_history = []
+    for r in history:
+        try:
+            parsed_history.append(json.loads(r["content"]))
+        except Exception:
+            parsed_history.append({"role": r["role"], "content": r["content"]})
     # Best-effort: a smoke test that takes the production process
     # down with it is not a smoke test. Catch every exception, log
     # it, keep going. The production bot should be able to start
     # even if llama-server is unreachable at boot.
     try:
         result = await _b.call_llama(
-            _b.conversations[SELFTEST_KEY],
+            parsed_history,
             max_tokens=2048,
             user_text="проверь математику",
             thinking_msg=None,
