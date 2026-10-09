@@ -578,7 +578,12 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     r.raise_for_status()
                     data = r.json()
                 except Exception as e:
-                    print(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}")
+                    body = ""
+                    try:
+                        body = r.text[:500] if 'r' in dir() and hasattr(r, 'text') else ''
+                    except Exception:
+                        pass
+                    print(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}", flush=True)
                     return f'[llama-server request failed: {e}]'
                 msg = data["choices"][0]["message"]
                 reasoning_buf = msg.get("reasoning_content") or ""
