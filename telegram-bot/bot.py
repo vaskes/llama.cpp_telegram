@@ -167,6 +167,18 @@ _TOOLS_CACHE = None
 # every dispatcher, which is out of scope for the current review wave.
 SHUTDOWN_EVENT: Optional[asyncio.Event] = None
 
+# Persistent conversation store. SQLite at $CONVERSATIONS_DB (default
+# /app/data/conversations.db, bind-mounted from ./data on the host
+# via docker-compose.yml). All sub-talk and message I/O goes through
+# this single object. Sync API; handlers wrap calls in
+# asyncio.to_thread() so the DB never blocks the event loop.
+import storage  # local module; safe because storage has no top-level
+                 # I/O at import time
+DB_PATH = os.environ.get('CONVERSATIONS_DB', '/app/data/conversations.db')
+CONTEXT_MESSAGES = int(os.environ.get('CONTEXT_MESSAGES', '20'))
+store = storage.Storage(DB_PATH)
+print(f"[storage] SQLite at {DB_PATH} (context window: {CONTEXT_MESSAGES} msgs)", flush=True)
+
 
 async def fetch_tools_from_llama():
     """Получить список tools с llama-server и отфильтровать доступные.
@@ -1057,6 +1069,178 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# === Sub-talk commands ===
+# A sub-talk is a named conversation thread. Each user has their own
+# set of sub-talks (no sharing across users). The "active" sub-talk
+# is per-user; new text/photo/voice/document messages go into the
+# active one. See docs/CALL_LLAMA.md and docs/ARCHITECTURE.md for the
+# design rationale.
+
+import re as _re
+
+# Sub-talk names: 1-32 chars, must start with a letter or digit,
+# may contain letters, digits, dash, underscore, dot. Spaces, slashes,
+# and other shell-meta characters are not allowed so the name is safe
+# to log and never collides with command arguments.
+_SUBTALK_NAME_RE = _re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.\-]{0,31}$')
+
+
+def _parse_subtalk_arg(text: str) -> str | None:
+    """Extract a single sub-talk name from a /command arg string.
+
+    Returns the first whitespace-separated token, or None if absent
+    or invalid.
+    """
+    parts = text.strip().split(None, 1)
+    if len(parts) < 2:
+        return None
+    name = parts[1].strip()
+    if not _SUBTALK_NAME_RE.match(name):
+        return None
+    return name
+
+
+async def _reply_active(update: Update, user_id: int) -> str:
+    """Returns the user's active sub-talk name (resolving to 'main' default)."""
+    return await asyncio.to_thread(store.get_active_sub_talk, user_id) or 'main'
+
+
+async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update, context):
+        return
+    user_id = update.effective_user.id
+    name = _parse_subtalk_arg(update.message.text)
+    if not name:
+        await update.message.reply_text(
+            '❌ Usage: /newsub <name>\n'
+            'Name: 1-32 chars, must start with a letter or digit, '
+            'may contain letters/digits/underscore/dash/dot.\n'
+            'Example: /newsub research'
+        )
+        return
+    created = await asyncio.to_thread(store.create_sub_talk, user_id, name)
+    if not created:
+        # Already exists — just switch to it.
+        await asyncio.to_thread(store.set_active_sub_talk, user_id, name)
+        await update.message.reply_text(
+            f'ℹ Sub-talk "{name}" already existed. Now active.'
+        )
+        return
+    await asyncio.to_thread(store.set_active_sub_talk, user_id, name)
+    await update.message.reply_text(
+        f'✅ Created sub-talk "{name}" — now active.\n'
+        f'Send any message to add to this thread. '
+        f'Use /sub to switch, /subs to list, /delsub to remove.'
+    )
+
+
+async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update, context):
+        return
+    user_id = update.effective_user.id
+    name = _parse_subtalk_arg(update.message.text)
+    if not name:
+        # /sub with no arg: show current
+        current = await _reply_active(update, user_id)
+        await update.message.reply_text(
+            f'You are in sub-talk "{current}".\n'
+            f'Use /sub <name> to switch, /subs to list all.'
+        )
+        return
+    existing = await asyncio.to_thread(store.get_sub_talk, user_id, name)
+    if existing is None:
+        # Auto-create on /sub to a non-existent name — friendlier than
+        # asking the user to /newsub first.
+        await asyncio.to_thread(store.create_sub_talk, user_id, name)
+    await asyncio.to_thread(store.set_active_sub_talk, user_id, name)
+    await update.message.reply_text(f'✅ Switched to sub-talk "{name}".')
+
+
+async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update, context):
+        return
+    user_id = update.effective_user.id
+    current = await _reply_active(update, user_id)
+    # Also show the sub_talk's last message snippet so the user
+    # remembers what they were doing here.
+    last = await asyncio.to_thread(store.get_last_message, user_id, current)
+    if last is None:
+        snippet = '(empty)'
+    else:
+        try:
+            content = json.loads(last["content"])
+            text = content.get("text", "")
+            if len(text) > 200:
+                text = text[:200] + "…"
+            role_emoji = "🧑" if last["role"] == "user" else "🤖"
+            snippet = f'{role_emoji} {text}' if text else '(non-text message)'
+        except Exception:
+            snippet = "(unreadable)"
+    await update.message.reply_text(
+        f'📍 Current sub-talk: "{current}"\n'
+        f'Last message: {snippet}\n\n'
+        f'Use /subs to list, /sub <name> to switch, /newsub <name> to create.'
+    )
+
+
+async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update, context):
+        return
+    user_id = update.effective_user.id
+    subs = await asyncio.to_thread(store.list_sub_talks, user_id)
+    active = await _reply_active(update, user_id)
+    if not subs:
+        await update.message.reply_text(
+            'You have no sub-talks yet. Send any message to start '
+            'the default "main" sub-talk, or /newsub <name> to create one.'
+        )
+        return
+    lines = []
+    for s in subs:
+        marker = "→ " if s["name"] == active else "  "
+        # Relative time
+        import time as _t
+        age = int(_t.time() - s["last_used"])
+        if age < 60:
+            ago = f'{age}s ago'
+        elif age < 3600:
+            ago = f'{age//60}m ago'
+        elif age < 86400:
+            ago = f'{age//3600}h ago'
+        else:
+            ago = f'{age//86400}d ago'
+        lines.append(
+            f'{marker}"{s["name"]}" — {s["msg_count"]} msgs, last used {ago}'
+        )
+    await update.message.reply_text(
+        f'📚 Your sub-talks (active marked with →):\n\n' + "\n".join(lines) +
+        f'\n\nUse /sub <name> to switch, /newsub <name> to create, '
+        f'/delsub <name> to remove.'
+    )
+
+
+async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update, context):
+        return
+    user_id = update.effective_user.id
+    name = _parse_subtalk_arg(update.message.text)
+    if not name:
+        await update.message.reply_text(
+            '❌ Usage: /delsub <name>\n'
+            'Removes the sub-talk AND all its messages. Cannot be undone.'
+        )
+        return
+    n = await asyncio.to_thread(store.delete_sub_talk, user_id, name)
+    if n == 0:
+        await update.message.reply_text(f'❌ Sub-talk "{name}" not found.')
+        return
+    # If we just deleted the active one, the next get_active will
+    # fall back to most-recent or to 'main'.
+    await update.message.reply_text(
+        f'🗑 Deleted sub-talk "{name}" and {n} message(s).'
+    )
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"[handle_photo] ENTRY user_id={update.effective_user.id} caption={update.message.caption!r}", flush=True)
     if await reject_if_unauthorized(update, context):
@@ -1468,6 +1652,11 @@ async def _dispatch_update(upd_dict):
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("reset", reset))
         app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(CommandHandler("newsub", cmd_newsub))
+        app.add_handler(CommandHandler("sub", cmd_sub))
+        app.add_handler(CommandHandler("subs", cmd_subs))
+        app.add_handler(CommandHandler("delsub", cmd_delsub))
+        app.add_handler(CommandHandler("here", cmd_here))
         app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
         app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
