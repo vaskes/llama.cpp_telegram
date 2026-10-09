@@ -193,6 +193,16 @@ class Storage:
         except sqlite3.OperationalError as e:
             print(f"[storage] WARN: migration step failed: {e}")
         c.executescript(SCHEMA_V2)
+        # v2 -> v3: add `rating` column to messages (used by
+        # RATING_MODE in group chats — 1-10 score assigned by
+        # the LLM to info/statement messages). Idempotent:
+        # if the column already exists, OperationalError is
+        # swallowed.
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN rating INTEGER")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e):
+                raise
         c.commit()
 
     def _conn(self) -> sqlite3.Connection:
@@ -439,13 +449,17 @@ class Storage:
 
     # --- messages ---
 
-    def add_message(self, chat_id: int, thread_id: str, role: str, content: str) -> int:
-        """Append a message. `content` is a JSON string. Returns the new message id."""
+    def add_message(self, chat_id: int, thread_id: str, role: str,
+                    content: str, rating: Optional[int] = None) -> int:
+        """Append a message. `content` is a JSON string. `rating` is
+        the optional 1-10 score the LLM assigned in RATING_MODE
+        (only set on assistant turns where the LLM produced a
+        `[[TYPE:info|statement]] [[RATE:N]]` response)."""
         c = self._conn()
         cur = c.execute(
-            "INSERT INTO messages (chat_id, thread_id, role, content, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (chat_id, thread_id, role, content, time.time()),
+            "INSERT INTO messages (chat_id, thread_id, role, content, created_at, rating) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (chat_id, thread_id, role, content, time.time(), rating),
         )
         c.commit()
         return cur.lastrowid
@@ -489,8 +503,8 @@ class Storage:
             c.commit()
         rows = c.execute(
             """
-            SELECT role, content FROM (
-                SELECT role, content, id FROM messages
+            SELECT role, content, rating FROM (
+                SELECT role, content, rating, id FROM messages
                 WHERE chat_id = ? AND thread_id = ?
                 ORDER BY id DESC
                 LIMIT ?
