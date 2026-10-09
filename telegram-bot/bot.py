@@ -1327,10 +1327,23 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === Group mode: show the current topic's name + last snippet ===
     if _is_group_chat(update):
         chat_id = update.effective_chat.id
-        thread_id = str(update.message.message_thread_id)
-        # We don't have a name lookup helper for forum topics here, but
-        # getForumTopics is async. For a quick "where am I" hint, just
-        # show the numeric id; the user sees the topic name in the UI.
+        msg_thread_id = update.message.message_thread_id
+        # In the General topic message_thread_id is None — use the
+        # "general" sentinel so the DB key is consistent.
+        thread_id = str(msg_thread_id) if msg_thread_id is not None else _general_thread_id()
+        # Look up the topic name. In the General topic (or any
+        # topic the bot did not create), the name is unknown —
+        # show the id alone.
+        if msg_thread_id is not None:
+            entry = await asyncio.to_thread(
+                store.find_known_topic_by_id, chat_id, msg_thread_id
+            )
+            if entry:
+                topic_label = f"#{msg_thread_id} — {entry['name']}"
+            else:
+                topic_label = f"#{msg_thread_id} (not in known_topics)"
+        else:
+            topic_label = "General"
         last = await asyncio.to_thread(store.get_last_message, chat_id, thread_id)
         if last is None:
             snippet = '(empty)'
@@ -1345,7 +1358,7 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 snippet = '(unreadable)'
         await _reply(update,
-            f'📍 Current topic: #{update.message.message_thread_id}\n'
+            f'📍 Current topic: {topic_label}\n'
             f'Last message in this topic: {snippet}'
         )
         return
@@ -1456,19 +1469,19 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         target_id = None
         target_name = None
-        # Numeric id?
+        # Numeric id? Direct SQL lookup (no Python-side scan).
         if arg.isdigit():
             tid = int(arg)
-            for t in await asyncio.to_thread(
-                store.list_known_topics, update.effective_chat.id
-            ):
-                if t["message_thread_id"] == tid:
-                    target_id = tid
-                    target_name = t["name"]
-                    break
-            if target_id is None:
+            entry = await asyncio.to_thread(
+                store.find_known_topic_by_id,
+                update.effective_chat.id,
+                tid,
+            )
+            if entry is None:
                 await _reply(update, f'❌ No topic with id={arg} in this group.')
                 return
+            target_id = entry["message_thread_id"]
+            target_name = entry["name"]
         else:
             entry = await asyncio.to_thread(
                 store.find_known_topic_by_name,
@@ -2554,6 +2567,31 @@ async def _selftest():
             all_ok = False
         else:
             print(f"  [OK] remove_known_topic worked", flush=True)
+        # find_known_topic_by_id: re-add, then look up by id (not name).
+        await asyncio.to_thread(
+            _b.store.add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
+        )
+        by_id = await asyncio.to_thread(
+            _b.store.find_known_topic_by_id, SELFTEST_CHAT, SELFTEST_TOPIC_ID
+        )
+        if by_id is None or by_id["name"] != 'selftest-topic':
+            print(f"  [FAIL] find_known_topic_by_id returned {by_id}", flush=True)
+            all_ok = False
+        else:
+            print(f"  [OK] find_known_topic_by_id resolved to '{by_id['name']}'", flush=True)
+        # Negative case: a non-existent id.
+        missing = await asyncio.to_thread(
+            _b.store.find_known_topic_by_id, SELFTEST_CHAT, 999999999
+        )
+        if missing is not None:
+            print(f"  [FAIL] find_known_topic_by_id returned non-None for missing id: {missing}", flush=True)
+            all_ok = False
+        else:
+            print(f"  [OK] find_known_topic_by_id returns None for missing id", flush=True)
+        # Cleanup
+        await asyncio.to_thread(
+            _b.store.remove_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID
+        )
     except Exception as e:
         print(f"  [FAIL] known_topics round-trip crashed: {type(e).__name__}: {e}", flush=True)
         all_ok = False
