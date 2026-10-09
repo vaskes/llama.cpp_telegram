@@ -132,20 +132,28 @@ are stored persistently in SQLite so a bot restart does not lose
 history, and so a user can return to "research" after a week of
 working on "main".
 
+In **group mode** (see below) the equivalent concept is a Telegram
+forum topic, and the same SQLite store keys threads by
+`(chat_id, thread_id)` — where `thread_id` is the Telegram topic
+id (or the `"general"` sentinel for the General topic).
+
 ### Commands
 
-| Command | Effect |
-|---|---|
-| `/newsub <name>` | Create a new sub-talk and switch to it. If the name exists, just switches. |
-| `/sub <name>` | Switch to the named sub-talk; auto-creates if it does not exist. |
-| `/sub` | Without arg: show the current active sub-talk. |
-| `/here` | Show the current sub-talk AND the last message snippet. |
-| `/subs` | List all sub-talks with message count and last_used; active marked with `→`. |
-| `/delsub <name>` | Delete the sub-talk and all its messages. |
+| Command | Private mode | Group mode |
+|---|---|---|
+| `/newsub <name>` | Create a sub-talk in the DB; switch to it | Call Telegram `createForumTopic`; reply in current topic |
+| `/sub <name>` | Switch active sub-talk (auto-create if missing) | Show a hint: tap the topic in the sidebar |
+| `/sub` | Show current sub-talk | Show current topic id |
+| `/here` | Show current sub-talk + last message snippet | Show current topic id + last message snippet |
+| `/subs` | List sub-talks with inline-keyboard switch buttons | List Telegram topics via `getForumTopics()` (no buttons) |
+| `/delsub <name>` | Delete sub-talk + messages from DB | Find topic by name; `deleteForumTopic`; wipe local history |
+| `/reset` | Clear messages in current sub-talk | Clear messages in current topic (topic unchanged) |
+| `/stats` | List sub-talks with message counts | Show topic count + per-topic msg count + grand total |
 
-Names match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$` — no spaces, slashes,
-or shell metacharacters. The default sub-talk is `main`, auto-created
-on the user's first message if no sub-talks exist.
+Private-mode names match `^[^\s]{1,32}$` — no whitespace, but
+any UTF-8 character (Russian, emoji, etc.) is allowed. Forum
+topic names (group mode) match `^[^\s]{1,128}$` (Telegram's
+own topic-name limit).
 
 ### Storage
 
@@ -153,41 +161,143 @@ on the user's first message if no sub-talks exist.
 SQLite file (default `/app/data/conversations.db`, persisted via
 the `./data:/app/data` bind-mount in `docker-compose.yml`).
 
+```sql
+chat_threads(chat_id, thread_id, created_at, last_used)  PK(chat_id, thread_id)
+messages(id, chat_id, thread_id, role, content, created_at)  idx(chat_id, thread_id, id)
+active_thread(chat_id PK, thread_id)         -- private mode only
 ```
-sub_talks(user_id, name, created_at, last_used)  PK(user_id, name)
-messages(id, user_id, sub_talk, role, content, created_at)  idx(user_id, sub_talk, id)
-active_sub_talk(user_id PK, name)
-```
+
+The schema is **mode-agnostic** — the keys are `(chat_id, thread_id)`
+either way:
+  - Private mode: `chat_id = user_id`, `thread_id = sub_talk_name`
+  - Group mode:   `chat_id = group_chat_id` (negative), `thread_id = str(message_thread_id)` or `"general"`
 
 The `content` column stores the message as a JSON-encoded dict
 matching the OpenAI Chat Completions format (`{"role", "content"}`).
 Text-only and multimodal (text + image_url) messages round-trip
 transparently because both are stored as JSON.
 
+A v1-to-v2 migration runs on first `Storage()` init: the legacy
+`user_id`/`sub_talk` columns are renamed via `ALTER TABLE ... RENAME
+COLUMN` (SQLite 3.25+, Ubuntu 24.04 ships 3.46+). v1 was a
+narrower special case where `chat_id` was always equal to
+`user_id`, so the rename is lossless.
+
 ### How handlers use the store
 
 Every message handler follows the same shape:
 
 ```python
-sub_talk = await _resolve_active(user_id)   # auto-create 'main' if needed
-await _persist_message(user_id, sub_talk, "user", user_content)
-history = await _load_history(user_id, sub_talk)   # up to CONTEXT_MESSAGES
+result = await _route_to_thread(update, context)   # private or group
+if result is None:
+    return                                       # whitelist rejected
+chat_id, thread_id, is_group = result
+await _persist_message(chat_id, thread_id, "user", user_content)
+history = await _load_history(chat_id, thread_id)   # up to CONTEXT_MESSAGES
 bot_response = await call_llama(history, ...)
-await _persist_message(user_id, sub_talk, "assistant", bot_response)
+await _persist_message(chat_id, thread_id, "assistant", bot_response)
 ```
 
 The previous in-memory `conversations = {}` dict was removed
 when sub-talks were introduced; SQLite is now the only place
 conversation state lives.
 
-### Why sub-talks at all?
+### Why sub-talks / topics at all?
 
-Without sub-talks, conversation history is one undifferentiated
+Without threads, conversation history is one undifferentiated
 stream — every topic you ever discussed with the bot bleeds into
-every new conversation's context. With sub-talks, the model sees
-only the recent messages of the active thread, which is what you
-want when you ask it to "проверь математику" inside `research`
-while your casual chat in `main` is unrelated.
+every new conversation's context. With sub-talks / topics, the
+model sees only the recent messages of the active thread, which
+is what you want when you ask it to "проверь математику" inside
+`research` while your casual chat in `main` is unrelated.
+
+In group mode, the same property is achieved with native forum
+topics — each topic has its own message history, sidebar entry,
+notification settings, and per-topic permissions.
+
+## Group mode (Telegram Topics)
+
+The bot detects group mode by inspecting `update.effective_chat`:
+
+```python
+def _is_group_chat(update) -> bool:
+    chat = update.effective_chat
+    if chat is None:
+        return False
+    if getattr(chat, "is_forum", False):
+        return True
+    return chat.type != "private"
+```
+
+The first check (`is_forum`) catches the common case; the
+second (`chat.type != "private"`) is a defensive fallback.
+**`message_thread_id` is NOT used as the discriminator** —
+the General topic of a forum-enabled supergroup has
+`message_thread_id == None` per Telegram Bot API, so that
+check would miss the most common entry point.
+
+### Routing per message
+
+The `_route_to_thread(update, context)` helper returns
+`(chat_id, thread_id, is_group)`:
+
+| Mode | `chat_id` | `thread_id` |
+|------|-----------|-------------|
+| Private (1:1) | `user_id` | active sub-talk name from DB (or auto-created `main`) |
+| Group, General topic | `chat_id` (negative) | sentinel string `"general"` |
+| Group, regular topic | `chat_id` (negative) | `str(message_thread_id)` |
+
+The same storage layer serves both modes — keys are
+`(chat_id, thread_id)` either way.
+
+### Telegram API calls in group mode
+
+`cmd_newsub` calls `bot.createForumTopic(chat_id, name)` and
+gets back a `ForumTopic` object whose `.message_thread_id` is
+the topic's id. From then on, the bot identifies the topic by
+that id (the storage key for messages in the topic is
+`(chat_id, str(message_thread_id))`).
+
+`cmd_subs` enumerates topics via `bot.getForum_topics(chat_id)`
+(an async generator in PTB 21). The General topic is hidden
+unless the user is currently in it.
+
+`cmd_delsub` looks up the topic by name in the same enumeration,
+calls `bot.delete_forum_topic(chat_id, message_thread_id)`, and
+wipes the local message history for that key.
+
+### Why native topics, not a separate in-DB sub-talk for groups
+
+Each Telegram forum topic has its own message_thread_id, so
+the topic itself is the natural thread key. Driving the
+Telegram API keeps:
+  - The topic UI in the Telegram client (sidebar, unread badges)
+  - Topic-specific notification settings per user
+  - Per-topic permissions (admins can lock some topics)
+  - No need to mirror the topic list in a separate DB table
+
+The local DB only stores message **history** keyed by
+`(chat_id, thread_id)`; Telegram itself owns the topic
+metadata (name, icon, ordering, permissions).
+
+### `_reply` — keeping replies in the same topic
+
+`Message.reply_text` does NOT pass `message_thread_id` through
+to `sendMessage`. Without an explicit `message_thread_id`, a
+reply in a regular topic would land in the General topic.
+The bot's `_reply` helper sets it explicitly when the source
+message is in a topic:
+
+```python
+async def _reply(update, text, **kwargs):
+    if update.message.message_thread_id is not None:
+        kwargs.setdefault('message_thread_id', update.message.message_thread_id)
+    return await update.message.reply_text(text, **kwargs)
+```
+
+When the source message is in the General topic, the helper
+leaves `message_thread_id` unset, which is the right default
+(`sendMessage` then lands in General — same place).
 
 ## What `bot.py` deliberately does NOT do
 

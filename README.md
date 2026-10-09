@@ -14,13 +14,17 @@ A ready-to-deploy bundle of two containers:
 
 The bot can:
 
-- 💬 Text, conversation context (last 20 messages per user)
+- 💬 Text, conversation context (last 20 messages per sub-talk / topic)
 - 🖼 Image analysis (vision models in llama.cpp)
 - 🎤 Voice messages via Whisper
 - 📄 Document reading (TXT, PDF — text layer)
 - 🛠 **Tool-calling**: `get_weather` (wttr.in) + `web_search` / `web_fetch` / `web_crawl` / `web_screenshot`
   via [donsetch-http](https://github.com/dondai44423/donsetch) (Rust + Playwright headless Chrome MCP server) — see "Related" below
-- 🔒 **Whitelist** by Telegram `user_id` / `@username` (env vars, LOCKDOWN by default)
+- 🔒 **Whitelist** by Telegram `user_id` / `@username` (env vars, LOCKDOWN by default in private mode)
+- 💾 **Persistent conversation history** in SQLite, per (chat_id, thread_id) — survives restarts
+- 🧵 **Two deployment modes**:
+  - **Private chat** — 1 user, multi-thread via `/newsub` `/sub` `/subs` (in-DB sub-talks)
+  - **Group with Telegram Topics** — N users, native forum topics via `/newsub` (creates a Telegram topic), `/subs` (lists topics), `/delsub` (deletes a topic). Replies stay in the topic where the user is.
 
 ## Architecture
 
