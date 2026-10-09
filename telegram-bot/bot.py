@@ -541,15 +541,29 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 req_body["tools"] = req_tools
                 req_body["tool_choice"] = "auto"
                 req_body["parallel_tool_calls"] = False
+            # Diagnostic: log the exact bytes we're about to send so we
+            # can compare with a working curl invocation byte-for-byte.
+            if iteration == 0 and not use_stream:
+                try:
+                    raw = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
+                    with open('/tmp/bot_payload.json', 'wb') as f:
+                        f.write(raw)
+                    print(f"[LLAMA] iter=0 raw_payload_bytes={len(raw)} first_300={raw[:300]!r}", flush=True)
+                except Exception as e:
+                    print(f"[LLAMA] iter=0 cannot dump payload: {e}", flush=True)
             # Log what we're about to send — without the image bytes
-            safe_body = {**req_body}
+            # CRITICAL: build a deep-copy for the log so we don't mutate
+            # req_body (the bug we just hit: this replaced real image_url
+            # with a truncated fake and llama-server 400'd on it).
+            import copy as _copy
+            safe_body = _copy.deepcopy(req_body)
             if "messages" in safe_body:
                 for m in safe_body["messages"]:
                     if isinstance(m.get("content"), list):
                         for item in m["content"]:
                             if isinstance(item, dict) and "image_url" in item:
                                 url = item["image_url"].get("url", "")
-                                item["image_url"] = {"url": f"data:image/jpeg;base64,...[{len(url)} chars]"}
+                                item["image_url"] = {"url": f"data:image/...,[{len(url)} chars]"}
             print(f"[LLAMA] iter={iteration} req_body_keys={list(req_body.keys())} tools={'yes ('+str(len(req_tools))+' defs)' if req_tools else 'no'} msgs_count={len(req_body.get('messages',[]))}", flush=True)
             if iteration == 0:
                 # On first iter, also print the first user message structure
@@ -568,15 +582,34 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
 
             if not use_stream:
                 # --- non-streaming POST (vision tasks, slow-reasoning models) ---
+                # Use a fresh client with no keep-alive — somehow a keep-alive
+                # connection from a prior streaming call to llama-server was
+                # producing 400 for the next request even though the bytes
+                # were identical. Closing the client per call avoids that.
+                # Return content immediately — no tool-call loop in this path
+                # (vision tasks don't need tools, and the multi-iter loop below
+                # was raising somewhere we couldn't catch on the vision payload).
                 try:
-                    r = await client.post(
-                        f"{LLAMA_URL}/chat/completions",
-                        headers={"Authorization": f"Bearer {API_KEY}",
-                                 "Content-Type": "application/json"},
-                        json=req_body,
-                    )
-                    r.raise_for_status()
-                    data = r.json()
+                    payload_bytes = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
+                    async with httpx.AsyncClient(
+                        timeout=600.0,
+                        limits=httpx.Limits(max_keepalive_connections=0, max_connections=1),
+                    ) as vclient:
+                        r = await vclient.post(
+                            f"{LLAMA_URL}/chat/completions",
+                            headers={"Authorization": f"Bearer {API_KEY}",
+                                     "Content-Type": "application/json"},
+                            content=payload_bytes,
+                        )
+                        r.raise_for_status()
+                        data = r.json()
+                    msg0 = data["choices"][0]["message"]
+                    content = msg0.get("content") or ""
+                    reasoning = msg0.get("reasoning_content") or ""
+                    print(f"[LLAMA] iter={iteration} non-stream finish={data['choices'][0].get('finish_reason')} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(msg0.get('tool_calls') or [])}", flush=True)
+                    if reasoning and thinking_msg is not None:
+                        await push_thinking(accumulated_reasoning + reasoning, force=True)
+                    return content
                 except Exception as e:
                     body = ""
                     try:
@@ -585,22 +618,6 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                         pass
                     print(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}", flush=True)
                     return f'[llama-server request failed: {e}]'
-                msg = data["choices"][0]["message"]
-                reasoning_buf = msg.get("reasoning_content") or ""
-                content_buf = msg.get("content") or ""
-                finish_reason = data["choices"][0].get("finish_reason")
-                # Build tool_calls list from non-streaming response
-                for tc in msg.get("tool_calls") or []:
-                    idx = len(tool_calls_buf)
-                    tool_calls_buf[idx] = {
-                        "id": tc.get("id", ""),
-                        "name": tc.get("function", {}).get("name", ""),
-                        "arguments": tc.get("function", {}).get("arguments", ""),
-                    }
-                # push reasoning to Telegram if we have a thinking message
-                if reasoning_buf:
-                    await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
-                continue  # skip the streaming parser block below
             try:
                 async with client.stream("POST", f"{LLAMA_URL}/chat/completions",
                                           headers={"Authorization": f"Bearer {API_KEY}",
@@ -724,6 +741,19 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             return (
                 f'[model returned an empty response. finish_reason={finish_reason}, '
                 f'reasoning_chars={len(reasoning_buf)}, content_chars=0]'
+            )
+        # If we asked for tools and the model produced some, run them.
+        # If we did NOT ask for tools (vision/math turn) and the model still
+        # hallucinated a tool_call, return whatever content we have rather
+        # than enter a loop the user can't escape.
+        if req_tools is None:
+            print(f"[LLAMA] iter={iteration} WARNING: model hallucinated tool_calls={len(tool_calls)} with req_tools=None; aborting tool loop", flush=True)
+            if content_buf:
+                return content_buf
+            return (
+                f'_(модель попыталась вызвать инструмент, хотя в этом turn\'е он не запрашивался; '
+                f'finish_reason={finish_reason}, content_chars={len(content_buf)})_\n\n'
+                f'{reasoning_buf[-3500:] if reasoning_buf else "(no reasoning)"}'
             )
         if content_buf:
             final_fallback = content_buf
@@ -1256,7 +1286,46 @@ async def _selftest():
         },
     }
     await _dispatch_update(fake)
+
+    # === Vision test: call call_llama directly with a real PNG ===
+    # Bypasses handle_photo (which needs a real Telegram file_id) but
+    # exercises the same data:image/png;base64,... path the handler uses.
+    print('[selftest] running vision test...', flush=True)
+    png_bytes = bytes.fromhex(
+        '89504e470d0a1a0a0000000d49484452000000010000000108020000'
+        '0090773d780000000c4944415478da6300010000050001'
+        '0d0a2db40000000049454e44ae426082'
+    )
+    photo_b64 = base64.b64encode(png_bytes).decode('ascii')
+    data_url = f"data:image/png;base64,{photo_b64}"
+    import bot as _b
+    # Inject the photo message directly into the conversation
+    vision_msg = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "проверь математику"},
+            {"type": "image_url", "image_url": {"url": data_url}}
+        ]
+    }
+    _b.conversations.setdefault(286293081, []).append(vision_msg)
+    # Diagnostic: dump what we're about to send
+    import json as _j
+    _b_bytes = _j.dumps(vision_msg, ensure_ascii=False).encode('utf-8')
+    print(f"[selftest] vision_msg before call_llama: {len(_b_bytes)} bytes, head={_b_bytes[:200]!r}", flush=True)
+    result = await _b.call_llama(
+        _b.conversations[286293081],
+        max_tokens=2048,
+        user_text="проверь математику",
+        thinking_msg=None,
+        use_stream=False,
+    )
+    print(f"[selftest] call_llama result: {len(result)} chars, head={result[:300]!r}", flush=True)
+
     print('[selftest] done', flush=True)
+
+
+async def _noop_async(*a, **kw):
+    return None
 
 
 if __name__ == '__main__':
