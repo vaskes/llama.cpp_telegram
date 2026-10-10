@@ -21,6 +21,9 @@ from telegram.ext import (
 
 import call_llama
 import handlers
+
+# === Module-level state (lazy singleton) ===
+_dispatcher = None
 import persistence
 import prompts
 import rating

@@ -11,6 +11,7 @@ import asyncio
 import base64
 import copy
 import json
+import time
 import urllib.parse
 from typing import Any
 
@@ -18,7 +19,7 @@ import httpx
 
 from config import (
     API_KEY, DISABLED_TOOLS, DONSETCH_SESSION_ID, DONSETCH_URL,
-    LLAMA_URL, MODEL, WHISPER_URL, _TOOLS_CACHE,
+    LLAMA_URL, MODEL, SHUTDOWN_EVENT, WHISPER_URL, _TOOLS_CACHE,
 )
 from prompts import GROUP_CONTEXT, RATING_RULES
 
@@ -250,6 +251,51 @@ def _tag_sender(m):
             parts[0] = {**parts[0], "text": f"From: {tag}: " + parts[0].get("text", "")}
             return {**m, "content": parts}
     return m
+
+async def fetch_tools_from_llama():
+    """Получить список tools с llama-server и отфильтровать доступные.
+
+    Cold-start retry: llama-server may take a few seconds after `docker
+    compose up` to bind the /tools endpoint. Three attempts with 1s/2s/4s
+    backoff before giving up. Caches the result so we only fetch once.
+    """
+    global _TOOLS_CACHE
+    if _TOOLS_CACHE is not None:
+        return _TOOLS_CACHE
+    last_err = None
+    for attempt, backoff in enumerate((1.0, 2.0, 4.0), start=1):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(f"{LLAMA_URL.replace('/v1', '')}/tools")
+                r.raise_for_status()
+                all_tools = r.json()
+            openai_tools = []
+            for t in all_tools:
+                name = t.get('tool', '')
+                if name in DISABLED_TOOLS:
+                    continue
+                defn = t.get('definition', {}).get('function', {})
+                if not defn:
+                    continue
+                openai_tools.append({
+                    'type': 'function',
+                    'function': {
+                        'name': defn.get('name', name),
+                        'description': defn.get('description', '')[:1500],
+                        'parameters': defn.get('parameters', {'type': 'object', 'properties': {}}),
+                    }
+                })
+            _TOOLS_CACHE = openai_tools
+            print(f"[tools] loaded {len(openai_tools)} enabled tools (from {len(all_tools)} total) on attempt {attempt}", flush=True)
+            return openai_tools
+        except Exception as e:
+            last_err = e
+            print(f"[tools] attempt {attempt}/3 failed: {type(e).__name__}: {e}", flush=True)
+            if attempt < 3:
+                await asyncio.sleep(backoff)
+    print(f"[tools] giving up after 3 attempts, last error: {last_err}", flush=True)
+    return []
+
 
 
 async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None, bot=None, chat_id=None, current_message_id=None):
@@ -1088,6 +1134,9 @@ async def transcribe_voice(voice_bytes):
 
 
 
+CUSTOM_TOOLS = {
+    'get_weather': get_weather,
+}
 # === Backward-compat aliases (used by tests and old call sites) ===
 async def call_llama_compat(*args, **kwargs):
     return await call_llama(*args, **kwargs)
