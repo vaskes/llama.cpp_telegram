@@ -73,6 +73,20 @@ from call_llama import (
 
 
 # === F3 stage 4: re-export handlers module ===
+
+
+
+# === F3 stage 5: re-export dispatch module ===
+import dispatch
+from dispatch import (
+    main, _dispatch_update, _handle_chat_member_update, _register_bot_menu,
+    cmd_callback, _check_user_slot, _get_global_llm_sem, _user_semaphore,
+    _is_group_chat, _should_mute_in_group, _is_reply_to_other_user,
+    _stop_button_markup, is_authorized, reject_if_unauthorized,
+    _parse_subtalk_arg, _parse_topic_arg,
+    start, reset, cmd_help, stats, cmd_newsub, cmd_sub, cmd_here,
+    cmd_subs, cmd_delsub,
+)
 import handlers
 from handlers import (
     handle_document, handle_photo, handle_text, handle_voice,
