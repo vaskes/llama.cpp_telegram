@@ -544,3 +544,32 @@ class Storage:
             (chat_id, thread_id),
         ).fetchone()
         return dict(row) if row else None
+
+
+# === Module-level singleton instance ===
+# v0.5.2 bot.py did `store = storage.Storage(DB_PATH)` at module
+# load. The refactored modules import `import storage as store`
+# and expect `store.add_message(...)` to work — but the alias
+# rebinds `store` to the module, not the instance. So we create
+# the instance here at import time and import it back as
+# `from storage import store` from callers (or just use the
+# module-level `store` directly).
+#
+# Defer instantiation to a function so it runs after config.DB_PATH
+# is set, not at storage import time. config.py is imported by
+# storage.py at the top, so DB_PATH is available.
+
+def get_store():
+    """Return the module-level Storage singleton, creating it on
+    first call. Lazy because the Storage constructor opens a
+    SQLite connection and runs migrations — better to defer until
+    the bot is actually starting up.
+    """
+    global _store_instance
+    if _store_instance is None:
+        from config import DB_PATH
+        _store_instance = Storage(DB_PATH)
+    return _store_instance
+
+
+_store_instance = None

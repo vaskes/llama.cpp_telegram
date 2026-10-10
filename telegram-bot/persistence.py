@@ -11,7 +11,11 @@
 import asyncio
 import json
 
-import storage as store
+from storage import get_store
+
+# Use a local name to avoid the `store` global binding from bot.py
+def _s():
+    return get_store()
 from config import CONTEXT_MESSAGES
 
 
@@ -32,7 +36,7 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     """
     msg = {"role": role, "content": content}
     await asyncio.to_thread(
-        store.add_message, chat_id, thread_id, role,
+        _s().add_message, chat_id, thread_id, role,
         json.dumps(msg, ensure_ascii=False), None, sender_name,
     )
 
@@ -57,7 +61,7 @@ async def load_history(chat_id: int, thread_id: str) -> list:
     to the same shape that call_llama forwards to llama-server.
     """
     rows = await asyncio.to_thread(
-        store.get_messages, chat_id, thread_id, CONTEXT_MESSAGES
+        _s().get_messages, chat_id, thread_id, CONTEXT_MESSAGES
     )
     out = []
     for r in rows:
