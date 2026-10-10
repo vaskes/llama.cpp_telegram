@@ -232,30 +232,39 @@ async def fetch_tools_from_llama():
 # we send a plain system prompt and skip the tool definitions so Ornith
 # just answers in a single turn (verified: 1 turn no tools = 17s and a
 # clean response; 3 turns with tools = 30s+ stuck in tool_calls loop).
-_TOOL_KEYWORDS = (
-    # RU
-    'погод', 'температур', 'осадк', 'дожд', 'снег', 'ветер',
-    'новост', 'что слышно', 'что нового', 'что в мире', 'свеж',
-    'найди в интернет', 'найди в сети', 'поищи в интернет', 'поищи в сети',
-    'погугли', 'загугли', 'поиск в гугл', 'web search',
-    'открой сайт', 'перейди на сайт', 'скачай страниц',
-    'скриншот', 'сделай скрин', 'сфоткай сайт',
-    'fetch the page', 'crawl the site',
-    # EN
-    'weather forecast', 'current weather', 'temperature in',
-    'news about', 'latest news', 'breaking news',
-    'search the web', 'google this', 'web search',
-    'open this url', 'read this url', 'fetch the page', 'crawl the site',
-    'screenshot', 'capture the page',
-)
-
-
-def _detect_tool_intent(text: str) -> bool:
-    """True if the user message looks like it actually needs a tool."""
-    if not text:
-        return False
-    t = text.lower()
-    return any(kw in t for kw in _TOOL_KEYWORDS)
+# === Tool availability ===
+#
+# History: the bot used to gate tool availability on a keyword
+# filter (`_TOOL_KEYWORDS` / `_detect_tool_intent`) so that simple
+# "hi" / "thanks" messages did not pay the cost of having the
+# model see the full tool definitions. In practice the keyword
+# list was too narrow: a user asking "what is the current price
+# of Bitcoin?" or "who won the match last night?" would get
+# hallucinated answers because the model had no tools and no
+# honest way to say "I don't have fresh data".
+#
+# New policy: tools are ALWAYS passed to the model, except when
+# the bot is in rating mode (RATING_MODE=1 + group + not muted).
+# In rating mode the LLM is acting as a classifier and must
+# output a structured `[[TYPE:...]]` response; tool calls
+# would be inappropriate noise. In all other modes, the LLM
+# decides for itself whether to call a tool. A greeting or
+# a chat question will simply not trigger any tool call; that
+# is the model's correct behaviour, not a bug.
+#
+# The cost of always-on tools is a small constant token overhead
+# per request (the tool definitions are ~500 tokens). We accept
+# that cost in exchange for correct behaviour on arbitrary
+# user queries.
+#
+# _detect_tool_intent is kept as a no-op for callers that may
+# still reference it (it's harmless and removed next refactor).
+def _detect_tool_intent(text: str) -> bool:  # pragma: no cover
+    """Legacy: keyword-based tool gate. Always True now; tools
+    are passed unconditionally in non-rating mode. See comment
+    above for rationale.
+    """
+    return True
 
 
 async def get_weather(args):
@@ -552,9 +561,13 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     # it doesn't pass tools by default.
     #
     # Heuristic: if the user's current message mentions web/weather/news/
-    # search/fetch/crawl in any language we support, treat it as a tool
-    # turn. Otherwise omit tools entirely so the model just answers.
-    tool_intent = _detect_tool_intent(user_text)
+    # Tool availability policy: tools are passed to the model in
+    # every call EXCEPT when rating_active=True. In rating mode
+    # the LLM is a classifier and must output a structured
+    # `[[TYPE:...]]` response; tool calls would be inappropriate
+    # noise. See the comment above _TOOL_KEYWORDS for the full
+    # rationale on why we dropped the keyword gate.
+    use_tools = not rating_active
     # If the caller asked for rating mode (group mode + RATING_MODE=1),
     # inject the rating rules as a system message BEFORE the existing
     # one. The LLM sees its first system message; both are honored.
@@ -562,26 +575,15 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         messages = [
             {"role": "system", "content": RATING_RULES}
         ] + messages
-    if not tool_intent:
-        # No tool intent: hand the model a plain system prompt and skip
-        # the tool definitions. Reasoning and content come back clean.
-        sys_prompt = {
-            'role': 'system',
-            'content': (
-                'You are a helpful assistant. '
-                'Answer in the language of the user. '
-                'Be direct and concise.'
-            )
-        }
-        msgs = [sys_prompt] + messages
-        req_tools = None
-    else:
+    if use_tools:
         sys_prompt = {
             'role': 'system',
             'content': (
                 'You are a helpful assistant with access to tools. '
-                'When the user asks about weather, news, current events, '
-                'or anything requiring fresh data — call the relevant tool. '
+                'Use them whenever the user asks about something '
+                'requiring fresh data, real-world facts you cannot '
+                'be sure about, weather, news, prices, sports results, '
+                'or any web content. '
                 'For weather: use get_weather (wttr.in, always works). '
                 'For web: use donsetch_web_search / donsetch_web_fetch / '
                 'donsetch_web_crawl / donsetch_web_screenshot. '
@@ -589,11 +591,26 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 'suggest where the user can find the info themselves. '
                 'Do NOT keep retrying the same query with variations. '
                 'After getting a tool result, give a clear, concise '
-                'answer in the user\'s language.'
+                'answer in the user\'s language. '
+                'If no tool is needed (greetings, opinions, math, code '
+                'review, chitchat), just answer directly — do not call '
+                'a tool unnecessarily.'
             )
         }
         msgs = [sys_prompt] + messages
         req_tools = all_tools
+    else:
+        # Rating mode: classifier persona, no tools.
+        sys_prompt = {
+            'role': 'system',
+            'content': (
+                'You are a message classifier. Classify the user message '
+                'and emit the structured prefix. No tools. No chatter. '
+                'See the rules above.'
+            )
+        }
+        msgs = [sys_prompt] + messages
+        req_tools = None
     max_iter = 15
     last_empty = 0
     final_fallback = None
