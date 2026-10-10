@@ -7,6 +7,7 @@
 # the per-user / global concurrency caps.
 
 import asyncio
+import signal
 import json
 import os
 import time
@@ -20,6 +21,8 @@ from telegram.ext import (
 )
 
 import call_llama
+import state
+from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores
 import handlers
 
 # === Module-level state (lazy singleton) ===
@@ -30,7 +33,7 @@ import rating
 from config import (
     ALLOWED_USER_IDS, ALLOWED_USERNAMES, API_KEY, BOT_TOKEN,
     BOT_USERNAME, DB_PATH, DISABLED_TOOLS, DONSETCH_URL,
-    LLAMA_URL, MAX_PHOTO_BYTES, MAX_DOC_BYTES, MAX_VOICE_BYTES,
+    LLAMA_URL, LOCKDOWN, MAX_PHOTO_BYTES, MAX_DOC_BYTES, MAX_VOICE_BYTES,
     MAX_VIDEO_NOTE_BYTES, MODEL, SHUTDOWN_EVENT, TELEGRAM_API,
     WHISPER_URL, _TOOLS_CACHE, LLAMABOT_SELFTEST,
     _GLOBAL_LLM_SEM_LIMIT, _PER_USER_SEMAPHORE_LIMIT,
@@ -38,6 +41,7 @@ from config import (
 from prompts import (
     BLOAT_EMOJI, GROUP_CONTEXT, RATING_EMOJI, RATING_MODE,
     RATING_RULES, WELCOME_TEXT, _EMOJI_CHAR_RE, _RATING_PREFIX_RE,
+    _LLM_TOKEN_RE, _SUBTALK_NAME_RE, _TOPIC_NAME_RE,
 )
 from persistence import persist as _persist_message, load_history as _load_history
 from rating import (
@@ -773,6 +777,9 @@ def main():
         shutdown_event.set()
 
     async def _run():
+        # Late import: _selftest lives in bot.py; bot.py imports this
+        # module, so we resolve at call time to break the cycle.
+        from bot import _selftest
         # Install signal handlers now that we have a running loop.
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -1032,6 +1039,9 @@ def main():
 
 # === _register_bot_menu ===
 async def _register_bot_menu():
+    # Late import: BOT_COMMANDS lives in bot.py; bot.py imports this
+    # module, so we resolve at call time to break the cycle.
+    from bot import BOT_COMMANDS
     """Register the bot's command menu with Telegram via setMyCommands.
 
     Called once at startup. Failures are non-fatal — if the network

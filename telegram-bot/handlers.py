@@ -19,6 +19,14 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import call_llama
+import state  # cross-module state (see state.py)
+from state import _abort_events, _bot_replies, _get_global_llm_sem
+from rating import _is_rating_active, _apply_rating_and_persist
+# Late imports for cross-module state (see state.py). The state
+# lives in state.py to break the circular dep between handlers.py
+# and dispatch.py (both need _abort_events, _bot_replies,
+# _get_global_llm_sem). Late import: done at handler-call time so
+# bot.py is fully loaded by the time we read these.
 import persistence
 import prompts
 import rating
@@ -40,6 +48,7 @@ async def send_reply(update: Update, text: str):
     Also records the (chat_id, user_message_id) → bot_message_id mapping
     so a later user edit can trigger delete+reprocess.
     """
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
     text = (text or '').strip()
     if not text:
         text = EMPTY_RESPONSE_FALLBACK
@@ -92,6 +101,7 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
       - chat_id = effective_chat.id (the group id, negative).
       - thread_id = str(message_thread_id) -- the Telegram topic id.
     """
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
     msg = update.message
     if _is_group_chat(update):
         # Group mode. Telegram is the source of truth for thread
@@ -126,6 +136,7 @@ async def _reply(update, text, **kwargs):
     in the General topic instead of staying in the user's topic.
     This helper fixes that.
     """
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
     if _is_group_chat(update):
         kwargs.setdefault('message_thread_id', update.message.message_thread_id)
     return await update.message.reply_text(text, **kwargs)
@@ -141,6 +152,7 @@ async def _reject_in_group(update) -> bool:
     Returns True if the message is in a group and we sent a notice,
     False otherwise (i.e. the caller should continue processing).
     """
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
     if _is_group_chat(update):
         await _reply(
             update,
@@ -195,6 +207,7 @@ def _sender_display_name(user) -> str | None:
 
 # === handle_photo ===
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
     print(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}", flush=True)
     result = await _route_to_thread(update, context)
     if result is None:
@@ -407,6 +420,7 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
 
 # === handle_voice ===
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
     result = await _route_to_thread(update, context)
     if result is None:
         return
@@ -497,6 +511,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === handle_document ===
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
     result = await _route_to_thread(update, context)
     if result is None:
         return
@@ -628,6 +643,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
     print(f"[handle_text] ENTRY user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text={update.message.text!r}", flush=True)
     result = await _route_to_thread(update, context)
     if result is None:

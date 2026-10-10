@@ -131,3 +131,15 @@ _EMOJI_CHAR_RE = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF]+",
     flags=re.UNICODE,
 )
+
+
+# === Command-name regexes (compiled once for hot path) ===
+import re as _llm_re
+import re as _re
+
+_LLM_TOKEN_RE = _llm_re.compile(
+    r"^\s*\[llm\](?=$|[\s.,!?;:])",
+    _llm_re.IGNORECASE,
+)
+_SUBTALK_NAME_RE = _re.compile(r'^[^\s]{1,32}$')
+_TOPIC_NAME_RE = _re.compile(r'^[^\s]{1,128}$')

@@ -320,6 +320,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     docs/CALL_LLAMA.md end-to-end and writing a regression test against
     a captured llama-server response. See also docs/REVIEW-MINIMAX.md §P3-4.
     """
+    from dispatch import _stop_button_markup
     tools = await fetch_tools_from_llama()
     # custom_weather_tool is now in bot_side_tool_defs below; see "Add our
     # bot-side tool implementations" comment. Keeping the legacy variable
@@ -1140,3 +1141,8 @@ CUSTOM_TOOLS = {
 # === Backward-compat aliases (used by tests and old call sites) ===
 async def call_llama_compat(*args, **kwargs):
     return await call_llama(*args, **kwargs)
+
+
+# Module-level MCP session state (donsetch_http)
+_donsetch_session_id = None
+_donsetch_session_lock = asyncio.Lock()
