@@ -783,42 +783,35 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                                                    "Content-Type": "application/json"},
                                           json=req_body) as r:
                     r.raise_for_status()
-                    # Manual line iteration with abort-aware waits.
-                    # The default `async for line in r.aiter_lines()`
-                    # blocks inside __anext__() until a chunk arrives,
-                    # which means an abort event set BEFORE the first
-                    # chunk is never seen — the user clicks Stop but
-                    # the bot keeps waiting on the first line.
+                    # Pre-check for abort before entering the line
+                    # iteration. This catches the case where the
+                    # user clicks Stop RIGHT after the bot sends
+                    # the thinking message but before the LLM has
+                    # produced any chunks.
                     #
-                    # We wrap each __anext__() in asyncio.wait_for with
-                    # a short timeout (300ms). If the timeout fires,
-                    # we check the abort event: if set, return the
-                    # sentinel; otherwise loop and try again. This
-                    # gives a worst-case abort latency of 300ms
-                    # between the click and the response, even when
-                    # the LLM is slow to produce the first chunk.
-                    line_iter = r.aiter_lines()
-                    while True:
-                        try:
-                            line = await asyncio.wait_for(
-                                line_iter.__anext__(),
-                                timeout=0.3,
-                            )
-                        except asyncio.TimeoutError:
-                            if abort_event is not None and abort_event.is_set():
-                                print(
-                                    f"[call_llama] abort_event set while "
-                                    f"waiting for first/next chunk "
-                                    f"iter={iteration}",
-                                    flush=True,
-                                )
-                                return '__ABORTED__'
-                            continue
-                        except StopAsyncIteration:
-                            break
-                        # Got a line. Honour the abort check between
-                        # chunks too (in case a fast LLM produces many
-                        # chunks between 300ms ticks).
+                    # IMPORTANT: do NOT use `asyncio.wait_for` with
+                    # a short timeout on `__anext__()`. Cancelling
+                    # the read task mid-stream corrupts httpx's
+                    # internal state and causes the LLM to return
+                    # empty responses on subsequent calls. Plain
+                    # `async for` is safe; the only downside is a
+                    # small window (typically <1s) where an abort
+                    # set after the LLM has started but before the
+                    # first chunk is not seen until the first
+                    # chunk arrives. The between-chunk check below
+                    # handles that.
+                    if abort_event is not None and abort_event.is_set():
+                        print(
+                            f"[call_llama] abort_event set pre-stream "
+                            f"iter={iteration}",
+                            flush=True,
+                        )
+                        return '__ABORTED__'
+                    async for line in r.aiter_lines():
+                        # Between-chunk abort check. Fires as soon
+                        # as a chunk arrives if the user clicked
+                        # Stop during the previous chunk's
+                        # processing.
                         if abort_event is not None and abort_event.is_set():
                             print(
                                 f"[call_llama] abort_event set between "
@@ -3340,7 +3333,16 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_to_message.from_user.id. We compare that against
     the callback's from_user.id.
     """
-    await update.callback_query.answer()
+    # answer() acknowledges the callback (removes the loading
+    # spinner in the Telegram client). It's best-effort: if
+    # the callback is too old (Telegram's timeout is short,
+    # typically 30s) the call raises BadRequest. The action
+    # itself proceeds regardless. Wrapped in try/except so
+    # the rest of the handler runs even if answer() fails.
+    try:
+        await update.callback_query.answer()
+    except Exception as e:
+        print(f"[cmd_callback] answer() failed (non-fatal): {type(e).__name__}: {e!r}", flush=True)
     data = update.callback_query.data or ""
     # === Stop button (works in private AND group) ===
     if data == "stop:thinking":
