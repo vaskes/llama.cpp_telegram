@@ -52,6 +52,16 @@ from prompts import (
     BLOAT_EMOJI, GROUP_CONTEXT, RATING_EMOJI, RATING_MODE,
     RATING_RULES, WELCOME_TEXT, _EMOJI_CHAR_RE, _RATING_PREFIX_RE,
 )
+# === F3 stage 2: re-export persistence and rating modules
+# so existing `from bot import _persist_message` etc. still
+# work during the staged refactor.
+import persistence
+import rating
+from persistence import persist as _persist_message, load_history as _load_history
+from rating import (
+    _apply_rating_and_persist, _apply_reaction, _execute_react_to_message,
+    _is_rating_active, _parse_rating_response,
+)
 
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
