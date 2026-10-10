@@ -22,8 +22,13 @@ RUN useradd --create-home --uid 1000 --shell /bin/false bot \
     && mkdir -p /app/files /app/data \
     && chown -R bot:bot /app
 
-# Then copy bot.py and storage.py
-COPY bot.py storage.py ./
+# Then copy ALL bot modules (F3 module split, v0.6.0+).
+# Without this wildcard, `docker compose build` produces
+# a container missing config.py / state.py / dispatch.py /
+# handlers.py / call_llama.py / etc., and bot.py fails to
+# import at startup. The COPY *.py glob is evaluated by the
+# Docker builder at build time, so the image is reproducible.
+COPY *.py ./
 
 # Drop privileges. Anything that needs to write here must be writable
 # by uid 1000, which is fine because we only write to /app/files
