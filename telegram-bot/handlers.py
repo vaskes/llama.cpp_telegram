@@ -21,6 +21,7 @@ from telegram.ext import ContextTypes
 
 from call_llama import call_llama, transcribe_voice, fetch_tools_from_llama, get_weather, _discover_default_model, _donsetch_init, donsetch_call, _tag_sender
 import state  # cross-module state (see state.py)
+from storage import get_store
 from state import _abort_events, _bot_replies, _get_global_llm_sem
 from rating import _is_rating_active, _apply_rating_and_persist
 # Late imports for cross-module state (see state.py). The state
@@ -71,7 +72,7 @@ async def send_reply(update: Update, text: str):
 # === _reply_active ===
 async def _reply_active(update: Update, user_id: int) -> str:
     """Returns the user's active sub-talk name (resolving to 'main' default)."""
-    return await asyncio.to_thread(store.get_active_thread, user_id) or 'main'
+    return await asyncio.to_thread(get_store().get_active_thread, user_id) or 'main'
 
 # === _general_thread_id ===
 def _general_thread_id() -> str:
@@ -119,13 +120,13 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
     if await reject_if_unauthorized(update, context):
         return None
     user_id = update.effective_user.id
-    active = await asyncio.to_thread(store.get_active_thread, user_id)
+    active = await asyncio.to_thread(get_store().get_active_thread, user_id)
     if active is not None:
         return user_id, active, False
     # No sub-talks at all yet — auto-create 'main' so the user's first
     # message lands somewhere sensible without them needing to /newsub.
-    await asyncio.to_thread(store.create_thread, user_id, 'main')
-    await asyncio.to_thread(store.set_active_thread, user_id, 'main')
+    await asyncio.to_thread(get_store().create_thread, user_id, 'main')
+    await asyncio.to_thread(get_store().set_active_thread, user_id, 'main')
     return user_id, 'main', False
 
 # === _reply ===
@@ -172,13 +173,13 @@ async def _resolve_active(user_id: int) -> str:
     Kept for backward compatibility with any external code that
     imports it. New code should call _route_to_thread() instead.
     """
-    active = await asyncio.to_thread(store.get_active_thread, user_id)
+    active = await asyncio.to_thread(get_store().get_active_thread, user_id)
     if active is not None:
         return active
     # No sub-talks at all yet — auto-create 'main' so the user's first
     # message lands somewhere sensible without them needing to /newsub.
-    await asyncio.to_thread(store.create_thread, user_id, 'main')
-    await asyncio.to_thread(store.set_active_thread, user_id, 'main')
+    await asyncio.to_thread(get_store().create_thread, user_id, 'main')
+    await asyncio.to_thread(get_store().set_active_thread, user_id, 'main')
     return 'main'
 
 # === _sender_display_name ===
