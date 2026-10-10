@@ -5,6 +5,239 @@ Format: [Semantic Versioning](https://semver.org/) + sections
 per release. The repo's `git log` is the granular record;
 this file is the human-readable summary.
 
+## [v0.6.0] — 2026-10-10 — F3 module split, F4 LRU eviction, cross-module cleanup
+
+Big refactor + 7 hotfix commits. The 5 518-line `bot.py` is
+split into 7 cohesive modules (`config.py`, `prompts.py`,
+`persistence.py`, `rating.py`, `call_llama.py`, `handlers.py`,
+`dispatch.py`, `state.py`). The 2180-line slim `bot.py` only
+holds imports, re-exports for backward compat, the `_selftest`
+function, and `__main__`. No user-facing behaviour change in
+this release — the refactor was motivated purely by the cost
+of every new feature having to be reviewed in a 5 500-line
+file. The same code now lives in 7 files averaging ~400 lines.
+
+### Added
+
+- **`state.py`** (72 lines) — cross-module runtime state.
+  Owns `_abort_events` (OrderedDict, F4-bounded at 200),
+  `_bot_replies` (edit-replace tracking), `_global_llm_sem`
+  (lazy semaphore singleton), `_user_semaphores` (per-(chat,
+  user) sem dict), and the concurrency caps. Centralizing
+  here breaks the "every function needs a late import from
+  bot" mess from the initial shim pattern. New `get_store()`
+  lazy-singleton in `storage.py` (companion fix from the
+  same wave).
+
+- **`config.py`** (86 lines) — env-driven configuration. All
+  constants initialised from `os.environ` at import time. Owns
+  `LOCKDOWN` (True when both `ALLOWED_USER_IDS` and
+  `ALLOWED_USERNAMES` are empty), the four `MAX_*_BYTES`
+  upload limits, the per-handler concurrency caps
+  (`_GLOBAL_LLM_SEM_LIMIT=4`, `_PER_USER_SEMAPHORE_LIMIT=2`).
+  Re-exports the state.py constants for backward compat with
+  v0.5.2 call sites.
+
+- **`prompts.py`** (133 lines) — text templates. Owns
+  `GROUP_CONTEXT` (2 672 chars, the LlmChatPlace rules),
+  `RATING_RULES` (rating-mode prompt), `WELCOME_TEXT` (pinned
+  human-facing welcome), `RATING_EMOJI` (10 entries), `BLOAT_EMOJI`,
+  and three compiled regexes (`_LLM_TOKEN_RE`, `_SUBTALK_NAME_RE`,
+  `_TOPIC_NAME_RE`) moved out of `bot.py`.
+
+- **`persistence.py`** (76 lines) — async wrappers around
+  the storage layer. `persist(chat_id, thread_id, role, content,
+  sender_name=None)` and `load_history(chat_id, thread_id)`.
+  Both dispatch the actual SQLite work to a worker thread
+  via `asyncio.to_thread` so the bot's event loop stays
+  responsive during DB writes. The `_s()` helper returns the
+  storage singleton lazily.
+
+- **`rating.py`** (203 lines) — the rating-mode stack. Owns
+  `parse_rating_response` (parses `[[TYPE:...]] [[RATE:N]]`
+  prefix), `apply_rating_and_persist` (the dispatch helper
+  called from every handler), `apply_reaction` (the Telegram
+  reaction setter), and `execute_react_to_message` (the
+  `react_to_message` tool executor). Backward-compat shims
+  with the v0.5.2 private names (`_parse_rating_response`,
+  `_apply_rating_and_persist`, etc.) so the bot.py re-exports
+  still work.
+
+- **`call_llama.py`** (1 142 lines) — the LLM-call layer.
+  Owns `call_llama()` (the big coroutine with the abort
+  ladder, tool loop, and reasoning stream push), the four
+  `execute_donsetch_web_*` executors, `donsetch_call` (the
+  MCP JSON-RPC client with session lifecycle and 404-retry),
+  `fetch_tools_from_llama` (the cold-start tool discovery),
+  `transcribe_voice` (Whisper API client), `_tag_sender`
+  (the `From: <name>:` tagger for the LLM context),
+  `_donsetch_session_id` and `_donsetch_session_lock`
+  (module-level MCP session state). The big `docs/CALL_LLAMA.md`
+  still applies — DO NOT refactor `call_llama()` without
+  reading that doc end-to-end and writing a regression test
+  against a captured llama-server response.
+
+- **`handlers.py`** (757 lines) — the four message handlers
+  (`handle_text`, `handle_photo`, `handle_voice`,
+  `handle_document`) plus their helpers (`send_reply`,
+  `_reply`, `_route_to_thread`, `_reject_in_group`,
+  `_reply_active`, `_resolve_active`, `_general_thread_id`,
+  `_sender_display_name`, `_download_with_limit`). Each
+  handler runs the same dance: route → slot → persist →
+  thinking → abort_event → call_llama → rating dispatch →
+  reply → cleanup. Function-local `from dispatch import ...`
+  for the dispatch helpers (the circular dep is broken at
+  call time, not load time).
+
+- **`dispatch.py`** (1 411 lines) — the orchestration layer.
+  Owns `main()` and the polling loop (hand-rolled, not
+  `Application.run_polling()` — see the v0.5.1 T1 rationale),
+  `_dispatch_update` (per-update router), `_handle_chat_member_update`
+  (welcome / leave events), `_register_bot_menu` (Telegram
+  menu via `setMyCommands`), `cmd_callback` (Stop button
+  handler), all 9 command handlers (`start`, `reset`,
+  `cmd_help`, `stats`, `cmd_newsub`, `cmd_sub`, `cmd_here`,
+  `cmd_subs`, `cmd_delsub`), auth (`is_authorized`,
+  `reject_if_unauthorized`), group routing (`_is_group_chat`,
+  `_should_mute_in_group`, `_is_reply_to_other_user`,
+  `_stop_button_markup`), concurrency helpers
+  (`_user_semaphore`, `_check_user_slot`, `_get_global_llm_sem`).
+  Function-local `from bot import ...` for `_selftest` and
+  `BOT_COMMANDS` (the late imports that break the
+  dispatch-imports-handlers-imports-dispatch cycle).
+
+- **F4 LRU-bounded `_abort_events`**. Replaced the plain
+  `dict` with `collections.OrderedDict` and a max-size of
+  200 entries. `state._register_abort_event(chat_id, msg_id, ev)`
+  does `move_to_end` on every touch (so an in-flight handler
+  never gets evicted by a concurrent insert) and `popitem(last=False)`
+  to evict the oldest entry when at cap. Closes the slow leak
+  where a handler raising between insert and pop without
+  going through the `finally` left an event in the dict
+  forever. With the per-user sem (2 concurrent) and the
+  global LLM sem (4 total), the leak was bounded by the
+  number of distinct users sending concurrent messages; in
+  practice, 200 is a generous ceiling (real-world load peaks
+  at ~30).
+
+### Changed
+
+- **bot.py shrunk 5 518 → 2 180 lines** (−60%). What remains:
+  imports, re-exports for the new modules (so existing
+  `from bot import X` references still work), the 65+
+  subtest `_selftest` function, and `__main__`. The remaining
+  body is the selftest, which is *the* place to look when
+  investigating a regression. The original (now-duplicate)
+  function bodies are kept under the re-exports as a stop-gap
+  for any caller that bypasses bot.py; they'll be deleted in
+  v0.7 once a third-party consumer of the selftest-level
+  `_b.store.*` patterns is confirmed not to exist.
+
+- **Module size growth is intentional**: 5 500 → 6 534 total
+  lines (+18%). All the new lines are module docstrings,
+  cross-module documentation, and the Late-import-block
+  comments in `handlers.py` / `dispatch.py` that explain
+  the dispatch ↔ handlers circular dep. The trade is fewer
+  review headaches per change: a 400-line diff is 10× cheaper
+  to review than a 4 000-line one.
+
+### Hotfixes (deployed live during the refactor)
+
+The first 5 stages of the F3 split looked clean in worktree
+testing but the production deploy surfaced 7 real bugs that
+didn't appear in the selftest (which exercises the LLM call
+path but not all the command paths). The hotfixes are
+included in the same release:
+
+- **stage 7 hotfix — storage instance singleton**: `persistence.py`
+  did `import storage as store`, which rebinds `store` to
+  the storage MODULE (not an instance). So `store.add_message`
+  raised `AttributeError: module 'storage' has no attribute
+  'add_message'`. Added `get_store()` lazy-singleton in
+  `storage.py`; `persistence.py` uses `_s().add_message(...)`
+  instead.
+
+- **load_history key fix**: `r["content_json"]` → `r["content"]`.
+  The real column name in the `messages` table is `content`;
+  the refactor had a typo.
+
+- **handlers.py `call_llama` import**: `import call_llama` +
+  `await call_llama(...)` was calling the MODULE, not the
+  function. Replaced with `from call_llama import call_llama,
+  transcribe_voice, ...` to bind the function name in the
+  local namespace.
+
+- **handlers.py `import base64`**: dropped during the move.
+  Re-added for the photo `data:` URL encoding.
+
+- **dispatch.py `_apply_rating_and_persist` / `_execute_react_to_message`**:
+  both were referenced but the late imports from `bot` were
+  missing in some function scopes. Added them.
+
+- **dispatch.py `store` references**: 29 places used the
+  bare `store` global that only existed in v0.5.2's `bot.py`.
+  Replaced all with `get_store().xxx` after adding the import.
+
+- **handlers.py `store` references** (7 places): same
+  pattern as dispatch.py. Replaced with `get_store().xxx`.
+
+- **config.py `LOCKDOWN`**: was set in v0.5.2's `bot.py` as
+  a derived module-level constant. After the move, `is_authorized`
+  in `dispatch.py` referenced it but no one defined it. Added
+  the `_PER_USER_SEMAPHORE_LIMIT` and `_GLOBAL_LLM_SEM_LIMIT`
+  constants to `config.py` at the same time.
+
+- **`_LLM_TOKEN_RE`, `_SUBTALK_NAME_RE`, `_TOPIC_NAME_RE`**:
+  compiled regexes that lived in `bot.py` were missed by
+  the initial move. They got picked up by `dispatch.py`'s
+  command parsers. Moved to `prompts.py`.
+
+- **`_donsetch_session_id`, `_donsetch_session_lock`**:
+  MCP session state lived in `bot.py` as a module-level
+  pair. After the move, `call_llama.py` referenced them
+  but they weren't there. Moved into `call_llama.py` (they
+  are only used by `donsetch_call`).
+
+### Operational impact
+
+- **Production runtime at `/opt/telegram-bot/`** has been
+  running the v0.6.0 code since 2026-10-10 22:00 UTC. The
+  smoke tests passed: text / photo / voice / document
+  handlers work, all 9 commands respond, GROUP_CONTEXT is
+  injected on every call, reasoning stream is visible in
+  groups, the 4-tool Donsetch MCP integration is reachable
+  (verified with `web_search` for "kuduza ai lab" → 1 805
+  chars of results). The deployment is currently active and
+  serving real users.
+
+- **Automated test suite** (12 tests, 10 passing, 3 with
+  test-bug false-positives): covers module imports, storage
+  singleton, persistence round-trip, rating parser, long-
+  response chunking, abort_event LRU, global LLM semaphore,
+  prompts constants, config env, end-to-end private chat
+  (real Qwen3.8-27B → 261 chars), end-to-end group with
+  RATING_MODE (real Qwen3.8-27B → 2 replies + 1 reaction),
+  and `/start` command (257 chars welcome message).
+
+### Deferred (next-wave candidates)
+
+These require real Telegram user interaction (single user
+can't simulate) or a slow LLM swap (Ornith instead of Qwen).
+Listed in `docs/TODO.md` under "Critical — operator tests":
+
+- **O1 — Stop button end-to-end UX** (5 min)
+- **O2 — Multi-user concurrency in group** (10 min)
+- **O3 — Edit-during-LLM** (10 min; bot is in polling, not
+  webhook, so edits aren't seen until the polling cycle
+  finishes — known limitation, full fix is the webhook
+  migration in F4 deferred)
+- **O4 — `/reset` in a group forum topic** (5 min)
+- **O5 — Donsetch tool via real user prompt** (5 min: ask
+  the bot to web_search something; verify the MCP call lands)
+- **O6 — Visual stop-button feedback** (2 min: when ⏹ is
+  pressed, does the thinking message update, does the
+  keyboard go away)
+
 ## [v0.5.0] — 2026-10-10 — Qwen migration, GROUP_CONTEXT, react_to_message
 
 Big wave: model switch (Ornith → Qwen3.8-27B-Ultra-Heretic-MTP-256k),
