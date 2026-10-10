@@ -646,7 +646,14 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             body = body[-max_payload:]
             truncated_marker = "\n[…earlier reasoning omitted…]\n"
         try:
-            await thinking_msg.edit_text(f"{prefix}{truncated_marker}{body}")
+            # IMPORTANT: editMessageText removes the inline keyboard
+            # if reply_markup is not passed. To keep the ⏹ Stop
+            # button visible while reasoning streams, we must
+            # re-attach the markup on every edit.
+            await thinking_msg.edit_text(
+                f"{prefix}{truncated_marker}{body}",
+                reply_markup=_stop_button_markup(),
+            )
         except Exception as e:
             err = str(e).lower()
             if 'not modified' in err:
@@ -768,6 +775,19 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                                           json=req_body) as r:
                     r.raise_for_status()
                     async for line in r.aiter_lines():
+                        # Honour the per-task abort event BETWEEN chunks
+                        # so clicking Stop during streaming actually
+                        # stops the response. Without this, the abort
+                        # only takes effect at the next tool-loop
+                        # iteration, which never comes for a
+                        # single-turn streaming response.
+                        if abort_event is not None and abort_event.is_set():
+                            print(
+                                f"[call_llama] abort_event set during streaming "
+                                f"iter={iteration}, breaking out",
+                                flush=True,
+                            )
+                            return '__ABORTED__'
                         if not line or not line.startswith("data: "):
                             continue
                         payload = line[6:]
