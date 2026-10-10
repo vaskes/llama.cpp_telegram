@@ -1012,9 +1012,62 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         for tc in tool_calls:
             fn_name = tc.get('function', {}).get('name', '')
             raw_args = tc.get('function', {}).get('arguments', '{}')
-            try:
-                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-            except Exception:
+            # --- Defensive parse of tool call args ---
+            # Qwen3.8-27B-Ultra-Heretic (and a few other recent models
+            # with speculative decoding / MTP heads) sometimes emit
+            # malformed tool-call JSON during long chains — most
+            # commonly the same key repeated many times, or the
+            # closing brace clipped. json.loads then either accepts
+            # only the last value of a duplicated key, or raises and
+            # we silently fall back to {} which then errors at the
+            # tool side. Both paths waste a turn. Detect up front:
+            # - if the raw arg string is suspiciously long, or
+            # - if it doesn't parse AND is non-empty (model produced
+            #   garbage, not a real tool call), or
+            # - if it parses to {} while the raw string is non-empty
+            #   (parsing dropped all keys), or
+            # - if the same top-level key appears > 3 times
+            # then return a feedback message asking the model to
+            # retry. This costs one iteration but prevents the
+            # runaway loop that ends in a 500 from llama-server.
+            args = None
+            if isinstance(raw_args, str) and raw_args:
+                # Cheap check: too many duplicate top-level keys.
+                # E.g. "max_chars":8000,"max_chars":8000,... — we don't
+                # need exact JSON parsing to count this.
+                if raw_args.count('":') > 8 or len(raw_args) > 1500:
+                    print(f"[tool] iter={iteration} REJECTED {fn_name} args too repetitive or too long ({len(raw_args)} chars); asking model to retry", flush=True)
+                    msgs.append({
+                        'role': 'tool',
+                        'tool_call_id': tc.get('id', ''),
+                        'content': f'[bot: your tool call for {fn_name} had malformed args (length={len(raw_args)}, possibly duplicate keys or clipped). Please re-emit the tool call with a single, well-formed JSON object.]',
+                    })
+                    last_empty += 1
+                    continue
+                try:
+                    args = json.loads(raw_args)
+                except Exception as e:
+                    print(f"[tool] iter={iteration} REJECTED {fn_name} args unparseable: {e!r} (head={raw_args[:120]!r})", flush=True)
+                    msgs.append({
+                        'role': 'tool',
+                        'tool_call_id': tc.get('id', ''),
+                        'content': f'[bot: your tool call for {fn_name} had invalid JSON ({e!r}). Please re-emit with a single well-formed JSON object.]',
+                    })
+                    last_empty += 1
+                    continue
+                # If parsing yielded {} for a non-empty raw string,
+                # the model produced only structural noise (e.g.
+                # "{{" or "null" or duplicated empty key). Reject.
+                if not args and raw_args.strip() not in ('{}', 'null', '[]'):
+                    print(f"[tool] iter={iteration} REJECTED {fn_name} args parsed to empty for raw={raw_args[:120]!r}", flush=True)
+                    msgs.append({
+                        'role': 'tool',
+                        'tool_call_id': tc.get('id', ''),
+                        'content': f'[bot: your tool call for {fn_name} parsed to an empty object. Please re-emit with actual parameters.]',
+                    })
+                    last_empty += 1
+                    continue
+            else:
                 args = {}
             tc_id = tc.get('id', '')
             current_calls.append((fn_name, json.dumps(args, sort_keys=True) if isinstance(args, dict) else str(args)))
