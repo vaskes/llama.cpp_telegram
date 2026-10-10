@@ -145,6 +145,106 @@ Format: [Semantic Versioning](https://semver.org/) + sections
 per release. The repo's `git log` is the granular record;
 this file is the human-readable summary.
 
+## [v0.5.1] — 2026-10-10 — third-pass review fixes (T1-T8)
+
+Response to the third code-review pass on v0.5.0. The P0
+items are real bugs that the prior two reviews missed;
+the P1/P2 items are refactoring and dead-code removal.
+
+### P0 — fix before next deploy
+
+  - **T1 (P0-1): global LLM concurrency cap** — added
+    `_GLOBAL_LLM_SEM = asyncio.Semaphore(4)` and wired it
+    into all 4 message handlers (handle_text, handle_photo,
+    handle_voice, handle_document). Without this cap, the
+    v0.5 `asyncio.create_task` switch in the polling loop
+    plus the per-user semaphore (=2) meant 50 different
+    users in a group could each fire one message and we'd
+    queue 50 concurrent 27B forward passes on a single GPU
+    → OOM. With cap=4, llama-server sees at most 4
+    in-flight requests no matter how many users spam.
+    Defense in depth: also added `limit=10` to the
+    `getUpdates` params so the per-cycle batch is bounded.
+  - **T2 (P0-2): GROUP_CONTEXT position in tools mode**.
+    The previous order in tools mode was
+    `[helpful_assistant_sys, GROUP_CONTEXT, ...rest]`, which
+    made Qwen3.8 treat the generic "helpful assistant"
+    persona as the most-authoritative system message and
+    deprioritise the LlmChatPlace rules. Fix Option B from
+    the review: rewrite the tools-mode `sys_prompt` to lead
+    with GROUP_CONTEXT (so the [llm] tag and rating-on-truth
+    rules are at the most-authoritative position), then
+    drop the now-redundant `_group_ctx_msg` from `messages`
+    in tools mode. Rating mode is unchanged (RATING_RULES
+    first, GROUP_CONTEXT second).
+
+### P1 — refactor + dead code
+
+  - **T3 (P1-1): `_apply_rating_and_persist()` helper** —
+    pulled the 30-line `if rating_active: ... else: ...`
+    block out of all 4 handlers into a single async helper.
+    Each handler now has a one-line call. Removes ~100
+    lines of duplication. Pure refactor, no behavior
+    change; all selftest cases still pass.
+  - **T4 (P1-2): deleted dead code** — `_msg_text_edited_during()`
+    function (10 lines) + the `_user_msg_text` data structure
+    and its 50-line explanatory comment block (60 lines) +
+    the polling-loop write to `_user_msg_text` (12 lines) +
+    the `_bg_text_offset` global. The function was a no-op
+    since the background text updater was disabled
+    (Telegram rejects simultaneous getUpdates with HTTP
+    409), and nothing else read the dict. Total: ~130
+    lines deleted.
+  - **T5 (P1-3): `__ABORTED__` sentinel → `None`** — `call_llama`
+    returns `None` (was `'__ABORTED__'`) on abort; handlers
+    check `if bot_response is None` (was `== '__ABORTED__'`).
+    3 return sites + 5 check sites updated. The string
+    sentinel was fragile: a user could paste `__ABORTED__`
+    into chat and the bot would silently swallow its own
+    response.
+  - **T6 (P1-4): `_tag_sender` deduplicated** — the
+    tools-mode closure and the rating-mode closure were
+    byte-for-byte identical. Lifted to a single module-level
+    function. Both branches now use the same code; "did I
+    keep them in sync?" hazard removed.
+
+### P2 — cleanup
+
+  - **T7 (P2-1): `_is_rating_active()` helper** — the 3-line
+    `RATING_MODE and _is_group_chat(update) and not
+    _should_mute_in_group(update)` check was duplicated in
+    4 handlers. Now a single function. The `not
+    _should_mute_in_group(update)` clause was already dead
+    at the call sites (the dispatch filter drops muted
+    messages earlier), but kept as defense-in-depth inside
+    the helper.
+  - **T8 (P2-2): duplicate GROUP_CONTEXT comment removed** —
+    two ~7-line blocks saying the same thing in different
+    words. Kept one.
+
+### No production behavior change
+
+End users see the same responses, the same reactions, the
+same [llm] tagging, the same tools, the same rating emoji.
+The P0 fixes are structural (prevent OOM, make GROUP_CONTEXT
+actually take effect); the P1/P2 fixes are refactoring that
+should be invisible.
+
+### Live selftest
+
+All 75+ selftest cases pass on container restart. The
+"real donsetch integration" subtest is skipped inside the
+bot's event loop (it needs `asyncio.run()` which can't be
+called from a running loop) — same limitation as v0.5.0;
+manually verified via `bot_smoke.py` against the live
+donsetch-http.
+
+### Net diff
+
+`bot.py`: +232 / −300 (net −68 lines, despite the new
+helper functions, because T3 + T4 alone removed ~200 lines
+of duplicated/dispatch/dead code).
+
 ## [Unreleased] — group-mode migration
 
 The bot now runs in **dual mode**: a 1:1 private chat (the

@@ -441,6 +441,37 @@ DONSETCH_TOOLS = {
 }
 
 
+def _tag_sender(m):
+    """T6 (P1-4): prepend "From: <name>: " to user content so the
+    LLM can tell Vasisualy from Dimon in a multi-human thread.
+    Sender name comes from the _sender_name field that
+    _load_history attaches (NULL for pre-v4 rows -> "user"
+    prefix). Returns the message dict unchanged if it's not a
+    user message, or if content is in an unsupported shape.
+
+    This used to be defined twice (once inside the tools-mode
+    branch, once inside the rating-mode branch) as closures
+    that were byte-for-byte identical. The duplication was a
+    hazard: any change to one (e.g. the text-prefix format)
+    had to be mirrored to the other, and one of the two was
+    always slightly out of date. Now defined once at module
+    level.
+    """
+    if not isinstance(m, dict) or m.get("role") != "user":
+        return m
+    name = m.get("_sender_name")
+    tag = (name.strip() if isinstance(name, str) and name.strip() else "user")
+    content = m.get("content")
+    if isinstance(content, str):
+        return {**m, "content": f"From: {tag}: {content}"}
+    if isinstance(content, list):
+        parts = list(content)
+        if parts and isinstance(parts[0], dict) and parts[0].get("type") == "text":
+            parts[0] = {**parts[0], "text": f"From: {tag}: " + parts[0].get("text", "")}
+            return {**m, "content": parts}
+    return m
+
+
 async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None, bot=None, chat_id=None, current_message_id=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
@@ -614,16 +645,10 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     # noise. See the comment above _TOOL_KEYWORDS for the full
     # rationale on why we dropped the keyword gate.
     use_tools = not rating_active
-    # === Group context (always-injected system message) ===
-    # The LlmChatPlace rules are baked into a system message that
-    # goes into EVERY call_llama call - both rating and tool modes.
-    # The pinned welcome message in the chat is for humans; the LLM
-    # does not see it on its own, and after a model switch or
-    # /reset it has no memory of the rules. Putting them here means
-    # they survive every cold start.
     # If the caller asked for rating mode (group mode + RATING_MODE=1),
     # inject the rating rules as a system message BEFORE the existing
-    # one. The LLM sees its first system message; both are honored.
+    # GROUP_CONTEXT message. The LLM sees its first system message;
+    # both are honored (RATING_RULES first, GROUP_CONTEXT second).
     if rating_active:
         # Add the rating-mode-specific RATING_RULES on top of the
         # already-injected GROUP_CONTEXT. ORDER matters: the LLM
@@ -633,48 +658,48 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         # general LlmChatPlace rules) comes second.
         messages = [{"role": "system", "content": RATING_RULES}] + messages
     if use_tools:
+        # T2 (P0-2): unified persona in the most-authoritative slot.
+        # Previously the order was [helpful_assistant_sys,
+        # GROUP_CONTEXT, ...rest], which made Qwen treat the generic
+        # assistant persona as the highest-priority system message
+        # and demote the LlmChatPlace rules (including the [llm]
+        # tag). Now the first system message leads with the
+        # LlmChatPlace persona (GROUP_CONTEXT) and the tool guidance
+        # comes second. The redundant _group_ctx_msg that we
+        # inserted at the top of this function is dropped from
+        # `messages` before the prepended sys_prompt so it doesn't
+        # appear twice.
         sys_prompt = {
             'role': 'system',
             'content': (
-                'You are a helpful assistant with access to tools. '
-                'Use them whenever the user asks about something '
-                'requiring fresh data, real-world facts you cannot '
-                'be sure about, weather, news, prices, sports results, '
-                'or any web content. '
-                'For weather: use get_weather (wttr.in, always works). '
-                'For web: use donsetch_web_search / donsetch_web_fetch / '
-                'donsetch_web_crawl / donsetch_web_screenshot. '
-                'If a tool returns no useful data, say so honestly and '
-                'suggest where the user can find the info themselves. '
-                'Do NOT keep retrying the same query with variations. '
-                'After getting a tool result, give a clear, concise '
-                'answer in the user\'s language. '
-                'If no tool is needed (greetings, opinions, math, code '
-                'review, chitchat), just answer directly — do not call '
-                'a tool unnecessarily.'
+                GROUP_CONTEXT
+                + '\n\n## Tool use (tools mode)\n'
+                + 'You have access to: get_weather (wttr.in, always works), '
+                + 'donsetch_web_search / donsetch_web_fetch / '
+                + 'donsetch_web_crawl / donsetch_web_screenshot, '
+                + 'and react_to_message (set a Telegram reaction). '
+                + 'Use a tool when the user asks for fresh data, '
+                + 'real-world facts you cannot be sure about, weather, '
+                + 'news, prices, sports results, or any web content. '
+                + 'If a tool returns no useful data, say so honestly '
+                + 'and suggest where the user can find the info '
+                + 'themselves. Do NOT keep retrying the same query '
+                + 'with variations. After getting a tool result, give '
+                + 'a clear, concise answer in the user\'s language. '
+                + 'If no tool is needed (greetings, opinions, math, '
+                + 'code review, chitchat), just answer directly — do '
+                + 'not call a tool unnecessarily.'
             )
         }
-        # === Speaker attribution for the LLM ===
-        # In group chats, multiple humans can write to the same thread
-        # in the same minute. Without a sender tag the model has no way
-        # to tell Vasisualy's "ok" from Dimon's "ok". We prepend
-        # "From: <name>: " to each user message so the LLM can see who
-        # said what. Sender name is read from the _sender_name field that
-        # _load_history attaches (NULL for pre-v4 rows -> "user" prefix).
-        def _tag_sender(m):
-            if not isinstance(m, dict) or m.get("role") != "user":
-                return m
-            name = m.get("_sender_name")
-            tag = (name.strip() if isinstance(name, str) and name.strip() else "user")
-            content = m.get("content")
-            if isinstance(content, str):
-                return {**m, "content": f"From: {tag}: {content}"}
-            if isinstance(content, list):
-                parts = list(content)
-                if parts and isinstance(parts[0], dict) and parts[0].get("type") == "text":
-                    parts[0] = {**parts[0], "text": f"From: {tag}: " + parts[0].get("text", "")}
-                    return {**m, "content": parts}
-            return m
+        # T2 (P0-2): drop the standalone _group_ctx_msg we added
+        # at the function top — it's now inside sys_prompt. Without
+        # this dedup the LlmChatPlace rules would appear twice and
+        # the rating-vs-tools ordering would be inconsistent with
+        # the rating branch (which keeps GROUP_CONTEXT as a
+        # separate system message after RATING_RULES).
+        messages = [m for m in messages if m is not _group_ctx_msg]
+        # T6 (P1-4): _tag_sender is now module-level, used by both
+        # the tools branch and the rating branch.
         messages = [_tag_sender(m) for m in messages]
         msgs = [sys_prompt] + messages
         req_tools = all_tools
@@ -688,24 +713,10 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 'See the rules above.'
             )
         }
-        # Same speaker-tag treatment as the tool-mode branch above
-        # (the closure is out of scope here, so we re-implement the
-        # 6 lines).
-        def _tag_sender_rating(m):
-            if not isinstance(m, dict) or m.get("role") != "user":
-                return m
-            name = m.get("_sender_name")
-            tag = (name.strip() if isinstance(name, str) and name.strip() else "user")
-            content = m.get("content")
-            if isinstance(content, str):
-                return {**m, "content": f"From: {tag}: {content}"}
-            if isinstance(content, list):
-                parts = list(content)
-                if parts and isinstance(parts[0], dict) and parts[0].get("type") == "text":
-                    parts[0] = {**parts[0], "text": f"From: {tag}: " + parts[0].get("text", "")}
-                    return {**m, "content": parts}
-            return m
-        messages = [_tag_sender_rating(m) for m in messages]
+        # T6 (P1-4): use the module-level _tag_sender (the
+        # in-branch _tag_sender_rating closure was a byte-for-byte
+        # duplicate of the tools-mode closure and is now removed).
+        messages = [_tag_sender(m) for m in messages]
         msgs = [sys_prompt] + messages
         req_tools = None
     max_iter = 15
@@ -784,7 +795,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         # process"), abort is per-message ("skip this one, move on").
         if abort_event is not None and abort_event.is_set():
             print(f"[call_llama] abort_event set, aborting tool loop at iteration {iteration}", flush=True)
-            return '__ABORTED__'
+            return None
         # --- request body ---
         async with httpx.AsyncClient(timeout=600.0) as client:
             req_body = {
@@ -948,7 +959,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                                 f"iter={iteration}",
                                 flush=True,
                             )
-                            return '__ABORTED__'
+                            return None
                         async for line in r.aiter_lines():
                             # Between-chunk abort check. Fires as soon
                             # as a chunk arrives if the user clicked
@@ -960,7 +971,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                                     f"chunks iter={iteration}",
                                     flush=True,
                                 )
-                                return '__ABORTED__'
+                                return None
                             if not line or not line.startswith("data: "):
                                 continue
                             payload = line[6:]
@@ -1998,23 +2009,6 @@ def _stop_button_markup():
     ])
 
 
-def _msg_text_edited_during(chat_id: int, msg_id: int, text_at_start: str) -> bool:
-    """True if the user message's text/caption has changed since
-    text_at_start was captured. Used by handlers to detect
-    "user edited while we were calling the LLM" — if so, the
-    bot's response (about to be sent) would be based on stale
-    text. Callers should discard the response and let the
-    polling loop's edit-handling take over.
-
-    Returns False if the dict has no entry for this message
-    (e.g., it was a voice message, which has no editable text).
-    """
-    current = _user_msg_text.get((chat_id, msg_id))
-    if current is None:
-        return False
-    return current != text_at_start
-
-
 def _is_reply_to_other_user(update, bot_id: int) -> bool:
     """True if the message is a reply to another human's message in
     a group, and should therefore be skipped.
@@ -2070,6 +2064,40 @@ def _is_reply_to_other_user(update, bot_id: int) -> bool:
 # different groups don't affect each other.
 _PER_USER_SEMAPHORE_LIMIT = 2
 _user_semaphores: dict = {}
+
+# T1 (P0-1): global cap on concurrent call_llama() in-flight requests.
+# The per-user semaphore (_PER_USER_SEMAPHORE_LIMIT) is necessary but
+# not sufficient: with asyncio.create_task in the polling loop, 50
+# different users sending one message each = 50 concurrent 27B
+# forward passes. Each holds real VRAM and KV-cache; on Qwen3.8-27B
+# with MTP speculative decoding we'd OOM before the wall-clock
+# budget fires. Cap llama-server's view of the world to a small
+# number of in-flight requests; tune to the model's max-parallel
+# capacity (Qwen3.8-27B with 256k ctx ~ 4 with full attention, 6-8
+# with MTP). Combined with getUpdates limit=10 (T1 defense-in-
+# depth) the worst-case is 10 in-flight at any moment, and only 4
+# are actually inside the LLM call.
+_GLOBAL_LLM_SEM_LIMIT = 4
+_global_llm_sem = None
+
+
+def _get_global_llm_sem():
+    """Return the module-level semaphore, lazy-initialised because
+    asyncio primitives cannot be created at module import time
+    (no running event loop)."""
+    global _global_llm_sem
+    if _global_llm_sem is None:
+        _global_llm_sem = asyncio.Semaphore(_GLOBAL_LLM_SEM_LIMIT)
+    return _global_llm_sem
+
+
+def _is_rating_active(update) -> bool:
+    """T7 (P2-1): single source of truth for whether the current
+    update should be handled in rating mode. Returns True only if
+    RATING_MODE is on AND the update came from a group. Private
+    chats are never rated (the rating-mode structured output is
+    meaningless in 1:1 context)."""
+    return bool(RATING_MODE) and _is_group_chat(update)
 
 
 def _user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
@@ -2452,6 +2480,62 @@ def _parse_rating_response(text: str) -> dict:
     return {"type": type_, "rating": None, "emoji": None, "rest": rest}
 
 
+async def _apply_rating_and_persist(
+    context, update, chat_id: int, thread_id, bot_response: str, rating_active: bool,
+) -> str:
+    """T3 (P1-1): pull the 30-line RATING_MODE dispatch block out
+    of all 4 message handlers into one helper. Returns the
+    (possibly empty) text to reply with to the user.
+
+    Behaviour:
+      - rating_active=False: persist bot_response as the assistant
+        turn; return it unchanged for the caller to send as text.
+      - rating_active=True + parseable [[TYPE:...]] [[RATE:N]]:
+        parse the prefix, apply a Telegram reaction with the
+        parsed emoji, persist an empty assistant turn with the
+        numeric rating, return "" (caller skips text reply).
+      - rating_active=True + bloat type: apply the bloat emoji
+        (😐), persist empty turn, return "".
+      - rating_active=True + question/request/confirmation type:
+        persist the full bot_response as the assistant turn
+        (so the structured prefix goes into the history), return
+        the original bot_response for the caller to send as text.
+
+    The previous inline dispatch was copy-pasted across all 4
+    handlers. Any change to the rating-mode contract (e.g. the
+    rating emoji for a given score, the persist-with-rating
+    path) had to be mirrored 4x. Helper is the single source
+    of truth; the 4 callers each become one line.
+    """
+    if not rating_active:
+        await _persist_message(chat_id, thread_id, 'assistant', bot_response)
+        return bot_response
+    parsed = _parse_rating_response(bot_response)
+    if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
+        await _apply_reaction(
+            context, update.effective_chat.id,
+            update.message.message_id, parsed['emoji'],
+        )
+        await _persist_message(
+            chat_id, thread_id, 'assistant', '',
+            rating=parsed['rating'],
+        )
+        return ''  # signal: no text reply
+    if parsed['type'] == 'bloat':
+        await _apply_reaction(
+            context, update.effective_chat.id,
+            update.message.message_id, parsed['emoji'],
+        )
+        await _persist_message(
+            chat_id, thread_id, 'assistant', '',
+        )
+        return ''  # signal: no text reply
+    # question / request / confirmation: persist full response
+    # (with the structured prefix) and reply with it.
+    await _persist_message(chat_id, thread_id, 'assistant', bot_response)
+    return bot_response
+
+
 async def _apply_reaction(context, chat_id: int, message_id: int, emoji: str) -> None:
     """Set a single-emoji reaction on a Telegram message. Best-effort:
     if the API rejects (e.g. emoji not in the allowed set, or bot
@@ -2780,14 +2864,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _abort_events[(chat_id, thinking.message_id)] = abort_event
         # Compute rating_active here (before call_llama) so we
         # can pass it to the model AND use it in the dispatcher.
-        rating_active = (
-            RATING_MODE
-            and _is_group_chat(update)
-            and not _should_mute_in_group(update)
-        )
-        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+        rating_active = _is_rating_active(update)
+        # T1 (P0-1): global LLM concurrency cap.
+        async with _get_global_llm_sem():
+            bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
-        if bot_response == '__ABORTED__':
+        if bot_response is None:
             print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
@@ -2817,7 +2899,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rating_active=rating_active, abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
-            if retry_response == '__ABORTED__':
+            if retry_response is None:
                 print(f"[handle_photo] ABORTED on retry, moving to next", flush=True)
                 try:
                     await thinking.edit_text('⏹ Остановлено')
@@ -2863,35 +2945,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Private mode and [llm]-marked messages always get a
         # plain text reply (rating path is group-only).
         # rating_active was computed above (before call_llama).
-        if rating_active:
-            parsed = _parse_rating_response(bot_response)
-            if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
-                await _apply_reaction(
-                    context, update.effective_chat.id,
-                    update.message.message_id, parsed['emoji'],
-                )
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', '',
-                    rating=parsed['rating'],
-                )
-                bot_response = ''  # signal: no text reply
-            elif parsed['type'] == 'bloat':
-                await _apply_reaction(
-                    context, update.effective_chat.id,
-                    update.message.message_id, parsed['emoji'],
-                )
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', '',
-                )
-                bot_response = ''
-            else:
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', bot_response
-                )
-        else:
-            await _persist_message(
-                chat_id, thread_id, 'assistant', bot_response
-            )
+        # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
+        # single helper call. The helper handles all 4 paths
+        # (rating_active off, info/statement with rating, bloat,
+        # question/request/confirmation) and returns the text
+        # to reply with (possibly empty for rating-only turns).
+        bot_response = await _apply_rating_and_persist(
+            context, update, chat_id, thread_id, bot_response, rating_active,
+        )
         if bot_response:
             await send_reply(update, bot_response)
     except Exception as e:
@@ -3005,43 +3066,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…')
-        rating_active = (
-            RATING_MODE
-            and _is_group_chat(update)
-            and not _should_mute_in_group(update)
-        )
-        bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+        rating_active = _is_rating_active(update)
+        # T1 (P0-1): global LLM concurrency cap.
+        async with _get_global_llm_sem():
+            bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         # === RATING_MODE dispatch (continuation) ===
         # rating_active was computed above (before call_llama).
-        if rating_active:
-            parsed = _parse_rating_response(bot_response)
-            if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
-                await _apply_reaction(
-                    context, update.effective_chat.id,
-                    update.message.message_id, parsed['emoji'],
-                )
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', '',
-                    rating=parsed['rating'],
-                )
-                bot_response = ''
-            elif parsed['type'] == 'bloat':
-                await _apply_reaction(
-                    context, update.effective_chat.id,
-                    update.message.message_id, parsed['emoji'],
-                )
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', '',
-                )
-                bot_response = ''
-            else:
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', bot_response
-                )
-        else:
-            await _persist_message(
-                chat_id, thread_id, 'assistant', bot_response
-            )
+        # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
+        # single helper call. The helper handles all 4 paths
+        # (rating_active off, info/statement with rating, bloat,
+        # question/request/confirmation) and returns the text
+        # to reply with (possibly empty for rating-only turns).
+        bot_response = await _apply_rating_and_persist(
+            context, update, chat_id, thread_id, bot_response, rating_active,
+        )
         if bot_response:
             # In rating mode the response is short (no chunking needed).
             # The original 4000-char chunking applied to voice transcripts
@@ -3111,15 +3149,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-        rating_active = (
-            RATING_MODE
-            and _is_group_chat(update)
-            and not _should_mute_in_group(update)
-        )
+        rating_active = _is_rating_active(update)
         abort_event = asyncio.Event()
         _abort_events[(chat_id, thinking.message_id)] = abort_event
-        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
-        if bot_response == '__ABORTED__':
+        # T1 (P0-1): global LLM concurrency cap.
+        async with _get_global_llm_sem():
+            bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+        if bot_response is None:
             print(f"[handle_document] ABORTED by user via Stop button, moving to next", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
@@ -3139,7 +3175,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
-            if retry_response == '__ABORTED__':
+            if retry_response is None:
                 print(f"[handle_document] ABORTED on retry, moving to next", flush=True)
                 try:
                     await thinking.edit_text('⏹ Остановлено')
@@ -3173,35 +3209,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Private mode and [llm]-marked messages always get a
         # plain text reply (rating path is group-only).
         # rating_active was computed above (before call_llama).
-        if rating_active:
-            parsed = _parse_rating_response(bot_response)
-            if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
-                await _apply_reaction(
-                    context, update.effective_chat.id,
-                    update.message.message_id, parsed['emoji'],
-                )
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', '',
-                    rating=parsed['rating'],
-                )
-                bot_response = ''  # signal: no text reply
-            elif parsed['type'] == 'bloat':
-                await _apply_reaction(
-                    context, update.effective_chat.id,
-                    update.message.message_id, parsed['emoji'],
-                )
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', '',
-                )
-                bot_response = ''
-            else:
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', bot_response
-                )
-        else:
-            await _persist_message(
-                chat_id, thread_id, 'assistant', bot_response
-            )
+        # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
+        # single helper call. The helper handles all 4 paths
+        # (rating_active off, info/statement with rating, bloat,
+        # question/request/confirmation) and returns the text
+        # to reply with (possibly empty for rating-only turns).
+        bot_response = await _apply_rating_and_persist(
+            context, update, chat_id, thread_id, bot_response, rating_active,
+        )
         if bot_response:
             await send_reply(update, bot_response)
     except Exception as e:
@@ -3255,13 +3270,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     abort_event = asyncio.Event()
     _abort_events[(chat_id, thinking.message_id)] = abort_event
     try:
-        rating_active = (
-            RATING_MODE
-            and _is_group_chat(update)
-            and not _should_mute_in_group(update)
-        )
-        bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
-        if bot_response == '__ABORTED__':
+        rating_active = _is_rating_active(update)
+        # T1 (P0-1): wrap call_llama in the global semaphore so
+        # 50 different users in a group can only cause 4
+        # concurrent LLM forwards on the same GPU.
+        async with _get_global_llm_sem():
+            bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+        if bot_response is None:
             print(f"[handle_text] ABORTED by user via Stop button, moving to next", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
@@ -3281,7 +3296,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
-            if retry_response == '__ABORTED__':
+            if retry_response is None:
                 print(f"[handle_text] ABORTED on retry, moving to next", flush=True)
                 try:
                     await thinking.edit_text('⏹ Остановлено')
@@ -3306,35 +3321,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # no-op without a concurrent getUpdates consumer.
         # See handle_photo for the full rationale.
         # === RATING_MODE dispatch ===
-        if rating_active:
-            parsed = _parse_rating_response(bot_response)
-            if parsed['type'] in ('info', 'statement') and parsed['rating'] is not None:
-                await _apply_reaction(
-                    context, update.effective_chat.id,
-                    update.message.message_id, parsed['emoji'],
-                )
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', '',
-                    rating=parsed['rating'],
-                )
-                bot_response = ''
-            elif parsed['type'] == 'bloat':
-                await _apply_reaction(
-                    context, update.effective_chat.id,
-                    update.message.message_id, parsed['emoji'],
-                )
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', '',
-                )
-                bot_response = ''
-            else:
-                await _persist_message(
-                    chat_id, thread_id, 'assistant', bot_response
-                )
-        else:
-            await _persist_message(
-                chat_id, thread_id, 'assistant', bot_response
-            )
+        # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
+        # single helper call. The helper handles all 4 paths
+        # (rating_active off, info/statement with rating, bloat,
+        # question/request/confirmation) and returns the text
+        # to reply with (possibly empty for rating-only turns).
+        bot_response = await _apply_rating_and_persist(
+            context, update, chat_id, thread_id, bot_response, rating_active,
+        )
         if bot_response:
             if len(bot_response) > 4000:
                 for i in range(0, len(bot_response), 4000):
@@ -3452,6 +3446,14 @@ def main():
                             params={
                                 "offset": offset,
                                 "timeout": 25,            # long-poll
+                                # T1 (P0-1) defense-in-depth: cap the
+                                # per-cycle update batch so a flood
+                                # doesn't queue 100 dispatch tasks at
+                                # once. With limit=10 and
+                                # _GLOBAL_LLM_SEM_LIMIT=4, the worst
+                                # case is 10 in-flight at any moment,
+                                # only 4 inside the LLM call.
+                                "limit": 10,
                                 "allowed_updates": '["message","edited_message","chat_member","callback_query"]',
                             },
                         )
@@ -3478,18 +3480,6 @@ def main():
                                 upd_chat = upd_msg.get("chat") or {}
                                 upd_from = upd_msg.get("from") or {}
                                 upd_text = (upd_msg.get("text") or upd_msg.get("caption") or "")[:60]
-                                # Populate _user_msg_text with the latest
-                                # text/caption for this user message. This
-                                # is read by handlers after the LLM call
-                                # to detect "edited during processing".
-                                # Both `message` and `edited_message`
-                                # update the same key, so the dict always
-                                # reflects the latest known text.
-                                _upd_chat_id = upd_chat.get("id")
-                                _upd_msg_id = upd_msg.get("message_id")
-                                _upd_full_text = upd_msg.get("text") or upd_msg.get("caption") or ""
-                                if _upd_chat_id is not None and _upd_msg_id is not None and _upd_full_text:
-                                    _user_msg_text[(_upd_chat_id, _upd_msg_id)] = _upd_full_text
                                 import hashlib
                                 text_hash = hashlib.sha1(upd_text.encode("utf-8", errors="replace")).hexdigest()[:10] if upd_text else "-"
                                 print(
@@ -3657,7 +3647,7 @@ _dispatcher = None
 # When the user clicks "Stop" on the thinking message, we set
 # the event for that specific handler. call_llama() checks
 # the event between iterations of the tool loop and bails out
-# with the special return value '__ABORTED__'. The handler then
+# with the special return value None. The handler then
 # edits the thinking message to "⏹ Остановлено" and moves to
 # the next update.
 #
@@ -3691,64 +3681,6 @@ _abort_events: dict = {}
 # "💭 думаю…" thinking message. We don't want to delete the
 # thinking message on edit — it's just a status indicator.
 _bot_replies: dict = {}
-
-
-# === Latest-text tracking for "edit-during-LLM-call" detection ===
-# This is the second half of the edit-handling story. _bot_replies
-# above handles the case where the user edits AFTER the bot has
-# finished responding. _user_msg_text handles the case where the
-# user edits WHILE the bot is in the middle of an LLM call.
-#
-# Flow when bot is busy answering message X (the user's reported bug):
-#   1. Bot polls, gets [Y_orig] (Y_edit not yet sent by user).
-#   2. Bot dispatches Y_orig: handler starts, sends "💭 думаю…",
-#      calls LLM (3 seconds). Main polling loop is BLOCKED on
-#      the LLM await.
-#   3. While the LLM is in flight, user edits Y_orig → Y_edit.
-#      The edit is queued at Telegram.
-#   4. BACKGROUND TEXT UPDATER (separate async task, started
-#      at boot) is concurrently polling getUpdates. It picks
-#      up Y_edit and updates _user_msg_text[(chat, Y_id)] =
-#      edited_text. This happens independently of the main
-#      polling loop, so it works even while the main loop is
-#      blocked on the LLM call.
-#   5. LLM returns. Handler checks: does _user_msg_text still
-#      equal what was sent to the LLM? NO (it has the edited
-#      text). Handler:
-#        - Deletes the "💭 думаю…" thinking message
-#        - Does NOT call send_reply (would send a response
-#          based on the OLD text — the bug)
-#        - Logs and returns
-#   6. Main polling loop continues, picks up Y_edit. The
-#      polling loop's edit block runs, but _bot_replies has
-#      no entry for Y_orig (we never recorded one), so the
-#      delete is a no-op. The edit is rewritten as a message
-#      and dispatched. The handler runs again (this time
-#      with the EDITED text), LLM call, response sent.
-#
-# Net effect: the user sees a brief "💭 думаю…" for the typo,
-# then it disappears, then a new "💭 думаю…" for the corrected
-# version, then the final corrected response. They do NOT see
-# a response to the typo (which was the bug).
-#
-# Why this needs a background task: the main polling loop is
-# single-threaded; while it's blocked on an LLM call, it
-# cannot pick up new updates. A second concurrent consumer
-# (the background task) is the simplest way to get real-time
-# edit detection without changing the bot to webhooks.
-#
-# The dict is in-memory only. For media messages (photo, doc)
-# the tracked value is the caption, which is the only part
-# that can be edited — the media itself is immutable on edit.
-# Voice messages have no editable text and are not tracked.
-_user_msg_text: dict = {}
-
-# The background text updater was disabled: Telegram rejects
-# simultaneous getUpdates from the same bot (HTTP 409). The
-# "edit during LLM" detection therefore relies on a different
-# mechanism (or is accepted as a brief wrong response, replaced
-# by the polling loop's edit block).
-_bg_text_offset: int = 0
 
 
 # Telegram bot menu — registered via setMyCommands on startup. This
