@@ -2920,21 +2920,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     '• Переформулировать вопрос\n'
                     '• Добавить больше деталей в вопрос'
                 )
-        # === Edit-during-LLM detection ===
-        # NOTE: the original implementation here checked
-        # _user_msg_text and discarded the response if the
-        # caption was edited during the LLM call. That check
-        # only works if a *concurrent* getUpdates consumer is
-        # updating _user_msg_text in real time, which we
-        # cannot do (Telegram rejects simultaneous getUpdates
-        # from the same bot with HTTP 409). The check is now
-        # a no-op in practice; we keep the data structure
-        # for future use if/when the bot is migrated to
-        # webhooks. The polling loop's edit block (commit
-        # 7056887) still replaces stale responses AFTER they
-        # are sent — the user sees a brief wrong answer, then
-        # the corrected one. The Stop button (this commit) is
-        # the recommended way to avoid the wrong answer.
+        # === Edit-during-LLM detection: removed (was v0.4) ===
+        # Earlier versions compared the user's current message
+        # text against a snapshot taken at handler entry, to
+        # detect "user edited during LLM call". That required a
+        # concurrent getUpdates consumer, which Telegram rejects
+        # (HTTP 409) — the check was a no-op in practice. The
+        # _user_msg_text dict and the helper function were
+        # deleted in v0.5.1 (T4). The polling loop's
+        # edit-replace block (in _dispatch_update) now deletes
+        # the bot's stale reply and re-processes the edit as a
+        # new user message — there's a brief wrong-answer
+        # window. The Stop button (per-handler abort_event) is
+        # the recommended escape for long-running LLM calls.
         # === RATING_MODE dispatch ===
         # In a group with RATING_MODE=1, the LLM prefixes its
         # response with [[TYPE:...]] [[RATE:N]]. We parse the
@@ -5326,6 +5324,29 @@ async def _selftest():
     # The LlmChatPlace rules are baked into a system message that
     # appears in EVERY call_llama call, not just rating mode. This
     # way the LLM carries the rules across model switches and /reset.
+    # F2 (NEW-2): smoke test for the global LLM concurrency cap.
+    # Acquires _GLOBAL_LLM_SEM_LIMIT slots and asserts the semaphore
+    # locks (would block a 5th acquire). Catches a future refactor
+    # that accidentally removes the cap or changes the limit.
+    print('[selftest] running global LLM semaphore test...', flush=True)
+    sem_ok = True
+    _sem = _get_global_llm_sem()
+    for _ in range(_GLOBAL_LLM_SEM_LIMIT):
+        await _sem.acquire()
+    if not _sem.locked():
+        print("  [FAIL] global LLM sem not locked at limit", flush=True)
+        sem_ok = False
+    else:
+        print(f"  [OK] global LLM sem locked at limit ({_GLOBAL_LLM_SEM_LIMIT})", flush=True)
+    for _ in range(_GLOBAL_LLM_SEM_LIMIT):
+        _sem.release()
+    if _sem.locked():
+        print("  [FAIL] global LLM sem still locked after release", flush=True)
+        sem_ok = False
+    else:
+        print("  [OK] global LLM sem unlocked after release", flush=True)
+    all_ok &= sem_ok
+
     print('[selftest] running GROUP_CONTEXT injection test...', flush=True)
     ctx_ok = True
     try:

@@ -245,6 +245,52 @@ donsetch-http.
 helper functions, because T3 + T4 alone removed ~200 lines
 of duplicated/dispatch/dead code).
 
+## [v0.5.2] — 2026-10-10 — v0.5.1 follow-up paperwork (F1, F2)
+
+Two trivial follow-ups from the v0.5.0 fourth-pass review.
+Both are 5-minute edits. No production behavior change.
+
+### Fixed
+
+  - **F1 (NEW-1): stale comment at handle_photo:2923** —
+    The 14-line "Edit-during-LLM detection" comment in
+    `handle_photo` survived the T4 dead-code deletion in
+    v0.5.1 and still said "we keep the data structure for
+    future use" — but `_user_msg_text` is gone. Replaced
+    with a 6-line comment that explicitly says the dict and
+    the helper function were deleted in v0.5.1 (T4) and
+    points the reader at the polling loop's edit-replace
+    block as the live mechanism. Same fix applies to any
+    other handler that has the same comment (only
+    `handle_photo` did; the search is exhaustive).
+  - **F2 (NEW-2): selftest for `_GLOBAL_LLM_SEM`** —
+    The v0.5.1 global LLM concurrency cap (T1) was a
+    production safety mechanism but had no selftest
+    coverage. Added a 9-line smoke test that acquires
+    `_GLOBAL_LLM_SEM_LIMIT=4` slots and asserts the
+    semaphore is locked, then releases and asserts it's
+    unlocked. Catches a future refactor that accidentally
+    removes the cap or changes the limit.
+
+### No production behavior change
+
+End users see the same responses, same reactions, same
+[llm] tagging, same tools. The two changes are a comment
+edit and a selftest addition; runtime code is unchanged.
+
+### Live selftest
+
+All previous selftest cases still pass; the new
+"global LLM semaphore test" group reports 2/2 OK.
+
+### Net diff
+
+`bot.py`: +36 / −15. The +36 includes the new selftest
+code (~22 lines: 5-line test + 11-line docstring +
+assertion messages) and the new shorter comment (6 lines
+vs 14 lines removed). The net is +21 lines, which is
+expected for comment + test additions.
+
 ## [Unreleased] — group-mode migration
 
 The bot now runs in **dual mode**: a 1:1 private chat (the
