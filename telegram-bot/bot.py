@@ -623,6 +623,15 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     last_thinking_push = [0.0]  # mutable closure for throttling
     last_flood_at = [0.0]       # back off edit_text for a while after Telegram flood
 
+    # Empty-response detection. The model sometimes returns no
+    # content, no reasoning, and no finish_reason — particularly
+    # on hard questions (future predictions, niche facts). The
+    # caller checks for this sentinel string and either retries
+    # or substitutes a user-friendly message. Defining it as a
+    # constant here keeps the marker and the recovery logic in
+    # one place.
+    EMPTY_FALLBACK_PREFIX = '[model returned an empty response.'
+
     async def push_thinking(reasoning_text: str, force: bool = False):
         if thinking_msg is None or not reasoning_text:
             return
@@ -2358,6 +2367,45 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             return
+        # === Empty-response retry ===
+        # The LLM sometimes returns no content, no reasoning,
+        # and no finish_reason — usually on hard questions
+        # (future predictions, niche facts). The call_llama
+        # fallback string starts with "[model returned an
+        # empty response." We retry once. If still empty,
+        # replace with a user-friendly message that suggests
+        # rephrasing or trying again.
+        if bot_response.startswith('[model returned an empty response.'):
+            print(
+                f"[handle_photo] empty response, retrying once",
+                flush=True,
+            )
+            try:
+                await thinking.edit_text('🔄 переспрашиваю…')
+            except Exception:
+                pass
+            retry_response = await call_llama(
+                history, max_tokens=16384, user_text=caption,
+                thinking_msg=thinking, use_stream=False,
+                rating_active=rating_active, abort_event=abort_event,
+            )
+            if retry_response == '__ABORTED__':
+                print(f"[handle_photo] ABORTED on retry, moving to next", flush=True)
+                try:
+                    await thinking.edit_text('⏹ Остановлено')
+                except Exception:
+                    pass
+                return
+            if not retry_response.startswith('[model returned an empty response.'):
+                bot_response = retry_response
+                print(f"[handle_photo] retry succeeded", flush=True)
+            else:
+                print(f"[handle_photo] retry also empty, sending fallback", flush=True)
+                bot_response = (
+                    '🤔 Не удалось получить ответ от модели. '
+                    'Попробуй переформулировать вопрос или '
+                    'добавить больше контекста.'
+                )
         # === Edit-during-LLM detection ===
         # NOTE: the original implementation here checked
         # _user_msg_text and discarded the response if the
@@ -2614,6 +2662,35 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             return
+        # === Empty-response retry (same as handle_photo) ===
+        if bot_response.startswith('[model returned an empty response.'):
+            print(f"[handle_document] empty response, retrying once", flush=True)
+            try:
+                await thinking.edit_text('🔄 переспрашиваю…')
+            except Exception:
+                pass
+            retry_response = await call_llama(
+                history, max_tokens=16384, user_text=caption,
+                thinking_msg=thinking, rating_active=rating_active,
+                abort_event=abort_event,
+            )
+            if retry_response == '__ABORTED__':
+                print(f"[handle_document] ABORTED on retry, moving to next", flush=True)
+                try:
+                    await thinking.edit_text('⏹ Остановлено')
+                except Exception:
+                    pass
+                return
+            if not retry_response.startswith('[model returned an empty response.'):
+                bot_response = retry_response
+                print(f"[handle_document] retry succeeded", flush=True)
+            else:
+                print(f"[handle_document] retry also empty, sending fallback", flush=True)
+                bot_response = (
+                    '🤔 Не удалось получить ответ от модели. '
+                    'Попробуй переформулировать вопрос или '
+                    'добавить больше контекста.'
+                )
         # Edit-during-LLM detection removed: the check is a
         # no-op without a concurrent getUpdates consumer.
         # See handle_photo for the full rationale.
@@ -2714,6 +2791,35 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             return
+        # === Empty-response retry (same as handle_photo) ===
+        if bot_response.startswith('[model returned an empty response.'):
+            print(f"[handle_text] empty response, retrying once", flush=True)
+            try:
+                await thinking.edit_text('🔄 переспрашиваю…')
+            except Exception:
+                pass
+            retry_response = await call_llama(
+                history, max_tokens=32768, user_text=user_message,
+                thinking_msg=thinking, rating_active=rating_active,
+                abort_event=abort_event,
+            )
+            if retry_response == '__ABORTED__':
+                print(f"[handle_text] ABORTED on retry, moving to next", flush=True)
+                try:
+                    await thinking.edit_text('⏹ Остановлено')
+                except Exception:
+                    pass
+                return
+            if not retry_response.startswith('[model returned an empty response.'):
+                bot_response = retry_response
+                print(f"[handle_text] retry succeeded", flush=True)
+            else:
+                print(f"[handle_text] retry also empty, sending fallback", flush=True)
+                bot_response = (
+                    '🤔 Не удалось получить ответ от модели. '
+                    'Попробуй переформулировать вопрос или '
+                    'добавить больше контекста.'
+                )
         # Edit-during-LLM detection removed: the check is a
         # no-op without a concurrent getUpdates consumer.
         # See handle_photo for the full rationale.
