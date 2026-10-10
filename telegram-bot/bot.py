@@ -36,6 +36,24 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 #   MODEL       — если пусто, бот спросит /v1/models у llama-server при старте
 #                 и возьмёт первое доступное имя. Никаких захардкоженных
 #                 имён конкретных моделей в коде.
+# === F3: re-export from config and prompts so existing
+# `from bot import X` references still work. The actual
+# definitions live in telegram-bot/config.py and
+# telegram-bot/prompts.py.
+from config import (
+    ALLOWED_USER_IDS, ALLOWED_USER_IDS_RAW, ALLOWED_USERNAMES,
+    ALLOWED_USERNAMES_RAW, API_KEY, BOT_TOKEN, BOT_USERNAME,
+    CONTEXT_MESSAGES, DB_PATH, DISABLED_TOOLS, DONSETCH_SESSION_ID,
+    DONSETCH_URL, LLAMA_URL, MAX_DOC_BYTES, MAX_PHOTO_BYTES,
+    MAX_VIDEO_NOTE_BYTES, MAX_VOICE_BYTES, MODEL, SHUTDOWN_EVENT,
+    TELEGRAM_API, WHISPER_URL, _TOOLS_CACHE, LLAMABOT_SELFTEST,
+)
+from prompts import (
+    BLOAT_EMOJI, GROUP_CONTEXT, RATING_EMOJI, RATING_MODE,
+    RATING_RULES, WELCOME_TEXT, _EMOJI_CHAR_RE, _RATING_PREFIX_RE,
+)
+
+
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN env var is required but not set")
