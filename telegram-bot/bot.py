@@ -1707,6 +1707,23 @@ def _should_mute_in_group(update) -> bool:
     return False
 
 
+def _msg_text_edited_during(chat_id: int, msg_id: int, text_at_start: str) -> bool:
+    """True if the user message's text/caption has changed since
+    text_at_start was captured. Used by handlers to detect
+    "user edited while we were calling the LLM" — if so, the
+    bot's response (about to be sent) would be based on stale
+    text. Callers should discard the response and let the
+    polling loop's edit-handling take over.
+
+    Returns False if the dict has no entry for this message
+    (e.g., it was a voice message, which has no editable text).
+    """
+    current = _user_msg_text.get((chat_id, msg_id))
+    if current is None:
+        return False
+    return current != text_at_start
+
+
 def _is_reply_to_other_user(update, bot_id: int) -> bool:
     """True if the message is a reply to another human's message in
     a group, and should therefore be skipped.
@@ -2257,6 +2274,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
+        # === Edit-during-LLM detection ===
+        # Same as handle_text: if the user edited the caption
+        # while we were calling the LLM, the response is stale.
+        if _msg_text_edited_during(
+            update.effective_chat.id,
+            update.message.message_id,
+            caption,
+        ):
+            print(
+                f"[handle_photo] EDIT-DURING-LLM: caption changed, "
+                f"discarding response (chat_id={update.effective_chat.id} "
+                f"msg_id={update.message.message_id})",
+                flush=True,
+            )
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+            return
         # === RATING_MODE dispatch ===
         # In a group with RATING_MODE=1, the LLM prefixes its
         # response with [[TYPE:...]] [[RATE:N]]. We parse the
@@ -2488,6 +2524,23 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and not _should_mute_in_group(update)
         )
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active)
+        # === Edit-during-LLM detection ===
+        if _msg_text_edited_during(
+            update.effective_chat.id,
+            update.message.message_id,
+            caption,
+        ):
+            print(
+                f"[handle_document] EDIT-DURING-LLM: caption changed, "
+                f"discarding response (chat_id={update.effective_chat.id} "
+                f"msg_id={update.message.message_id})",
+                flush=True,
+            )
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+            return
         # === RATING_MODE dispatch ===
         # In a group with RATING_MODE=1, the LLM prefixes its
         # response with [[TYPE:...]] [[RATE:N]]. We parse the
@@ -2569,6 +2622,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and not _should_mute_in_group(update)
         )
         bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active)
+        # === Edit-during-LLM detection ===
+        # If the user edited their message while we were calling
+        # the LLM, the response we just got is based on the OLD
+        # text. Discard it; the polling loop's edit-handling
+        # block will process the edit as a fresh request. We
+        # also delete the "💭 думаю…" thinking message so the
+        # user doesn't see a stray placeholder.
+        if _msg_text_edited_during(
+            update.effective_chat.id,
+            update.message.message_id,
+            user_message,
+        ):
+            print(
+                f"[handle_text] EDIT-DURING-LLM: text changed, "
+                f"discarding response (chat_id={update.effective_chat.id} "
+                f"msg_id={update.message.message_id})",
+                flush=True,
+            )
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+            return
         # === RATING_MODE dispatch ===
         if rating_active:
             parsed = _parse_rating_response(bot_response)
@@ -2681,6 +2757,14 @@ def main():
         # we can't easily test with a real user.
         await _selftest()
 
+        # Start the background text updater. It runs concurrently with the
+        # main polling loop and is the only way to detect user edits that
+        # arrive while the main loop is blocked on a handler's LLM call.
+        # The task updates _user_msg_text in real time so handlers can
+        # detect "edited during processing" and discard stale responses.
+        bg_text_task = asyncio.create_task(_background_text_updater())
+        print("[main] background text updater started", flush=True)
+
         offset = 0
         backoff = 1.0
         n_polls = 0
@@ -2735,6 +2819,18 @@ def main():
                                 upd_chat = upd_msg.get("chat") or {}
                                 upd_from = upd_msg.get("from") or {}
                                 upd_text = (upd_msg.get("text") or upd_msg.get("caption") or "")[:60]
+                                # Populate _user_msg_text with the latest
+                                # text/caption for this user message. This
+                                # is read by handlers after the LLM call
+                                # to detect "edited during processing".
+                                # Both `message` and `edited_message`
+                                # update the same key, so the dict always
+                                # reflects the latest known text.
+                                _upd_chat_id = upd_chat.get("id")
+                                _upd_msg_id = upd_msg.get("message_id")
+                                _upd_full_text = upd_msg.get("text") or upd_msg.get("caption") or ""
+                                if _upd_chat_id is not None and _upd_msg_id is not None and _upd_full_text:
+                                    _user_msg_text[(_upd_chat_id, _upd_msg_id)] = _upd_full_text
                                 import hashlib
                                 text_hash = hashlib.sha1(upd_text.encode("utf-8", errors="replace")).hexdigest()[:10] if upd_text else "-"
                                 print(
@@ -2865,6 +2961,12 @@ def main():
             # shutdown), CancelledError, or any exception. Without
             # this, the httpx client held by app.bot leaks and prints
             # "RuntimeWarning: unclosed client" on interpreter shutdown.
+            if bg_text_task is not None and not bg_text_task.done():
+                bg_text_task.cancel()
+                try:
+                    await bg_text_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             if _dispatcher is not None:
                 try:
                     await _dispatcher.shutdown()
@@ -2883,6 +2985,96 @@ def main():
 _dispatcher = None
 
 
+async def _background_text_updater():
+    """Background polling task that keeps _user_msg_text up-to-date.
+
+    Runs concurrently with the main polling loop. While the main
+    loop is blocked on a handler's LLM call, this task continues
+    to poll for new updates and updates _user_msg_text with the
+    latest text/caption of each user message. Handlers check
+    _user_msg_text after the LLM call returns to detect "user
+    edited during processing" and discard the stale response.
+
+    Why a separate task: the main polling loop is single-threaded
+    and blocks on each handler call. Without this background
+    task, edits that arrive while the loop is blocked would only
+    be processed after the handler finished, and the bot would
+    briefly send a response based on the OLD text before the
+    edit block could replace it.
+
+    This task:
+      - Uses its own offset (_bg_text_offset), independent of
+        the main loop's offset.
+      - Calls getUpdates with a long timeout (25s) to minimise
+        request rate.
+      - Only writes to _user_msg_text; it does NOT dispatch
+        updates. The main loop is the sole dispatcher.
+      - Filters out non-text updates (e.g., chat_member, voice
+        with no caption) — only updates that have text or
+        caption contribute to _user_msg_text.
+
+    Two concurrent getUpdates consumers are fine: Telegram
+    returns the next pending update to each caller, and they
+    don't share state. Each consumer advances its own offset.
+
+    Shutdown: the task checks SHUTDOWN_EVENT periodically and
+    exits cleanly. The main loop should also call task.cancel()
+    on shutdown for prompt termination.
+    """
+    import time
+    global _bg_text_offset
+    backoff = 1.0
+    n_polls = 0
+    # Build a fresh httpx client with no keep-alive to avoid
+    # the PTB Updater's connection-limit issues that the main
+    # loop has to dance around.
+    api_url = f"https://api.telegram.org/bot{BOT_TOKEN}"
+    async with httpx.AsyncClient(
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        timeout=60.0,
+    ) as client:
+        while True:
+            if SHUTDOWN_EVENT is not None and SHUTDOWN_EVENT.is_set():
+                print(f"[bg-text] shutdown requested, exiting after {n_polls} polls", flush=True)
+                return
+            try:
+                r = await client.get(
+                    f"{api_url}/getUpdates",
+                    params={
+                        "offset": _bg_text_offset,
+                        "timeout": 25,
+                        # We only need message + edited_message to track
+                        # the latest text. chat_member is irrelevant here.
+                        "allowed_updates": '["message","edited_message"]',
+                    },
+                )
+                data = r.json()
+                if not data.get("ok"):
+                    raise RuntimeError(f"getUpdates not ok: {data}")
+                updates = data.get("result", [])
+                n_polls += 1
+                if updates:
+                    backoff = 1.0
+                    for upd in updates:
+                        _bg_text_offset = upd["update_id"] + 1
+                        msg = upd.get("message") or upd.get("edited_message") or {}
+                        chat_id = (msg.get("chat") or {}).get("id")
+                        msg_id = msg.get("message_id")
+                        text = msg.get("text") or msg.get("caption") or ""
+                        if chat_id is not None and msg_id is not None and text:
+                            _user_msg_text[(chat_id, msg_id)] = text
+                elif n_polls <= 3 or n_polls % 20 == 0:
+                    # Don't spam the log when idle
+                    print(f"[bg-text] cycle={n_polls} no updates", flush=True)
+            except asyncio.CancelledError:
+                print(f"[bg-text] cancelled, exiting", flush=True)
+                raise
+            except Exception as e:
+                print(f"[bg-text] error: {type(e).__name__}: {e!r}", flush=True)
+                await asyncio.sleep(min(backoff, 30.0))
+                backoff = min(backoff * 2, 30.0)
+
+
 # === Edit-replace tracking ===
 # When a user edits their message, the bot's previous response to
 # the original message becomes stale. We track the (chat_id,
@@ -2895,6 +3087,63 @@ _dispatcher = None
 # "💭 думаю…" thinking message. We don't want to delete the
 # thinking message on edit — it's just a status indicator.
 _bot_replies: dict = {}
+
+
+# === Latest-text tracking for "edit-during-LLM-call" detection ===
+# This is the second half of the edit-handling story. _bot_replies
+# above handles the case where the user edits AFTER the bot has
+# finished responding. _user_msg_text handles the case where the
+# user edits WHILE the bot is in the middle of an LLM call.
+#
+# Flow when bot is busy answering message X (the user's reported bug):
+#   1. Bot polls, gets [Y_orig] (Y_edit not yet sent by user).
+#   2. Bot dispatches Y_orig: handler starts, sends "💭 думаю…",
+#      calls LLM (3 seconds). Main polling loop is BLOCKED on
+#      the LLM await.
+#   3. While the LLM is in flight, user edits Y_orig → Y_edit.
+#      The edit is queued at Telegram.
+#   4. BACKGROUND TEXT UPDATER (separate async task, started
+#      at boot) is concurrently polling getUpdates. It picks
+#      up Y_edit and updates _user_msg_text[(chat, Y_id)] =
+#      edited_text. This happens independently of the main
+#      polling loop, so it works even while the main loop is
+#      blocked on the LLM call.
+#   5. LLM returns. Handler checks: does _user_msg_text still
+#      equal what was sent to the LLM? NO (it has the edited
+#      text). Handler:
+#        - Deletes the "💭 думаю…" thinking message
+#        - Does NOT call send_reply (would send a response
+#          based on the OLD text — the bug)
+#        - Logs and returns
+#   6. Main polling loop continues, picks up Y_edit. The
+#      polling loop's edit block runs, but _bot_replies has
+#      no entry for Y_orig (we never recorded one), so the
+#      delete is a no-op. The edit is rewritten as a message
+#      and dispatched. The handler runs again (this time
+#      with the EDITED text), LLM call, response sent.
+#
+# Net effect: the user sees a brief "💭 думаю…" for the typo,
+# then it disappears, then a new "💭 думаю…" for the corrected
+# version, then the final corrected response. They do NOT see
+# a response to the typo (which was the bug).
+#
+# Why this needs a background task: the main polling loop is
+# single-threaded; while it's blocked on an LLM call, it
+# cannot pick up new updates. A second concurrent consumer
+# (the background task) is the simplest way to get real-time
+# edit detection without changing the bot to webhooks.
+#
+# The dict is in-memory only. For media messages (photo, doc)
+# the tracked value is the caption, which is the only part
+# that can be edited — the media itself is immutable on edit.
+# Voice messages have no editable text and are not tracked.
+_user_msg_text: dict = {}
+
+# The background text updater uses its own offset, independent
+# of the main polling loop. Two concurrent getUpdates consumers
+# are fine on Telegram's side: each one just returns the next
+# pending update, and they don't share state.
+_bg_text_offset: int = 0
 
 
 # Telegram bot menu — registered via setMyCommands on startup. This
