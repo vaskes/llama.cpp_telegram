@@ -18,7 +18,7 @@ import tempfile
 from telegram import Update
 from telegram.ext import ContextTypes
 
-import call_llama
+from call_llama import call_llama, transcribe_voice, fetch_tools_from_llama, get_weather, _discover_default_model, _donsetch_init, donsetch_call, _tag_sender
 import state  # cross-module state (see state.py)
 from state import _abort_events, _bot_replies, _get_global_llm_sem
 from rating import _is_rating_active, _apply_rating_and_persist
