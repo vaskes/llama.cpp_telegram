@@ -2982,7 +2982,7 @@ def main():
                             params={
                                 "offset": offset,
                                 "timeout": 25,            # long-poll
-                                "allowed_updates": '["message","edited_message","chat_member"]',
+                                "allowed_updates": '["message","edited_message","chat_member","callback_query"]',
                             },
                         )
                         data = r.json()
