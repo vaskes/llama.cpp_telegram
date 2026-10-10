@@ -4366,6 +4366,88 @@ async def _selftest():
     all_ok &= er_ok
     print(f"[selftest] edit-replace tests: {'all pass' if er_ok else 'FAILED'}", flush=True)
 
+    # === _download_with_limit (PTB 21 download_as_chunks regression guard) ===
+    # Bug: PTB 21.0 removed File.download_as_chunks. Any code path
+    # still calling it raised "File object has no attribute
+    # download_as_chunks", which the bot surfaced as
+    # "Failed to download photo/voice" to the user. We now use
+    # File.download_as_bytearray() inside _download_with_limit.
+    # These 4 cases verify the helper behaves correctly with a
+    # mock File object, without needing a real Telegram file.
+    print('[selftest] running _download_with_limit test...', flush=True)
+    dl_ok = True
+    try:
+        import bot as _b
+        class _FakeUpdate:
+            pass
+
+        async def _run(coro):
+            return await coro
+
+        captured_replies = []
+        async def _fake_reply(update, text):
+            captured_replies.append(text)
+        _b._reply = _fake_reply
+
+        # Case 1: file_size set + over max_bytes -> reject without download.
+        class _BigFile:
+            file_size = 999_999_999
+            async def download_as_bytearray(self):
+                raise AssertionError("download should not be called when file_size is over the cap")
+        r = await _b._download_with_limit(_BigFile(), 100, "Photo", _FakeUpdate())
+        if r is not None or not captured_replies or "too large" not in captured_replies[-1]:
+            print("  [FAIL] oversized file: expected None + 'too large' reply", flush=True)
+            dl_ok = False
+        else:
+            print("  [OK] oversized file rejected via file_size pre-check (no download)", flush=True)
+
+        # Case 2: file_size missing + small download -> success.
+        captured_replies.clear()
+        class _GoodFile:
+            file_size = None
+            async def download_as_bytearray(self):
+                return bytearray(b"hello" * 50)  # 250 bytes
+        r = await _b._download_with_limit(_GoodFile(), 100_000, "Photo", _FakeUpdate())
+        if r is None or len(r) != 250 or captured_replies:
+            print(f"  [FAIL] small file: expected 250 bytes, got {len(r) if r else None}, replies={captured_replies}", flush=True)
+            dl_ok = False
+        else:
+            print("  [OK] small file downloaded (250 bytes, no error reply)", flush=True)
+
+        # Case 3: download raises -> friendly error, no download_as_chunks mention.
+        captured_replies.clear()
+        class _FailingFile:
+            file_size = None
+            async def download_as_bytearray(self):
+                raise RuntimeError("network error")
+        r = await _b._download_with_limit(_FailingFile(), 100_000, "Photo", _FakeUpdate())
+        if r is not None or not captured_replies or "Failed to download" not in captured_replies[-1]:
+            print(f"  [FAIL] failing file: expected None + 'Failed to download' reply, got {r!r} {captured_replies!r}", flush=True)
+            dl_ok = False
+        elif "download_as_chunks" in captured_replies[-1]:
+            print(f"  [FAIL] download_as_chunks still mentioned in error: {captured_replies[-1]!r}", flush=True)
+            dl_ok = False
+        else:
+            print("  [OK] download exception -> 'Failed to download' reply (no download_as_chunks mention)", flush=True)
+
+        # Case 4: file_size missing + download returns oversized buf -> post-check rejects.
+        captured_replies.clear()
+        class _BigBufFile:
+            file_size = None  # PTB didn't populate
+            async def download_as_bytearray(self):
+                return bytearray(b"x" * 200_000)  # 200 KB, > 100 KB cap
+        r = await _b._download_with_limit(_BigBufFile(), 100_000, "Photo", _FakeUpdate())
+        if r is not None or not captured_replies or "too large" not in captured_replies[-1]:
+            print(f"  [FAIL] big buf: expected None + 'too large' reply, got {r!r} {captured_replies!r}", flush=True)
+            dl_ok = False
+        else:
+            print("  [OK] post-check on len(buf) catches oversized file when file_size is missing", flush=True)
+    except Exception as e:
+        print(f"  [FAIL] _download_with_limit test raised: {type(e).__name__}: {e!r}", flush=True)
+        dl_ok = False
+    all_ok &= dl_ok
+    print(f"[selftest] _download_with_limit tests: {'all pass' if dl_ok else 'FAILED'}", flush=True)
+
     # === Per-handler abort_event key (Stop button race fix) ===
     # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
     # in-flight handlers for the same user overwrote each other's
