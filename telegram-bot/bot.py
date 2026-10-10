@@ -8,7 +8,6 @@ import tempfile
 import urllib.parse
 import socket
 import asyncio
-from collections import OrderedDict
 import httpx
 from typing import Optional
 from telegram import Update
@@ -41,8 +40,20 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 import state
 from state import (
     _abort_events, _bot_replies, _get_global_llm_sem,
-    _register_abort_event,
+    _register_abort_event, _GLOBAL_LLM_SEM_LIMIT, _PER_USER_SEMAPHORE_LIMIT,
 )
+# Re-export storage as `store` for selftest backward compat.
+# The selftest uses `import bot as _b; _b.store.xxx`; without a real
+# Storage instance here, the in-tree selftest crashes after the v0.6.1
+# P0-4 fix deleted the eager `store = storage.Storage(...)` global.
+#
+# We call get_store() ONCE at import time so `bot.store` is a
+# Storage instance (not the get_store function). The same singleton
+# is also reachable via `storage.get_store()` (returns the same
+# instance), so there is exactly one Storage instance in the process
+# - no more double-open-connection waste.
+from storage import get_store
+store = get_store()
 
 
 # === F3: re-export from config and prompts so existing
@@ -68,7 +79,7 @@ import persistence
 import rating
 from persistence import persist as _persist_message, load_history as _load_history
 from rating import (
-    _apply_rating_and_persist, _apply_reaction, _execute_react_to_message,
+    _apply_rating_and_persist, _execute_react_to_message,
     _is_rating_active, _parse_rating_response,
 )
 
@@ -126,9 +137,6 @@ SHUTDOWN_EVENT: Optional[asyncio.Event] = None
 # via docker-compose.yml). All sub-talk and message I/O goes through
 # this single object. Sync API; handlers wrap calls in
 # asyncio.to_thread() so the DB never blocks the event loop.
-import storage  # local module; safe because storage has no top-level
-                 # I/O at import time
-DB_PATH = os.environ.get('CONVERSATIONS_DB', '/app/data/conversations.db')
 
 
 # Keywords (RU + EN) that signal the user actually wants a tool call.
