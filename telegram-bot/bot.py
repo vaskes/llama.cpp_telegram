@@ -846,10 +846,43 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     msg0 = data["choices"][0]["message"]
                     content = msg0.get("content") or ""
                     reasoning = msg0.get("reasoning_content") or ""
-                    print(f"[LLAMA] iter={iteration} non-stream finish={data['choices'][0].get('finish_reason')} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(msg0.get('tool_calls') or [])}", flush=True)
+                    non_stream_tool_calls = msg0.get("tool_calls") or []
+                    print(f"[LLAMA] iter={iteration} non-stream finish={data['choices'][0].get('finish_reason')} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}", flush=True)
                     if reasoning and thinking_msg is not None:
                         await push_thinking(accumulated_reasoning + reasoning, force=True)
-                    return content
+                    accumulated_reasoning += reasoning
+                    # If the model returned tool_calls (e.g. react_to_message
+                    # on a vision task), fall through to the unified tool
+                    # loop below - DO NOT short-circuit with `return content`,
+                    # otherwise the tool call is silently dropped and the
+                    # user sees an empty response. The non-streaming path
+                    # was originally vision-only with no tools, so the
+                    # unconditional return was safe; once we added
+                    # react_to_message (Oct 2026) it isn't.
+                    if not non_stream_tool_calls:
+                        return content
+                    # Populate the streaming-side tool_calls_buf in the same
+                    # shape the SSE parser produces ({idx: {id, name,
+                    # arguments}}). The code that reconstructs the final
+                    # `tool_calls` list (just below) iterates over this
+                    # buffer, so by populating it here we let the same
+                    # shared dispatch path handle the non-streaming case.
+                    # Set a sentinel so the streaming block below is
+                    # skipped for this iteration (we already have a
+                    # response and we don't want a second POST).
+                    _ns_handled = True
+                    finish_reason = data['choices'][0].get('finish_reason') or 'tool_calls'
+                    content_buf = content
+                    reasoning_buf = accumulated_reasoning
+                    tool_calls_buf = {}
+                    for idx, tc in enumerate(non_stream_tool_calls):
+                        fn = tc.get('function', {}) or {}
+                        tool_calls_buf[idx] = {
+                            'id': tc.get('id', f'call_ns_{idx}'),
+                            'name': fn.get('name', ''),
+                            'arguments': fn.get('arguments', '') or '',
+                        }
+                        print(f"[LLAMA]   call: {fn.get('name','')}({(fn.get('arguments') or '')[:200]})", flush=True)
                 except Exception as e:
                     # r is bound to the httpx Response if we got past
                     # the .post() call; otherwise it's still None
@@ -858,117 +891,120 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     body = r.text[:500] if r is not None else ''
                     print(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}", flush=True)
                     return f'[llama-server request failed: {e}]'
-            try:
-                async with client.stream("POST", f"{LLAMA_URL}/chat/completions",
-                                          headers={"Authorization": f"Bearer {API_KEY}",
-                                                   "Content-Type": "application/json"},
-                                          json=req_body) as r:
-                    r.raise_for_status()
-                    # Pre-check for abort before entering the line
-                    # iteration. This catches the case where the
-                    # user clicks Stop RIGHT after the bot sends
-                    # the thinking message but before the LLM has
-                    # produced any chunks.
-                    #
-                    # IMPORTANT: do NOT use `asyncio.wait_for` with
-                    # a short timeout on `__anext__()`. Cancelling
-                    # the read task mid-stream corrupts httpx's
-                    # internal state and causes the LLM to return
-                    # empty responses on subsequent calls. Plain
-                    # `async for` is safe; the only downside is a
-                    # small window (typically <1s) where an abort
-                    # set after the LLM has started but before the
-                    # first chunk is not seen until the first
-                    # chunk arrives. The between-chunk check below
-                    # handles that.
-                    if abort_event is not None and abort_event.is_set():
-                        print(
-                            f"[call_llama] abort_event set pre-stream "
-                            f"iter={iteration}",
-                            flush=True,
-                        )
-                        return '__ABORTED__'
-                    async for line in r.aiter_lines():
-                        # Between-chunk abort check. Fires as soon
-                        # as a chunk arrives if the user clicked
-                        # Stop during the previous chunk's
-                        # processing.
+            if not locals().get('_ns_handled'):
+                try:
+                    async with client.stream("POST", f"{LLAMA_URL}/chat/completions",
+                                              headers={"Authorization": f"Bearer {API_KEY}",
+                                                       "Content-Type": "application/json"},
+                                              json=req_body) as r:
+                        r.raise_for_status()
+                        # Pre-check for abort before entering the line
+                        # iteration. This catches the case where the
+                        # user clicks Stop RIGHT after the bot sends
+                        # the thinking message but before the LLM has
+                        # produced any chunks.
+                        #
+                        # IMPORTANT: do NOT use `asyncio.wait_for` with
+                        # a short timeout on `__anext__()`. Cancelling
+                        # the read task mid-stream corrupts httpx's
+                        # internal state and causes the LLM to return
+                        # empty responses on subsequent calls. Plain
+                        # `async for` is safe; the only downside is a
+                        # small window (typically <1s) where an abort
+                        # set after the LLM has started but before the
+                        # first chunk is not seen until the first
+                        # chunk arrives. The between-chunk check below
+                        # handles that.
                         if abort_event is not None and abort_event.is_set():
                             print(
-                                f"[call_llama] abort_event set between "
-                                f"chunks iter={iteration}",
+                                f"[call_llama] abort_event set pre-stream "
+                                f"iter={iteration}",
                                 flush=True,
                             )
                             return '__ABORTED__'
-                        if not line or not line.startswith("data: "):
-                            continue
-                        payload = line[6:]
-                        if payload.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(payload)
-                        except json.JSONDecodeError:
-                            continue
-                        for choice in chunk.get("choices", []):
-                            delta = choice.get("delta", {})
-                            rc = delta.get("reasoning_content")
-                            if rc:
-                                reasoning_buf += rc
-                                await push_thinking(accumulated_reasoning + reasoning_buf)
-                            cc = delta.get("content")
-                            if cc:
-                                content_buf += cc
-                            for tc_delta in delta.get("tool_calls") or []:
-                                idx = tc_delta.get("index", 0)
-                                if idx not in tool_calls_buf:
-                                    tool_calls_buf[idx] = {"id": "", "name": "", "arguments": ""}
-                                if tc_delta.get("id"):
-                                    tool_calls_buf[idx]["id"] = tc_delta["id"]
-                                fn = tc_delta.get("function") or {}
-                                if fn.get("name"):
-                                    tool_calls_buf[idx]["name"] += fn["name"]
-                                if fn.get("arguments"):
-                                    tool_calls_buf[idx]["arguments"] += fn["arguments"]
-                            if choice.get("finish_reason"):
-                                finish_reason = choice["finish_reason"]
-                    # Final flush: ensure the latest reasoning text is on Telegram
-                    if reasoning_buf:
-                        await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
-            except httpx.HTTPError as e:
-                print(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming", flush=True)
-                # Fall back to non-streaming request
-                try:
-                    async with httpx.AsyncClient(timeout=600.0) as client2:
-                        r2 = await client2.post(
-                            f"{LLAMA_URL}/chat/completions",
-                            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-                            json={**req_body, "stream": False},
-                        )
-                        r2.raise_for_status()
-                        data = r2.json()
-                    msg = data["choices"][0]["message"]
-                    tool_calls = msg.get("tool_calls") or []
-                    if not tool_calls:
-                        if msg.get("content"):
-                            return msg["content"]
-                        if msg.get("reasoning_content"):
-                            tail = msg["reasoning_content"][-3500:]
-                            return (
-                                f'_(fallback non-stream: content пустой, '
-                                f'reasoning_chars={len(msg["reasoning_content"])})_\n\n'
-                                f'{tail}'
+                        async for line in r.aiter_lines():
+                            # Between-chunk abort check. Fires as soon
+                            # as a chunk arrives if the user clicked
+                            # Stop during the previous chunk's
+                            # processing.
+                            if abort_event is not None and abort_event.is_set():
+                                print(
+                                    f"[call_llama] abort_event set between "
+                                    f"chunks iter={iteration}",
+                                    flush=True,
+                                )
+                                return '__ABORTED__'
+                            if not line or not line.startswith("data: "):
+                                continue
+                            payload = line[6:]
+                            if payload.strip() == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(payload)
+                            except json.JSONDecodeError:
+                                continue
+                            for choice in chunk.get("choices", []):
+                                delta = choice.get("delta", {})
+                                rc = delta.get("reasoning_content")
+                                if rc:
+                                    reasoning_buf += rc
+                                    await push_thinking(accumulated_reasoning + reasoning_buf)
+                                cc = delta.get("content")
+                                if cc:
+                                    content_buf += cc
+                                for tc_delta in delta.get("tool_calls") or []:
+                                    idx = tc_delta.get("index", 0)
+                                    if idx not in tool_calls_buf:
+                                        tool_calls_buf[idx] = {"id": "", "name": "", "arguments": ""}
+                                    if tc_delta.get("id"):
+                                        tool_calls_buf[idx]["id"] = tc_delta["id"]
+                                    fn = tc_delta.get("function") or {}
+                                    if fn.get("name"):
+                                        tool_calls_buf[idx]["name"] += fn["name"]
+                                    if fn.get("arguments"):
+                                        tool_calls_buf[idx]["arguments"] += fn["arguments"]
+                                if choice.get("finish_reason"):
+                                    finish_reason = choice["finish_reason"]
+                        # Final flush: ensure the latest reasoning text is on Telegram
+                        if reasoning_buf:
+                            await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
+                except httpx.HTTPError as e:
+                    print(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming", flush=True)
+                    # Fall back to non-streaming request
+                    try:
+                        async with httpx.AsyncClient(timeout=600.0) as client2:
+                            r2 = await client2.post(
+                                f"{LLAMA_URL}/chat/completions",
+                                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                                json={**req_body, "stream": False},
                             )
-                        return f'[fallback empty: finish_reason={msg.get("finish_reason")}]'
-                    msgs.append(msg)
-                    if msg.get("content"):
-                        final_fallback = msg["content"]
-                    # jump into tool execution below by reusing local var
-                    reasoning_buf = msg.get("reasoning_content") or ""
-                    content_buf = msg.get("content") or ""
-                except Exception as e2:
-                    print(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}", flush=True)
-                    return f'[both streaming and non-streaming failed: stream_err={e!r}, fallback_err={e2!r}]'
+                            r2.raise_for_status()
+                            data = r2.json()
+                        msg = data["choices"][0]["message"]
+                        tool_calls = msg.get("tool_calls") or []
+                        if not tool_calls:
+                            if msg.get("content"):
+                                return msg["content"]
+                            if msg.get("reasoning_content"):
+                                tail = msg["reasoning_content"][-3500:]
+                                return (
+                                    f'_(fallback non-stream: content пустой, '
+                                    f'reasoning_chars={len(msg["reasoning_content"])})_\n\n'
+                                    f'{tail}'
+                                )
+                            return f'[fallback empty: finish_reason={msg.get("finish_reason")}]'
+                        msgs.append(msg)
+                        if msg.get("content"):
+                            final_fallback = msg["content"]
+                        # jump into tool execution below by reusing local var
+                        reasoning_buf = msg.get("reasoning_content") or ""
+                        content_buf = msg.get("content") or ""
+                    except Exception as e2:
+                        print(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}", flush=True)
+                        return f'[both streaming and non-streaming failed: stream_err={e!r}, fallback_err={e2!r}]'
 
+            else:
+                pass
         # commit accumulated reasoning for next-iteration display
         accumulated_reasoning += reasoning_buf
 
@@ -5087,6 +5123,130 @@ async def _selftest():
         react_ok = False
     all_ok &= react_ok
     print(f"[selftest] react_to_message tests: {'all pass' if react_ok else 'FAILED'}", flush=True)
+
+    # === Regression: non-streaming tool_call path (vision + react_to_message) ===
+    # Bug: handle_photo uses use_stream=False (vision tasks). The
+    # non-streaming branch used to return content immediately,
+    # which meant a model that responded with finish_reason=
+    # tool_calls (e.g. "react_to_message on this picture") had
+    # its tool call silently dropped, and the user saw an empty
+    # response. Fix: when the non-streaming response carries
+    # tool_calls, populate tool_calls_buf and skip the streaming
+    # POST, letting the shared tool-dispatch path handle the call.
+    # The smoke test below mocks llama-server to return a non-
+    # streaming chat completion with one tool_call and verifies
+    # that the executor runs.
+    print('[selftest] running non-streaming tool_call regression test...', flush=True)
+    ns_ok = True
+    try:
+        from unittest.mock import patch, AsyncMock
+        from bot import call_llama
+
+        # Build a fake non-streaming response: assistant message with
+        # no content, one tool_call to react_to_message.
+        # First call: assistant returns a tool_call (no content).
+        # Second call (after the tool runs): assistant returns text.
+        # This is what a real LLM would do.
+        call_count = [0]
+
+        def make_response():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                msg = {
+                    'role': 'assistant',
+                    'content': '',
+                    'reasoning_content': 'I should react with checkmark',
+                    'tool_calls': [{
+                        'id': 'call_ns_0',
+                        'type': 'function',
+                        'function': {
+                            'name': 'react_to_message',
+                            'arguments': '{"emoji": "\u2705"}',
+                        },
+                    }],
+                }
+                return {'choices': [{'message': msg, 'finish_reason': 'tool_calls'}]}
+            else:
+                # Second call: text-only response (the LLM confirms).
+                msg = {
+                    'role': 'assistant',
+                    'content': 'Done, set the reaction.',
+                    'reasoning_content': '',
+                }
+                return {'choices': [{'message': msg, 'finish_reason': 'stop'}]}
+
+        class _FakeResp:
+            def __init__(self, data):
+                self._data = data
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return self._data
+            @property
+            def text(self):
+                import json as _json
+                return _json.dumps(self._data)
+
+        class _FakeAsyncClient:
+            def __init__(self, *a, **kw):
+                pass
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+            async def post(self, url, **kw):
+                return _FakeResp(make_response())
+
+        # Mock the bot.set_message_reaction to record the call.
+        from telegram import ReactionTypeEmoji
+        react_calls = []
+
+        class _FakeBot:
+            async def set_message_reaction(self, chat_id, message_id, reaction, **kw):
+                react_calls.append({
+                    'chat_id': chat_id,
+                    'message_id': message_id,
+                    'emojis': [getattr(r, 'emoji', None) for r in reaction],
+                })
+
+        # Capture what call_llama returns
+        with patch('bot.httpx.AsyncClient', _FakeAsyncClient):
+            result = await call_llama(
+                messages=[{'role': 'user', 'content': 'react to this picture'}],
+                use_stream=False,
+                bot=_FakeBot(),
+                chat_id=-1004461679108,
+                current_message_id=99999,
+            )
+
+        # The bot response should NOT be empty - it should be a
+        # follow-up message after the tool ran (or at least a
+        # non-empty tool result wrapping message). What we really
+        # care about: set_message_reaction was called with 🔥 on
+        # the default message_id.
+        if len(react_calls) != 1:
+            print(f"  [FAIL] expected exactly 1 set_message_reaction call, got {len(react_calls)}: {react_calls}", flush=True)
+            ns_ok = False
+        elif react_calls[0]['message_id'] != 99999:
+            print(f"  [FAIL] wrong message_id: {react_calls[0]}", flush=True)
+            ns_ok = False
+        elif react_calls[0]['emojis'] != ['\u2705']:
+            print(f"  [FAIL] wrong emoji: {react_calls[0]['emojis']}", flush=True)
+            ns_ok = False
+        elif call_count[0] != 2:
+            print(f"  [FAIL] expected 2 LLM calls (1 tool + 1 follow-up), got {call_count[0]}", flush=True)
+            ns_ok = False
+        elif 'Done' not in result:
+            print(f"  [FAIL] call_llama result doesn't contain the follow-up text: {result!r}", flush=True)
+            ns_ok = False
+        else:
+            print(f"  [OK] non-streaming tool_call dispatched: chat_id={react_calls[0]['chat_id']} msg_id={react_calls[0]['message_id']} emoji={react_calls[0]['emojis']}", flush=True)
+            print(f"  [OK] call_llama returned {len(result)} chars (LLM was re-called after tool result): {result[:80]!r}", flush=True)
+    except Exception as e:
+        print(f"  [FAIL] non-streaming tool_call test raised: {type(e).__name__}: {e!r}", flush=True)
+        ns_ok = False
+    all_ok &= ns_ok
+    print(f"[selftest] non-streaming tool_call tests: {'all pass' if ns_ok else 'FAILED'}", flush=True)
 
     # === Per-handler abort_event key (Stop button race fix) ===
     # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
