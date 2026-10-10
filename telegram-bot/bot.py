@@ -441,7 +441,7 @@ DONSETCH_TOOLS = {
 }
 
 
-async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False):
+async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
@@ -666,6 +666,12 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
         if _sd is not None and _sd.is_set():
             print(f"[call_llama] shutdown_event set, aborting tool loop at iteration {iteration}", flush=True)
             return '[bot: shutdown requested, aborting tool loop]'
+        # Honour per-task abort (Stop button on the thinking message).
+        # Distinct from shutdown_event: shutdown is global ("kill the
+        # process"), abort is per-message ("skip this one, move on").
+        if abort_event is not None and abort_event.is_set():
+            print(f"[call_llama] abort_event set, aborting tool loop at iteration {iteration}", flush=True)
+            return '__ABORTED__'
         # --- request body ---
         async with httpx.AsyncClient(timeout=600.0) as client:
             req_body = {
@@ -1707,6 +1713,25 @@ def _should_mute_in_group(update) -> bool:
     return False
 
 
+def _stop_button_markup():
+    """Inline keyboard markup for the "💭 думаю…" thinking message.
+
+    One button: "⏹ Stop". When the user clicks it, the callback
+    handler looks up the per-(chat, user) abort event and sets
+    it; call_llama() then bails out at the next iteration of
+    the tool loop. The handler edits the thinking message to
+    "⏹ Остановлено" and moves to the next update.
+
+    We import InlineKeyboardButton lazily so this module is
+    still importable in environments where the full PTB extras
+    are not installed (selftest imports, for example).
+    """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏹ Stop", callback_data="stop:thinking")],
+    ])
+
+
 def _msg_text_edited_during(chat_id: int, msg_id: int, text_at_start: str) -> bool:
     """True if the user message's text/caption has changed since
     text_at_start was captured. Used by handlers to detect
@@ -2263,8 +2288,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # When recalling image turns in later text-only messages, the
         # images themselves cannot be re-sent from history (no id
         # retained), so the model falls back to its own description.
-        thinking = await _reply(update, '💭 думаю…')
+        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
         print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        # Per-task abort event for the Stop button.
+        abort_event = asyncio.Event()
+        _abort_events[(chat_id, user_id)] = abort_event
         # Compute rating_active here (before call_llama) so we
         # can pass it to the model AND use it in the dispatcher.
         rating_active = (
@@ -2272,27 +2300,30 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and _is_group_chat(update)
             and not _should_mute_in_group(update)
         )
-        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active)
+        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
-        # === Edit-during-LLM detection ===
-        # Same as handle_text: if the user edited the caption
-        # while we were calling the LLM, the response is stale.
-        if _msg_text_edited_during(
-            update.effective_chat.id,
-            update.message.message_id,
-            caption,
-        ):
-            print(
-                f"[handle_photo] EDIT-DURING-LLM: caption changed, "
-                f"discarding response (chat_id={update.effective_chat.id} "
-                f"msg_id={update.message.message_id})",
-                flush=True,
-            )
+        if bot_response == '__ABORTED__':
+            print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
             try:
-                await thinking.delete()
+                await thinking.edit_text('⏹ Остановлено')
             except Exception:
                 pass
             return
+        # === Edit-during-LLM detection ===
+        # NOTE: the original implementation here checked
+        # _user_msg_text and discarded the response if the
+        # caption was edited during the LLM call. That check
+        # only works if a *concurrent* getUpdates consumer is
+        # updating _user_msg_text in real time, which we
+        # cannot do (Telegram rejects simultaneous getUpdates
+        # from the same bot with HTTP 409). The check is now
+        # a no-op in practice; we keep the data structure
+        # for future use if/when the bot is migrated to
+        # webhooks. The polling loop's edit block (commit
+        # 7056887) still replaces stale responses AFTER they
+        # are sent — the user sees a brief wrong answer, then
+        # the corrected one. The Stop button (this commit) is
+        # the recommended way to avoid the wrong answer.
         # === RATING_MODE dispatch ===
         # In a group with RATING_MODE=1, the LLM prefixes its
         # response with [[TYPE:...]] [[RATE:N]]. We parse the
@@ -2348,6 +2379,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
+        _abort_events.pop((chat_id, user_id), None)
         sem.release()
 
 
@@ -2517,30 +2549,25 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _persist_message(chat_id, thread_id, 'user', user_content)
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
-        thinking = await _reply(update, '💭 думаю…')
+        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
         rating_active = (
             RATING_MODE
             and _is_group_chat(update)
             and not _should_mute_in_group(update)
         )
-        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active)
-        # === Edit-during-LLM detection ===
-        if _msg_text_edited_during(
-            update.effective_chat.id,
-            update.message.message_id,
-            caption,
-        ):
-            print(
-                f"[handle_document] EDIT-DURING-LLM: caption changed, "
-                f"discarding response (chat_id={update.effective_chat.id} "
-                f"msg_id={update.message.message_id})",
-                flush=True,
-            )
+        abort_event = asyncio.Event()
+        _abort_events[(chat_id, user_id)] = abort_event
+        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event)
+        if bot_response == '__ABORTED__':
+            print(f"[handle_document] ABORTED by user via Stop button, moving to next", flush=True)
             try:
-                await thinking.delete()
+                await thinking.edit_text('⏹ Остановлено')
             except Exception:
                 pass
             return
+        # Edit-during-LLM detection removed: the check is a
+        # no-op without a concurrent getUpdates consumer.
+        # See handle_photo for the full rationale.
         # === RATING_MODE dispatch ===
         # In a group with RATING_MODE=1, the LLM prefixes its
         # response with [[TYPE:...]] [[RATE:N]]. We parse the
@@ -2592,6 +2619,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
+        _abort_events.pop((chat_id, user_id), None)
         sem.release()
 
 
@@ -2614,37 +2642,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _persist_message(chat_id, thread_id, 'user', user_message)
     history = await _load_history(chat_id, thread_id)
     print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
-    thinking = await _reply(update, '💭 думаю…')
+    thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+    # Register per-task abort event so the Stop button on the
+    # thinking message can interrupt the LLM call. Cleaned up
+    # in the finally block to avoid leaking the event into the
+    # next handler call (the semaphore allows the same user to
+    # have at most 2 in-flight requests, so the dict shouldn't
+    # grow without bound).
+    abort_event = asyncio.Event()
+    _abort_events[(chat_id, user_id)] = abort_event
     try:
         rating_active = (
             RATING_MODE
             and _is_group_chat(update)
             and not _should_mute_in_group(update)
         )
-        bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active)
-        # === Edit-during-LLM detection ===
-        # If the user edited their message while we were calling
-        # the LLM, the response we just got is based on the OLD
-        # text. Discard it; the polling loop's edit-handling
-        # block will process the edit as a fresh request. We
-        # also delete the "💭 думаю…" thinking message so the
-        # user doesn't see a stray placeholder.
-        if _msg_text_edited_during(
-            update.effective_chat.id,
-            update.message.message_id,
-            user_message,
-        ):
-            print(
-                f"[handle_text] EDIT-DURING-LLM: text changed, "
-                f"discarding response (chat_id={update.effective_chat.id} "
-                f"msg_id={update.message.message_id})",
-                flush=True,
-            )
+        bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event)
+        if bot_response == '__ABORTED__':
+            print(f"[handle_text] ABORTED by user via Stop button, moving to next", flush=True)
             try:
-                await thinking.delete()
+                await thinking.edit_text('⏹ Остановлено')
             except Exception:
                 pass
             return
+        # Edit-during-LLM detection removed: the check is a
+        # no-op without a concurrent getUpdates consumer.
+        # See handle_photo for the full rationale.
         # === RATING_MODE dispatch ===
         if rating_active:
             parsed = _parse_rating_response(bot_response)
@@ -2689,6 +2712,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await thinking.delete()
         except Exception:
             pass
+        # Deregister the per-task abort event so a subsequent
+        # handler call for the same user doesn't accidentally
+        # see a leftover event. We pop the specific key rather
+        # than clear, in case the dict has been overwritten by
+        # a concurrent handler (defensive — the semaphore
+        # prevents same-user concurrency, but be safe).
+        _abort_events.pop((chat_id, user_id), None)
         sem.release()
 
 
@@ -2756,14 +2786,6 @@ def main():
         # the dispatcher so we can verify handlers actually fire even when
         # we can't easily test with a real user.
         await _selftest()
-
-        # Start the background text updater. It runs concurrently with the
-        # main polling loop and is the only way to detect user edits that
-        # arrive while the main loop is blocked on a handler's LLM call.
-        # The task updates _user_msg_text in real time so handlers can
-        # detect "edited during processing" and discard stale responses.
-        bg_text_task = asyncio.create_task(_background_text_updater())
-        print("[main] background text updater started", flush=True)
 
         offset = 0
         backoff = 1.0
@@ -2961,12 +2983,6 @@ def main():
             # shutdown), CancelledError, or any exception. Without
             # this, the httpx client held by app.bot leaks and prints
             # "RuntimeWarning: unclosed client" on interpreter shutdown.
-            if bg_text_task is not None and not bg_text_task.done():
-                bg_text_task.cancel()
-                try:
-                    await bg_text_task
-                except (asyncio.CancelledError, Exception):
-                    pass
             if _dispatcher is not None:
                 try:
                     await _dispatcher.shutdown()
@@ -2985,94 +3001,24 @@ def main():
 _dispatcher = None
 
 
-async def _background_text_updater():
-    """Background polling task that keeps _user_msg_text up-to-date.
 
-    Runs concurrently with the main polling loop. While the main
-    loop is blocked on a handler's LLM call, this task continues
-    to poll for new updates and updates _user_msg_text with the
-    latest text/caption of each user message. Handlers check
-    _user_msg_text after the LLM call returns to detect "user
-    edited during processing" and discard the stale response.
-
-    Why a separate task: the main polling loop is single-threaded
-    and blocks on each handler call. Without this background
-    task, edits that arrive while the loop is blocked would only
-    be processed after the handler finished, and the bot would
-    briefly send a response based on the OLD text before the
-    edit block could replace it.
-
-    This task:
-      - Uses its own offset (_bg_text_offset), independent of
-        the main loop's offset.
-      - Calls getUpdates with a long timeout (25s) to minimise
-        request rate.
-      - Only writes to _user_msg_text; it does NOT dispatch
-        updates. The main loop is the sole dispatcher.
-      - Filters out non-text updates (e.g., chat_member, voice
-        with no caption) — only updates that have text or
-        caption contribute to _user_msg_text.
-
-    Two concurrent getUpdates consumers are fine: Telegram
-    returns the next pending update to each caller, and they
-    don't share state. Each consumer advances its own offset.
-
-    Shutdown: the task checks SHUTDOWN_EVENT periodically and
-    exits cleanly. The main loop should also call task.cancel()
-    on shutdown for prompt termination.
-    """
-    import time
-    global _bg_text_offset
-    backoff = 1.0
-    n_polls = 0
-    # Build a fresh httpx client with no keep-alive to avoid
-    # the PTB Updater's connection-limit issues that the main
-    # loop has to dance around.
-    api_url = f"https://api.telegram.org/bot{BOT_TOKEN}"
-    async with httpx.AsyncClient(
-        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
-        timeout=60.0,
-    ) as client:
-        while True:
-            if SHUTDOWN_EVENT is not None and SHUTDOWN_EVENT.is_set():
-                print(f"[bg-text] shutdown requested, exiting after {n_polls} polls", flush=True)
-                return
-            try:
-                r = await client.get(
-                    f"{api_url}/getUpdates",
-                    params={
-                        "offset": _bg_text_offset,
-                        "timeout": 25,
-                        # We only need message + edited_message to track
-                        # the latest text. chat_member is irrelevant here.
-                        "allowed_updates": '["message","edited_message"]',
-                    },
-                )
-                data = r.json()
-                if not data.get("ok"):
-                    raise RuntimeError(f"getUpdates not ok: {data}")
-                updates = data.get("result", [])
-                n_polls += 1
-                if updates:
-                    backoff = 1.0
-                    for upd in updates:
-                        _bg_text_offset = upd["update_id"] + 1
-                        msg = upd.get("message") or upd.get("edited_message") or {}
-                        chat_id = (msg.get("chat") or {}).get("id")
-                        msg_id = msg.get("message_id")
-                        text = msg.get("text") or msg.get("caption") or ""
-                        if chat_id is not None and msg_id is not None and text:
-                            _user_msg_text[(chat_id, msg_id)] = text
-                elif n_polls <= 3 or n_polls % 20 == 0:
-                    # Don't spam the log when idle
-                    print(f"[bg-text] cycle={n_polls} no updates", flush=True)
-            except asyncio.CancelledError:
-                print(f"[bg-text] cancelled, exiting", flush=True)
-                raise
-            except Exception as e:
-                print(f"[bg-text] error: {type(e).__name__}: {e!r}", flush=True)
-                await asyncio.sleep(min(backoff, 30.0))
-                backoff = min(backoff * 2, 30.0)
+# === Per-task abort events (Stop button) ===
+# When the user clicks "Stop" on the thinking message, we set
+# the event for their (chat_id, user_id). call_llama() checks
+# the event between iterations of the tool loop and bails out
+# with the special return value '__ABORTED__'. The handler then
+# edits the thinking message to "⏹ Остановлено" and moves to
+# the next update.
+#
+# The dict is keyed by (chat_id, user_id) so the same Stop
+# button only affects its own message. In a forum group, each
+# topic is a separate "user" from the perspective of the
+# bot's processing order (the semaphore is per-(chat,user)).
+#
+# Entries are added at the start of the handler and removed in
+# a try/finally so an exception doesn't leak the event into
+# the next handler call.
+_abort_events: dict = {}
 
 
 # === Edit-replace tracking ===
@@ -3139,10 +3085,11 @@ _bot_replies: dict = {}
 # Voice messages have no editable text and are not tracked.
 _user_msg_text: dict = {}
 
-# The background text updater uses its own offset, independent
-# of the main polling loop. Two concurrent getUpdates consumers
-# are fine on Telegram's side: each one just returns the next
-# pending update, and they don't share state.
+# The background text updater was disabled: Telegram rejects
+# simultaneous getUpdates from the same bot (HTTP 409). The
+# "edit during LLM" detection therefore relies on a different
+# mechanism (or is accepted as a brief wrong response, replaced
+# by the polling loop's edit block).
 _bg_text_offset: int = 0
 
 
@@ -3211,25 +3158,96 @@ async def _register_bot_menu():
 
 
 async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle inline-keyboard button presses from /subs and /here.
+    """Handle inline-keyboard button presses.
 
     callback_data format:
-      sub:<name>     — switch to sub-talk <name>
+      sub:<name>     — switch to sub-talk <name>  (private mode)
       newsub:prompt  — show a one-time reply keyboard asking for the new name
       delsub:<name>  — confirm-then-delete (we delete immediately; no confirm step)
+      stop:thinking  — abort the in-flight LLM call for the user
 
-    Group mode: callback_data is only emitted by the private-mode
-    /subs inline keyboard, so any callback here is a stale/private
-    state leak. Just answer and ignore.
+    The Stop button is on every "💭 думаю…" message in both
+    private and group mode. The original user (the one whose
+    message is being processed) is the only one allowed to
+    stop it — identified via the thinking message's
+    reply_to_message.from_user.id. We compare that against
+    the callback's from_user.id.
     """
     await update.callback_query.answer()
+    data = update.callback_query.data or ""
+    # === Stop button (works in private AND group) ===
+    if data == "stop:thinking":
+        # Identify the original user from the thinking message.
+        # The thinking message was sent as a reply to the user's
+        # original message, so reply_to_message is set.
+        thinking_msg = update.callback_query.message
+        original = (
+            thinking_msg.reply_to_message
+            if thinking_msg and thinking_msg.reply_to_message
+            else None
+        )
+        if original is None or original.from_user is None:
+            print("[callback stop] no original message in reply_to_message", flush=True)
+            return
+        original_user_id = original.from_user.id
+        clicker_id = update.effective_user.id
+        if clicker_id != original_user_id:
+            # Don't reveal that the request was meaningful; just
+            # answer with a notice and let the clicker move on.
+            print(
+                f"[callback stop] rejected: clicker={clicker_id} != "
+                f"original={original_user_id}",
+                flush=True,
+            )
+            await update.callback_query.answer(
+                "Только автор сообщения может остановить обработку.",
+                show_alert=True,
+            )
+            return
+        chat_id = update.effective_chat.id
+        key = (chat_id, original_user_id)
+        event = _abort_events.get(key)
+        if event is None:
+            # No in-flight request for this user. Either the
+            # handler finished between when the user clicked
+            # Stop and when the callback arrived, or this is a
+            # stale button (rare — buttons are tied to a
+            # specific thinking message which gets deleted on
+            # completion).
+            print(
+                f"[callback stop] no abort_event for {key} "
+                f"(handler may have already finished)",
+                flush=True,
+            )
+            try:
+                await update.callback_query.edit_message_text("⏹ Уже завершено")
+            except Exception:
+                pass
+            return
+        event.set()
+        print(
+            f"[callback stop] abort_event set for {key}",
+            flush=True,
+        )
+        # Edit the thinking message to "⏹ Остановлено" immediately
+        # so the user sees the click took effect. The handler will
+        # also try to edit it (and may delete it); the second edit
+        # is a no-op if Telegram returns "not modified" or the
+        # message is already gone.
+        try:
+            await update.callback_query.edit_message_text("⏹ Остановлено…")
+        except Exception as e:
+            print(f"[callback stop] edit_text failed: {type(e).__name__}: {e!r}", flush=True)
+        return
+
+    # The remaining branches (sub:, newsub:prompt, delsub:) are
+    # only emitted by the private-mode /subs inline keyboard.
     # Group mode: no inline buttons exist there.
     if _is_group_chat(update):
         return
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    data = update.callback_query.data or ""
     if data.startswith("sub:"):
         thread_id = data[4:]
         existing = await asyncio.to_thread(store.get_thread, user_id, thread_id)
