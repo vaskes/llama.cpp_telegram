@@ -1049,11 +1049,27 @@ async def send_reply(update: Update, text: str):
     (Ornith-Uncensored in particular) spend the whole token budget on reasoning
     and return content='' for short prompts. We don't want the user to see a
     cryptic API error in that case.
+
+    Also records the (chat_id, user_message_id) → bot_message_id mapping
+    so a later user edit can trigger delete+reprocess.
     """
     text = (text or '').strip()
     if not text:
         text = EMPTY_RESPONSE_FALLBACK
-    await _reply(update, text)
+    sent = await _reply(update, text)
+    # Record the bot reply so an edit on the user message can replace it.
+    # update.message.message_id is the user's message; sent.message_id is
+    # the bot's reply. The mapping lets us delete the bot reply and
+    # process the edited user message as a fresh request.
+    try:
+        user_msg = update.message
+        if user_msg is not None and sent is not None:
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            if chat_id is not None:
+                _bot_replies[(chat_id, user_msg.message_id)] = sent.message_id
+    except Exception as e:
+        # Never let tracking break a reply.
+        print(f"[send_reply] tracking failed: {type(e).__name__}: {e!r}", flush=True)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2738,20 +2754,31 @@ def main():
                                 # Telegram re-delivers edited messages as
                                 # `edited_message` updates (separate from
                                 # the original `message`). The bot used to
-                                # skip them entirely, but the UX was bad:
-                                # users press up-arrow + Send in the
-                                # Telegram input, and that produces an
-                                # edited_message (not a fresh `message`).
-                                # The bot's silence looked like a bug.
+                                # skip non-command edits — the original
+                                # was already answered, the edit was just
+                                # a typo fix. But this made the bot
+                                # appear unresponsive to the corrected
+                                # version: the user sees a wrong answer
+                                # for the typo and no new answer for the
+                                # correction.
                                 #
-                                # Compromise: only process edited_message
-                                # if the new text is a command (starts with
-                                # `/`). Edits of regular text are dropped
-                                # (we already answered the original; a
-                                # follow-up would be confusing or duplicate
-                                # work). Commands, by contrast, are
-                                # idempotent enough that re-running them
-                                # is fine.
+                                # New behaviour:
+                                #   1. If the new text is a command, keep
+                                #      the old behaviour (commands are
+                                #      idempotent, re-running is fine).
+                                #   2. If the new text is regular text,
+                                #      look up the bot's previous reply
+                                #      to the original message in
+                                #      _bot_replies. If we have one,
+                                #      delete it. Then rewrite the
+                                #      update as a regular `message` and
+                                #      let the dispatcher process it
+                                #      like a fresh user message.
+                                #   3. If we have no previous reply
+                                #      (e.g., the original was rejected
+                                #      for security, or the bot never
+                                #      responded for some reason), just
+                                #      process the edit.
                                 if "edited_message" in upd_dict and "message" not in upd_dict:
                                     em = upd_dict["edited_message"]
                                     em_text = (em.get("text") or "").lstrip()
@@ -2769,14 +2796,50 @@ def main():
                                             flush=True,
                                         )
                                     else:
-                                        # Edit of a non-command message —
-                                        # already handled when first sent.
+                                        # Non-command edit: delete the
+                                        # bot's previous reply (if any)
+                                        # and reprocess.
+                                        em_chat_id = (em.get("chat") or {}).get("id")
+                                        em_msg_id = em.get("message_id")
+                                        if em_chat_id is not None and em_msg_id is not None:
+                                            key = (em_chat_id, em_msg_id)
+                                            old_bot_msg_id = _bot_replies.pop(key, None)
+                                            if old_bot_msg_id is not None and _dispatcher is not None:
+                                                try:
+                                                    await _dispatcher.bot.delete_message(
+                                                        chat_id=em_chat_id,
+                                                        message_id=old_bot_msg_id,
+                                                    )
+                                                    print(
+                                                        f"[poll] edit-replace: deleted old bot reply "
+                                                        f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id} "
+                                                        f"user_msg_id={em_msg_id}",
+                                                        flush=True,
+                                                    )
+                                                except Exception as e:
+                                                    # Most common failure: bot
+                                                    # lacks delete permission,
+                                                    # or the message is too
+                                                    # old. Just log and
+                                                    # continue.
+                                                    print(
+                                                        f"[poll] edit-replace: delete failed "
+                                                        f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id}: "
+                                                        f"{type(e).__name__}: {e!r}",
+                                                        flush=True,
+                                                    )
+                                        # Now rewrite the update as a
+                                        # regular `message` so the
+                                        # dispatcher processes it like
+                                        # a new user message. The
+                                        # downstream handlers (handle_text
+                                        # etc.) will see the edited text.
+                                        upd_dict["message"] = em
                                         print(
-                                            f"[poll] skipping edited non-command "
-                                            f"update_id={upd_dict['update_id']}",
+                                            f"[poll] edit-replace: processing edited_message "
+                                            f"update_id={upd_dict['update_id']} text_hash={em_text[:32]!r}",
                                             flush=True,
                                         )
-                                        continue
                                 try:
                                     # Dispatch via PTB's Application so handlers
                                     # get a real Context with .bot, .user_data, etc.
@@ -2818,6 +2881,20 @@ def main():
 # dispatch. We never call .start() on it; the dispatcher works fine
 # without start() for one-shot process_update.
 _dispatcher = None
+
+
+# === Edit-replace tracking ===
+# When a user edits their message, the bot's previous response to
+# the original message becomes stale. We track the (chat_id,
+# user_message_id) → bot_message_id mapping so that, on edit, we
+# can delete the stale bot reply and process the edit as a fresh
+# user message. The map lives in-memory; restarts clear it, which
+# is fine because edits are only useful for the current session.
+#
+# Only `send_reply` (the final response) is tracked, not the
+# "💭 думаю…" thinking message. We don't want to delete the
+# thinking message on edit — it's just a status indicator.
+_bot_replies: dict = {}
 
 
 # Telegram bot menu — registered via setMyCommands on startup. This
@@ -3741,6 +3818,53 @@ async def _selftest():
         print(f"  [FAIL] _handle_chat_member_update(bot-join) raised: {type(e).__name__}: {e!r}", flush=True)
         cm_ok = False
     all_ok &= cm_ok
+
+    # === Edit-replace test ===
+    # Verifies the _bot_replies tracking and the new edit-handling
+    # logic in the polling loop. We don't run the full polling loop
+    # (it requires a live Telegram server), but we exercise the
+    # data structure: record a (chat, user_msg) → bot_msg mapping,
+    # then verify it can be retrieved and popped.
+    print('[selftest] running edit-replace test...', flush=True)
+    er_ok = True
+    try:
+        # Save the existing map and clear it for the test
+        import bot as _b
+        saved = dict(_b._bot_replies)
+        _b._bot_replies.clear()
+        # Record a mapping
+        _b._bot_replies[(-1001234567890, 100)] = 200
+        _b._bot_replies[(-1001234567890, 101)] = 201
+        # Lookup works
+        if _b._bot_replies.get((-1001234567890, 100)) != 200:
+            print("  [FAIL] _bot_replies.get() returned wrong bot_msg_id", flush=True)
+            er_ok = False
+        else:
+            print("  [OK] _bot_replies stores (chat, user_msg) → bot_msg mapping", flush=True)
+        # Pop removes the entry
+        popped = _b._bot_replies.pop((-1001234567890, 100), None)
+        if popped != 200:
+            print(f"  [FAIL] pop returned {popped}, expected 200", flush=True)
+            er_ok = False
+        elif (-1001234567890, 100) in _b._bot_replies:
+            print("  [FAIL] entry not actually removed by pop", flush=True)
+            er_ok = False
+        else:
+            print("  [OK] pop removes entry correctly", flush=True)
+        # Pop on missing key returns None (no exception)
+        if _b._bot_replies.pop((-1001234567890, 99999), None) is not None:
+            print("  [FAIL] pop on missing key should return None", flush=True)
+            er_ok = False
+        else:
+            print("  [OK] pop on missing key returns None", flush=True)
+        # Restore the saved state
+        _b._bot_replies.clear()
+        _b._bot_replies.update(saved)
+    except Exception as e:
+        print(f"  [FAIL] edit-replace test raised: {type(e).__name__}: {e!r}", flush=True)
+        er_ok = False
+    all_ok &= er_ok
+    print(f"[selftest] edit-replace tests: {'all pass' if er_ok else 'FAILED'}", flush=True)
 
     print('[selftest] done', flush=True)
     print('[selftest] done', flush=True)
