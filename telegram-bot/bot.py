@@ -764,15 +764,26 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                                 item["image_url"] = {"url": f"data:image/...,[{len(url)} chars]"}
             print(f"[LLAMA] iter={iteration} req_body_keys={list(req_body.keys())} tools={'yes ('+str(len(req_tools))+' defs)' if req_tools else 'no'} msgs_count={len(req_body.get('messages',[]))}", flush=True)
             if iteration == 0:
-                # On first iter, also print the first user message structure
-                for m in req_body.get("messages", []):
-                    if m.get("role") == "user":
-                        c = m.get("content")
-                        if isinstance(c, list):
-                            print(f"[LLAMA]   first user msg content types: {[item.get('type') for item in c if isinstance(item, dict)]}", flush=True)
-                        else:
-                            print(f"[LLAMA]   first user msg content head: {str(c)[:150]!r}", flush=True)
-                        break
+                # On first iter, also print the first AND last user
+                # message structure (the first to confirm history is
+                # loaded; the last to confirm the current speaker
+                # got tagged with "From: <name>: ").
+                user_msgs = [m for m in req_body.get("messages", []) if m.get("role") == "user"]
+                if user_msgs:
+                    m0 = user_msgs[0]
+                    c0 = m0.get("content")
+                    if isinstance(c0, list):
+                        print(f"[LLAMA]   first user msg content types: {[item.get('type') for item in c0 if isinstance(item, dict)]}", flush=True)
+                    else:
+                        print(f"[LLAMA]   first user msg content head: {str(c0)[:150]!r}", flush=True)
+                    ml = user_msgs[-1]
+                    cl = ml.get("content")
+                    if isinstance(cl, list):
+                        first_part = cl[0] if cl else {}
+                        first_text = first_part.get("text", "") if isinstance(first_part, dict) else ""
+                        print(f"[LLAMA]   last user msg first text part head: {first_text[:150]!r}", flush=True)
+                    else:
+                        print(f"[LLAMA]   last user msg content head: {str(cl)[:150]!r}", flush=True)
             reasoning_buf = ""
             content_buf = ""
             tool_calls_buf = {}
