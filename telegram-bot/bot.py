@@ -71,6 +71,16 @@ from call_llama import (
     transcribe_voice, _tag_sender,
 )
 
+
+# === F3 stage 4: re-export handlers module ===
+import handlers
+from handlers import (
+    handle_document, handle_photo, handle_text, handle_voice,
+    send_reply, _download_with_limit, _general_thread_id, _reply,
+    _reply_active, _resolve_active, _route_to_thread, _sender_display_name,
+    _reject_in_group, _persist_message, _load_history,
+)
+
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN env var is required but not set")
