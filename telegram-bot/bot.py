@@ -774,17 +774,46 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                                                    "Content-Type": "application/json"},
                                           json=req_body) as r:
                     r.raise_for_status()
-                    async for line in r.aiter_lines():
-                        # Honour the per-task abort event BETWEEN chunks
-                        # so clicking Stop during streaming actually
-                        # stops the response. Without this, the abort
-                        # only takes effect at the next tool-loop
-                        # iteration, which never comes for a
-                        # single-turn streaming response.
+                    # Manual line iteration with abort-aware waits.
+                    # The default `async for line in r.aiter_lines()`
+                    # blocks inside __anext__() until a chunk arrives,
+                    # which means an abort event set BEFORE the first
+                    # chunk is never seen — the user clicks Stop but
+                    # the bot keeps waiting on the first line.
+                    #
+                    # We wrap each __anext__() in asyncio.wait_for with
+                    # a short timeout (300ms). If the timeout fires,
+                    # we check the abort event: if set, return the
+                    # sentinel; otherwise loop and try again. This
+                    # gives a worst-case abort latency of 300ms
+                    # between the click and the response, even when
+                    # the LLM is slow to produce the first chunk.
+                    line_iter = r.aiter_lines()
+                    while True:
+                        try:
+                            line = await asyncio.wait_for(
+                                line_iter.__anext__(),
+                                timeout=0.3,
+                            )
+                        except asyncio.TimeoutError:
+                            if abort_event is not None and abort_event.is_set():
+                                print(
+                                    f"[call_llama] abort_event set while "
+                                    f"waiting for first/next chunk "
+                                    f"iter={iteration}",
+                                    flush=True,
+                                )
+                                return '__ABORTED__'
+                            continue
+                        except StopAsyncIteration:
+                            break
+                        # Got a line. Honour the abort check between
+                        # chunks too (in case a fast LLM produces many
+                        # chunks between 300ms ticks).
                         if abort_event is not None and abort_event.is_set():
                             print(
-                                f"[call_llama] abort_event set during streaming "
-                                f"iter={iteration}, breaking out",
+                                f"[call_llama] abort_event set between "
+                                f"chunks iter={iteration}",
                                 flush=True,
                             )
                             return '__ABORTED__'
