@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS messages (
     thread_id   TEXT NOT NULL,
     role        TEXT NOT NULL,
     content     TEXT NOT NULL,
+    sender_name TEXT,
     created_at  REAL NOT NULL
 );
 
@@ -200,6 +201,17 @@ class Storage:
         # swallowed.
         try:
             c.execute("ALTER TABLE messages ADD COLUMN rating INTEGER")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e):
+                raise
+        # v3 -> v4: add `sender_name` column to messages. The bot
+        # now records who sent each user message (display name
+        # resolved from Telegram's User object: first_name +
+        # last_name, falling back to @username, then user_<id>).
+        # Old rows stay NULL; the LLM sees them with a generic
+        # "user" prefix. Idempotent on existing v4 DBs.
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN sender_name TEXT")
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e):
                 raise
@@ -450,16 +462,25 @@ class Storage:
     # --- messages ---
 
     def add_message(self, chat_id: int, thread_id: str, role: str,
-                    content: str, rating: Optional[int] = None) -> int:
-        """Append a message. `content` is a JSON string. `rating` is
-        the optional 1-10 score the LLM assigned in RATING_MODE
-        (only set on assistant turns where the LLM produced a
-        `[[TYPE:info|statement]] [[RATE:N]]` response)."""
+                    content: str, rating: Optional[int] = None,
+                    sender_name: Optional[str] = None) -> int:
+        """Append a message. `content` is a JSON string.
+
+        `rating` is the optional 1-10 score the LLM assigned in
+        RATING_MODE (only set on assistant turns where the LLM
+        produced a `[[TYPE:info|statement]] [[RATE:N]]` response).
+
+        `sender_name` is the Telegram-side display name of the
+        human who sent the message (only set on `role='user'`
+        rows). It lets the LLM distinguish between Vasisualy and
+        Dimon in a busy group chat. Resolved by the bot from
+        update.message.from_user; may be NULL for old rows
+        (pre-sender-name migration) or for system/assistant rows."""
         c = self._conn()
         cur = c.execute(
-            "INSERT INTO messages (chat_id, thread_id, role, content, created_at, rating) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (chat_id, thread_id, role, content, time.time(), rating),
+            "INSERT INTO messages (chat_id, thread_id, role, content, sender_name, created_at, rating) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (chat_id, thread_id, role, content, sender_name, time.time(), rating),
         )
         c.commit()
         return cur.lastrowid
@@ -503,8 +524,8 @@ class Storage:
             c.commit()
         rows = c.execute(
             """
-            SELECT role, content, rating FROM (
-                SELECT role, content, rating, id FROM messages
+            SELECT role, content, sender_name, rating FROM (
+                SELECT role, content, sender_name, rating, id FROM messages
                 WHERE chat_id = ? AND thread_id = ?
                 ORDER BY id DESC
                 LIMIT ?
