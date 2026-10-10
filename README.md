@@ -1,5 +1,12 @@
 # llama.cpp_telegram
 
+> **State at v0.5.0 (Oct 2026):** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
+> `192.168.10.6:8080`, Whisper on `192.168.10.7:8000`, donsetch v4.7.4
+> (split-shape) on `127.0.0.1:8765`. Private + group-with-Topics modes.
+> GROUP_CONTEXT system prompt locked. react_to_message tool available
+> in non-rating mode. Per-handler Stop button race fixed. PTB 21
+> download compat. ~75 selftest cases on every container start.
+
 A Telegram bot wrapper around the [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-compatible API
 plus a local Whisper server for voice transcription.
 
@@ -22,6 +29,13 @@ The bot can:
   via [donsetch-http](https://github.com/dondai44423/donsetch) (Rust + Playwright headless Chrome MCP server) — see "Related" below
 - 🔒 **Whitelist** by Telegram `user_id` / `@username` (env vars, LOCKDOWN by default in private mode)
 - 💾 **Persistent conversation history** in SQLite, per (chat_id, thread_id) — survives restarts
+- 🏷 **Sender name in history** — every user message is tagged with `From: <name>: ` so the LLM can tell Vasisualy from Dimon in a group. NULL → `From: user:`. Schema v3→v4 migration is idempotent.
+- 🧠 **GROUP_CONTEXT system prompt** — LlmChatPlace rules (10-step rating scale, [llm] tag, truth-over-style, no tone policing) injected on every call_llama, in both tool and rating modes. Survives model switches and /reset.
+- 👍 **react_to_message tool** — LLM can set a single-emoji Telegram reaction on any message in the current chat (standard 10-step scale, default message_id = user's current). Available in non-rating mode.
+- 🛡 **Malformed tool-call JSON rejection** — defensive parse in the dispatcher; runaway Qwen-500 loops (10× duplicated keys) caught and rejected with feedback to the LLM.
+- ⏹ **Per-handler Stop button** — the ⏹ on a thinking message aborts THAT handler only. Keyed on (chat_id, thinking.message_id), not (chat_id, user_id) so concurrent handlers don't overwrite each other.
+- 🎬 **Non-streaming tool-call path** — vision tasks (handle_photo) now run the unified tool loop instead of returning empty when the LLM emits a tool_call on a non-streaming POST.
+- 🤖 **Donsetch 4.7.4 split-shape** — `DONSETCH_MCP__TEXT_ONLY=false` in the compose file gives back the human-readable text response that the bot's `donsetch_call` was designed for.
 - 🧵 **Two deployment modes**:
   - **Private chat** — 1 user, multi-thread via `/newsub` `/sub` `/subs` (in-DB sub-talks)
   - **Group with Telegram Topics** — N users, native forum topics via `/newsub` (creates a Telegram topic), `/subs` (lists topics), `/delsub` (deletes a topic). Replies stay in the topic where the user is.
