@@ -23,7 +23,7 @@ via Telegram reactions. Peer review, not judgement.
 - info / statement → rating 1-10, no text
 - bloat → 😐, no text
 
-Scale: 💩 🤮 😡 😢 😐 🤔 👍 👏 ❤ 🔥
+Scale: 💩 🤮 😡 😢 😐 🤔 👍 👏 ❤️ 🔥
 
 ⚖️ **Rating = TRUTH, not style**
 
