@@ -37,6 +37,14 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 #   MODEL       — если пусто, бот спросит /v1/models у llama-server при старте
 #                 и возьмёт первое доступное имя. Никаких захардкоженных
 #                 имён конкретных моделей в коде.
+# === F3 stage 7: re-export from state.py (cross-module state) ===
+import state
+from state import (
+    _abort_events, _bot_replies, _get_global_llm_sem,
+    _register_abort_event,
+)
+
+
 # === F3: re-export from config and prompts so existing
 # `from bot import X` references still work. The actual
 # definitions live in telegram-bot/config.py and
@@ -230,8 +238,7 @@ def _detect_tool_intent(text: str) -> bool:  # pragma: no cover
 # them with `donsetch_` (e.g. `donsetch_web_search`); we strip that prefix when calling.
 
 DONSETCH_URL = os.environ.get('DONSETCH_URL', 'http://localhost:8765/mcp')
-_donsetch_session_id = None
-_donsetch_session_lock = asyncio.Lock()
+# _donsetch_session moved to call_llama.py (F3 stage 7)
 
 EMPTY_RESPONSE_FALLBACK = (
     '[model returned an empty response. This usually means the LLM '

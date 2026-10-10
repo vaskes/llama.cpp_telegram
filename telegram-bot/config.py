@@ -24,6 +24,22 @@ ALLOWED_USERNAMES_RAW = os.environ.get("ALLOWED_USERNAMES", "").strip()
 ALLOWED_USER_IDS = {int(x) for x in ALLOWED_USER_IDS_RAW.split(",") if x.strip().isdigit()}
 ALLOWED_USERNAMES = {x.lstrip("@").lower() for x in ALLOWED_USERNAMES_RAW.split(",") if x.strip()}
 
+# LOCKDOWN: True when BOTH ALLOWED_USER_IDS and ALLOWED_USERNAMES
+# are empty. In that case is_authorized() rejects everything. The
+# flag exists so command handlers can short-circuit ("bot is in
+# lockdown, do not respond to any /commands either") instead of
+# relying on update_id iteration.
+if not ALLOWED_USER_IDS and not ALLOWED_USERNAMES:
+    LOCKDOWN = True
+    print("[SECURITY] ALLOWED_USER_IDS and ALLOWED_USERNAMES both empty -> LOCKDOWN (reject all).", flush=True)
+else:
+    LOCKDOWN = False
+    print(f"[SECURITY] whitelist: {len(ALLOWED_USER_IDS)} ids, {len(ALLOWED_USERNAMES)} usernames", flush=True)
+    if ALLOWED_USERNAMES and not ALLOWED_USER_IDS:
+        print("[SECURITY] WARNING: ALLOWED_USERNAMES is set but ALLOWED_USER_IDS is empty. "
+              "Username-based access can break if a user changes their @username. "
+              "Prefer numeric IDs.", flush=True)
+
 # === File-size limits ===
 MAX_PHOTO_BYTES = int(os.environ.get("MAX_PHOTO_BYTES", "10000000"))     # 10 MB
 MAX_DOC_BYTES = int(os.environ.get("MAX_DOC_BYTES", "5000000"))         # 5 MB
@@ -67,12 +83,14 @@ _GLOBAL_LLM_SEM_LIMIT = 4
 _PER_USER_SEMAPHORE_LIMIT = 2
 
 # === Concurrency caps (v0.5.1 T1 / P0-1) ===
-# Per-user: at most 2 concurrent call_llama() per (chat_id, user_id).
-# Global: at most 4 concurrent call_llama() across all users.
-# Combined: getUpdates limit=10 + 2*2 per-user + 4 global = at most
-# 10 in-flight dispatches at any moment, only 4 in the LLM call.
-_GLOBAL_LLM_SEM_LIMIT = 4
-_PER_USER_SEMAPHORE_LIMIT = 2
+# Re-exports for backward compat. The actual values live in
+# state.py (created in F3 stage 6 cleanup). Modules that
+# need them: `from config import _GLOBAL_LLM_SEM_LIMIT` still
+# works, but new code should import from state.py.
+from state import (
+    _GLOBAL_LLM_SEM_LIMIT, _PER_USER_SEMAPHORE_LIMIT,
+    _abort_events, _bot_replies, _get_global_llm_sem,
+)
 
 # === Conversation store ===
 DB_PATH = os.environ.get("CONVERSATIONS_DB", "/app/data/conversations.db")
