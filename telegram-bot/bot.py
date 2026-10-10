@@ -2505,7 +2505,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result is None:
         return
     chat_id, thread_id, is_group = result
-    user_id = chat_id  # alias for log lines below
+    # The actual user id, not the chat id. In private mode these
+    # are equal (Telegram uses the same value for both), but in
+    # group mode chat_id is the group's id and user_id must be
+    # the user's id. The previous `user_id = chat_id` alias
+    # caused the abort_event key to mismatch what the callback
+    # handler looks up: (group_id, group_id) vs (group_id, real
+    # user_id) — the Stop button failed silently.
+    user_id = update.effective_user.id
     sem = await _check_user_slot(chat_id, user_id, update)
     if sem is None:
         return
@@ -2610,7 +2617,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result is None:
         return
     chat_id, thread_id, is_group = result
-    user_id = chat_id  # alias for log lines below
+    # The actual user id, not the chat id. In private mode these
+    # are equal (Telegram uses the same value for both), but in
+    # group mode chat_id is the group's id and user_id must be
+    # the user's id. The previous `user_id = chat_id` alias
+    # caused the abort_event key to mismatch what the callback
+    # handler looks up: (group_id, group_id) vs (group_id, real
+    # user_id) — the Stop button failed silently.
+    user_id = update.effective_user.id
     sem = await _check_user_slot(chat_id, user_id, update)
     if sem is None:
         return
@@ -2757,7 +2771,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)
         return
     chat_id, thread_id, is_group = result
-    user_id = chat_id  # alias for log lines below
+    # The actual user id, not the chat id. In private mode these
+    # are equal (Telegram uses the same value for both), but in
+    # group mode chat_id is the group's id and user_id must be
+    # the user's id. The previous `user_id = chat_id` alias
+    # caused the abort_event key to mismatch what the callback
+    # handler looks up: (group_id, group_id) vs (group_id, real
+    # user_id) — the Stop button failed silently.
+    user_id = update.effective_user.id
     sem = await _check_user_slot(chat_id, user_id, update)
     if sem is None:
         return
