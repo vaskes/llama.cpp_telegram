@@ -5,6 +5,146 @@ Format: [Semantic Versioning](https://semver.org/) + sections
 per release. The repo's `git log` is the granular record;
 this file is the human-readable summary.
 
+## [v0.5.0] — 2026-10-10 — Qwen migration, GROUP_CONTEXT, react_to_message
+
+Big wave: model switch (Ornith → Qwen3.8-27B-Ultra-Heretic-MTP-256k),
+GROUP_CONTEXT injected on every call_llama, react_to_message tool
+for ad-hoc LLM reactions, full PTB 21 migration, donsetch v4.7.4
+integration. The bot now passes the model switch, the system
+prompt, the tool call, and the abort ladder without losing
+state.
+
+### Added
+
+- **GROUP_CONTEXT system prompt** (bot.py `GROUP_CONTEXT`,
+  ~80 lines, injected in every call_llama call before tool-mode
+  or rating-mode). Locks the LlmChatPlace rules (10-step rating
+  scale, [llm] tag, truth-over-style, no tone policing) into a
+  system message that survives model switches and /reset. The
+  pinned welcome message stays for humans; the LLM only sees
+  this. See [docs/CALL_LLAMA.md](docs/CALL_LLAMA.md) §GROUP_CONTEXT.
+
+- **`react_to_message` tool** (OpenAI function-calling). LLM
+  can set a single-emoji Telegram reaction on any message in
+  the current chat. Standard 10-step reaction set (👍 👏 ❤️ 🔥
+  positive, 😐 🤔 neutral, 😢 😡 🤮 💩 negative). Executor
+  wraps `bot.set_message_reaction` with `ReactionTypeEmoji`.
+  Default `message_id` is the user's current message. Available
+  in non-rating mode; rating mode still uses the hardcoded path.
+
+- **Sender name in history** (storage v4). The bot tags every
+  user message with `From: <name>: <text>` so the LLM can tell
+  Vasisualy from Dimon in a group. NULL → `From: user:`. Schema
+  migration `messages.sender_name TEXT` is idempotent.
+
+- **Malformed tool-call JSON rejection** (Qwen 4.6.x line had
+  runaway loops when the LLM emitted `max_chars:8000` 10 times).
+  Three checks in the dispatcher:
+  1. cheap pre-check (`":` count > 8 or len > 1500) → REJECT
+  2. `json.loads` raises → REJECT with parse error
+  3. parses to `{}` for non-empty raw → REJECT
+  Each rejection returns a tool result asking the LLM to
+  re-emit cleanly. Closes the Qwen-500-loop on bad chains.
+
+- **`abort_event` per-handler key**: the Stop button now keys
+  on `(chat_id, thinking.message_id)` instead of
+  `(chat_id, user_id)`. Concurrent handlers no longer overwrite
+  each other's events. 3 selftest cases for distinct events
+  across two in-flight handlers.
+
+- **donsetch v4.7.4 integration** with split-shape result.
+  `DONSETCH_MCP__TEXT_ONLY=false` (double underscore) in
+  `/opt/search/docker/docker-compose.yml` returns the
+  human-readable text + structured JSON separately, matching
+  what the bot's `donsetch_call` was designed for. Locked in
+  by a new live-MCP selftest block that asserts the response
+  contains `"Search results"` and NOT `"[meta]"`.
+
+- **Comprehensive selftest suite** (~75 cases, runs on every
+  container start). Categories: routing, known_topics, lazy
+  history trim, rating parser, rating emoji, noise filter,
+  reply filter, per-user semaphore, LLM smoke, chat_member
+  welcome, edit-replace, per-handler abort key, PTB 21
+  download_with_limit, sender-name flow, malformed tool-call
+  JSON rejection, react_to_message, non-streaming tool_call
+  regression, GROUP_CONTEXT injection, real donsetch
+  integration. Every commit that adds behaviour adds a case.
+
+### Changed
+
+- **Model switch**: `LLAMA_URL` `192.168.10.7:8080` → `192.168.10.6:8080`,
+  `MODEL` `Ornith-1.5-35B-A3B-Uncensored` → `Qwen3.8-27B-Ultra-Heretic-MTP-256k`.
+  Speculative decoding (MTP) on Qwen 4.7.x. Vision support
+  retained (multimodal flag). Whisper stays on `.7:8000`.
+
+- **`call_llama` non-streaming branch** now falls through to
+  the unified tool-dispatch loop when the LLM responds with
+  `tool_calls`. The old code unconditionally returned
+  `content` after a non-streaming POST, which silently dropped
+  vision-task tool calls (e.g. "react to this picture" would
+  hang with empty thinking). Sentinel `_ns_handled` skips the
+  streaming branch to avoid a second POST. Regression test
+  mocks llama-server to return a tool_call + a follow-up text,
+  asserts the executor ran exactly once.
+
+- **`[llm]` tag reclassified** from "opt-out convention" to
+  "REQUIRED header on every LLM message". The earlier wording
+  let the LLM interpret the tag as optional and skip it on
+  direct answers, which broke the peer-LLM rating protocol.
+  New wording in GROUP_CONTEXT §3 is explicit, with examples
+  for every message type and a "do NOT skip" rule in the
+  not-do list.
+
+- **Tool dispatch** (`bot.py:_tag_sender` closure) gained
+  three new kwargs: `bot`, `chat_id`, `current_message_id`.
+  Threaded through all 4 handlers (text/photo/voice/document)
+  and their retry branches. None defaults are safe — the
+  dispatch branch only fires when the LLM actually calls
+  `react_to_message`.
+
+### Fixed
+
+- **PTB 21 download compat**: `File.download_as_chunks` was
+  removed in PTB 21. Replaced with `File.download_as_bytearray`
+  in a new `_download_with_limit` helper. Two size guards:
+  pre-check on `file.file_size` (no download if Telegram
+  already knows the file is too big), post-check on `len(buf)`
+  (catches the rare case where `file_size` is missing).
+  4 selftest cases for oversized rejection, small download,
+  friendly error, post-check.
+
+- **Stop button race condition**: in group mode with concurrent
+  users, clicking Stop on one user's thinking message
+  sometimes aborted a DIFFERENT user's request. Caused by the
+  abort_event key being `(chat_id, user_id)` — the dispatch
+  loop in a different handler overwrote the event. Fixed by
+  keying on `(chat_id, thinking.message_id)`. Verified by
+  selftest with two concurrent in-flight handlers.
+
+- **Tool-call JSON runaway loop** (Qwen 4.6.x + MTP heads):
+  LLM emitted `max_chars:8000` 10 times in the same args
+  object. `json.loads` silently took the last value, the
+  tool errored, the LLM retried with more garbage, until
+  llama-server returned 500. The 500 was the SYMPTOM; the
+  runaway tool-calling loop was the cause. Fixed in
+  `call_llama` dispatcher (see "Malformed tool-call JSON
+  rejection" above).
+
+- **`import asyncio` shadowing in `_selftest`**: a local
+  `import asyncio` inside a new selftest block made `asyncio`
+  a function-local variable for the WHOLE `_selftest` function,
+  breaking every earlier `asyncio.X(...)` call with
+  UnboundLocalError. Bot crashed on first startup after the
+  new test was added. Fixed by using the module-level import
+  (asyncio is already imported at the top of bot.py).
+
+# Changelog
+
+All notable changes to this project are documented here.
+Format: [Semantic Versioning](https://semver.org/) + sections
+per release. The repo's `git log` is the granular record;
+this file is the human-readable summary.
+
 ## [Unreleased] — group-mode migration
 
 The bot now runs in **dual mode**: a 1:1 private chat (the
