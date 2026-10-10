@@ -10,21 +10,26 @@ task list (F3-F8).
 
 ## Active (next-wave candidates)
 
-### F3 - Module split of `telegram-bot/bot.py` - IN PROGRESS
+### F3 - Module split of `telegram-bot/bot.py` - DONE
 
-**Status:** In progress on `feature/f3-module-split` worktree.
-**What:** Split the 5 518-line `bot.py` into 6 modules:
-- `prompts.py` (~150 lines) - GROUP_CONTEXT, RATING_RULES,
-  WELCOME_TEXT, _TOOL_KEYWORDS, RATING_EMOJI, BLOAT_EMOJI
-- `rating.py` (~120) - _parse_rating_response, _apply_reaction,
-  _execute_react_to_message, _is_rating_active,
-  _apply_rating_and_persist
-- `handlers.py` (~600) - handle_text, handle_photo, handle_voice,
-  handle_document, _download_with_limit, _sender_display_name
-- `dispatch.py` (~400) - main(), _run(), _register_bot_menu,
-  _dispatch_update, _handle_chat_member_update, polling loop
-- `call_llama.py` (~900) - call_llama, _tools cache, tool defs
-- `bot.py` (~3 200) - config, lifecycle, selftest
+**Status:** Complete on `feature/f3-module-split` (commit
+chain `ac0f319`..`c95b683`, pushed to origin 2026-10-11).
+**What:** Split the 5 518-line `bot.py` into 7 modules:
+- `config.py` (86 lines) - env constants, async primitives,
+  concurrency caps
+- `prompts.py` (133) - GROUP_CONTEXT, RATING_RULES,
+  WELCOME_TEXT, regex, RATING_EMOJI, BLOAT_EMOJI
+- `persistence.py` (76) - persist(), load_history()
+- `rating.py` (203) - rating-mode parser + applier +
+  react-to-message helper
+- `call_llama.py` (1142) - LLM call layer: tool defs,
+  donsetch MCP client, sender-name tagging, call_llama(),
+  transcribe_voice, fetch_tools_from_llama
+- `handlers.py` (757) - the 4 message handlers (text/photo/
+  voice/document) + their helpers
+- `dispatch.py` (1411) - main(), polling, command handlers,
+  auth, group routing, concurrency helpers, _dispatch_update
+- `bot.py` (2151) - imports, re-exports, _selftest, __main__
 
 **Why:** Each new feature wave compounds review cost; a
 6-module bot is reviewed ~10x cheaper than a 5 500-line
