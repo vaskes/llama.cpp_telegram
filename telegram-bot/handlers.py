@@ -11,6 +11,7 @@
 # in a project still in mid-refactor.
 
 import asyncio
+import base64
 import json
 import os
 import tempfile
