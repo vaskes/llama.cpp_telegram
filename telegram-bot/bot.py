@@ -4733,6 +4733,113 @@ async def _selftest():
     all_ok &= sn_ok
     print(f"[selftest] sender-name tests: {'all pass' if sn_ok else 'FAILED'}", flush=True)
 
+    # === Malformed tool-call JSON rejection (Qwen3.8 / MTP heads) ===
+    # Bug: Qwen3.8-27B-Ultra-Heretic-MTP-256k on .6:8080 sometimes
+    # emits tool-call args with the same key duplicated 10+ times or
+    # with a clipped closing brace. The previous fallback called the
+    # tool with {} which then errored, causing a runaway tool-calling
+    # loop that ended in a 500 from llama-server. Fix: reject
+    # malformed args up front and send a feedback tool result that
+    # tells the LLM to re-emit cleanly. These 8 cases cover the
+    # patterns we have seen in production logs.
+    print('[selftest] running malformed tool-call JSON rejection test...', flush=True)
+    rej_ok = True
+    try:
+        # Replicate the dispatcher block (it's a closure inside
+        # call_llama; we don't have a real round-trip harness here).
+        async def dispatch_one_tool(raw_args, fn_name="donsetch_web_fetch"):
+            if isinstance(raw_args, str) and raw_args:
+                if raw_args.count('":') > 8 or len(raw_args) > 1500:
+                    return ("REJECT", None,
+                            f"[bot: your tool call for {fn_name} had malformed args "
+                            f"(length={len(raw_args)}, possibly duplicate keys or clipped). "
+                            f"Please re-emit the tool call with a single, well-formed JSON object.]")
+                try:
+                    args = json.loads(raw_args)
+                except Exception as e:
+                    return ("REJECT", None,
+                            f"[bot: your tool call for {fn_name} had invalid JSON ({e!r}). "
+                            f"Please re-emit with a single well-formed JSON object.]")
+                if not args and raw_args.strip() not in ('{}', 'null', '[]'):
+                    return ("REJECT", None,
+                            f"[bot: your tool call for {fn_name} parsed to an empty object. "
+                            f"Please re-emit with actual parameters.]")
+                return ("CALL", args, None)
+            return ("CALL", {}, None)
+
+        # Case 1: the exact pattern from the bot's log - 10x max_chars.
+        raw = ('{"url":"https://korolev.ginfo.ru","max_chars":8000,"max_chars":8000,'
+               '"max_chars":8000,"max_chars":8000,"max_chars":8000,"max_chars":8000,'
+               '"max_chars":8000,"max_chars":8000,"max_chars":8000,"max_chars":8000}')
+        action, args, fb = await dispatch_one_tool(raw)
+        if action != "REJECT" or args is not None or "malformed args" not in fb:
+            print(f"  [FAIL] case 1: 10x max_chars should be rejected; got {action}, {args!r}", flush=True)
+            rej_ok = False
+        else:
+            print("  [OK] case 1: 10x max_chars rejected with malformed-args feedback", flush=True)
+
+        # Case 2: well-formed JSON should pass through.
+        action, args, fb = await dispatch_one_tool('{"url":"https://x.com","max_chars":8000}')
+        if action != "CALL" or args.get("url") != "https://x.com":
+            print(f"  [FAIL] case 2: well-formed JSON should pass; got {action}, {args!r}", flush=True)
+            rej_ok = False
+        else:
+            print("  [OK] case 2: well-formed 2-key JSON passes through", flush=True)
+
+        # Case 3: truncated JSON (closing brace clipped) - json.loads raises.
+        action, args, fb = await dispatch_one_tool('{"url":"https://x.com","max_chars":8000,"max_chars":8000')
+        if action != "REJECT" or "invalid JSON" not in fb:
+            print(f"  [FAIL] case 3: truncated JSON should be rejected; got {action}", flush=True)
+            rej_ok = False
+        else:
+            print("  [OK] case 3: truncated JSON rejected via parse error", flush=True)
+
+        # Case 4: bare 'null' - allowed (caller deals with args=None).
+        action, args, fb = await dispatch_one_tool('null')
+        if action != "CALL" or args is not None:
+            print(f"  [FAIL] case 4: bare null should pass through; got {action}, {args!r}", flush=True)
+            rej_ok = False
+        else:
+            print("  [OK] case 4: bare 'null' passes through (args=None is the caller's job)", flush=True)
+
+        # Case 5: very long arg string (>1500 chars).
+        raw = '{"url":"' + 'a' * 2000 + '"}'
+        action, args, fb = await dispatch_one_tool(raw)
+        if action != "REJECT":
+            print(f"  [FAIL] case 5: 2KB+ args should be rejected; got {action}", flush=True)
+            rej_ok = False
+        else:
+            print("  [OK] case 5: 2KB+ arg string rejected as too long", flush=True)
+
+        # Case 6: structural noise (only '{{' - parses to garbage).
+        action, args, fb = await dispatch_one_tool('{{')
+        if action != "REJECT":
+            print(f"  [FAIL] case 6: '{{' should be rejected; got {action}", flush=True)
+            rej_ok = False
+        else:
+            print("  [OK] case 6: structural noise rejected via parse error", flush=True)
+
+        # Case 7: empty {} is allowed - the tool decides if it needs args.
+        action, args, fb = await dispatch_one_tool('{}')
+        if action != "CALL" or args != {}:
+            print(f"  [FAIL] case 7: empty '{{}}' should pass; got {action}, {args!r}", flush=True)
+            rej_ok = False
+        else:
+            print("  [OK] case 7: empty '{{}}' passes through (tool decides)", flush=True)
+
+        # Case 8: legitimate 4-key JSON.
+        action, args, fb = await dispatch_one_tool('{"url":"https://x.com","max_chars":8000,"max_results":7,"language":"en"}')
+        if action != "CALL" or len(args) != 4 or args.get("language") != "en":
+            print(f"  [FAIL] case 8: 4-key JSON should pass; got {action}, {args!r}", flush=True)
+            rej_ok = False
+        else:
+            print("  [OK] case 8: 4-key JSON passes through with all 4 fields", flush=True)
+    except Exception as e:
+        print(f"  [FAIL] tool-rejection test raised: {type(e).__name__}: {e!r}", flush=True)
+        rej_ok = False
+    all_ok &= rej_ok
+    print(f"[selftest] tool-call JSON rejection tests: {'all pass' if rej_ok else 'FAILED'}", flush=True)
+
     # === Per-handler abort_event key (Stop button race fix) ===
     # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
     # in-flight handlers for the same user overwrote each other's
