@@ -238,6 +238,76 @@ Listed in `docs/TODO.md` under "Critical — operator tests":
   pressed, does the thinking message update, does the
   keyboard go away)
 
+## [v0.6.1] — 2026-10-10 — P0 hotfix for F3 module split
+
+Five P0 bugs from the v0.6.0 post-release review, all in bot.py
+or config.py. No user-facing behavior change - these were
+all internal cleanups. Silent hotfix (no public release notes
+at the time; added here retrospectively).
+
+### Fixed
+
+- **P0-1: F4 LRU bound is broken in handlers.** handlers.py
+  used raw `_abort_events[key] = ev` in 3 places, bypassing
+  the LRU eviction. Replaced with
+  `state._register_abort_event(chat_id, msg_id, ev)` in
+  handle_photo, handle_document, handle_text. handle_voice
+  didn't have abort_event at all in v0.5.2 - added it as
+  part of the same fix.
+- **P0-2: TWO _abort_events dicts in bot.py.** bot.py had a
+  duplicate OrderedDict and `_register_abort_event` function
+  that shadowed the state.py versions. Deleted the 60-line
+  block, kept only the `from state import ...` re-exports.
+- **P0-3: bot.py duplicated config constants.** 60 lines
+  of env-var reads (BOT_TOKEN, LLAMA_URL, ALLOWED_USER_IDS,
+  MAX_*_BYTES) AFTER importing them from config.py. The
+  local declarations shadowed the imports. Also deleted
+  the hardcoded `DISABLED_TOOLS = {25-entry set}` that
+  ignored the env-overridable config.DISABLED_TOOLS.
+- **P0-4: Two Storage instances.** bot.py had
+  `store = storage.Storage(DB_PATH)` creating an eager
+  instance; storage.py had `get_store()` lazy singleton.
+  Two open SQLite connections. Deleted the eager init.
+- **P0-5: Dockerfile is broken.** `COPY bot.py storage.py ./`
+  only copied 2 of 10 Python files. Changed to
+  `COPY *.py ./` with explanation comment.
+
+### Verified
+
+E2E with real Qwen3.8-27B: 173 chars response with [llm]
+prefix, abort_events cleaned to 0 after handler.
+
+## [v0.6.2] — 2026-10-11 — selftest regression hotfix after v0.6.1
+
+The v0.6.1 P0-4 fix (delete eager `store = ...`) broke the
+in-tree selftest, which uses `import bot as _b; _b.store.xxx`
+in 25 places. The hotfix restores the selftest as the safety
+net for the next refactor. Silent hotfix (no public release
+notes at the time; added here retrospectively).
+
+### Fixed
+
+- **T1a: Re-export Storage as `bot.store`.** Used
+  `from storage import get_store; store = get_store()` to
+  make `bot.store` a real Storage instance (not the get_store
+  function, which was the v0.6.1 mistake). Single instance
+  shared with `storage.get_store()`.
+- **T1b: Re-export `_PER_USER_SEMAPHORE_LIMIT` and
+  `_GLOBAL_LLM_SEM_LIMIT` to bot.py** (selftest used these).
+- **T2-T6: Dead code cleanup.** `from collections import
+  OrderedDict`, `import storage`, `DB_PATH = ...`,
+  `_apply_reaction` import, 3× duplicate concurrency caps
+  in config.py, `_s()` wrapper in persistence.py.
+
+### Deferred (v0.6.3)
+
+- LRU regression test in in-tree selftest (claimed in v0.6.2
+  commit message but not actually added - see v0.6.3).
+- Rating parser test `rest`→`body` KeyError (broken since
+  v0.6.0, fixed in v0.6.3).
+- Existing abort_event test uses raw insert (gives false
+  confidence, fixed in v0.6.3).
+
 ## [v0.5.0] — 2026-10-10 — Qwen migration, GROUP_CONTEXT, react_to_message
 
 Big wave: model switch (Ornith → Qwen3.8-27B-Ultra-Heretic-MTP-256k),

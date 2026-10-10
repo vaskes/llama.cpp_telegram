@@ -40,29 +40,6 @@ async def _discover_default_model(base_url: str, api_key: str) -> str:
 
 
 # === Custom tools ===
-def _discover_default_model(base_url: str, api_key: str) -> str:
-    """Hit /v1/models, return the first model id. Used only if MODEL is unset."""
-    import urllib.request
-    import json as _json
-    base = base_url.rstrip('/').removesuffix('/v1')
-    req = urllib.request.Request(
-        f"{base}/v1/models",
-        headers={"Authorization": f"Bearer {api_key}"},
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        data = _json.loads(resp.read())
-    models = data.get("data") or data.get("models") or []
-    if not models:
-        raise RuntimeError(f"llama-server at {base}/v1/models returned no models")
-    first = models[0]
-    return first.get("id") or first.get("name") or ""
-
-if not MODEL:
-    MODEL = _discover_default_model(LLAMA_URL, API_KEY)
-    print(f"[config] MODEL not set, auto-discovered from llama-server: {MODEL}", flush=True)
-
-
-
 async def get_weather(args):
     """Custom tool: wttr.in для погоды. Always works, no CAPTCHA."""
     location = args.get('location', '') or args.get('city', '')
@@ -299,6 +276,25 @@ async def fetch_tools_from_llama():
 
 
 
+async def _ensure_model() -> str:
+    """Lazy MODEL discovery. Called at the top of call_llama().
+
+    Why lazy: the v0.6.0 implementation ran this at import time,
+    which failed the whole bot if llama-server was unreachable
+    at boot. The v0.6.3 fix defers it to first LLM call, so
+    the bot starts cleanly and the user sees a clear error
+    when their first message tries to reach the model.
+
+    If MODEL is set in env (e.g. via docker-compose), this is a
+    no-op - we just return it.
+    """
+    global MODEL
+    if not MODEL:
+        MODEL = await _discover_default_model(LLAMA_URL, API_KEY)
+        print(f"[config] MODEL auto-discovered: {MODEL}", flush=True)
+    return MODEL
+
+
 async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None, bot=None, chat_id=None, current_message_id=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
@@ -321,6 +317,8 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     docs/CALL_LLAMA.md end-to-end and writing a regression test against
     a captured llama-server response. See also docs/REVIEW-MINIMAX.md §P3-4.
     """
+
+    await _ensure_model()  # lazy first-call discovery
     from dispatch import _stop_button_markup
     tools = await fetch_tools_from_llama()
     # custom_weather_tool is now in bot_side_tool_defs below; see "Add our
