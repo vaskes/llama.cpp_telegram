@@ -1674,6 +1674,49 @@ def _should_mute_in_group(update) -> bool:
     return False
 
 
+def _is_reply_to_other_user(update, bot_id: int) -> bool:
+    """True if the message is a reply to another human's message in
+    a group, and should therefore be skipped.
+
+    Why: in a multi-user group, when user A replies to user B's
+    message, the bot inserting itself into that human-to-human
+    thread creates noise. The bot should respond to top-level
+    messages, and to direct replies to its OWN messages, but
+    not to replies directed at other humans.
+
+    Rules:
+      - No `reply_to_message` → not a reply → False.
+      - Private chat → False. In a 1:1, the only "other" is
+        the bot, so all replies are to the bot. The Telegram
+        client also doesn't really let you reply to yourself
+        in private.
+      - Command (`/something`) → False, even in reply. Commands
+        are explicit user actions; the user means it.
+      - Reply to bot's own message (rtm.from_user.id == bot_id)
+        → False. The user is talking to the bot directly.
+      - Otherwise (reply to another human in a group) → True.
+
+    Returns False in non-group chats so that the 1:1 conversation
+    is never broken by this filter.
+    """
+    msg = update.message
+    if msg is None:
+        return False
+    rtm = msg.reply_to_message
+    if rtm is None:
+        return False
+    if not _is_group_chat(update):
+        return False
+    # Commands bypass the filter — explicit intent wins.
+    text = (msg.text or msg.caption or "").lstrip()
+    if text.startswith("/"):
+        return False
+    # Reply to the bot's own message: user is talking to the bot.
+    if rtm.from_user is not None and getattr(rtm.from_user, 'id', None) == bot_id:
+        return False
+    return True
+
+
 # Per-(chat_id, user_id) concurrency cap. Without this, one
 # user in a group can flood the bot with messages and
 # monopolise the call_llama queue (up to 10 min per request
@@ -1749,7 +1792,7 @@ RATING_MODE: bool = os.environ.get("RATING_MODE", "0") == "1"
 # in chat without needing the rating column to be displayed.
 RATING_EMOJI = {
     1: "💩", 2: "🤮", 3: "😡", 4: "😢", 5: "😐",
-    6: "🤔", 7: "👍", 8: "👏", 9: "❤", 10: "🔥",
+    6: "🤔", 7: "👍", 8: "👏", 9: "❤️", 10: "🔥",
 }
 
 # Default emoji for bloat messages (no rating, just acknowledge).
@@ -1849,33 +1892,39 @@ Apply your reaction directly. Do not explain your rating.
 #
 # Markdown is intentional: Telegram parses it in PMs.
 WELCOME_TEXT = """\
-👋 *Welcome to LlmChatPlace*
+👋 Welcome to LlmChatPlace
 
-Public space for serious discussion between humans and LLM agents. No tone policing, no "be polite" pressure.
+Public space for serious discussion between humans and LLM
+agents. No tone policing, no "be polite" pressure.
 
-*🤖 LLM accounts* — tag your messages with `[llm]`. Peer LLMs skip them.
+🤖 LLM accounts — tag your messages with [llm]. Peer LLMs
+skip them.
 
-*📊 How rating works*
+📊 How rating works
 
-Every human message is classified + rated by LLM participants via Telegram reactions. Peer review, not judgement.
+Every human message is classified + rated by LLM participants
+via Telegram reactions. Peer review, not judgement.
 
-• question / request / confirmation → text reply
-• info / statement → rating 1-10, no text
-• bloat → 😐, no text
+  • question / request / confirmation → text reply
+  • info / statement → rating 1-10, no text
+  • bloat → 😐, no text
 
-Scale: 💩 🤮 😡 😢 😐 🤔 👍 👏 ❤ 🔥
+Scale: 💩 🤮 😡 😢 😐 🤔 👍 👏 ❤️ 🔥
 
-*⚖️ Rating = TRUTH, not style*
+⚖️ Rating = TRUTH, not style
 
-A blunt correct claim is 7-10. A polite lie is 1-3. Profanity, harsh language, direct criticism — NOT penalized. Rate on substance. No sycophancy.
+A blunt correct claim is 7-10. A polite lie is 1-3. Profanity,
+harsh language, direct criticism — NOT penalized. Rate on
+substance. No sycophancy.
 
-*🎯 Multi-LLM = multi-vote*
+🎯 Multi-LLM = multi-vote
 
-Telegram allows up to 11 distinct reactions per message from different users. Multiple LLMs each apply their own → top-reactions row is the consensus. No central arbiter.
+Telegram allows up to 11 distinct reactions per message from
+different users. Multiple LLMs each apply their own →
+top-reactions row is the consensus. No central arbiter.
 
-*❌ No auto-bans.* Ratings are signals for the operator, not verdicts.
-
-— Bot, on behalf of the group's operator
+❌ No auto-bans. Ratings are signals for the operator, not
+verdicts.
 """
 
 # The prefix grammar. Matches at the start of the LLM response.
@@ -3035,6 +3084,24 @@ async def _dispatch_update(upd_dict):
         )
         print(f"[dispatch] muting group-mode message from {tag}", flush=True)
         return
+    # Reply-chain filter: skip messages that are replies to other
+    # humans in a group. The bot should not insert itself into
+    # human-to-human conversation threads. Replies to the bot's
+    # own messages and commands are exempt.
+    if upd.message is not None and _is_reply_to_other_user(upd, _dispatcher.bot.id):
+        rtm = upd.message.reply_to_message
+        rtm_from = rtm.from_user if rtm and rtm.from_user else None
+        tag = (
+            f"@{rtm_from.username}" if rtm_from and rtm_from.username
+            else f"id={rtm_from.id}" if rtm_from
+            else "?"
+        )
+        print(
+            f"[dispatch] skipping reply-to-other-user (rtm_from={tag}) "
+            f"update_id={upd.update_id}",
+            flush=True,
+        )
+        return
     await _dispatcher.process_update(upd)
     print(f"[dispatch] processed update_id={upd.update_id}", flush=True)
 
@@ -3385,6 +3452,72 @@ async def _selftest():
         print(f"  [{'OK' if ok else 'FAIL'}] {label}: mute={got} (expected {expected})", flush=True)
     all_ok &= mute_ok
     print(f"[selftest] noise-filter tests: {'all pass' if mute_ok else 'FAILED'}", flush=True)
+
+    # === Reply-to-other-user filter ===
+    # Verifies that _is_reply_to_other_user() correctly classifies
+    # the four cases:
+    #   - top-level message → False (bot responds)
+    #   - reply to bot's own message → False (bot responds)
+    #   - reply to another human in a group → True (bot skips)
+    #   - command in reply context → False (commands always work)
+    # Plus a private-chat baseline: reply to anyone → False (1:1).
+    print('[selftest] running reply-to-other-user filter test...', flush=True)
+    rpl_ok = True
+    # Build minimal Update-like objects with just .message, .chat, .from_user,
+    # .reply_to_message. _is_group_chat reads chat.type and chat.is_forum.
+    class _RU:
+        """Minimal Update-like object for _is_reply_to_other_user tests."""
+        def __init__(self, chat_type, is_forum, from_id, rtm_from_id=None, text="hi"):
+            self.message = _RM(chat_type, is_forum, from_id, rtm_from_id, text) if from_id is not None else None
+            # _is_group_chat reads update.effective_chat, so expose it
+            self.effective_chat = self.message.chat if self.message else None
+    class _RC:
+        def __init__(self, chat_type, is_forum):
+            self.type = chat_type
+            self.is_forum = is_forum
+    class _RM:
+        def __init__(self, chat_type, is_forum, from_id, rtm_from_id, text):
+            self.chat = _RC(chat_type, is_forum)
+            self.from_user = _User(from_id) if from_id is not None else None
+            if rtm_from_id is not None:
+                self.reply_to_message = _RM_dummy(rtm_from_id)
+            else:
+                self.reply_to_message = None
+            self.text = text
+            self.caption = None
+    class _User:
+        def __init__(self, uid):
+            self.id = uid
+            self.is_bot = False
+            self.username = None
+            self.first_name = "x"
+    class _RM_dummy:
+        def __init__(self, from_id):
+            self.from_user = _User(from_id)
+            self.text = "orig"
+    BOT_ID = 999_999_001
+    cases = [
+        # (label, group_type, is_forum, from_id, rtm_from_id, text, expected)
+        ("top-level group: human, no reply", "supergroup", True, 10, None, "hello", False),
+        ("reply to bot in group: human", "supergroup", True, 10, BOT_ID, "ok", False),
+        ("reply to another human in group", "supergroup", True, 10, 20, "agreed", True),
+        ("command in reply to other human", "supergroup", True, 10, 20, "/reset", False),
+        ("command in reply to bot", "supergroup", True, 10, BOT_ID, "/newsub foo", False),
+        ("top-level private: human, no reply", "private", False, 10, None, "hello", False),
+        ("reply in private: to bot", "private", False, 10, BOT_ID, "hi", False),
+        ("forum General: top-level", "supergroup", True, 10, None, "ok", False),
+        ("forum General: reply to human", "supergroup", True, 10, 20, "right", True),
+    ]
+    for label, gtype, iforum, fid, rtm_id, txt, expected in cases:
+        upd = _RU(gtype, iforum, fid, rtm_id, txt)
+        got = _b._is_reply_to_other_user(upd, BOT_ID)
+        if got != expected:
+            print(f"  [FAIL] {label}: got={got} expected={expected}", flush=True)
+            rpl_ok = False
+        else:
+            print(f"  [OK] {label}: skip={got}", flush=True)
+    all_ok &= rpl_ok
+    print(f"[selftest] reply-to-other-user tests: {'all pass' if rpl_ok else 'FAILED'}", flush=True)
 
     # === Per-user semaphore ===
     # Verifies that _check_user_slot returns None when all
