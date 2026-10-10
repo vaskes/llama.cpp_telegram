@@ -21,6 +21,7 @@ from telegram.ext import (
 )
 
 import call_llama
+from storage import get_store
 import state
 from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores
 import handlers
@@ -116,12 +117,12 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_thread_id = update.message.message_thread_id
         thread_id = str(msg_thread_id) if msg_thread_id is not None else _general_thread_id()
         n = await asyncio.to_thread(
-            store.delete_thread, chat_id, thread_id
+            get_store().delete_thread, chat_id, thread_id
         )
         # Look up the topic name for a friendlier message
         if msg_thread_id is not None:
             entry = await asyncio.to_thread(
-                store.find_known_topic_by_id, chat_id, msg_thread_id
+                get_store().find_known_topic_by_id, chat_id, msg_thread_id
             )
             topic_label = f"#{msg_thread_id} — {entry['name']}" if entry else f"#{msg_thread_id}"
         else:
@@ -139,11 +140,11 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
     thread_id = await _resolve_active(user_id)
-    n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
+    n = await asyncio.to_thread(get_store().delete_thread, user_id, thread_id)
     # delete_thread removes the thread row too, so re-create it
     # (empty) and keep it active. The user can still /subs to see it.
-    await asyncio.to_thread(store.create_thread, user_id, thread_id)
-    await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
+    await asyncio.to_thread(get_store().create_thread, user_id, thread_id)
+    await asyncio.to_thread(get_store().set_active_thread, user_id, thread_id)
     await _reply(update,
         f'🔄 Cleared {n} message(s) in sub-talk "{thread_id}".\n'
         f'Sub-talk is preserved. Use /delsub to remove the whole thread.'
@@ -196,10 +197,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         thread_id = str(update.message.message_thread_id)
         topics = await asyncio.to_thread(
-            store.list_known_topics, chat_id
+            get_store().list_known_topics, chat_id
         )
         # Per-topic message count from local DB
-        all_subs = await asyncio.to_thread(store.list_threads, chat_id)
+        all_subs = await asyncio.to_thread(get_store().list_threads, chat_id)
         msg_total = sum(s["msg_count"] for s in all_subs)
         cur_count = next(
             (s["msg_count"] for s in all_subs if s["thread_id"] == thread_id),
@@ -216,7 +217,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    subs = await asyncio.to_thread(store.list_threads, user_id)
+    subs = await asyncio.to_thread(get_store().list_threads, user_id)
     thread_id = await _resolve_active(user_id)
     current_count = next((s["msg_count"] for s in subs if s["thread_id"] == thread_id), 0)
     tools = await fetch_tools_from_llama()
@@ -293,7 +294,7 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # "list topics" method to bots, so the bot's local DB is
         # the only way to enumerate topics we know about.
         await asyncio.to_thread(
-            store.add_known_topic,
+            get_store().add_known_topic,
             update.effective_chat.id,
             topic.message_thread_id,
             topic_name,
@@ -315,15 +316,15 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    created = await asyncio.to_thread(store.create_thread, user_id, thread_id)
+    created = await asyncio.to_thread(get_store().create_thread, user_id, thread_id)
     if not created:
         # Already exists — just switch to it.
-        await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
+        await asyncio.to_thread(get_store().set_active_thread, user_id, thread_id)
         await _reply(update,
             f'ℹ Sub-talk "{thread_id}" already existed. Now active.'
         )
         return
-    await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
+    await asyncio.to_thread(get_store().set_active_thread, user_id, thread_id)
     await _reply(update,
         f'✅ Created sub-talk "{thread_id}" — now active.\n'
         f'Send any message to add to this thread. '
@@ -354,12 +355,12 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'Use /sub <thread_id> to switch, /subs to list all.'
         )
         return
-    existing = await asyncio.to_thread(store.get_thread, user_id, thread_id)
+    existing = await asyncio.to_thread(get_store().get_thread, user_id, thread_id)
     if existing is None:
         # Auto-create on /sub to a non-existent thread_id — friendlier than
         # asking the user to /newsub first.
-        await asyncio.to_thread(store.create_thread, user_id, thread_id)
-    await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
+        await asyncio.to_thread(get_store().create_thread, user_id, thread_id)
+    await asyncio.to_thread(get_store().set_active_thread, user_id, thread_id)
     await _reply(update, f'✅ Switched to sub-talk "{thread_id}".')
 
 # === cmd_here ===
@@ -376,7 +377,7 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # show the id alone.
         if msg_thread_id is not None:
             entry = await asyncio.to_thread(
-                store.find_known_topic_by_id, chat_id, msg_thread_id
+                get_store().find_known_topic_by_id, chat_id, msg_thread_id
             )
             if entry:
                 topic_label = f"#{msg_thread_id} — {entry['name']}"
@@ -384,7 +385,7 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 topic_label = f"#{msg_thread_id} (not in known_topics)"
         else:
             topic_label = "General"
-        last = await asyncio.to_thread(store.get_last_message, chat_id, thread_id)
+        last = await asyncio.to_thread(get_store().get_last_message, chat_id, thread_id)
         if last is None:
             snippet = '(empty)'
         else:
@@ -408,7 +409,7 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = await _reply_active(update, user_id)
     # Also show the thread_id's last message snippet so the user
     # remembers what they were doing here.
-    last = await asyncio.to_thread(store.get_last_message, user_id, current)
+    last = await asyncio.to_thread(get_store().get_last_message, user_id, current)
     if last is None:
         snippet = '(empty)'
     else:
@@ -437,7 +438,7 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # here. The Telegram sidebar is the authoritative list.
     if _is_group_chat(update):
         topics = await asyncio.to_thread(
-            store.list_known_topics, update.effective_chat.id
+            get_store().list_known_topics, update.effective_chat.id
         )
         if not topics:
             await _reply(update,
@@ -461,7 +462,7 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    subs = await asyncio.to_thread(store.list_threads, user_id)
+    subs = await asyncio.to_thread(get_store().list_threads, user_id)
     active = await _reply_active(update, user_id)
     if not subs:
         await _reply(update,
@@ -516,7 +517,7 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if arg.isdigit():
             tid = int(arg)
             entry = await asyncio.to_thread(
-                store.find_known_topic_by_id,
+                get_store().find_known_topic_by_id,
                 update.effective_chat.id,
                 tid,
             )
@@ -527,7 +528,7 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_name = entry["name"]
         else:
             entry = await asyncio.to_thread(
-                store.find_known_topic_by_name,
+                get_store().find_known_topic_by_name,
                 update.effective_chat.id,
                 arg,
             )
@@ -552,12 +553,12 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         # Remove from known_topics + wipe local message history.
         await asyncio.to_thread(
-            store.remove_known_topic,
+            get_store().remove_known_topic,
             update.effective_chat.id,
             target_id,
         )
         n = await asyncio.to_thread(
-            store.delete_thread, update.effective_chat.id, str(target_id)
+            get_store().delete_thread, update.effective_chat.id, str(target_id)
         )
         await _reply(update,
             f'🗑 Deleted topic "{target_name}" (id={target_id}) '
@@ -575,7 +576,7 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
-    n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
+    n = await asyncio.to_thread(get_store().delete_thread, user_id, thread_id)
     if n == 0:
         await _reply(update, f'❌ Sub-talk "{thread_id}" not found.')
         return
@@ -1197,10 +1198,10 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if data.startswith("sub:"):
         thread_id = data[4:]
-        existing = await asyncio.to_thread(store.get_thread, user_id, thread_id)
+        existing = await asyncio.to_thread(get_store().get_thread, user_id, thread_id)
         if existing is None:
-            await asyncio.to_thread(store.create_thread, user_id, thread_id)
-        await asyncio.to_thread(store.set_active_thread, user_id, thread_id)
+            await asyncio.to_thread(get_store().create_thread, user_id, thread_id)
+        await asyncio.to_thread(get_store().set_active_thread, user_id, thread_id)
         await update.callback_query.edit_message_text(
             f'✅ Switched to sub-talk "{thread_id}".'
         )
@@ -1216,7 +1217,7 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif data.startswith("delsub:"):
         thread_id = data[7:]
-        n = await asyncio.to_thread(store.delete_thread, user_id, thread_id)
+        n = await asyncio.to_thread(get_store().delete_thread, user_id, thread_id)
         await update.callback_query.edit_message_text(
             f'🗑 Deleted "{thread_id}" and {n} message(s).'
         )
