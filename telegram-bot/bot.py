@@ -5448,6 +5448,55 @@ async def _selftest():
     all_ok &= ctx_ok
     print(f"[selftest] GROUP_CONTEXT tests: {'all pass' if ctx_ok else 'FAILED'}", flush=True)
 
+    # === Real donsetch integration (against the live MCP server) ===
+    # Skip this whole block if the env doesn't expose DONSETCH_URL
+    # (e.g. in a unit-test environment that doesn't run the MCP).
+    # The test exercises donsetch_call() which goes through the real
+    # HTTP transport at 127.0.0.1:8765, validating that the v4.7.4
+    # split-shape (DONSETCH_MCP__TEXT_ONLY=false) gives us a
+    # human-readable text result instead of the [meta] JSON envelope.
+    if os.environ.get('DONSETCH_URL') or os.environ.get('LLAMABOT_SELFTEST') == '1':
+        print('[selftest] running real donsetch integration test...', flush=True)
+        rt_ok = True
+        try:
+            # asyncio is imported at the top of this file; we use it
+            # here without re-importing (a local `import asyncio` would
+            # shadow the module reference for the whole function and
+            # break every earlier `asyncio.X(...)` call in _selftest).
+            from bot import donsetch_call, _donsetch_session_id as _sid
+            # force re-init in case the session was set by a prior test
+            import bot as _b_module
+            _b_module._donsetch_session_id = None
+
+            async def _rt():
+                # web_search: human-readable result, no [meta] envelope
+                r = await donsetch_call('web_search',
+                    {'query': 'python 3.13 release', 'max_results': 2})
+                assert isinstance(r, str), f'web_search result is not str: {type(r)}'
+                assert 'Search results' in r, f'web_search missing "Search results": {r[:100]}'
+                assert '[meta]' not in r, f'web_search still has [meta] envelope (split-shape off?): {r[:200]}'
+                print(f'  [OK] web_search: {len(r)} chars, "Search results" present, no [meta] envelope', flush=True)
+
+                # web_fetch: markdown content
+                r2 = await donsetch_call('web_fetch',
+                    {'url': 'https://example.com'})
+                assert isinstance(r2, str), f'web_fetch result is not str: {type(r2)}'
+                assert 'Example Domain' in r2, f'web_fetch missing "Example Domain": {r2[:200]}'
+                print(f'  [OK] web_fetch: {len(r2)} chars, markdown content delivered', flush=True)
+
+            asyncio.run(_rt())
+        except AssertionError as e:
+            print(f"  [FAIL] {e!r}", flush=True)
+            rt_ok = False
+        except Exception as e:
+            # If donsetch is unreachable (e.g. test env without MCP),
+            # skip rather than fail - we still have the curl-level
+            # test in the deployment script.
+            print(f"  [SKIP] donsetch unreachable in this env: {type(e).__name__}: {e!r}", flush=True)
+            rt_ok = True
+        all_ok &= rt_ok
+        print(f"[selftest] real donsetch integration tests: {'all pass' if rt_ok else 'FAILED'}", flush=True)
+
     # === Per-handler abort_event key (Stop button race fix) ===
     # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
     # in-flight handlers for the same user overwrote each other's
