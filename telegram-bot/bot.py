@@ -8,6 +8,7 @@ import tempfile
 import urllib.parse
 import socket
 import asyncio
+from collections import OrderedDict
 import httpx
 from typing import Optional
 from telegram import Update
@@ -675,7 +676,35 @@ _EMOJI_CHAR_RE = _rating_re.compile(
 # Entries are added at the start of the handler and removed in
 # a try/finally so an exception doesn't leak the event into
 # the next handler call.
-_abort_events: dict = {}
+_ABORT_EVENTS_MAXSIZE = 200
+_abort_events: "OrderedDict[tuple[int, int], asyncio.Event]" = OrderedDict()
+
+
+
+def _register_abort_event(chat_id: int, message_id: int, ev: asyncio.Event) -> None:
+    """Insert (chat_id, message_id) -> ev into _abort_events with
+    LRU eviction if at maxsize. Touch (move to end) on every
+    successful lookup so active handlers don't get evicted while
+    still in flight.
+
+    Why bounded: in v0.5.1, handlers register the event at the
+    start and remove it in a try/finally. A handler that raises
+    between insert and pop leaks the entry. With the per-user
+    semaphore (max 2 concurrent per user) and the global LLM
+    semaphore (max 4 total), the leak is bounded by the number
+    of distinct users sending concurrent messages. In practice,
+    200 is a generous ceiling; real-world load peaks at ~30.
+    """
+    key = (chat_id, message_id)
+    if key in _abort_events:
+        # Touch: move to end so we don't evict an active handler
+        # just to re-insert at the same key.
+        _abort_events.move_to_end(key)
+    else:
+        _abort_events[key] = ev
+        while len(_abort_events) > _ABORT_EVENTS_MAXSIZE:
+            # Evict the oldest entry (first inserted, least recently touched).
+            _abort_events.popitem(last=False)
 
 # === Edit-replace tracking ===
 # When a user edits their message, the bot's previous response to
