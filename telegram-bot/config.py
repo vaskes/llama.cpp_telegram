@@ -42,6 +42,38 @@ SHUTDOWN_EVENT: Optional[asyncio.Event] = None
 # === Tool cache (lazy-init) ===
 _TOOLS_CACHE = None
 
+# === Concurrency caps (v0.5.1 T1 / P0-1) ===
+# Per-user: at most 2 concurrent call_llama() per (chat_id, user_id).
+# Global: at most 4 concurrent call_llama() across all users.
+# Combined: getUpdates limit=10 + 2*2 per-user + 4 global = at most
+# 10 in-flight dispatches at any moment, only 4 in the LLM call.
+_GLOBAL_LLM_SEM_LIMIT = 4
+_PER_USER_SEMAPHORE_LIMIT = 2
+
+# === Concurrency caps (v0.5.1 T1 / P0-1) ===
+# Per-user: at most 2 concurrent call_llama() per (chat_id, user_id).
+# Global: at most 4 concurrent call_llama() across all users.
+# Combined: getUpdates limit=10 + 2*2 per-user + 4 global = at most
+# 10 in-flight dispatches at any moment, only 4 in the LLM call.
+_GLOBAL_LLM_SEM_LIMIT = 4
+_PER_USER_SEMAPHORE_LIMIT = 2
+
+# === Concurrency caps (v0.5.1 T1 / P0-1) ===
+# Per-user: at most 2 concurrent call_llama() per (chat_id, user_id).
+# Global: at most 4 concurrent call_llama() across all users.
+# Combined: getUpdates limit=10 + 2*2 per-user + 4 global = at most
+# 10 in-flight dispatches at any moment, only 4 in the LLM call.
+_GLOBAL_LLM_SEM_LIMIT = 4
+_PER_USER_SEMAPHORE_LIMIT = 2
+
+# === Concurrency caps (v0.5.1 T1 / P0-1) ===
+# Per-user: at most 2 concurrent call_llama() per (chat_id, user_id).
+# Global: at most 4 concurrent call_llama() across all users.
+# Combined: getUpdates limit=10 + 2*2 per-user + 4 global = at most
+# 10 in-flight dispatches at any moment, only 4 in the LLM call.
+_GLOBAL_LLM_SEM_LIMIT = 4
+_PER_USER_SEMAPHORE_LIMIT = 2
+
 # === Conversation store ===
 DB_PATH = os.environ.get("CONVERSATIONS_DB", "/app/data/conversations.db")
 CONTEXT_MESSAGES = int(os.environ.get("CONTEXT_MESSAGES", "20"))
