@@ -22,7 +22,7 @@ from telegram.ext import ContextTypes
 from call_llama import call_llama, transcribe_voice, fetch_tools_from_llama, get_weather, _discover_default_model, _donsetch_init, donsetch_call, _tag_sender
 import state  # cross-module state (see state.py)
 from storage import get_store
-from state import _abort_events, _bot_replies, _get_global_llm_sem
+from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event
 from rating import _is_rating_active, _apply_rating_and_persist
 # Late imports for cross-module state (see state.py). The state
 # lives in state.py to break the circular dep between handlers.py
@@ -272,7 +272,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         # Per-task abort event for the Stop button.
         abort_event = asyncio.Event()
-        _abort_events[(chat_id, thinking.message_id)] = abort_event
+        _register_abort_event(chat_id, thinking.message_id, abort_event)
         # Compute rating_active here (before call_llama) so we
         # can pass it to the model AND use it in the dispatcher.
         rating_active = _is_rating_active(update)
@@ -476,10 +476,17 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…')
+        # Per-task abort event for the Stop button. handle_voice
+        # didn't have this in v0.5.2 either; the F4 fix in v0.6.0
+        # added it to handle_photo / handle_document / handle_text
+        # but missed voice. Adding it here so the Stop button
+        # works for voice messages too.
+        abort_event = asyncio.Event()
+        _register_abort_event(chat_id, thinking.message_id, abort_event)
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         # === RATING_MODE dispatch (continuation) ===
         # rating_active was computed above (before call_llama).
         # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
@@ -562,7 +569,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
         rating_active = _is_rating_active(update)
         abort_event = asyncio.Event()
-        _abort_events[(chat_id, thinking.message_id)] = abort_event
+        _register_abort_event(chat_id, thinking.message_id, abort_event)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
@@ -680,7 +687,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # have at most 2 in-flight requests, so the dict shouldn't
     # grow without bound).
     abort_event = asyncio.Event()
-    _abort_events[(chat_id, thinking.message_id)] = abort_event
+    _register_abort_event(chat_id, thinking.message_id, abort_event)
     try:
         rating_active = _is_rating_active(update)
         # T1 (P0-1): wrap call_llama in the global semaphore so

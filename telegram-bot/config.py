@@ -9,6 +9,8 @@ from typing import Optional
 
 # === Telegram bot identity ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN env var is required but not set")
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}" if BOT_TOKEN else ""
 

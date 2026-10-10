@@ -100,48 +100,6 @@ from handlers import (
     _reject_in_group, _persist_message, _load_history,
 )
 
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN env var is required but not set")
-LLAMA_URL = os.environ.get('LLAMA_URL', 'http://localhost:8080/v1')
-WHISPER_URL = os.environ.get('WHISPER_URL', 'http://localhost:8000')
-API_KEY = os.environ.get('API_KEY', 'sk-no-key')
-MODEL = os.environ.get('MODEL', '').strip()
-
-# Если MODEL не задан — спросим у llama-server, что реально загружено.
-# Это автоматически подстраивается под любую конфигурацию и не
-# привязывает репо к конкретной модели.
-
-# === Security: whitelist ===
-# ALLOWED_USER_IDS — comma-separated numeric Telegram user IDs, e.g. "123456789,987654321"
-# ALLOWED_USERNAMES — comma-separated Telegram usernames (without @), case-insensitive
-# Both empty = LOCKDOWN (bot rejects everyone). Set at least one to allow access.
-ALLOWED_USER_IDS_RAW = os.environ.get('ALLOWED_USER_IDS', '').strip()
-ALLOWED_USERNAMES_RAW = os.environ.get('ALLOWED_USERNAMES', '').strip()
-ALLOWED_USER_IDS = {int(x) for x in ALLOWED_USER_IDS_RAW.split(',') if x.strip().isdigit()}
-ALLOWED_USERNAMES = {x.lstrip('@').lower() for x in ALLOWED_USERNAMES_RAW.split(',') if x.strip()}
-if not ALLOWED_USER_IDS and not ALLOWED_USERNAMES:
-    LOCKDOWN = True
-    print('[SECURITY] ALLOWED_USER_IDS and ALLOWED_USERNAMES both empty -> LOCKDOWN (reject all).', flush=True)
-else:
-    LOCKDOWN = False
-    print(f'[SECURITY] whitelist: {len(ALLOWED_USER_IDS)} ids, {len(ALLOWED_USERNAMES)} usernames', flush=True)
-    # Username-based access is fragile: users can change their @username
-    # at any time and silently lose access. Prefer IDs. Warn if usernames
-    # are configured without any IDs to anchor on.
-    if ALLOWED_USERNAMES and not ALLOWED_USER_IDS:
-        print('[SECURITY] WARNING: ALLOWED_USERNAMES is set but ALLOWED_USER_IDS is empty. '
-              'Username-based access can break if a user changes their @username. '
-              'Prefer numeric IDs (find yours via @userinfobot or by reading '
-              '"rejected id=..." in the logs).', flush=True)
-
-# === Size limits ===
-# Without these, a single user sending a 50-MP photo or a 500-MB PDF
-# could OOM the bot process. We reject upfront, before downloading.
-MAX_PHOTO_BYTES = int(os.environ.get('MAX_PHOTO_BYTES', '10000000'))   # 10 MB
-MAX_DOC_BYTES = int(os.environ.get('MAX_DOC_BYTES', '5000000'))       # 5 MB
-MAX_VOICE_BYTES = int(os.environ.get('MAX_VOICE_BYTES', '20000000'))  # 20 MB
-MAX_VIDEO_NOTE_BYTES = int(os.environ.get('MAX_VIDEO_NOTE_BYTES', '50000000'))  # 50 MB
 # Voice messages are typically <1 MB and capped client-side at 20 MB.
 # Video notes (round video) go through the same handler via filters.AUDIO
 # and can be 5-50 MB; a separate, higher cap keeps them working without
@@ -152,23 +110,6 @@ MAX_VIDEO_NOTE_BYTES = int(os.environ.get('MAX_VIDEO_NOTE_BYTES', '50000000'))  
 # sub-talks were introduced — see docs/CALL_LLAMA.md §7 for the
 # rationale.
 
-# Tools the bot does NOT execute (security or not implemented)
-DISABLED_TOOLS = {
-    'read_file', 'write_file', 'edit_file', 'exec_shell_command',
-    'file_glob_search', 'grep_search', 'get_info',
-    'playwright_browser_close', 'playwright_browser_resize',
-    'playwright_browser_console_messages', 'playwright_browser_handle_dialog',
-    'playwright_browser_evaluate', 'playwright_browser_file_upload',
-    'playwright_browser_drop', 'playwright_browser_find',
-    'playwright_browser_fill_form', 'playwright_browser_press_key',
-    'playwright_browser_type', 'playwright_browser_navigate',
-    'playwright_browser_navigate_back', 'playwright_browser_network_requests',
-    'playwright_browser_network_request', 'playwright_browser_run_code_unsafe',
-    'playwright_browser_take_screenshot', 'playwright_browser_snapshot',
-    'playwright_browser_click', 'playwright_browser_drag',
-    'playwright_browser_hover', 'playwright_browser_select_option',
-    'playwright_browser_tabs', 'playwright_browser_wait_for',
-}
 
 # Кеш tools (загружаются один раз)
 _TOOLS_CACHE = None
@@ -188,9 +129,6 @@ SHUTDOWN_EVENT: Optional[asyncio.Event] = None
 import storage  # local module; safe because storage has no top-level
                  # I/O at import time
 DB_PATH = os.environ.get('CONVERSATIONS_DB', '/app/data/conversations.db')
-CONTEXT_MESSAGES = int(os.environ.get('CONTEXT_MESSAGES', '20'))
-store = storage.Storage(DB_PATH)
-print(f"[storage] SQLite at {DB_PATH} (context window: {CONTEXT_MESSAGES} msgs)", flush=True)
 
 
 # Keywords (RU + EN) that signal the user actually wants a tool call.
@@ -660,58 +598,8 @@ _EMOJI_CHAR_RE = _rating_re.compile(
 # dispatch. We never call .start() on it; the dispatcher works fine
 # without start() for one-shot process_update.
 
-# === Per-task abort events (Stop button) ===
-# When the user clicks "Stop" on the thinking message, we set
-# the event for that specific handler. call_llama() checks
-# the event between iterations of the tool loop and bails out
-# with the special return value None. The handler then
-# edits the thinking message to "⏹ Остановлено" and moves to
-# the next update.
-#
-# The dict is keyed by (chat_id, thinking.message_id) so each
-# handler has its own slot. The previous key (chat_id, user_id)
-# was shared across all in-flight handlers for the same user,
-# which caused the LATER handler to overwrite the EARLIER one:
-# a Stop click then set the wrong event, and the earlier LLM
-# call ran to completion while the user thought it had been
-# stopped. (Bug observed in 348109712 / 348109710 sequence.)
-# The semaphore is still per-(chat,user) and limits concurrent
-# handlers, but the per-handler event key guarantees that the
-# Stop click on a specific thinking message targets the matching
-# handler - no race between concurrent in-flight requests.
-#
-# Entries are added at the start of the handler and removed in
-# a try/finally so an exception doesn't leak the event into
-# the next handler call.
-_ABORT_EVENTS_MAXSIZE = 200
-_abort_events: "OrderedDict[tuple[int, int], asyncio.Event]" = OrderedDict()
-
-
-
-def _register_abort_event(chat_id: int, message_id: int, ev: asyncio.Event) -> None:
-    """Insert (chat_id, message_id) -> ev into _abort_events with
-    LRU eviction if at maxsize. Touch (move to end) on every
-    successful lookup so active handlers don't get evicted while
-    still in flight.
-
-    Why bounded: in v0.5.1, handlers register the event at the
-    start and remove it in a try/finally. A handler that raises
-    between insert and pop leaks the entry. With the per-user
-    semaphore (max 2 concurrent per user) and the global LLM
-    semaphore (max 4 total), the leak is bounded by the number
-    of distinct users sending concurrent messages. In practice,
-    200 is a generous ceiling; real-world load peaks at ~30.
-    """
-    key = (chat_id, message_id)
-    if key in _abort_events:
-        # Touch: move to end so we don't evict an active handler
-        # just to re-insert at the same key.
-        _abort_events.move_to_end(key)
-    else:
-        _abort_events[key] = ev
-        while len(_abort_events) > _ABORT_EVENTS_MAXSIZE:
-            # Evict the oldest entry (first inserted, least recently touched).
-            _abort_events.popitem(last=False)
+# _abort_events and _register_abort_event moved to state.py (v0.6.1 cleanup).
+# Re-exported at the top of this file via `from state import ...`.
 
 # === Edit-replace tracking ===
 # When a user edits their message, the bot's previous response to
