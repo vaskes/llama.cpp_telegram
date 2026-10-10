@@ -191,17 +191,20 @@ of test coverage.
 to be the natural place to swap polling for webhook mode
 when the next migration happens.
 
-### F4 - Bounded `_abort_events` cleanup - 30 min
+### F4 - Bounded `_abort_events` cleanup - DONE in v0.6.0
 
-**Status:** Deferred (P2).
-**What:** The `_abort_events: dict` in `bot.py:3679` can
-leak entries if a handler raises between insert and pop
-without going through the `finally`. Per-user semaphore
-bounds the leak but does not eliminate it.
-**Fix options:** (a) `weakref.finalize` on the thinking
-message; (b) per-call `ContextVar`; (c) explicit LRU cap
-on the dict (e.g. maxsize=200 with oldest-first eviction).
-**When:** Anytime after F3 lands. Easy 30-min cleanup.
+**Status:** DONE in v0.6.0. See commits `6985249` (initial
+implementation) and `935f4d2` (handlers.py migration).
+- `_abort_events` is `collections.OrderedDict` with
+  `_ABORT_EVENTS_MAXSIZE = 200`.
+- `_register_abort_event(chat_id, msg_id, ev)` does
+  `move_to_end` on touch and `popitem(last=False)` to evict
+  the oldest entry at cap.
+- All 4 message handlers (photo, voice, document, text)
+  use `_register_abort_event` since v0.6.1.
+- In-tree selftest has F4 LRU regression test (3-line
+  insert-250-assert-200) since v0.6.3.
+
 
 ### Webhook migration for edit-during-LLM abort - 6-10 h
 

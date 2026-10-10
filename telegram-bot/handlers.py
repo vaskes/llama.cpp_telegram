@@ -19,16 +19,15 @@ import tempfile
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from call_llama import call_llama, transcribe_voice, fetch_tools_from_llama, get_weather, _discover_default_model, _donsetch_init, donsetch_call, _tag_sender
+from call_llama import call_llama, transcribe_voice, _tag_sender
 import state  # cross-module state (see state.py)
 from storage import get_store
 from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event
 from rating import _is_rating_active, _apply_rating_and_persist
-# Late imports for cross-module state (see state.py). The state
+# Per-function late imports from dispatch (see below). The state
 # lives in state.py to break the circular dep between handlers.py
-# and dispatch.py (both need _abort_events, _bot_replies,
-# _get_global_llm_sem). Late import: done at handler-call time so
-# bot.py is fully loaded by the time we read these.
+# and dispatch.py. Each handler does `from dispatch import X`
+# inside the function, importing only what it actually uses.
 import persistence
 import prompts
 import rating
@@ -50,7 +49,7 @@ async def send_reply(update: Update, text: str):
     Also records the (chat_id, user_message_id) → bot_message_id mapping
     so a later user edit can trigger delete+reprocess.
     """
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
+    from dispatch import _is_group_chat, reject_if_unauthorized
     text = (text or '').strip()
     if not text:
         text = EMPTY_RESPONSE_FALLBACK
@@ -103,7 +102,7 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
       - chat_id = effective_chat.id (the group id, negative).
       - thread_id = str(message_thread_id) -- the Telegram topic id.
     """
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
+    from dispatch import _is_group_chat
     msg = update.message
     if _is_group_chat(update):
         # Group mode. Telegram is the source of truth for thread
@@ -138,7 +137,7 @@ async def _reply(update, text, **kwargs):
     in the General topic instead of staying in the user's topic.
     This helper fixes that.
     """
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
+    from dispatch import _is_group_chat
     if _is_group_chat(update):
         kwargs.setdefault('message_thread_id', update.message.message_thread_id)
     return await update.message.reply_text(text, **kwargs)
@@ -154,7 +153,7 @@ async def _reject_in_group(update) -> bool:
     Returns True if the message is in a group and we sent a notice,
     False otherwise (i.e. the caller should continue processing).
     """
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
+    from dispatch import _check_user_slot, _stop_button_markup
     if _is_group_chat(update):
         await _reply(
             update,
@@ -209,13 +208,13 @@ def _sender_display_name(user) -> str | None:
 
 # === handle_photo ===
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
+    from dispatch import _check_user_slot
     print(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}", flush=True)
     result = await _route_to_thread(update, context)
     if result is None:
         print("[handle_photo] REJECTED", flush=True)
         return
-    chat_id, thread_id, is_group = result
+    chat_id, thread_id = result[:2]  # is_group unused
     print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}", flush=True)
     sem = await _check_user_slot(chat_id, update.effective_user.id, update)
     if sem is None:
@@ -422,11 +421,11 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
 
 # === handle_voice ===
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
+    from dispatch import _check_user_slot
     result = await _route_to_thread(update, context)
     if result is None:
         return
-    chat_id, thread_id, is_group = result
+    chat_id, thread_id = result[:2]  # is_group unused
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be
@@ -520,11 +519,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === handle_document ===
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
+    from dispatch import _check_user_slot
     result = await _route_to_thread(update, context)
     if result is None:
         return
-    chat_id, thread_id, is_group = result
+    chat_id, thread_id = result[:2]  # is_group unused
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be
@@ -658,7 +657,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result is None:
         print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)
         return
-    chat_id, thread_id, is_group = result
+    chat_id, thread_id = result[:2]  # is_group unused
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be

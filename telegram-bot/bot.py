@@ -1142,11 +1142,11 @@ async def _selftest():
     for text, exp_type, exp_rating, exp_rest in parse_cases:
         got = _b._parse_rating_response(text)
         if got['type'] != exp_type or got['rating'] != exp_rating:
-            print(f"  [FAIL] {text!r}: type={got['type']!r} rating={got['rating']!r} rest={got['rest']!r} "
+            print(f"  [FAIL] {text!r}: type={got['type']!r} rating={got['rating']!r} rest={got['body']!r} "
                   f"(expected type={exp_type!r}, rating={exp_rating!r})", flush=True)
             parse_ok = False
-        elif exp_rest and exp_rest not in got['rest']:
-            print(f"  [FAIL] {text!r}: rest={got['rest']!r} doesn't contain {exp_rest!r}", flush=True)
+        elif exp_rest and exp_rest not in got['body']:
+            print(f"  [FAIL] {text!r}: rest={got['body']!r} doesn't contain {exp_rest!r}", flush=True)
             parse_ok = False
     if parse_ok:
         print(f"  [OK] all {len(parse_cases)} parse cases passed", flush=True)
@@ -2036,8 +2036,10 @@ async def _selftest():
         ev_a.set()  # simulate "user clicked Stop on handler A"
         # The OLD key (chat_id, user_id) would collide; the NEW key
         # uses the thinking message id which is unique per handler.
-        _b._abort_events[(-1001234567890, 5001)] = ev_a
-        _b._abort_events[(-1001234567890, 5002)] = ev_b
+        # Use _register_abort_event (not raw insert) so the F4
+        # LRU bound fires - the runtime path is the production path.
+        _b._register_abort_event(-1001234567890, 5001, ev_a)
+        _b._register_abort_event(-1001234567890, 5002, ev_b)
         # Both events present, neither overwrites the other.
         if _b._abort_events.get((-1001234567890, 5001)) is not ev_a:
             print("  [FAIL] handler A event overwritten or missing", flush=True)
@@ -2058,6 +2060,7 @@ async def _selftest():
         else:
             print("  [OK] setting handler A's event does not affect handler B", flush=True)
         # Pop only the matching key; the other stays intact.
+
         popped = _b._abort_events.pop((-1001234567890, 5001), None)
         if popped is not ev_a:
             print("  [FAIL] pop on handler A key returned wrong value", flush=True)
@@ -2075,6 +2078,39 @@ async def _selftest():
         aek_ok = False
     all_ok &= aek_ok
     print(f"[selftest] abort_event key tests: {'all pass' if aek_ok else 'FAILED'}", flush=True)
+    # === F4 LRU bound (v0.6.0 P0-1 regression test) ===
+    # _abort_events is LRU-bounded at 200 entries. If someone
+    # removes the OrderedDict or the popitem in
+    # _register_abort_event, the 250 -> 200 assertion fails
+    # loudly. Without this test, the v0.6.0 P0-1 bug is silently
+    # regressable on the next refactor.
+    print('[selftest] running F4 LRU bound test...', flush=True)
+    lru_ok = True
+    saved_aes = dict(_b._abort_events)
+    _b._abort_events.clear()
+    try:
+        for i in range(250):
+            _b._register_abort_event(0, i, asyncio.Event())
+        if len(_b._abort_events) != 200:
+            print(f"  [FAIL] F4 LRU bound: expected 200, got {len(_b._abort_events)}", flush=True)
+            lru_ok = False
+        else:
+            print("  [OK] F4 LRU bound at 200 (250 inserts -> 200 entries)", flush=True)
+        if (0, 0) in _b._abort_events:
+            print("  [FAIL] F4 LRU should have evicted (0, 0)", flush=True)
+            lru_ok = False
+        else:
+            print("  [OK] F4 LRU evicted oldest 50 entries", flush=True)
+    except Exception as e:
+        print(f"  [FAIL] F4 LRU test raised: {type(e).__name__}: {e!r}", flush=True)
+        lru_ok = False
+    finally:
+        _b._abort_events.clear()
+        _b._abort_events.update(saved_aes)
+    all_ok &= lru_ok
+    print(f"[selftest] F4 LRU bound: {'all pass' if lru_ok else 'FAILED'}", flush=True)
+
+
 
     print('[selftest] done', flush=True)
     print('[selftest] done', flush=True)
