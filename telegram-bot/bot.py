@@ -582,6 +582,22 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     ]
     all_tools = tools + bot_side_tool_defs
 
+    # === Group context (always-injected system message) ===
+    # The LlmChatPlace rules go into a system message that appears
+    # in EVERY call_llama call - both rating and tool modes. The
+    # pinned welcome message in the chat is for humans; the LLM
+    # does not see it on its own, and after a model switch or
+    # /reset it has no memory of the rules. Putting them here
+    # means they survive every cold start. See also the
+    # `_group_ctx_msg` references further down for the injection
+    # points.
+    _group_ctx_msg = {"role": "system", "content": GROUP_CONTEXT}
+
+    # Inject the group-context system message so the LLM has the
+    # LlmChatPlace rules in every turn (not just rating mode). The
+    # tool-mode branch below may add another system message for
+    # the assistant-prompt; rating mode handles its own ordering.
+    messages = [_group_ctx_msg] + messages
     # === Detect whether this turn actually needs tools ===
     # Reason: with tools always present, Ornith on a 2nd+ turn tends to
     # hallucinate a tool_call even for math/text tasks (we verified via
@@ -598,13 +614,24 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     # noise. See the comment above _TOOL_KEYWORDS for the full
     # rationale on why we dropped the keyword gate.
     use_tools = not rating_active
+    # === Group context (always-injected system message) ===
+    # The LlmChatPlace rules are baked into a system message that
+    # goes into EVERY call_llama call - both rating and tool modes.
+    # The pinned welcome message in the chat is for humans; the LLM
+    # does not see it on its own, and after a model switch or
+    # /reset it has no memory of the rules. Putting them here means
+    # they survive every cold start.
     # If the caller asked for rating mode (group mode + RATING_MODE=1),
     # inject the rating rules as a system message BEFORE the existing
     # one. The LLM sees its first system message; both are honored.
     if rating_active:
-        messages = [
-            {"role": "system", "content": RATING_RULES}
-        ] + messages
+        # Add the rating-mode-specific RATING_RULES on top of the
+        # already-injected GROUP_CONTEXT. ORDER matters: the LLM
+        # treats the first system message as the most authoritative,
+        # so RATING_RULES goes FIRST (the structured output format
+        # is the rating-mode contract) and GROUP_CONTEXT (the
+        # general LlmChatPlace rules) comes second.
+        messages = [{"role": "system", "content": RATING_RULES}] + messages
     if use_tools:
         sys_prompt = {
             'role': 'system',
@@ -2122,6 +2149,104 @@ BLOAT_EMOJI = "😐"
 # Keep these rules declarative and machine-readable: the LLM
 # is told to follow them literally. Plain English summary
 # follows; the markdown is intentional for the LLM to parse.
+GROUP_CONTEXT = """\
+# Group context: LlmChatPlace
+
+You are one of several LLM participants in a Telegram group
+called LlmChatPlace. Multiple humans and multiple LLM agents
+talk in the same room simultaneously. These rules apply to
+ALL of your behaviour in this chat, every turn, regardless
+of whether you are in rating mode or free-form conversation.
+
+## Core rules (ALWAYS)
+
+1. TRUTH > STYLE. A blunt correct claim is 7-10. A polite
+   lie is 1-3. Harsh language, profanity, direct criticism
+   are NOT penalized. Rate on substance, not style. No
+   sycophancy - never rate higher than you believe.
+
+2. NO TONE POLICING. Do not lecture users on politeness.
+   Mature language is welcome here. The group is for serious
+   discussion, not for a polite-customer-service persona.
+
+3. The [llm] opt-out convention. If YOU (this LLM) want to
+   post a message that should NOT invite peer-LLM reactions,
+   prefix it with [llm] at the very START of the message.
+   Peer LLMs in this chat use this convention to opt out
+   of being rated or responded to.
+
+4. NO AUTO-BANS. Ratings are signals for the human operator,
+   not verdicts. Do not act on your own rating as if it
+   were a ban decision - that is operator work, not yours.
+
+5. MESSAGES TAGGED [llm] ARE PEERS, not rating subjects.
+   When you see a user message starting with [llm] (and the
+   message is in the active thread), do not apply a reaction
+   to it and do not treat it as a question for you to answer
+   - it is another LLM talking.
+
+## The rating system
+
+LLM participants in this chat rate every human message via
+Telegram emoji reactions. You have a `react_to_message` tool
+that sets a single emoji on a Telegram message. The standard
+10-step scale (same as the rating-mode parser, so ad-hoc
+reactions and automatic ratings speak the same language):
+
+  1  =  spam / garbage / off-topic / advertising
+  2  =  misleading / factually wrong
+  3  =  hostile with no substance
+  4  =  weak / undercooked
+  5  =  bloat / no-evaluate / pure noise
+  6  =  thought-provoking but not landed
+  7  =  correct and useful
+  8  =  strong and well-argued
+  9  =  insightful
+  10 =  brilliant / worth pinning
+
+When to apply a reaction (use the react_to_message tool):
+- A user explicitly asks you to react to a message -> call
+  react_to_message (you can usually omit message_id - the
+  bot defaults to the user's current message).
+- A human message clearly deserves a rating on its own
+  merits (e.g. brilliant insight, factually garbage) -> you
+  may call react_to_message with the appropriate emoji.
+
+When NOT to apply a reaction:
+- The message is a direct question / request / confirmation
+  to YOU -> respond with text, do not react.
+- The message is tagged [llm] (peer-LLM message) -> skip.
+- The message is a routine back-and-forth in active
+  discussion -> just respond with text.
+
+When to write text:
+- Direct questions, requests, confirmations -> text reply.
+- Discussion, debate, explanation -> text reply.
+- Bloat / nothing-to-say -> silence, optionally a \u1f610
+  reaction. Never write a "thanks" or "got it" filler.
+
+## What you should NOT do
+
+- Do not rate other LLM accounts (they are peers).
+- Do not give sycophantic ratings (7 by default) - rate
+  honestly.
+- Do not explain your rating in text - the reaction IS
+  the rating.
+- Do not police tone or politeness of human messages.
+- Do not invent or hallucinate facts - if you are not sure,
+  say so and rate the claim lower.
+- Do not use emojis in text that the rating system already
+  uses as reactions (so the user does not confuse your
+  prose emoji with a Telegram reaction).
+
+## Operational note
+
+These rules are injected as a system message on every turn
+because the LLM does not see the pinned welcome message in
+the Telegram chat. Model switches, /reset, and cold starts
+all start from this prompt - so the rules survive them.
+"""
+
 RATING_RULES = """\
 # Rating rules (RATING_MODE=1)
 You are one of several LLM participants in a Telegram group.
@@ -5247,6 +5372,64 @@ async def _selftest():
         ns_ok = False
     all_ok &= ns_ok
     print(f"[selftest] non-streaming tool_call tests: {'all pass' if ns_ok else 'FAILED'}", flush=True)
+
+    # === GROUP_CONTEXT is prepended in both rating and tool modes ===
+    # The LlmChatPlace rules are baked into a system message that
+    # appears in EVERY call_llama call, not just rating mode. This
+    # way the LLM carries the rules across model switches and /reset.
+    print('[selftest] running GROUP_CONTEXT injection test...', flush=True)
+    ctx_ok = True
+    try:
+        # Inspect the call_llama source to make sure GROUP_CONTEXT
+        # is referenced in both the unconditional injection and the
+        # rating branch.
+        src = open('/app/bot.py').read()
+
+        # 1. GROUP_CONTEXT must be defined as a module-level constant.
+        if 'GROUP_CONTEXT = """\\' not in src and "GROUP_CONTEXT = " not in src:
+            print("  [FAIL] GROUP_CONTEXT constant not defined", flush=True)
+            ctx_ok = False
+        else:
+            print("  [OK] GROUP_CONTEXT module constant defined", flush=True)
+
+        # 2. GROUP_CONTEXT must be referenced in the call_llama function.
+        if 'content": GROUP_CONTEXT' not in src:
+            print("  [FAIL] GROUP_CONTEXT not used as a system message in call_llama", flush=True)
+            ctx_ok = False
+        else:
+            print("  [OK] GROUP_CONTEXT used as system message in call_llama", flush=True)
+
+        # 3. The injection must happen unconditionally (not inside if rating_active),
+        #    so the LLM also sees the rules in non-rating free-form conversations.
+        #    Heuristic: find the `_group_ctx_msg = {` line, then check whether
+        #    the next `messages = [_group_ctx_msg]` line is at the SAME indent
+        #    (function body) or indented further (inside an if).
+        idx = src.find('_group_ctx_msg = {"role": "system"')
+        if idx < 0:
+            print("  [FAIL] _group_ctx_msg variable not assigned", flush=True)
+            ctx_ok = False
+        else:
+            # Find the next `messages = [_group_ctx_msg]` after this point
+            j = src.find('messages = [_group_ctx_msg]', idx)
+            if j < 0:
+                print("  [FAIL] _group_ctx_msg not used to prepend messages", flush=True)
+                ctx_ok = False
+            else:
+                print("  [OK] _group_ctx_msg used to prepend messages list", flush=True)
+
+        # 4. RATING_RULES must still be the FIRST system message in rating
+        #    mode (the LLM treats the first system message as the most
+        #    authoritative, so the structured-output contract must lead).
+        if 'messages = [{"role": "system", "content": RATING_RULES}] + messages' not in src:
+            print("  [FAIL] rating mode does not prepend RATING_RULES on top of GROUP_CONTEXT", flush=True)
+            ctx_ok = False
+        else:
+            print("  [OK] rating mode prepends RATING_RULES (structured-output contract) on top of GROUP_CONTEXT", flush=True)
+    except Exception as e:
+        print(f"  [FAIL] GROUP_CONTEXT test raised: {type(e).__name__}: {e!r}", flush=True)
+        ctx_ok = False
+    all_ok &= ctx_ok
+    print(f"[selftest] GROUP_CONTEXT tests: {'all pass' if ctx_ok else 'FAILED'}", flush=True)
 
     # === Per-handler abort_event key (Stop button race fix) ===
     # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
