@@ -441,7 +441,7 @@ DONSETCH_TOOLS = {
 }
 
 
-async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None):
+async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None, bot=None, chat_id=None, current_message_id=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
@@ -546,6 +546,36 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                         'url': {'type': 'string', 'description': 'http(s) URL to capture'},
                     },
                     'required': ['url']
+                }
+            }
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'react_to_message',
+                'description': (
+                    'Set a single-emoji Telegram reaction on a message in the current chat. '
+                    'Use this when the user explicitly asks for a reaction ("поставь 👍 на моё сообщение", '
+                    '"react to his question with 🤔"), or when you want to acknowledge a message non-verbally. '
+                    'Standard Telegram reaction set (use these — other emojis may be rejected by the API): '
+                    '👍 👏 ❤️ 🔥 (positive), 😐 🤔 (neutral), 😢 😡 🤮 💩 (negative). '
+                    'If message_id is omitted, the bot reacts to the most recent human message in the active thread '
+                    '(the one that triggered this turn), which is what you usually want. '
+                    'Not available in rating mode (rating mode uses a hardcoded reaction path).'
+                ),
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'emoji': {
+                            'type': 'string',
+                            'description': 'A single emoji. Standard set: 👍 👏 ❤️ 🔥 😐 🤔 😢 😡 🤮 💩.',
+                        },
+                        'message_id': {
+                            'type': 'integer',
+                            'description': 'Optional. Telegram message_id of the target message in the current chat. If omitted, reacts to the most recent human message in this thread (the default you usually want).',
+                        },
+                    },
+                    'required': ['emoji']
                 }
             }
         },
@@ -1072,12 +1102,19 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             tc_id = tc.get('id', '')
             current_calls.append((fn_name, json.dumps(args, sort_keys=True) if isinstance(args, dict) else str(args)))
             print(f"[tool] iter={iteration} call {fn_name}({args})", flush=True)
-            if fn_name in CUSTOM_TOOLS:
+            if fn_name == 'react_to_message':
+                result = await _execute_react_to_message(
+                    args,
+                    bot=bot,
+                    chat_id=chat_id,
+                    default_message_id=current_message_id,
+                )
+            elif fn_name in CUSTOM_TOOLS:
                 result = await CUSTOM_TOOLS[fn_name](args)
             elif fn_name in DONSETCH_TOOLS:
                 result = await DONSETCH_TOOLS[fn_name](args)
             else:
-                result = f'[tool {fn_name} unavailable in this mode. Bot supports: get_weather, donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot.]'
+                result = f'[tool {fn_name} unavailable in this mode. Bot supports: get_weather, donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot, react_to_message.]'
                 saw_unavailable_tool = True
             r_str = str(result)
             is_empty = (
@@ -2252,6 +2289,64 @@ async def _apply_reaction(context, chat_id: int, message_id: int, emoji: str) ->
         print(f"[rating] set_message_reaction failed: {type(e).__name__}: {e}", flush=True)
 
 
+
+async def _execute_react_to_message(args, *, bot, chat_id, default_message_id):
+    """Tool executor: react_to_message.
+
+    Sets a single-emoji Telegram reaction on a specific message in
+    the current chat. The LLM calls this when the user explicitly
+    asks for an emoji reaction on a message (e.g. "поставь 👍 на моё
+    последнее сообщение") or when the LLM itself decides a
+    reaction is appropriate in non-rating mode (e.g. acknowledging
+    a polite bloat message with 😐).
+
+    Args:
+        args: dict with keys
+            emoji: required, a single emoji string. Standard Telegram
+                reaction set is preferred: 👍 👏 ❤️ 🔥 😢 😡 🤮 💩 😐 🤔
+                (the same 10-step scale the rating parser uses, so
+                ad-hoc and automatic ratings speak the same language).
+            message_id: optional int, Telegram message_id of the
+                target. If omitted, the tool reacts to the message
+                that triggered this turn (the most recent human
+                message in the active thread).
+        bot: the Telegram Bot instance (ptb Application.bot).
+        chat_id: the chat where the reaction should be applied.
+        default_message_id: the message_id to fall back on when
+            args.message_id is absent. Set by the handler from
+            update.message.message_id.
+
+    Returns a short status string for the tool result envelope.
+    Errors do not raise — they return a string the LLM can read
+    and react to, so a transient API error doesn't crash the
+    whole tool-calling loop.
+    """
+    from telegram import ReactionTypeEmoji
+    emoji = (args.get('emoji') or '').strip()
+    if not emoji:
+        return '[bot: react_to_message requires a non-empty "emoji" parameter. Use a single emoji like 👍 or 😐.]'
+    msg_id = args.get('message_id')
+    try:
+        msg_id = int(msg_id) if msg_id is not None else None
+    except (TypeError, ValueError):
+        return f'[bot: react_to_message: message_id must be an integer, got {msg_id!r}]'
+    if msg_id is None:
+        msg_id = default_message_id
+    if msg_id is None:
+        return '[bot: react_to_message: no target message_id available — pass one in args, or call from a handler that provides a default.]'
+    try:
+        await bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=msg_id,
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+        )
+        print(f"[react_tool] set {emoji!r} on chat_id={chat_id} message_id={msg_id}", flush=True)
+        return f'[bot: OK — set {emoji} reaction on message_id={msg_id} in chat_id={chat_id}]'
+    except Exception as e:
+        print(f"[react_tool] set_message_reaction FAILED: {type(e).__name__}: {e!r}", flush=True)
+        return f'[bot: react_to_message failed: {type(e).__name__}: {e!r}]'
+
+
 def _general_thread_id() -> str:
     """Sentinel thread id for the General topic of a forum-enabled
     supergroup. The General topic is real (it has messages, history,
@@ -2512,7 +2607,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and _is_group_chat(update)
             and not _should_mute_in_group(update)
         )
-        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event)
+        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
         if bot_response == '__ABORTED__':
             print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
@@ -2542,6 +2637,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 history, max_tokens=16384, user_text=caption,
                 thinking_msg=thinking, use_stream=False,
                 rating_active=rating_active, abort_event=abort_event,
+                bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
             if retry_response == '__ABORTED__':
                 print(f"[handle_photo] ABORTED on retry, moving to next", flush=True)
@@ -2736,7 +2832,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and _is_group_chat(update)
             and not _should_mute_in_group(update)
         )
-        bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active)
+        bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         # === RATING_MODE dispatch (continuation) ===
         # rating_active was computed above (before call_llama).
         if rating_active:
@@ -2844,7 +2940,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         abort_event = asyncio.Event()
         _abort_events[(chat_id, thinking.message_id)] = abort_event
-        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event)
+        bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         if bot_response == '__ABORTED__':
             print(f"[handle_document] ABORTED by user via Stop button, moving to next", flush=True)
             try:
@@ -2863,6 +2959,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 history, max_tokens=16384, user_text=caption,
                 thinking_msg=thinking, rating_active=rating_active,
                 abort_event=abort_event,
+                bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
             if retry_response == '__ABORTED__':
                 print(f"[handle_document] ABORTED on retry, moving to next", flush=True)
@@ -2985,7 +3082,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and _is_group_chat(update)
             and not _should_mute_in_group(update)
         )
-        bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event)
+        bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         if bot_response == '__ABORTED__':
             print(f"[handle_text] ABORTED by user via Stop button, moving to next", flush=True)
             try:
@@ -3004,6 +3101,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 history, max_tokens=32768, user_text=user_message,
                 thinking_msg=thinking, rating_active=rating_active,
                 abort_event=abort_event,
+                bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
             if retry_response == '__ABORTED__':
                 print(f"[handle_text] ABORTED on retry, moving to next", flush=True)
@@ -4879,6 +4977,116 @@ async def _selftest():
         rej_ok = False
     all_ok &= rej_ok
     print(f"[selftest] tool-call JSON rejection tests: {'all pass' if rej_ok else 'FAILED'}", flush=True)
+
+    # === react_to_message tool ===
+    # The LLM in non-rating mode can call react_to_message to set
+    # an emoji on a Telegram message. This is a thin wrapper over
+    # bot.set_message_reaction(chat_id, message_id, reaction=
+    # [ReactionTypeEmoji(emoji=...)]). The 4 cases below cover
+    # the executor's validation paths:
+    #   1. valid emoji + explicit message_id  -> calls API
+    #   2. valid emoji, no message_id, default available -> uses default
+    #   3. empty emoji                       -> refuses with feedback
+    #   4. non-integer message_id            -> refuses with feedback
+    # We mock the bot's set_message_reaction to a coroutine and
+    # inspect the (chat_id, message_id, reaction) it was called
+    # with. The executor never raises — it returns a string for
+    # the LLM to read, so a transient API error doesn't crash the
+    # tool-calling loop.
+    print('[selftest] running react_to_message tool test...', flush=True)
+    react_ok = True
+    try:
+        from unittest.mock import MagicMock
+        mock_calls = []
+
+        class _MockReaction:
+            def __init__(self, emoji):
+                self.emoji = emoji
+
+        async def _mock_set_message_reaction(chat_id, message_id, reaction, **kw):
+            mock_calls.append({
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'emojis': [getattr(r, 'emoji', None) for r in reaction],
+            })
+            # no exception -> success
+
+        mock_bot = MagicMock()
+        mock_bot.set_message_reaction = _mock_set_message_reaction
+
+        # Case 1: valid emoji + explicit message_id
+        result = await _b._execute_react_to_message(
+            {'emoji': '👍', 'message_id': 12345},
+            bot=mock_bot, chat_id=-1004461679108, default_message_id=99999,
+        )
+        ok1 = 'OK' in result and len(mock_calls) == 1 and mock_calls[0]['message_id'] == 12345 and mock_calls[0]['emojis'] == ['👍']
+        if not ok1:
+            print(f"  [FAIL] case 1: explicit message_id. result={result!r}, calls={mock_calls}", flush=True)
+            react_ok = False
+        else:
+            print("  [OK] case 1: explicit message_id=12345 with 👍 -> set_message_reaction called once", flush=True)
+
+        # Case 2: valid emoji, no message_id, default available
+        mock_calls.clear()
+        result = await _b._execute_react_to_message(
+            {'emoji': '🔥'},
+            bot=mock_bot, chat_id=-1004461679108, default_message_id=88888,
+        )
+        ok2 = 'OK' in result and len(mock_calls) == 1 and mock_calls[0]['message_id'] == 88888 and mock_calls[0]['emojis'] == ['🔥']
+        if not ok2:
+            print(f"  [FAIL] case 2: default message_id. result={result!r}, calls={mock_calls}", flush=True)
+            react_ok = False
+        else:
+            print("  [OK] case 2: no message_id in args -> fell back to default=88888, set 🔥", flush=True)
+
+        # Case 3: empty emoji -> refuses, no API call
+        mock_calls.clear()
+        result = await _b._execute_react_to_message(
+            {'emoji': ''},
+            bot=mock_bot, chat_id=-1004461679108, default_message_id=88888,
+        )
+        ok3 = 'requires' in result.lower() and len(mock_calls) == 0
+        if not ok3:
+            print(f"  [FAIL] case 3: empty emoji. result={result!r}, calls={mock_calls}", flush=True)
+            react_ok = False
+        else:
+            print("  [OK] case 3: empty emoji refused with feedback, no API call", flush=True)
+
+        # Case 4: non-integer message_id -> refuses
+        mock_calls.clear()
+        result = await _b._execute_react_to_message(
+            {'emoji': '👍', 'message_id': 'abc'},
+            bot=mock_bot, chat_id=-1004461679108, default_message_id=88888,
+        )
+        ok4 = 'integer' in result.lower() and len(mock_calls) == 0
+        if not ok4:
+            print(f"  [FAIL] case 4: non-int message_id. result={result!r}, calls={mock_calls}", flush=True)
+            react_ok = False
+        else:
+            print("  [OK] case 4: non-integer message_id refused with feedback, no API call", flush=True)
+
+        # Case 5: API raises -> executor returns error string, doesn't propagate
+        mock_calls.clear()
+
+        async def _mock_raise(chat_id, message_id, reaction, **kw):
+            raise Exception("REACTION_NOT_ALLOWED")
+
+        mock_bot.set_message_reaction = _mock_raise
+        result = await _b._execute_react_to_message(
+            {'emoji': '😐', 'message_id': 11111},
+            bot=mock_bot, chat_id=-1004461679108, default_message_id=88888,
+        )
+        ok5 = 'failed' in result.lower() and 'REACTION_NOT_ALLOWED' in result
+        if not ok5:
+            print(f"  [FAIL] case 5: API error swallowed. result={result!r}", flush=True)
+            react_ok = False
+        else:
+            print("  [OK] case 5: API exception caught, error string returned, no crash", flush=True)
+    except Exception as e:
+        print(f"  [FAIL] react_to_message test raised: {type(e).__name__}: {e!r}", flush=True)
+        react_ok = False
+    all_ok &= react_ok
+    print(f"[selftest] react_to_message tests: {'all pass' if react_ok else 'FAILED'}", flush=True)
 
     # === Per-handler abort_event key (Stop button race fix) ===
     # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
