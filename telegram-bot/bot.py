@@ -597,6 +597,28 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 'a tool unnecessarily.'
             )
         }
+        # === Speaker attribution for the LLM ===
+        # In group chats, multiple humans can write to the same thread
+        # in the same minute. Without a sender tag the model has no way
+        # to tell Vasisualy's "ok" from Dimon's "ok". We prepend
+        # "From: <name>: " to each user message so the LLM can see who
+        # said what. Sender name is read from the _sender_name field that
+        # _load_history attaches (NULL for pre-v4 rows -> "user" prefix).
+        def _tag_sender(m):
+            if not isinstance(m, dict) or m.get("role") != "user":
+                return m
+            name = m.get("_sender_name")
+            tag = (name.strip() if isinstance(name, str) and name.strip() else "user")
+            content = m.get("content")
+            if isinstance(content, str):
+                return {**m, "content": f"From: {tag}: {content}"}
+            if isinstance(content, list):
+                parts = list(content)
+                if parts and isinstance(parts[0], dict) and parts[0].get("type") == "text":
+                    parts[0] = {**parts[0], "text": f"From: {tag}: " + parts[0].get("text", "")}
+                    return {**m, "content": parts}
+            return m
+        messages = [_tag_sender(m) for m in messages]
         msgs = [sys_prompt] + messages
         req_tools = all_tools
     else:
@@ -609,6 +631,24 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 'See the rules above.'
             )
         }
+        # Same speaker-tag treatment as the tool-mode branch above
+        # (the closure is out of scope here, so we re-implement the
+        # 6 lines).
+        def _tag_sender_rating(m):
+            if not isinstance(m, dict) or m.get("role") != "user":
+                return m
+            name = m.get("_sender_name")
+            tag = (name.strip() if isinstance(name, str) and name.strip() else "user")
+            content = m.get("content")
+            if isinstance(content, str):
+                return {**m, "content": f"From: {tag}: {content}"}
+            if isinstance(content, list):
+                parts = list(content)
+                if parts and isinstance(parts[0], dict) and parts[0].get("type") == "text":
+                    parts[0] = {**parts[0], "text": f"From: {tag}: " + parts[0].get("text", "")}
+                    return {**m, "content": parts}
+            return m
+        messages = [_tag_sender_rating(m) for m in messages]
         msgs = [sys_prompt] + messages
         req_tools = None
     max_iter = 15
@@ -2243,8 +2283,18 @@ async def _resolve_active(user_id: int) -> str:
 
 async def _load_history(chat_id: int, thread_id: str) -> list:
     """Return up to CONTEXT_MESSAGES messages for the thread, in chronological
-    order, as the full OpenAI message dicts ({"role", "content"}) that
-    call_llama expects.
+    order, as dicts that call_llama expects.
+
+    Each returned dict has:
+      - "role": "user" | "assistant" | "system"
+      - "content": the raw OpenAI content (str for text, list of
+        content parts for multimodal)
+      - "sender_name": str | None. The Telegram display name of the
+        human who sent this user message (NULL for system /
+        assistant rows, or for pre-sender-name DB rows from before
+        the v3 -> v4 migration). call_llama uses this to render
+        "From: {name}: <content>" so the model can tell speakers
+        apart in a busy group.
 
     Text-only and multimodal (text + image_url) messages are returned
     verbatim because both are stored as JSON in the DB and parse to the
@@ -2261,19 +2311,58 @@ async def _load_history(chat_id: int, thread_id: str) -> list:
             # Defensive: if a row was somehow written with non-JSON
             # content, fall back to wrapping it as a text message.
             msg = {"role": r["role"], "content": r["content"]}
+        # Attach the sender name as an out-of-band field. We do NOT
+        # put it inside the JSON envelope (call_llama does not parse
+        # it; it reads r["sender_name"] directly from the row dict).
+        if isinstance(msg, dict):
+            msg["_sender_name"] = r.get("sender_name")
         out.append(msg)
     return out
 
 
-async def _persist_message(chat_id: int, thread_id: str, role: str, content):
+def _sender_display_name(user) -> str | None:
+    """Build a short display name for a Telegram User so the LLM can
+    distinguish speakers in a group. Resolution order:
+      1. first_name + " " + last_name  (e.g. "Vasisualy Lohankin")
+      2. first_name only
+      3. "@" + username
+      4. "user_" + str(id)              (last-resort numeric)
+
+    Returns None for non-User inputs (system messages, channel posts)
+    so the caller can decide to skip persisting the name.
+    """
+    if user is None:
+        return None
+    first = getattr(user, "first_name", None) or ""
+    last = getattr(user, "last_name", None) or ""
+    full = (first + " " + last).strip()
+    if full:
+        return full
+    if getattr(user, "username", None):
+        return "@" + user.username
+    if getattr(user, "id", None) is not None:
+        return f"user_{user.id}"
+    return None
+
+
+async def _persist_message(chat_id: int, thread_id: str, role: str, content,
+                           sender_name: str | None = None):
     """Append a message to the thread's history in the DB.
 
     `content` is whatever the message has — a string for text, a list
     of content parts for multimodal. json.dumps it for storage.
+
+    `sender_name` (optional) is the Telegram display name of the
+    human who sent this message. Persisted alongside the row so
+    the LLM can render "From: {name}: ..." in subsequent turns
+    (and so /stats / analysis can attribute messages). Only
+    meaningful for role='user'; pass None for assistant / system
+    rows.
     """
     msg = {"role": role, "content": content}
     await asyncio.to_thread(
-        store.add_message, chat_id, thread_id, role, json.dumps(msg, ensure_ascii=False)
+        store.add_message, chat_id, thread_id, role,
+        json.dumps(msg, ensure_ascii=False), None, sender_name,
     )
 
 
@@ -2330,7 +2419,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"type": "image_url", "image_url": {"url": photo_data_url}}
         ]
         thread_id = thread_id  # already resolved by _route_to_thread
-        await _persist_message(chat_id, thread_id, 'user', photo_content)
+        sender_name = _sender_display_name(update.message.from_user)
+        await _persist_message(chat_id, thread_id, 'user', photo_content, sender_name=sender_name)
         history = await _load_history(chat_id, thread_id)
         # When recalling image turns in later text-only messages, the
         # images themselves cannot be re-sent from history (no id
@@ -2561,7 +2651,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # No parse_mode — transcript is user-generated and may contain
         # '*', '_', '[', '`', which would break Markdown rendering.
         await _reply(update, f'🎤 Transcript:\n{transcript}')
-        await _persist_message(chat_id, thread_id, 'user', transcript)
+        sender_name = _sender_display_name(update.message.from_user)
+        await _persist_message(chat_id, thread_id, 'user', transcript, sender_name=sender_name)
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…')
@@ -2666,7 +2757,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             doc_text = f.read()[:16000]
         caption = update.message.caption or 'Read the document and answer questions.'
         user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
-        await _persist_message(chat_id, thread_id, 'user', user_content)
+        sender_name = _sender_display_name(update.message.from_user)
+        await _persist_message(chat_id, thread_id, 'user', user_content, sender_name=sender_name)
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
@@ -2799,7 +2891,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.chat.send_action(action='typing')
     except Exception as e:
         print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
-    await _persist_message(chat_id, thread_id, 'user', user_message)
+    sender_name = _sender_display_name(update.message.from_user)
+    await _persist_message(chat_id, thread_id, 'user', user_message, sender_name=sender_name)
     history = await _load_history(chat_id, thread_id)
     print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
     thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
@@ -4447,6 +4540,134 @@ async def _selftest():
         dl_ok = False
     all_ok &= dl_ok
     print(f"[selftest] _download_with_limit tests: {'all pass' if dl_ok else 'FAILED'}", flush=True)
+
+    # === Sender-name flow (group-mode speaker attribution) ===
+    # Bug: the bot could not distinguish between two humans writing
+    # in the same group topic. The LLM only saw "user: ok" twice and
+    # had no way to tell Vasisualy from Dimon apart. Fix: each user
+    # message is persisted with sender_name (resolved from
+    # update.message.from_user), and call_llama's _tag_sender
+    # closure prepends "From: <name>: " to every user content
+    # (text and multimodal alike) so the model can read who said
+    # what. Old rows from before the v3 -> v4 migration have
+    # sender_name=NULL and fall back to a generic "user" prefix.
+    print('[selftest] running sender-name flow test...', flush=True)
+    sn_ok = True
+    try:
+        import bot as _b
+        from telegram import User as _U
+
+        # Case 1: display-name resolution.
+        n_vasya = _b._sender_display_name(_U(id=111, first_name='Vasisualy', last_name='Lohankin', username='V_bot', is_bot=False))
+        n_dima = _b._sender_display_name(_U(id=222, first_name='Dima', last_name=None, username='KlimDimm', is_bot=False))
+        n_anon = _b._sender_display_name(_U(id=333, first_name=None, last_name=None, username=None, is_bot=False))
+        n_none = _b._sender_display_name(None)
+        if n_vasya != 'Vasisualy Lohankin' or n_dima != 'Dima' or n_anon != 'user_333' or n_none is not None:
+            print(f"  [FAIL] name resolution: {n_vasya!r} {n_dima!r} {n_anon!r} {n_none!r}", flush=True)
+            sn_ok = False
+        else:
+            print('  [OK] _sender_display_name resolves first+last / first / @user / user_id / None', flush=True)
+
+        # Case 2: persist + load round-trip preserves sender_name.
+        # We use the real global store but a fake chat_id so the
+        # selftest rows are easy to identify and clean up.
+        SN_CHAT = -1001234567890
+        SN_THREAD = 'selftest-sender-name'
+        # Clean any leftover rows from a previous run of this test.
+        def _pre_cleanup():
+            import sqlite3 as _sq
+            cc = _sq.connect(_b.store.path)
+            cc.execute('DELETE FROM messages WHERE chat_id = ? AND thread_id = ?',
+                       (SN_CHAT, SN_THREAD))
+            cc.commit()
+            cc.close()
+        await asyncio.to_thread(_pre_cleanup)
+        await _b._persist_message(SN_CHAT, SN_THREAD, 'user', 'hi from vasya', sender_name=n_vasya)
+        await _b._persist_message(SN_CHAT, SN_THREAD, 'user', 'hi from dima', sender_name=n_dima)
+        await _b._persist_message(SN_CHAT, SN_THREAD, 'assistant', 'hello both', None)
+        history = await _b._load_history(SN_CHAT, SN_THREAD)
+        if len(history) != 3 or history[0]['_sender_name'] != n_vasya or history[1]['_sender_name'] != n_dima or history[2]['_sender_name'] is not None:
+            print(f"  [FAIL] persist+load: {[h.get('_sender_name') for h in history]!r}", flush=True)
+            sn_ok = False
+        else:
+            print('  [OK] persist + _load_history round-trip preserves sender_name (3 rows)', flush=True)
+
+        # Case 3: _tag_sender formatting on text content.
+        def _tag(m):
+            if not isinstance(m, dict) or m.get('role') != 'user':
+                return m
+            name = m.get('_sender_name')
+            tag = (name.strip() if isinstance(name, str) and name.strip() else 'user')
+            content = m.get('content')
+            if isinstance(content, str):
+                return {**m, 'content': f'From: {tag}: {content}'}
+            if isinstance(content, list):
+                parts = list(content)
+                if parts and isinstance(parts[0], dict) and parts[0].get('type') == 'text':
+                    parts[0] = {**parts[0], 'text': f'From: {tag}: ' + parts[0].get('text', '')}
+                    return {**m, 'content': parts}
+            return m
+        tagged = [_tag(m) for m in history]
+        if 'From: Vasisualy Lohankin: hi from vasya' not in tagged[0]['content']:
+            print(f"  [FAIL] text tag: {tagged[0]['content']!r}", flush=True)
+            sn_ok = False
+        elif 'From: Dima: hi from dima' not in tagged[1]['content']:
+            print(f"  [FAIL] dima tag: {tagged[1]['content']!r}", flush=True)
+            sn_ok = False
+        elif tagged[2]['content'] != 'hello both':
+            print(f"  [FAIL] assistant should be untouched, got {tagged[2]['content']!r}", flush=True)
+            sn_ok = False
+        else:
+            print('  [OK] _tag_sender prepends From: <name>: to text content; assistant unchanged', flush=True)
+
+        # Case 4: multimodal content (list of parts) - sender tag
+        # goes into the first text part, image_url untouched.
+        mm = {
+            'role': 'user',
+            '_sender_name': 'Vasisualy Lohankin',
+            'content': [
+                {'type': 'text', 'text': 'Что на картинке?'},
+                {'type': 'image_url', 'image_url': {'url': 'data:...'}},
+            ],
+        }
+        tagged_mm = _tag(mm)
+        if (isinstance(tagged_mm['content'], list)
+                and tagged_mm['content'][0]['text'] == 'From: Vasisualy Lohankin: Что на картинке?'
+                and tagged_mm['content'][1] == {'type': 'image_url', 'image_url': {'url': 'data:...'}}):
+            print('  [OK] multimodal: sender tag in first text part, image preserved', flush=True)
+        else:
+            print(f"  [FAIL] multimodal tag: {tagged_mm!r}", flush=True)
+            sn_ok = False
+
+        # Case 5: NULL sender_name (old pre-migration row) falls back
+        # to a generic 'user' prefix so the LLM still knows it's a
+        # person, just unnamed.
+        legacy = {'role': 'user', '_sender_name': None, 'content': 'old message'}
+        if _tag(legacy)['content'] != 'From: user: old message':
+            print(f"  [FAIL] NULL fallback: {_tag(legacy)!r}", flush=True)
+            sn_ok = False
+        else:
+            print('  [OK] NULL sender_name falls back to From: user: (no name but still tagged)', flush=True)
+
+        # Cleanup: remove the 3 test rows so re-running the selftest
+        # is idempotent and the real DB doesn't accumulate junk. We
+        # open a private sqlite3 connection to the same DB path so we
+        # don't fight the bot's threading.local() connection. The
+        # WAL mode means concurrent readers + the one writer won't
+        # block each other; cleanup is short-lived and best-effort.
+        def _cleanup():
+            import sqlite3 as _sq
+            cc = _sq.connect(_b.store.path)
+            cc.execute('DELETE FROM messages WHERE chat_id = ? AND thread_id = ?',
+                       (SN_CHAT, SN_THREAD))
+            cc.commit()
+            cc.close()
+        await asyncio.to_thread(_cleanup)
+    except Exception as e:
+        print(f"  [FAIL] sender-name test raised: {type(e).__name__}: {e!r}", flush=True)
+        sn_ok = False
+    all_ok &= sn_ok
+    print(f"[selftest] sender-name tests: {'all pass' if sn_ok else 'FAILED'}", flush=True)
 
     # === Per-handler abort_event key (Stop button race fix) ===
     # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
