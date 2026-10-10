@@ -3118,17 +3118,31 @@ def main():
                                             f"update_id={upd_dict['update_id']} text_hash={em_text[:32]!r}",
                                             flush=True,
                                         )
+                                # Dispatch as a TASK, not awaited. This is
+                                # the critical change for the Stop button:
+                                # previously, the polling loop was blocked
+                                # on `await _dispatch_update(...)` for the
+                                # entire duration of a handler's LLM call
+                                # (3-30 seconds). Any callback_query
+                                # updates (e.g., the Stop button click)
+                                # would queue up and only be processed
+                                # AFTER the handler finished — by which
+                                # time the abort_event had been popped and
+                                # the Stop click was useless.
+                                #
+                                # With task dispatch, the for loop returns
+                                # immediately and the while loop is free to
+                                # call getUpdates again. The handler runs
+                                # concurrently in its own task. When the
+                                # user clicks Stop, the callback reaches
+                                # the polling loop, gets dispatched as
+                                # another task, sets the abort_event, and
+                                # the original handler's between-chunk
+                                # check picks it up.
                                 try:
-                                    # Dispatch via PTB's Application so handlers
-                                    # get a real Context with .bot, .user_data, etc.
-                                    # We construct an Application lazily here, only
-                                    # for this single Update, to avoid keeping
-                                    # any persistent state.
-                                    await _dispatch_update(upd_dict)
+                                    asyncio.create_task(_dispatch_update(upd_dict))
                                 except Exception as e:
-                                    print(f"[poll] dispatch error: {type(e).__name__}: {e!r}", flush=True)
-                                    import traceback
-                                    traceback.print_exc()
+                                    print(f"[poll] task-create error: {type(e).__name__}: {e!r}", flush=True)
                         elif n_polls <= 5 or n_polls % 20 == 0:
                             print(f"[poll] cycle={n_polls} no updates", flush=True)
                     except asyncio.CancelledError:
