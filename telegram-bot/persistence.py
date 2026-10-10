@@ -66,7 +66,7 @@ async def load_history(chat_id: int, thread_id: str) -> list:
     out = []
     for r in rows:
         try:
-            msg = json.loads(r["content_json"])
+            msg = json.loads(r["content"])
         except (json.JSONDecodeError, TypeError):
             continue
         if not isinstance(msg, dict) or "role" not in msg or "content" not in msg:
