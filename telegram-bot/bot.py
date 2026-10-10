@@ -2403,8 +2403,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"[handle_photo] retry also empty, sending fallback", flush=True)
                 bot_response = (
                     '🤔 Не удалось получить ответ от модели. '
-                    'Попробуй переформулировать вопрос или '
-                    'добавить больше контекста.'
+                    'Возможные причины: перегруженный длинный контекст, '
+                    'сложный вопрос (предсказания, нишевые факты) или '
+                    'временный сбой llama-server. Попробуй:\n'
+                    '• /reset — очистить историю и начать с нуля\n'
+                    '• Переформулировать вопрос\n'
+                    '• Добавить больше деталей в вопрос'
                 )
         # === Edit-during-LLM detection ===
         # NOTE: the original implementation here checked
@@ -2688,8 +2692,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"[handle_document] retry also empty, sending fallback", flush=True)
                 bot_response = (
                     '🤔 Не удалось получить ответ от модели. '
-                    'Попробуй переформулировать вопрос или '
-                    'добавить больше контекста.'
+                    'Возможные причины: перегруженный длинный контекст, '
+                    'сложный вопрос (предсказания, нишевые факты) или '
+                    'временный сбой llama-server. Попробуй:\n'
+                    '• /reset — очистить историю и начать с нуля\n'
+                    '• Переформулировать вопрос\n'
+                    '• Добавить больше деталей в вопрос'
                 )
         # Edit-during-LLM detection removed: the check is a
         # no-op without a concurrent getUpdates consumer.
@@ -2817,8 +2825,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"[handle_text] retry also empty, sending fallback", flush=True)
                 bot_response = (
                     '🤔 Не удалось получить ответ от модели. '
-                    'Попробуй переформулировать вопрос или '
-                    'добавить больше контекста.'
+                    'Возможные причины: перегруженный длинный контекст, '
+                    'сложный вопрос (предсказания, нишевые факты) или '
+                    'временный сбой llama-server. Попробуй:\n'
+                    '• /reset — очистить историю и начать с нуля\n'
+                    '• Переформулировать вопрос\n'
+                    '• Добавить больше деталей в вопрос'
                 )
         # Edit-during-LLM detection removed: the check is a
         # no-op without a concurrent getUpdates consumer.
