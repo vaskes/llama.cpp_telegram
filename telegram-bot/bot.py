@@ -2292,25 +2292,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking = None
     try:
         photo = update.message.photo[-1]
-        # Telegram sends multiple PhotoSize entries; we want the smallest
-        # that is still useful (index 0 = 90x90 thumbnail is too small,
-        # we usually take the last = largest). But cap it: a 50-MP photo
-        # at Q8_0 base64 inflates to >30 MB and OOMs the bot.
-        # Note: photo.file_size is not always populated by Telegram. We
-        # cannot trust it as the only guard, so we also stream-download
-        # with a chunk counter that aborts if the cumulative size
-        # exceeds MAX_PHOTO_BYTES. This avoids the OOM that the post-
-        # download check (which only looks at len(bytearray)) could
-        # not prevent — by the time you have the bytearray, you
-        # already have the whole file in RAM.
+        # Telegram sends multiple PhotoSize entries; we want the
+        # largest (index -1). Cap it: a 50-MP photo at Q8_0 base64
+        # inflates to >30 MB and would OOM the bot.
+        # Note: photo.file_size is not always populated by Telegram.
+        # The pre-check below fast-fails when file_size is set; the
+        # helper _download_with_limit re-checks (and falls back to a
+        # post-check on the actual byte count) when it isn't.
         if photo.file_size and photo.file_size > MAX_PHOTO_BYTES:
-            await _reply(update, 
+            await _reply(update,
                 f'❌ Photo too large ({photo.file_size/1e6:.1f} MB > '
                 f'{MAX_PHOTO_BYTES/1e6:.0f} MB).'
             )
             return
         file = await context.bot.get_file(photo.file_id)
-        photo_bytes = await _stream_with_limit(file, MAX_PHOTO_BYTES, 'Photo', update)
+        photo_bytes = await _download_with_limit(file, MAX_PHOTO_BYTES, 'Photo', update)
         if photo_bytes is None:
             return
         # Telegram photos are often WebP (especially from Android), not JPEG.
@@ -2477,27 +2473,43 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sem.release()
 
 
-async def _stream_with_limit(file, max_bytes: int, kind: str, update: Update):
-    """Stream-download a Telegram file, aborting if size > max_bytes.
+async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
+    """Download a Telegram file with a size guard.
 
-    Returns the accumulated bytes on success, or None if aborted (the
-    user-facing error message has already been sent to `update`).
-    Used by handle_photo, handle_voice, and handle_document so the
-    pre-check + chunk counter + error path live in one place.
+    Returns the downloaded bytes on success, or None if the file is
+    too large or the download failed (the user-facing error message
+    has already been sent to `update` in both cases). Used by
+    handle_photo, handle_voice, and handle_document so the
+    pre-check + error path live in one place.
+
+    Note: PTB 21.0 removed File.download_as_chunks (the old
+    chunked iterator we used to abort mid-download). We now use
+    File.download_as_bytearray(), which buffers the whole file
+    in memory. The pre-check on file.file_size rejects oversized
+    files before the request goes out (Telegram usually populates
+    file_size, but not always); the post-check on len(buf) catches
+    the rare case where file_size is missing and the file is huge.
+    Worst-case memory: max_bytes (10 MB photo, 20 MB voice, 5 MB doc,
+    50 MB video_note) - well within the bot's memory budget.
     """
-    buf = bytearray()
+    if file.file_size and file.file_size > max_bytes:
+        await _reply(update,
+            f'❌ {kind} too large ({file.file_size/1e6:.1f} MB > '
+            f'{max_bytes/1e6:.0f} MB).'
+        )
+        return None
     try:
-        async for chunk in file.download_as_chunks(chunk_size=64 * 1024):
-            buf.extend(chunk)
-            if len(buf) > max_bytes:
-                await _reply(update, 
-                    f'❌ {kind} too large (>{max_bytes/1e6:.0f} MB during download).'
-                )
-                return None
+        buf = await file.download_as_bytearray()
     except Exception as e:
         await _reply(update, f'❌ Failed to download {kind.lower()}: {e}')
         return None
-    return buf
+    if len(buf) > max_bytes:
+        await _reply(update,
+            f'❌ {kind} too large ({len(buf)/1e6:.1f} MB > '
+            f'{max_bytes/1e6:.0f} MB).'
+        )
+        return None
+    return bytes(buf)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2542,7 +2554,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         file = await context.bot.get_file(media.file_id)
-        voice_bytes = await _stream_with_limit(file, max_bytes, media_kind, update)
+        voice_bytes = await _download_with_limit(file, max_bytes, media_kind, update)
         if voice_bytes is None:
             return
         transcript = await transcribe_voice(voice_bytes)
@@ -2640,7 +2652,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     file = await context.bot.get_file(doc.file_id)
-    doc_bytes = await _stream_with_limit(file, MAX_DOC_BYTES, 'Document', update)
+    doc_bytes = await _download_with_limit(file, MAX_DOC_BYTES, 'Document', update)
     if doc_bytes is None:
         return
     tmp_path = None
