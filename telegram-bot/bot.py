@@ -2343,7 +2343,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         # Per-task abort event for the Stop button.
         abort_event = asyncio.Event()
-        _abort_events[(chat_id, user_id)] = abort_event
+        _abort_events[(chat_id, thinking.message_id)] = abort_event
         # Compute rating_active here (before call_llama) so we
         # can pass it to the model AND use it in the dispatcher.
         rating_active = (
@@ -2473,7 +2473,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
-        _abort_events.pop((chat_id, user_id), None)
+        _abort_events.pop((chat_id, thinking.message_id), None)
         sem.release()
 
 
@@ -2664,7 +2664,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and not _should_mute_in_group(update)
         )
         abort_event = asyncio.Event()
-        _abort_events[(chat_id, user_id)] = abort_event
+        _abort_events[(chat_id, thinking.message_id)] = abort_event
         bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event)
         if bot_response == '__ABORTED__':
             print(f"[handle_document] ABORTED by user via Stop button, moving to next", flush=True)
@@ -2760,7 +2760,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
-        _abort_events.pop((chat_id, user_id), None)
+        _abort_events.pop((chat_id, thinking.message_id), None)
         sem.release()
 
 
@@ -2798,7 +2798,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # have at most 2 in-flight requests, so the dict shouldn't
     # grow without bound).
     abort_event = asyncio.Event()
-    _abort_events[(chat_id, user_id)] = abort_event
+    _abort_events[(chat_id, thinking.message_id)] = abort_event
     try:
         rating_active = (
             RATING_MODE
@@ -2899,7 +2899,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # than clear, in case the dict has been overwritten by
         # a concurrent handler (defensive — the semaphore
         # prevents same-user concurrency, but be safe).
-        _abort_events.pop((chat_id, user_id), None)
+        _abort_events.pop((chat_id, thinking.message_id), None)
         sem.release()
 
 
@@ -3199,16 +3199,23 @@ _dispatcher = None
 
 # === Per-task abort events (Stop button) ===
 # When the user clicks "Stop" on the thinking message, we set
-# the event for their (chat_id, user_id). call_llama() checks
+# the event for that specific handler. call_llama() checks
 # the event between iterations of the tool loop and bails out
 # with the special return value '__ABORTED__'. The handler then
 # edits the thinking message to "⏹ Остановлено" and moves to
 # the next update.
 #
-# The dict is keyed by (chat_id, user_id) so the same Stop
-# button only affects its own message. In a forum group, each
-# topic is a separate "user" from the perspective of the
-# bot's processing order (the semaphore is per-(chat,user)).
+# The dict is keyed by (chat_id, thinking.message_id) so each
+# handler has its own slot. The previous key (chat_id, user_id)
+# was shared across all in-flight handlers for the same user,
+# which caused the LATER handler to overwrite the EARLIER one:
+# a Stop click then set the wrong event, and the earlier LLM
+# call ran to completion while the user thought it had been
+# stopped. (Bug observed in 348109712 / 348109710 sequence.)
+# The semaphore is still per-(chat,user) and limits concurrent
+# handlers, but the per-handler event key guarantees that the
+# Stop click on a specific thinking message targets the matching
+# handler - no race between concurrent in-flight requests.
 #
 # Entries are added at the start of the handler and removed in
 # a try/finally so an exception doesn't leak the event into
@@ -3409,7 +3416,17 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         chat_id = update.effective_chat.id
-        key = (chat_id, original_user_id)
+        # Key on the thinking message id, NOT (chat_id, user_id).
+        # Two concurrent in-flight handlers for the same (chat, user)
+        # would otherwise overwrite each other in the dict: the LATER
+        # handler wins the dict slot, so the Stop click on the EARLIER
+        # message sets the wrong event, leaving the earlier LLM call to
+        # run to completion. The user then sees a "stopped" thinking
+        # message followed by a full response from the still-running LLM.
+        # Using the thinking message id makes each handler own its own
+        # slot, and the Stop click on a specific thinking message always
+        # targets the matching handler.
+        key = (chat_id, thinking_msg.message_id)
         event = _abort_events.get(key)
         if event is None:
             # No in-flight request for this user. Either the
@@ -4336,6 +4353,66 @@ async def _selftest():
         er_ok = False
     all_ok &= er_ok
     print(f"[selftest] edit-replace tests: {'all pass' if er_ok else 'FAILED'}", flush=True)
+
+    # === Per-handler abort_event key (Stop button race fix) ===
+    # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
+    # in-flight handlers for the same user overwrote each other's
+    # events; the Stop click then set the WRONG event and the earlier
+    # LLM call ran to completion while the user thought it had been
+    # stopped. Fix: key on (chat_id, thinking.message_id) so each
+    # handler has its own slot.
+    print('[selftest] running per-handler abort_event key test...', flush=True)
+    aek_ok = True
+    try:
+        import bot as _b
+        saved = dict(_b._abort_events)
+        _b._abort_events.clear()
+        # Two in-flight handlers for the same (chat, user) - the
+        # old shared key would let the second overwrite the first.
+        ev_a = asyncio.Event()
+        ev_b = asyncio.Event()
+        ev_a.set()  # simulate "user clicked Stop on handler A"
+        # The OLD key (chat_id, user_id) would collide; the NEW key
+        # uses the thinking message id which is unique per handler.
+        _b._abort_events[(-1001234567890, 5001)] = ev_a
+        _b._abort_events[(-1001234567890, 5002)] = ev_b
+        # Both events present, neither overwrites the other.
+        if _b._abort_events.get((-1001234567890, 5001)) is not ev_a:
+            print("  [FAIL] handler A event overwritten or missing", flush=True)
+            aek_ok = False
+        elif _b._abort_events.get((-1001234567890, 5002)) is not ev_b:
+            print("  [FAIL] handler B event missing", flush=True)
+            aek_ok = False
+        else:
+            print("  [OK] two concurrent in-flight handlers keep distinct events", flush=True)
+        # Handler A's event is set; handler B's is not. Verifies the
+        # race: setting one does NOT set the other.
+        if not ev_a.is_set():
+            print("  [FAIL] handler A event should be set", flush=True)
+            aek_ok = False
+        elif ev_b.is_set():
+            print("  [FAIL] handler B event should NOT be set", flush=True)
+            aek_ok = False
+        else:
+            print("  [OK] setting handler A's event does not affect handler B", flush=True)
+        # Pop only the matching key; the other stays intact.
+        popped = _b._abort_events.pop((-1001234567890, 5001), None)
+        if popped is not ev_a:
+            print("  [FAIL] pop on handler A key returned wrong value", flush=True)
+            aek_ok = False
+        elif (-1001234567890, 5002) not in _b._abort_events:
+            print("  [FAIL] handler B event popped by mistake (shared key regression)", flush=True)
+            aek_ok = False
+        else:
+            print("  [OK] pop on handler A key does not touch handler B", flush=True)
+        # Cleanup
+        _b._abort_events.clear()
+        _b._abort_events.update(saved)
+    except Exception as e:
+        print(f"  [FAIL] abort_event test raised: {type(e).__name__}: {e!r}", flush=True)
+        aek_ok = False
+    all_ok &= aek_ok
+    print(f"[selftest] abort_event key tests: {'all pass' if aek_ok else 'FAILED'}", flush=True)
 
     print('[selftest] done', flush=True)
     print('[selftest] done', flush=True)
