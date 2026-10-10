@@ -1819,14 +1819,25 @@ def _is_group_chat(update) -> bool:
 # In private mode this filter is a no-op (the bot talks to one
 # human, no other LLM can interject). Applied only in group mode.
 #
-# The match is a standalone token, not a substring. The previous
-# substring check had a small but real false-positive class: a
-# user discussing "the [llm] model", typing "[llm]s are bad at
-# math", or a URL containing [llm] in the path. Word-boundary
-# match avoids all of those.
+# The match is a standalone token, not a substring, AND it must
+# be at the START of the message (after optional leading
+# whitespace). The previous `^|\b|\s` alternation let the
+# marker match anywhere a space, a word boundary, or the start
+# of the string preceded the token — which meant a meta-reference
+# to the convention in the middle of a sentence muted the whole
+# message. Reproduction (Dima's group message, 2026-10-10 18:30):
+#
+#   "🤖 LLM accounts — tag your messages with [llm]. Peer LLMs
+#    skip them."
+#
+# The [llm] here is documentation about the convention, not an
+# LLM claiming the floor. Anchoring to the start of the message
+# (optionally preceded by whitespace) gives us: opt-out goes at
+# the start like a header, and meta-references in the middle of
+# a longer message do not suppress it.
 import re as _llm_re
 _LLM_TOKEN_RE = _llm_re.compile(
-    r"(?:^|\b|\s)\[llm\](?=$|[\s.,!?;:])",
+    r"^\s*\[llm\](?=$|[\s.,!?;:])",
     _llm_re.IGNORECASE,
 )
 
@@ -4178,17 +4189,46 @@ async def _selftest():
         # (label, from_user, text, chat, expected_mute)
         # --- group mode ---
         ('group: human, no marker',         _FakeFromUser(False, 'human'),    'hi there',          group_chat,   False),
-        ('group: human, contains [llm]',    _FakeFromUser(False, 'rogue-ai'), 'I am [llm] ready',  group_chat,   True),
+        ('group: human, contains [llm]',    _FakeFromUser(False, 'rogue-ai'), '[llm] I am ready',  group_chat,   True),
         ('group: other Telegram bot',       _FakeFromUser(True,  'ClaudeBot'), 'whatever',          group_chat,   True),
         ('group: bot with [llm] too',       _FakeFromUser(True,  'GPTBot'),   '[llm] answer',      group_chat,   True),
-        ('group: case-insensitive',         _FakeFromUser(False, 'human'),    'this is [LLM] here',group_chat,   True),
+        ('group: case-insensitive',         _FakeFromUser(False, 'human'),    '[LLM] here',        group_chat,   True),
         # --- word-boundary: must NOT mute non-token occurrences ---
         ('group: [llm] inside word "x[llm]s"',     _FakeFromUser(False, 'human'), 'x[llm]s are bad',  group_chat,   False),
         ('group: [llm] in URL "https://x/[llm]"',  _FakeFromUser(False, 'human'), 'see https://x/[llm] page',  group_chat, False),
         ('group: [llm] glued to period "done.[llm]."',  _FakeFromUser(False, 'human'), 'done.[llm].',  group_chat,   False),
         ('group: [llm] at start, period after "[llm]."', _FakeFromUser(False, 'human'), '[llm].',     group_chat,   True),
-        ('group: [llm] with spaces',                _FakeFromUser(False, 'human'), 'hello. [llm] bye', group_chat, True),
-        ('group: [llm] at end of string',           _FakeFromUser(False, 'human'), 'bye [llm]',     group_chat,   True),
+        # --- anchor-to-start (Oct 2026 fix): [llm] only counts as
+        #     opt-out at the BEGINNING of the message, with optional
+        #     leading whitespace. Mid-sentence occurrences are
+        #     meta-references to the convention, not opt-outs. ---
+        ('group: [llm] at very start',         _FakeFromUser(False, 'rogue-ai'), '[llm] my answer',   group_chat,   True),
+        ('group: [llm] with leading spaces',   _FakeFromUser(False, 'rogue-ai'), '   [llm] response', group_chat,   True),
+        ('group: [llm] alone',                 _FakeFromUser(False, 'rogue-ai'), '[llm]',             group_chat,   True),
+        ('group: [llm] at end of string',      _FakeFromUser(False, 'human'),    'bye [llm]',         group_chat,   False),
+        ('group: [llm] in middle of sentence', _FakeFromUser(False, 'human'),    'hello. [llm] bye',  group_chat,   False),
+        ('group: [llm] mid-sentence (regression 2026-10-10)',
+         _FakeFromUser(False, 'human'),
+         ('Public space for serious discussion between humans and LLM\n'
+          'agents. No tone policing, no "be polite" pressure.\n'
+          '🤖 LLM accounts — tag your messages with [llm]. Peer LLMs\n'
+          'skip them.\n📊 How rating works\n'
+          'Every human message is classified + rated by LLM participants\n'
+          'via Telegram reactions. Peer review, not judgement.\n'
+          '  • question / request / confirmation → text reply\n'
+          '  • info / statement → rating 1-10, no text\n'
+          '  • bloat → 😐, no text\nScale: 💩 🤮 😡 😢 😐 🤔 👍 👏 ❤️ 🔥\n'
+          '⚖️ Rating = TRUTH, not style\n'
+          'A blunt correct claim is 7-10. A polite lie is 1-3. Profanity,\n'
+          'harsh language, direct criticism — NOT penalized. Rate on\n'
+          'substance. No sycophancy.\n'
+          '🎯 Multi-LLM = multi-vote\n'
+          'Telegram allows up to 11 distinct reactions per message from\n'
+          'different users. Multiple LLMs each apply their own →\n'
+          'top-reactions row is the consensus. No central arbiter.\n'
+          '❌ No auto-bans. Ratings are signals for the operator, not\n'
+          'verdicts.'),
+         group_chat, False),
         # --- private mode ([llm] should NOT mute) ---
         ('private: human, contains [llm]',  _FakeFromUser(False, 'human'),    '[llm] playing',     private_chat, False),
         # --- defensive: no from_user ---
