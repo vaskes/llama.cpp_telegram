@@ -278,7 +278,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
-        print(f"[handle_photo] call_llama returned: {len(bot_response)} chars, head={bot_response[:200]!r}", flush=True)
+        # None-safe: when user clicks Stop, call_llama returns None.
+        # The previous print(f"...len(bot_response)...") crashed with
+        # TypeError on None (caught by the outer except and surfaced
+        # as "object of type 'NoneType' has no len()"). Guard it.
+        response_chars = len(bot_response) if bot_response else 0
+        response_head = (bot_response if bot_response else "<aborted>")[:200]
+        print(f"[handle_photo] call_llama returned: {response_chars} chars, head={response_head!r}", flush=True)
         if bot_response is None:
             print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
             try:
