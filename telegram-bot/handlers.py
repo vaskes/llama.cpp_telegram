@@ -22,7 +22,7 @@ from telegram.ext import ContextTypes
 from call_llama import call_llama, transcribe_voice, _tag_sender
 import state  # cross-module state (see state.py)
 from storage import get_store
-from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event
+from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event, _register_bot_reply
 from rating import _is_rating_active, _apply_rating_and_persist
 # Per-function late imports from dispatch (see below). The state
 # lives in state.py to break the circular dep between handlers.py
@@ -63,7 +63,7 @@ async def send_reply(update: Update, text: str):
         if user_msg is not None and sent is not None:
             chat_id = update.effective_chat.id if update.effective_chat else None
             if chat_id is not None:
-                _bot_replies[(chat_id, user_msg.message_id)] = sent.message_id
+                _register_bot_reply(chat_id, user_msg.message_id, sent.message_id)
     except Exception as e:
         # Never let tracking break a reply.
         print(f"[send_reply] tracking failed: {type(e).__name__}: {e!r}", flush=True)
