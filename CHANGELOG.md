@@ -1007,6 +1007,99 @@ updated to check SEMANTIC MARKERS instead of string length
 v0.10.1 contains everything from v0.9.6 + v0.9.7 + v0.10.0 +
 the wave-2 fixes. **The operator only needs to deploy v0.10.1
 to get all fixes.**
+## [v0.10.2] — 2026-10-12 — Qwen wave-3 final review fixes
+
+Two real bugs caught by the wave-3 review (which both earlier
+waves missed), plus 6 non-blocking improvements.
+
+### BLOCKING bugs fixed (Qwen caught these, both waves missed)
+
+**1. `EMPTY_RESPONSE_FALLBACK` NameError in `handlers.py:send_reply`.**
+The function uses this constant on empty LLM response, but
+`handlers.py` never imported it (and didn't have a local
+definition). Result: a `NameError` whenever the LLM returned
+empty content — exactly the moment the user most needs a
+friendly fallback. **This would have crashed the bot in
+production.**
+
+Fix: moved the constant to `config.py` (which handlers.py
+already imports from) and removed the dead duplicate in
+`bot.py`. Single source of truth. Regression test added.
+
+**2. `_rate_limit_send` defined but never called.**
+A full per-chat rate limiter (15 sends per 60s window) was
+defined in `dispatch.py` but no code path called it. The
+bot was unprotected from Telegram's 20 msg/min/chat limit.
+A burst (queue drain after restart, rating-mode storm) would
+trigger `RetryAfter` on Telegram's side and produce failed
+sends with no client-side rate.
+
+Fix: `send_reply` now calls `await _rate_limit_send(chat_id)`
+before sending. Dead code is now live.
+
+### Non-blocking improvements (Qwen wave-3 items 2.2, 2.5-2.7, 1.2)
+
+**3. `_tag_sender` leaks internal fields to LLM API.** Fixed
+to strip `_*` prefixed fields before constructing the request
+body. `_sender_name` becomes a `From: Alice` tag in content
+(visible to the LLM) but the field itself doesn't leave the
+process. Regression test added.
+
+**4. `transcribe_voice` hardcodes `language: 'ru'`.** Made
+configurable via `WHISPER_LANGUAGE` env var; empty value
+= autodetect. Default remains `ru` for backwards compat with
+the LlmChatPlace group.
+
+**5. `fetch_tools_from_llama` uses fragile `LLAMA_URL.replace('/v1','')`.**
+Replaced with `urlparse`/`urlunparse` to handle edge cases
+(trailing slashes, multiple `/v1`, no `/v1`, etc.).
+
+**6. `_check_user_slot` silently drops on timeout.** After
+5 minutes in queue, the message was dropped with only a
+log line. Now sends the user a "Бот перегружен" message
+before dropping. UX improvement.
+
+**7. `set_active_thread` not in transaction.** Wrapped the
+two writes (`INSERT OR REPLACE` + `UPDATE last_used`) in
+explicit `BEGIN`/`COMMIT` for consistency with v0.10.1's
+`delete_thread` fix.
+
+**8. Webhook mode lacks signal handlers.** `webhook.run()`
+awaited `asyncio.Event()` forever — no response to SIGTERM.
+v0.10.2 installs handlers for SIGINT/SIGTERM, triggers
+`runner.cleanup()` on shutdown so in-flight requests can
+finish.
+
+### False alarms (Qwen wave-3 was wrong about these)
+
+- **3.1 `_RATING_PREFIX_RE` lost `^\s*` allowance.** Already
+  has `^\s*` in `prompts.py` (v0.10.0 had this correct).
+  Models can have leading whitespace and the regex still
+  matches.
+
+- **3.2 `_EMOJI_CHAR_RE` different versions.** Both
+  `bot.py` and `prompts.py` now use the same regex
+  (`^(\S{1,4})\b`). After the v0.10.0 dead-code cleanup,
+  the Unicode-range version in `prompts.py` was replaced
+  with the bot.py version (which is what `rating.py` actually
+  uses).
+
+- **2.8 `BOT_COMMANDS` language inconsistency.** Cosmetic,
+  not blocking. Russian bot uses Russian descriptions with
+  English technical terms ("sub-talk") which is intentional
+  and matches the operator's group convention.
+
+### Tests (60 total, was 57)
+
+- `test_empty_response_fallback_is_imported_in_handlers` —
+  regression: same object in handlers and config
+- `test_send_reply_does_not_crash_on_empty_text` — actually
+  exercises send_reply with empty text, verifies fallback
+  is used
+- `test_tag_sender_strips_underscore_prefixed_fields` — no
+  `_` fields leak to LLM API
+
+The new tests would catch a regression of the wave-3 bugs.
 ## [v0.8.0] — 2026-10-10 — v0.7.8 → v0.7.9b + v0.8.0 → v0.8.2 chain
 
 Hotfix chain documented in v0.9.0 above. This entry

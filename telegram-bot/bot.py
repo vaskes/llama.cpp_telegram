@@ -182,20 +182,6 @@ def _detect_tool_intent(text: str) -> bool:  # pragma: no cover
     """
     return True
 
-# === Donsetch-http MCP client ===
-# Donsetch replaces the old SearXNG-based stack (which is CAPTCHA-blocked on cloud IPs).
-# It exposes 4 tools via MCP/JSON-RPC on http://localhost:8765/mcp. llama-server prefixes
-# them with `donsetch_` (e.g. `donsetch_web_search`); we strip that prefix when calling.
-
-DONSETCH_URL = os.environ.get('DONSETCH_URL', 'http://localhost:8765/mcp')
-# _donsetch_session moved to call_llama.py (F3 stage 7)
-
-EMPTY_RESPONSE_FALLBACK = (
-    '[model returned an empty response. This usually means the LLM '
-    'spent all its tokens on internal reasoning without writing a reply. '
-    'Try /reset to clear context, or switch to a less reasoning-heavy model.]'
-)
-
 # === Sub-talk commands ===
 # A sub-talk is a named conversation thread. Each user has their own
 # set of sub-talks (no sharing across users). The "active" sub-talk

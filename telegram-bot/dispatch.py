@@ -788,6 +788,13 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
             f"after {MAX_QUEUE_WAIT_SEC}s; dropping message",
             flush=True,
         )
+        # v0.10.2 (Qwen wave-3): tell the user the bot is overloaded
+        # instead of silently dropping. The user would otherwise see
+        # "💭 думаю…" and then nothing for 5 minutes.
+        try:
+            await _reply(update, "⚠️ Бот перегружен, попробуйте позже.")
+        except Exception:
+            pass
         return None
 
 # === main ===

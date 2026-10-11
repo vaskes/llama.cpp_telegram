@@ -32,8 +32,8 @@ import persistence
 import prompts
 import rating
 from config import (
-    BOT_TOKEN, MAX_DOC_BYTES, MAX_PHOTO_BYTES, MAX_VOICE_BYTES,
-    MODEL, TELEGRAM_API,
+    BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, MAX_DOC_BYTES, MAX_PHOTO_BYTES,
+    MAX_VOICE_BYTES, MODEL, TELEGRAM_API,
 )
 from prompts import GROUP_CONTEXT, RATING_RULES
 
@@ -48,8 +48,16 @@ async def send_reply(update: Update, text: str):
 
     Also records the (chat_id, user_message_id) → bot_message_id mapping
     so a later user edit can trigger delete+reprocess.
+
+    v0.10.2 (Qwen wave-3): applies per-chat rate limiting BEFORE sending.
+    Without this, a burst (queue-drain after restart, or a rating-mode
+    storm) can exceed Telegram's 20 msg/min/chat limit and trigger
+    RetryAfter. _rate_limit_send sleeps if the chat is over budget.
     """
-    from dispatch import _is_group_chat, reject_if_unauthorized
+    from dispatch import _is_group_chat, _rate_limit_send, reject_if_unauthorized
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    if chat_id is not None:
+        await _rate_limit_send(chat_id)
     text = (text or '').strip()
     if not text:
         text = EMPTY_RESPONSE_FALLBACK

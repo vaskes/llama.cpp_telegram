@@ -644,3 +644,62 @@ async def test_text_successful_flow_keeps_message(monkeypatch, tmp_path):
     import json as _json
     actual_content = _json.loads(user_msgs[0]["content"]).get("content", "")
     assert actual_content == "important question"
+
+
+def test_empty_response_fallback_is_imported_in_handlers(monkeypatch):
+    """v0.10.2 (Qwen wave-3 regression): handlers.py uses
+    EMPTY_RESPONSE_FALLBACK but previously didn't import it, causing
+    NameError on empty LLM responses. This test verifies the import
+    is present.
+    """
+    import handlers
+    import config
+    # Must be the SAME object (not a re-define with the same value)
+    assert handlers.EMPTY_RESPONSE_FALLBACK is config.EMPTY_RESPONSE_FALLBACK, \
+        "EMPTY_RESPONSE_FALLBACK must be the same object in handlers and config"
+    # Must be non-empty and informative
+    assert len(handlers.EMPTY_RESPONSE_FALLBACK) > 20
+    assert "reset" in handlers.EMPTY_RESPONSE_FALLBACK.lower(), \
+        "EMPTY_RESPONSE_FALLBACK should mention /reset to the user"
+
+
+@pytest.mark.asyncio
+async def test_send_reply_does_not_crash_on_empty_text(monkeypatch, tmp_path):
+    """v0.10.2 (regression): send_reply with empty text must not crash
+    with NameError. The fallback message is used instead."""
+    import config as _cfg
+    import handlers as _handlers
+    from unittest.mock import AsyncMock, MagicMock
+    monkeypatch.setattr(_cfg, "DB_PATH", str(tmp_path / "test.db"))
+    import storage as _st
+    monkeypatch.setattr(_st, "_store_instance", None)
+    import persistence as _pers
+    store = _st.Storage(str(tmp_path / "test.db"))
+    monkeypatch.setattr(_st, "get_store", lambda: store)
+    monkeypatch.setattr(_pers, "get_store", lambda: store)
+
+    # _reply mock — must NOT raise
+    mock_sent = MagicMock()
+    mock_sent.message_id = 999
+    monkeypatch.setattr(
+        "handlers._reply",
+        AsyncMock(return_value=mock_sent),
+    )
+    # Rate limit must not block
+    async def no_op_rate_limit(chat_id):
+        pass
+    monkeypatch.setattr(
+        "dispatch._rate_limit_send",
+        no_op_rate_limit,
+    )
+
+    update = MagicMock()
+    update.effective_chat.id = 1
+    update.message.message_id = 42
+
+    # This used to raise NameError before v0.10.2
+    await _handlers.send_reply(update, "")
+    # Verify _reply was called with the fallback
+    _handlers._reply.assert_awaited_once()
+    sent_text = _handlers._reply.await_args.args[1]
+    assert sent_text == _handlers.EMPTY_RESPONSE_FALLBACK

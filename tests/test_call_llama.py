@@ -118,3 +118,23 @@ def test_known_topics_returns_none_for_missing(tmp_path):
     assert s.find_known_topic_by_name(1, "nope") is None
     # remove_known_topic on a missing topic should not raise
     s.remove_known_topic(1, 999)  # no-op
+
+
+def test_tag_sender_strips_underscore_prefixed_fields():
+    """v0.10.2 (Qwen wave-3): _tag_sender must NOT forward
+    _-prefixed fields to the LLM API. These are internal markers
+    that should never leave the process."""
+    from call_llama import _tag_sender
+    
+    # User message with internal _sender_name field
+    msg = {
+        "role": "user",
+        "content": "hello",
+        "_sender_name": "Alice",
+        "_internal_marker": "should be stripped",
+    }
+    out = _tag_sender(msg)
+    # _sender_name becomes a tag in content, but _internal_marker must be gone
+    assert "_internal_marker" not in out, f"_internal_marker leaked: {out}"
+    # The tag should be in content
+    assert "Alice" in out["content"] or "From: Alice" in out["content"]

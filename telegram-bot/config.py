@@ -17,6 +17,9 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}" if BOT_TOKEN else ""
 # === LLM endpoints ===
 LLAMA_URL = os.environ.get("LLAMA_URL", "http://localhost:8080/v1")
 WHISPER_URL = os.environ.get("WHISPER_URL", "http://localhost:8000")
+# v0.10.2: Whisper language hint. Empty = autodetect (recommended for multilingual users).
+# Default "ru" for backwards compat with the Russian-speaking LlmChatPlace group.
+WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "ru")
 API_KEY = os.environ.get("API_KEY", "sk-no-key")
 MODEL = os.environ.get("MODEL", "").strip()
 
@@ -44,6 +47,21 @@ else:
 
 # === File-size limits ===
 MAX_PHOTO_BYTES = int(os.environ.get("MAX_PHOTO_BYTES", "10000000"))     # 10 MB
+
+
+# === v0.10.2: Friendly message when the LLM returns an empty response.
+# Telegram rejects empty messages with "Message text is empty", and
+# some models (e.g. reasoning-heavy ones) spend the whole token
+# budget on internal reasoning. Without this fallback, the user
+# sees a cryptic API error or a crash (NameError in older code).
+# The message is in English because the LLM error path is
+# language-agnostic — even a Russian bot user should understand
+# "the LLM didn't return a reply, try /reset".
+EMPTY_RESPONSE_FALLBACK = (
+    "[model returned an empty response. This usually means the LLM "
+    "spent all its tokens on internal reasoning without writing a reply. "
+    "Try /reset to clear context, or switch to a less reasoning-heavy model.]"
+)
 MAX_DOC_BYTES = int(os.environ.get("MAX_DOC_BYTES", "5000000"))         # 5 MB
 MAX_VOICE_BYTES = int(os.environ.get("MAX_VOICE_BYTES", "20000000"))    # 20 MB
 MAX_VIDEO_NOTE_BYTES = int(os.environ.get("MAX_VIDEO_NOTE_BYTES", "50000000"))  # 50 MB

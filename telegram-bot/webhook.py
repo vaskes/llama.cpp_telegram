@@ -166,7 +166,15 @@ def make_app() -> web.Application:
 
 
 async def run() -> None:
-    """Start the aiohttp server. Returns when the server stops."""
+    """Start the aiohttp server. Returns when the server stops.
+
+    v0.10.2 (Qwen wave-3): add signal handlers for graceful shutdown
+    in webhook mode. Without this, `docker stop` (SIGTERM) kills the
+    aiohttp server abruptly and in-flight requests are dropped
+    mid-stream. With the shutdown_event, SIGTERM triggers
+    runner.cleanup() so active dispatches can finish.
+    """
+    import signal
     app = make_app()
     runner = web.AppRunner(app)
     await runner.setup()
@@ -178,8 +186,20 @@ async def run() -> None:
         config.WEBHOOK_HOST, config.WEBHOOK_PORT, config.WEBHOOK_PATH,
         _MAX_BODY_BYTES // 1024,
     )
-    # Block forever. The runner keeps the loop alive.
+    # v0.10.2: shutdown event triggered by SIGTERM/SIGINT
+    shutdown_event = asyncio.Event()
+    def _on_signal(signame):
+        log.info("[webhook] received %s, initiating shutdown", signame)
+        shutdown_event.set()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _on_signal, sig.name)
+        except (NotImplementedError, RuntimeError):
+            pass  # Windows or non-main thread, fall through
     try:
-        await asyncio.Event().wait()
+        await shutdown_event.wait()
     finally:
+        # Give in-flight tasks a chance to finish, then stop the runner
+        log.info("[webhook] stopping runner, %d tasks still pending", len(_pending_dispatch_tasks))
         await runner.cleanup()

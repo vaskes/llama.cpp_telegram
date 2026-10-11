@@ -217,18 +217,19 @@ def _tag_sender(m):
     level.
     """
     if not isinstance(m, dict) or m.get("role") != "user":
-        return m
+        return {k: v for k, v in m.items() if not k.startswith("_")}
     name = m.get("_sender_name")
     tag = (name.strip() if isinstance(name, str) and name.strip() else "user")
     content = m.get("content")
     if isinstance(content, str):
-        return {**m, "content": f"From: {tag}: {content}"}
+        clean = {k: v for k, v in m.items() if not k.startswith("_")}
+    return {**clean, "content": f"From: {tag}: {content}"}
     if isinstance(content, list):
         parts = list(content)
         if parts and isinstance(parts[0], dict) and parts[0].get("type") == "text":
             parts[0] = {**parts[0], "text": f"From: {tag}: " + parts[0].get("text", "")}
             return {**m, "content": parts}
-    return m
+    return {k: v for k, v in m.items() if not k.startswith("_")}
 
 async def fetch_tools_from_llama():
     """Получить список tools с llama-server и отфильтровать доступные.
@@ -244,7 +245,17 @@ async def fetch_tools_from_llama():
     for attempt, backoff in enumerate((1.0, 2.0, 4.0), start=1):
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                r = await client.get(f"{LLAMA_URL.replace('/v1', '')}/tools")
+                # v0.10.2 (Qwen wave-3): robust URL construction.
+                # Old LLAMA_URL.replace('/v1', '') broke on trailing
+                # slashes, multiple /v1, or non-/v1 paths. Use urlparse
+                # to strip the last path component if it's /v1.
+                from urllib.parse import urlparse, urlunparse
+                parsed = urlparse(LLAMA_URL)
+                path = parsed.path.rstrip("/")
+                if path.endswith("/v1"):
+                    path = path[:-3]
+                base = urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+                r = await client.get(f"{base}/tools")
                 r.raise_for_status()
                 all_tools = r.json()
             openai_tools = []
@@ -1221,7 +1232,8 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
 async def transcribe_voice(voice_bytes):
     async with httpx.AsyncClient(timeout=120.0) as client:
         files = {'file': ('voice.ogg', bytes(voice_bytes), 'audio/ogg')}
-        data = {'language': 'ru'}
+        # v0.10.2: WHISPER_LANGUAGE env var, empty = autodetect. Default 'ru' for backwards compat with the LlmChatPlace group.
+        data = {'language': WHISPER_LANGUAGE} if WHISPER_LANGUAGE else {}
         response = await client.post(
             f"{WHISPER_URL}/v1/audio/transcriptions",
             files=files, data=data
