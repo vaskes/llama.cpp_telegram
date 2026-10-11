@@ -22,15 +22,20 @@ def _reset_module_state():
     caused one of these to be set, subsequent tests see a stale
     instance and assert the wrong thing.
 
-    This is autouse so all 36 tests in tests/ get the reset without
+    This is autouse so all 44 tests in tests/ get the reset (state, storage, bot) without
     having to declare the fixture.
     """
     import storage as _st
     import bot as _bot
+    import state as _st_state
     _st._store_instance = None
     if hasattr(_bot, "store"):
         _bot.store = _st.get_store()  # set before each test
+    # v0.9.7: also reset per-(chat, user) semaphores so a test that
+    # times out holding the sem doesn't leak it for the next test.
+    _st_state._user_semaphores.clear()
     yield
     _st._store_instance = None
     if hasattr(_bot, "store"):
         _bot.store = None
+    _st_state._user_semaphores.clear()
