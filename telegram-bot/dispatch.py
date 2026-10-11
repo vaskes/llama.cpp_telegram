@@ -1177,15 +1177,27 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"[callback stop] abort_event set for {key}",
             flush=True,
         )
-        # Edit the thinking message to "⏹ Остановлено" immediately
-        # so the user sees the click took effect. The handler will
-        # also try to edit it (and may delete it); the second edit
-        # is a no-op if Telegram returns "not modified" or the
-        # message is already gone.
+        # Delete the thinking message immediately so the user sees
+        # the click took effect. We DELETE (not edit) so the inline
+        # Stop button disappears with the message - editing would
+        # keep the button on the 'Остановлено' text, which looks
+        # 'sticky' in the chat scroll. The handler's abort path
+        # also tries to delete, but it's a no-op if the message is
+        # already gone.
         try:
-            await update.callback_query.edit_message_text("⏹ Остановлено…")
+            await update.callback_query.delete_message()
         except Exception as e:
-            print(f"[callback stop] edit_text failed: {type(e).__name__}: {e!r}", flush=True)
+            # Fallback: if delete fails (message too old, already
+            # deleted by handler, etc.), try to edit with the
+            # inline keyboard removed. answer() with show_alert=False
+            # to not spam the user with an error toast.
+            print(f"[callback stop] delete_message failed: {type(e).__name__}: {e!r}; falling back to edit", flush=True)
+            try:
+                await update.callback_query.edit_message_text(
+                    "⏹ Остановлено", reply_markup=None
+                )
+            except Exception as e2:
+                print(f"[callback stop] edit fallback also failed: {type(e2).__name__}: {e2!r}", flush=True)
         return
 
     # The remaining branches (sub:, newsub:prompt, delsub:) are

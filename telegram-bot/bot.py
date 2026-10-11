@@ -833,6 +833,96 @@ async def _selftest():
     all_ok &= hp_ok
     print(f"[selftest] handle_photo NameError regression: {'all pass' if hp_ok else 'FAILED'}", flush=True)
 
+    # === handle_voice _stop_button_markup regression (v0.7.4) ===
+    # Same bug class as v0.6.3 T8: the late-import trim dropped
+    # _stop_button_markup from handle_voice. handle_voice uses
+    # _stop_button_markup() on the 'thinking' message (line ~568).
+    # Without the import, every voice message since v0.6.3 crashed
+    # with NameError before getting to the LLM call. The user
+    # noticed because photo sends had the same error (handle_photo
+    # is_group bug, fixed in v0.7.3). voice/document were still
+    # broken.
+    print('[selftest] running handle_voice _stop_button_markup regression test...', flush=True)
+    hv_ok = True
+    try:
+        import bot as _b
+        async def _fake_route_v(_u, _c):
+            return (-1001, '19', True)
+        async def _fake_slot_v(*args, **kwargs):
+            return None
+        _b._route_to_thread = _fake_route_v
+        _b._check_user_slot = _fake_slot_v
+        class _FakeVoice:
+            file_id = 'fake'
+            file_size = 12345
+            duration = 5
+            async def download_as_bytearray(self):
+                return bytearray(b'fake-voice-bytes')
+        class _FakeVoiceMessage:
+            voice = _FakeVoice()
+            caption = None
+            message_thread_id = 19
+            chat = type('C', (), {'id': -1001, 'send_action': lambda self, **kw: asyncio.sleep(0)})()
+        class _FakeVoiceUpdate:
+            effective_chat = type('C', (), {'id': -1001, 'type': 'supergroup'})()
+            effective_user = type('U', (), {'id': 286293081, 'is_bot': False})()
+            message = _FakeVoiceMessage()
+        class _FakeVoiceContext:
+            bot = type('B', (), {'id': 1})()
+        await _b.handle_voice(_FakeVoiceUpdate(), _FakeVoiceContext())
+        print('  [OK] handle_voice does not NameError on _stop_button_markup', flush=True)
+    except NameError as e:
+        if '_stop_button_markup' in str(e):
+            print(f"  [FAIL] handle_voice regressed: {e!r}", flush=True)
+            hv_ok = False
+        else:
+            print(f"  [FAIL] handle_voice NameError: {e!r}", flush=True)
+            hv_ok = False
+    except Exception as e:
+        print(f"  [OK] handle_voice reached past _stop_button_markup ({type(e).__name__})", flush=True)
+    all_ok &= hv_ok
+    print(f"[selftest] handle_voice _stop_button_markup regression: {'all pass' if hv_ok else 'FAILED'}", flush=True)
+
+    # === handle_document _stop_button_markup regression (v0.7.4) ===
+    print('[selftest] running handle_document _stop_button_markup regression test...', flush=True)
+    hd_ok = True
+    try:
+        import bot as _b
+        async def _fake_route_d(_u, _c):
+            return (-1001, '19', True)
+        async def _fake_slot_d(*args, **kwargs):
+            return None
+        _b._route_to_thread = _fake_route_d
+        _b._check_user_slot = _fake_slot_d
+        class _FakeDoc:
+            file_id = 'fake'
+            file_size = 12345
+            file_name = 'test.txt'
+        class _FakeDocMessage:
+            document = _FakeDoc()
+            caption = None
+            message_thread_id = 19
+            chat = type('C', (), {'id': -1001, 'send_action': lambda self, **kw: asyncio.sleep(0)})()
+        class _FakeDocUpdate:
+            effective_chat = type('C', (), {'id': -1001, 'type': 'supergroup'})()
+            effective_user = type('U', (), {'id': 286293081, 'is_bot': False})()
+            message = _FakeDocMessage()
+        class _FakeDocContext:
+            bot = type('B', (), {'id': 1})()
+        await _b.handle_document(_FakeDocUpdate(), _FakeDocContext())
+        print('  [OK] handle_document does not NameError on _stop_button_markup', flush=True)
+    except NameError as e:
+        if '_stop_button_markup' in str(e):
+            print(f"  [FAIL] handle_document regressed: {e!r}", flush=True)
+            hd_ok = False
+        else:
+            print(f"  [FAIL] handle_document NameError: {e!r}", flush=True)
+            hd_ok = False
+    except Exception as e:
+        print(f"  [OK] handle_document reached past _stop_button_markup ({type(e).__name__})", flush=True)
+    all_ok &= hd_ok
+    print(f"[selftest] handle_document _stop_button_markup regression: {'all pass' if hd_ok else 'FAILED'}", flush=True)
+
     # === Storage: known_topics round-trip ===
     # Add a topic, list it, find it by name, remove it. Catches
     # typos in the SQL and the new known_topics methods (commit 8).
