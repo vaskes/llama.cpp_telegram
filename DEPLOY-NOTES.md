@@ -1,159 +1,75 @@
-# Deploy notes for v0.9.6 / v0.9.7 / v0.10.0 — 2026-10-12 morning
+# Deploy notes for v0.10.1 — 2026-10-12 morning
 
-Three releases in the worktree, not yet in production
-(`/opt/telegram-bot/`). Each is a focused, low-risk change.
+**v0.10.1 is the SINGLE bundle. It contains all fixes from v0.9.6,
+v0.9.7, v0.10.0, and the Qwen wave-2 review. Just deploy v0.10.1
+and you're done.**
 
-## v0.10.0 — P0-3 prompts drift + LRU hardening (HIGHEST PRIORITY)
+## What v0.10.1 contains
 
-**Commit:** `4611de4`
-**Tag:** `v0.10.0`
+**From v0.9.6 (T28 fix):** `parse_rating_response` maps unknown
+types to "question" — fixes 2 pre-existing in-tree selftest
+failures (P0-3 from Qwen review).
 
-### What changed
+**From v0.10.0 (P0-3 from Qwen wave-1):** `prompts.py` now has
+the LONG version of `GROUP_CONTEXT` (4786 chars vs old 2672).
+Production LLM is no longer under-instructed. Dead code
+(-291 lines) removed from `bot.py`. LRU eviction added for
+`_user_semaphores` and `_bot_replies` (OrderedDict, maxsize=500).
 
-- `telegram-bot/prompts.py` — Now has the LONG version of
-  `GROUP_CONTEXT` (4786 chars vs old 2672), `RATING_RULES` (2463
-  chars vs old 865), and `WELCOME_TEXT` (934 chars vs old 316).
-  The short version was missing critical rules: the [llm] tag
-  requirement (one bullet, not a section), the rating scale
-  with concrete examples, the react_to_message tool description,
-  the "do not police tone" rule, the "no auto-bans" rule.
-- `telegram-bot/bot.py` — Removed the dead duplicates
-  (-291 lines, -11%). Also removed `RATING_MODE: bool = ...`,
-  `_RATING_PREFIX_RE`, `_EMOJI_CHAR_RE`, `_SUBTALK_NAME_RE`,
-  `_TOPIC_NAME_RE`, `_LLM_TOKEN_RE` — all now imported from
-  prompts.py.
-- `telegram-bot/state.py` — `_user_semaphores` is now
-  `OrderedDict` with LRU at `_USER_SEMAPHORES_MAXSIZE=500`.
-  `_bot_replies` is now `OrderedDict` with LRU at
-  `_BOT_REPLIES_MAXSIZE=500`. New helpers `_register_bot_reply()`
-  and `_pop_bot_reply()`.
-- `telegram-bot/handlers.py` — `send_reply` now uses
-  `_register_bot_reply()` (was: direct dict assignment).
-- `tests/test_state.py` — 8 new tests:
-  - 3 for `_user_semaphores` LRU (eviction, touch, under-limit)
-  - 2 for `_bot_replies` LRU (eviction, pop)
-  - 3 REGRESSION tests for P0-3 (prompts has long version)
+**From v0.10.1 (Qwen wave-2 fixes):**
+- 1-line `abort_event.is_set()` check before `send_reply()` in
+  all 4 handlers (closes residual race window)
+- Explicit `BEGIN`/`COMMIT` in `storage.delete_thread()` with
+  `ROLLBACK` on exception (was relying on implicit transaction)
+- 50-task backpressure cap on webhook queue (was: unbounded
+  `asyncio.create_task` per incoming POST)
+- Dead code in `dispatch.py` removed (F3 stage 5 shims, no
+  longer needed)
+- 3 prompt tests updated to check semantic markers, not length
+- Test for LRU eviction at the actual 500 limit
 
-### Why it matters (P0-3 is the real sleeper bug)
-
-For weeks, the LLM in production was getting the SHORT version
-of `GROUP_CONTEXT` (~30% shorter than intended). This means:
-- The LLM was less likely to add the [llm] tag → peer LLMs
-  rated its messages as if they were human
-- The rating scale lacked concrete examples → more random
-  ratings
-- The "no auto-bans" and "no tone policing" rules were
-  weaker → more policing-style refusals
-
-Operators may have noticed weaker adherence to group rules
-over the past weeks and attributed it to model drift. The
-real cause was a shorter prompt.
-
-### How to deploy
+## How to deploy
 
 ```bash
-# Stop the bot
-cd /opt/telegram-bot && sudo docker compose stop telegram-bot
+cd /opt/telegram-bot
+sudo docker compose stop telegram-bot
 
-# Copy the new code
-sudo cp /opt/llama.cpp_telegram/telegram-bot/prompts.py \
-        /opt/telegram-bot/telegram-bot/prompts.py
-sudo cp /opt/llama.cpp_telegram/telegram-bot/bot.py \
-        /opt/telegram-bot/telegram-bot/bot.py
-sudo cp /opt/llama.cpp_telegram/telegram-bot/state.py \
-        /opt/telegram-bot/telegram-bot/state.py
+# Copy the new code (4 files)
 sudo cp /opt/llama.cpp_telegram/telegram-bot/handlers.py \
         /opt/telegram-bot/telegram-bot/handlers.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/dispatch.py \
+        /opt/telegram-bot/telegram-bot/dispatch.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/storage.py \
+        /opt/telegram-bot/telegram-bot/storage.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/webhook.py \
+        /opt/telegram-bot/telegram-bot/webhook.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/rating.py \
+        /opt/telegram-bot/telegram-bot/rating.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/prompts.py \
+        /opt/telegram-bot/telegram-bot/prompts.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/state.py \
+        /opt/telegram-bot/telegram-bot/state.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/bot.py \
+        /opt/telegram-bot/telegram-bot/bot.py
 
-# Restart
 sudo docker compose up -d
 ```
 
 Or simpler: rebuild the image.
 
-### Risk
+## Risk
 
-MEDIUM. The biggest code change in the v0.9.x cycle. The
-prompt content changes ARE user-visible (LLM will behave
-differently in groups). But:
-- The longer prompt is the INTENDED one
-- The change is additive (more rules, not fewer)
-- The new content was already in the codebase (just dead)
-- 52/52 tests pass, including regression tests for prompt content
+MEDIUM. The prompts change (long GROUP_CONTEXT) will visibly
+change LLM behaviour in group mode (more [llm] tag adherence,
+better rating scale, no tone policing). The behavioural change
+is the INTENDED one. Watch for any 24h after deploy.
 
-If you want to be cautious: deploy v0.9.6 first (the
-rating.py fix is conservative and isolated), then v0.10.0
-separately. But the prompts drift is the more impactful bug
-to fix sooner.
-
----
-
-## v0.9.6 — T28: parse_rating_response fall-back fix
-
-**Commit:** `69ba8bb`
-**Tag:** `v0.9.6`
-
-### What changed
-
-- `telegram-bot/rating.py` — `parse_rating_response` now maps
-  any non-known type (including the literal `[[TYPE:unknown]]`)
-  to `type="question"` and returns the whole input text as
-  `body`.
-
-### How to deploy
-
-```bash
-cd /opt/telegram-bot && sudo docker compose stop telegram-bot
-sudo cp /opt/llama.cpp_telegram/telegram-bot/rating.py \
-        /opt/telegram-bot/telegram-bot/rating.py
-sudo docker compose up -d
-```
-
-### Risk
-
-LOW. Conservative fall-back. No code that previously worked
-is broken.
-
----
-
-## v0.9.7 — conftest.py hardening (TEST-ONLY)
-
-**Commit:** `158bd21`
-**Tag:** `v0.9.7`
-
-### What changed
-
-- `tests/conftest.py` — autouse fixture now also resets
-  `state._user_semaphores` before AND after each test.
-
-### How to deploy
-
-Not a production deploy. Test infrastructure only.
-
-### Risk
-
-ZERO.
-
----
-
-## Test status (all in worktree)
+## Test status
 
 ```
 $ cd /opt/llama.cpp_telegram && sudo python3 -m pytest tests/
-... 52 passed in 0.49s
+... 57 passed in 0.50s
 ```
-
----
-
-## Deployment order (recommended)
-
-1. **v0.9.6 first** (rating.py only, low risk)
-2. **v0.10.0 second** (prompts + state + handlers + bot.py,
-   medium risk but the prompts drift is the bigger bug)
-3. **v0.9.7 last** (test-only, no production deploy)
-
-Or deploy v0.10.0 directly. The prompts drift is the
-most important fix.
 
 ## What I did NOT do (by request)
 
@@ -161,5 +77,7 @@ most important fix.
 - Did NOT restart the bot
 - Did NOT touch `/opt/whisper-api/`
 - Did NOT change nginx config
+- Did NOT rotate API_KEY / WEBHOOK_SECRET_TOKEN (still in old
+  history cache; should rotate next time you have 5 min)
 
 Production is still on v0.9.4 as of last check.
