@@ -307,8 +307,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response_chars = len(bot_response) if bot_response else 0
         response_head = (bot_response if bot_response else "<aborted>")[:200]
         print(f"[handle_photo] call_llama returned: {response_chars} chars, head={response_head!r}", flush=True)
-        if bot_response is None:
-            print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
+        if bot_response is None or abort_event.is_set():
+            # v0.8.0: also discard if abort_event was set, even when
+            # call_llama returned a non-None response (post won the
+            # race). The user clicked Stop, so the LLM response
+            # should NOT be sent.
+            if bot_response is not None and abort_event.is_set():
+                print(
+                    f"[handle_photo] ABORTED via Stop; "
+                    f"discarding {len(bot_response)}-char response "
+                    f"(post-won race)",
+                    flush=True,
+                )
+            else:
+                print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
             except Exception:
@@ -337,8 +349,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rating_active=rating_active, abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
-            if retry_response is None:
-                print(f"[handle_photo] ABORTED on retry, moving to next", flush=True)
+            if retry_response is None or abort_event.is_set():
+                # v0.8.0: same discard-on-abort as primary
+                if retry_response is not None and abort_event.is_set():
+                    print(
+                        f"[handle_photo] ABORTED on retry via Stop; "
+                        f"discarding {len(retry_response)}-char response",
+                        flush=True,
+                    )
+                else:
+                    print(f"[handle_photo] ABORTED on retry, moving to next", flush=True)
                 try:
                     await thinking.edit_text('⏹ Остановлено')
                 except Exception:
@@ -514,6 +534,27 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+        # v0.8.0: handle_voice had no abort check at all (handle_photo/
+        # handle_document/handle_text had `if bot_response is None` but
+        # voice didn't). When call_llama returns None on abort,
+        # _apply_rating_and_persist(None) is harmless, but if post won
+        # the race and returned a non-None response, we'd send it
+        # even though the user clicked Stop. Add the explicit check.
+        if bot_response is None or abort_event.is_set():
+            if bot_response is not None and abort_event.is_set():
+                print(
+                    f"[handle_voice] ABORTED via Stop; "
+                    f"discarding {len(bot_response)}-char response "
+                    f"(post-won race)",
+                    flush=True,
+                )
+            else:
+                print(f"[handle_voice] ABORTED by user via Stop button, moving to next", flush=True)
+            try:
+                await thinking.edit_text('⏹ Остановлено')
+            except Exception:
+                pass
+            return
         # === RATING_MODE dispatch (continuation) ===
         # rating_active was computed above (before call_llama).
         # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
@@ -600,8 +641,20 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
-        if bot_response is None:
-            print(f"[handle_document] ABORTED by user via Stop button, moving to next", flush=True)
+        if bot_response is None or abort_event.is_set():
+            # v0.8.0: also discard if abort_event was set, even when
+            # call_llama returned a non-None response (post won the
+            # race). The user clicked Stop, so the LLM response
+            # should NOT be sent.
+            if bot_response is not None and abort_event.is_set():
+                print(
+                    f"[handle_document] ABORTED via Stop; "
+                    f"discarding {len(bot_response)}-char response "
+                    f"(post-won race)",
+                    flush=True,
+                )
+            else:
+                print(f"[handle_document] ABORTED by user via Stop button, moving to next", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
             except Exception:
@@ -620,8 +673,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
-            if retry_response is None:
-                print(f"[handle_document] ABORTED on retry, moving to next", flush=True)
+            if retry_response is None or abort_event.is_set():
+                # v0.8.0: same discard-on-abort as primary
+                if retry_response is not None and abort_event.is_set():
+                    print(
+                        f"[handle_document] ABORTED on retry via Stop; "
+                        f"discarding {len(retry_response)}-char response",
+                        flush=True,
+                    )
+                else:
+                    print(f"[handle_document] ABORTED on retry, moving to next", flush=True)
                 try:
                     await thinking.edit_text('⏹ Остановлено')
                 except Exception:
@@ -722,8 +783,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # concurrent LLM forwards on the same GPU.
         async with _get_global_llm_sem():
             bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
-        if bot_response is None:
-            print(f"[handle_text] ABORTED by user via Stop button, moving to next", flush=True)
+        if bot_response is None or abort_event.is_set():
+            # v0.8.0: also discard if abort_event was set, even when
+            # call_llama returned a non-None response (post won the
+            # race). The user clicked Stop, so the LLM response
+            # should NOT be sent.
+            if bot_response is not None and abort_event.is_set():
+                print(
+                    f"[handle_text] ABORTED via Stop; "
+                    f"discarding {len(bot_response)}-char response "
+                    f"(post-won race)",
+                    flush=True,
+                )
+            else:
+                print(f"[handle_text] ABORTED by user via Stop button, moving to next", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
             except Exception:
@@ -742,8 +815,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
             )
-            if retry_response is None:
-                print(f"[handle_text] ABORTED on retry, moving to next", flush=True)
+            if retry_response is None or abort_event.is_set():
+                # v0.8.0: same discard-on-abort as primary
+                if retry_response is not None and abort_event.is_set():
+                    print(
+                        f"[handle_text] ABORTED on retry via Stop; "
+                        f"discarding {len(retry_response)}-char response",
+                        flush=True,
+                    )
+                else:
+                    print(f"[handle_text] ABORTED on retry, moving to next", flush=True)
                 try:
                     await thinking.edit_text('⏹ Остановлено')
                 except Exception:
