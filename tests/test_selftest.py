@@ -2,6 +2,7 @@
 import asyncio
 import os
 import re
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -84,13 +85,6 @@ def test_rating_parser_returns_body():
     assert "body" in result, f"_parse_rating_response must return 'body' key, got {sorted(result.keys())}"
     assert "rest" not in result, f"_parse_rating_response must NOT return 'rest' key, got {sorted(result.keys())}"
     assert result["body"] == "plain answer"
-import os
-import json
-import asyncio
-import hmac
-from unittest.mock import MagicMock
-
-import pytest
 
 # === test_delete_last_user_message ===
 @pytest.mark.asyncio

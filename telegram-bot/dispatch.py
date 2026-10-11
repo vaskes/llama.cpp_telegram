@@ -819,6 +819,43 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
         return None
 
 # === main ===
+def _webhook_auto_register_sync(url: str, secret_token: str) -> None:
+    """Register the webhook with Telegram using a synchronous HTTP call.
+
+    This is a one-shot startup call, so it does not need the
+    persistent async Bot object that _webhook_run() uses for
+    normal message traffic. The Bot is lazily initialized inside
+    the webhook event loop; if we used an async set_webhook
+    here in a separate event loop, the Bot httpx client would
+    be closed by the time the webhook loop started, and every
+    bot.send_message() call would fail.
+
+    Includes `allowed_updates` so Telegram delivers callback_query
+    updates (the Stop button) and chat_member updates (new-member
+    join). Without this, Telegram defaults to message-only and
+    the Stop button is silently broken.
+    """
+    import urllib.request
+    import urllib.parse
+    import json as _json
+    api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+    payload = {
+        "url": url,
+        "secret_token": secret_token,
+        "allowed_updates": _json.dumps([
+            "message", "edited_message", "callback_query", "chat_member",
+        ]),
+        "drop_pending_updates": "false",
+    }
+    data = urllib.parse.urlencode(payload).encode("utf-8")
+    try:
+        req = urllib.request.Request(api_url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"[main] webhook auto-registered: {url} (status={resp.status})", flush=True)
+    except Exception as e:
+        print(f"[main] webhook auto-register FAILED: {type(e).__name__}: {e!r}", flush=True)
+
+
 def main():
     # === Pure-httpx polling loop, no PTB Updater, no app.start() ===
     # Rationale: with `app.initialize()` or `app.start()` PTB holds a
@@ -847,29 +884,27 @@ def main():
             f"{_config.WEBHOOK_PATH}/",
             flush=True,
         )
-        # v0.9.2: auto-register the webhook with Telegram if WEBHOOK_URL
-        # is set. The operator can skip this and register manually
-        # (see docs/WEBHOOK.md) by leaving WEBHOOK_URL empty. The bot
-        # Application is initialized eagerly here so we have a Bot
-        # object to call set_webhook on; subsequent dispatches reuse it.
+        # v0.9.3: auto-register the webhook with Telegram if WEBHOOK_URL
+        # is set, using a sync HTTP call. The v0.9.2 implementation
+        # initialized a Bot object in a first asyncio.run() loop and
+        # then closed it; the Bot's httpx client was dead by the time
+        # the second loop (_webhook_run) started, so all subsequent
+        # bot.send_message() calls failed.
+        #
+        # Sync HTTP sidesteps that: set_webhook is a one-shot call,
+        # it doesn't need the persistent Bot, and urllib's
+        # connection pool closes cleanly when the with-block exits.
+        #
+        # MUST include `allowed_updates` to receive callback_query
+        # (the Stop button) and chat_member (new-member join) updates.
+        # Telegram defaults to ["message", "edited_message"] which
+        # silently drops everything else. Without callback_query,
+        # the Stop button appears in the UI but clicks are lost.
         if _config.WEBHOOK_URL and _config.WEBHOOK_SECRET_TOKEN:
-            async def _auto_register():
-                try:
-                    global _dispatcher
-                    if _dispatcher is None:
-                        from telegram.ext import Application
-                        app = Application.builder().token(BOT_TOKEN).build()
-                        await app.initialize()
-                        _dispatcher = app
-                    await _dispatcher.bot.set_webhook(
-                        url=_config.WEBHOOK_URL,
-                        secret_token=_config.WEBHOOK_SECRET_TOKEN,
-                        drop_pending_updates=False,
-                    )
-                    print(f"[main] webhook auto-registered: {_config.WEBHOOK_URL}", flush=True)
-                except Exception as e:
-                    print(f"[main] webhook auto-register FAILED: {type(e).__name__}: {e!r}", flush=True)
-            asyncio.run(_auto_register())
+            _webhook_auto_register_sync(
+                url=_config.WEBHOOK_URL,
+                secret_token=_config.WEBHOOK_SECRET_TOKEN,
+            )
         asyncio.run(_webhook_run())
         return
 

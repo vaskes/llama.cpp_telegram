@@ -286,11 +286,21 @@ it secret — anyone with this token can forge updates.
 ```bash
 curl -s -X POST \
   "https://api.telegram.org/bot<bot-token>/setWebhook" \
-  -d "url=https://<your-subdomain>.<your-domain>/tg-webhook/<your-webhook-secret-token>" \
-  -d "secret_token=<your-webhook-secret-token>" \
-  -d "drop_pending_updates=false" \
-  | jq
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://<your-subdomain>.<your-domain>/tg-webhook/<your-webhook-secret-token>",
+    "secret_token": "<your-webhook-secret-token>",
+    "allowed_updates": ["message", "edited_message", "callback_query", "chat_member"],
+    "drop_pending_updates": false
+  }' | jq
 ```
+
+The `allowed_updates` parameter is **mandatory**. Without it,
+Telegram defaults to `["message", "edited_message"]` and
+silently drops `callback_query` updates - which is what the
+Stop button sends. With `allowed_updates` missing, the Stop
+button appears in the UI but clicks are lost; the LLM runs to
+completion ignoring the user intent.
 
 If `WEBHOOK_URL` is set in your `.env`, the bot auto-registers
 on startup. Skip this step. If you left it empty (e.g., for a

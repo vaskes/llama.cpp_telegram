@@ -680,6 +680,66 @@ WEBHOOK_URL=https://<your-subdomain>.<your-domain>/tg-webhook
 ```
 
 in `telegram-bot/.env` and restart.
+## [v0.9.3] — 2026-10-11 — auto-register footgun fixes + cleanup
+
+Post-v0.9.2 review (REVIEW-MINIMAX-v8) caught 2 NEW P0 bugs in
+the v0.9.2 auto-register feature. v0.9.3 closes them plus 2
+cleanup items. None of the bugs were live in production
+(WEBHOOK_URL was empty; the operator registered manually),
+but they would have manifested the moment auto-register was
+enabled.
+
+### Fixed (v0.9.3)
+
+- **Auto-register missing `allowed_updates`** (P0-NEW-1).
+  The v0.9.2 set_webhook call did not pass `allowed_updates`,
+  so Telegram defaulted to `["message", "edited_message"]`
+  only — silently dropping `callback_query` updates (the
+  Stop button). Added `allowed_updates=["message",
+  "edited_message", "callback_query", "chat_member"]` to the
+  registration call. Without `callback_query`, the Stop
+  button appears in the UI but clicks are lost; the LLM
+  runs to completion ignoring the user intent.
+
+- **Auto-register used double `asyncio.run()` loop** (P0-NEW-2).
+  The v0.9.2 code did `asyncio.run(_auto_register())` followed
+  by `asyncio.run(_webhook_run())`. The first loop initialized
+  a Bot object whose httpx client was closed when the loop
+  exited. The second loop started the webhook server, but
+  every `context.bot.send_message(...)` call failed because
+  the Bot's httpx client was dead. Replaced with a synchronous
+  HTTP call (`urllib`) for the one-shot `set_webhook`
+  registration. The Bot is now initialized lazily inside
+  the webhook event loop, where its httpx client lives for
+  the duration of the process. New helper:
+  `dispatch._webhook_auto_register_sync(url, secret_token)`.
+
+- **WEBHOOK.md section 4.5 manual-register curl lost
+  `allowed_updates`** (P2 paired with P0-NEW-1). The v0.9.2
+  doc had a simpler curl that did not include
+  `allowed_updates`. Updated to use the JSON-body form with
+  `allowed_updates=["message", "edited_message",
+  "callback_query", "chat_member"]` and added a callout
+  paragraph explaining why `allowed_updates` is mandatory.
+
+- **tests/test_selftest.py imports in middle of file**
+  (P3). v0.9.2 had `import os / json / asyncio / hmac /
+  MagicMock / pytest` placed AFTER
+  `test_rating_parser_returns_body`. Moved `MagicMock` to
+  the top imports; removed duplicate `os`/`asyncio`/`pytest`;
+  removed unused `json`/`hmac`.
+
+### Documentation added
+
+- `docs/REVIEW-MINIMAX-v8.md` — the post-v0.9.2 review wave
+  that surfaced the 2 new P0s. 8 KB.
+
+### Operator action required
+
+None. The 2 P0s were dormant in production (WEBHOOK_URL was
+empty). If you intend to use auto-register in the future, the
+v0.9.3 fix is now in place. Just set `WEBHOOK_URL` in
+`telegram-bot/.env` and restart.
 ## [v0.8.0] — 2026-10-10 — v0.7.8 → v0.7.9b + v0.8.0 → v0.8.2 chain
 
 Hotfix chain documented in v0.9.0 above. This entry
