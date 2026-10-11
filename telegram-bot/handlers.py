@@ -474,7 +474,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _persist_message(chat_id, thread_id, 'user', transcript, sender_name=sender_name)
         history = await _load_history(chat_id, thread_id)
         print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
-        thinking = await _reply(update, '💭 думаю…')
+        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
         # Per-task abort event for the Stop button. handle_voice
         # didn't have this in v0.5.2 either; the F4 fix in v0.6.0
         # added it to handle_photo / handle_document / handle_text
