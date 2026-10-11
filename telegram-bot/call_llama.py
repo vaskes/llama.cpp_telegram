@@ -820,6 +820,31 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     # the response object is constructed).
                     body = r.text[:500] if r is not None else ''
                     print(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}", flush=True)
+                    # v0.8.1: 500 from llama-server is usually the PEG
+                    # grammar parser rejecting the model tool-call
+                    # output. Retry ONCE without tools.
+                    if r is not None and getattr(r, 'status_code', None) == 500 and req_body.get('tools'):
+                        print(f"[call_llama] 500 on tools-enabled request; retrying iter={iteration} without tools", flush=True)
+                        fallback_body = dict(req_body)
+                        fallback_body.pop('tools', None)
+                        fallback_body.pop('tool_choice', None)
+                        try:
+                            r2 = await _abortable_post(
+                                vclient, f"{LLAMA_URL}/chat/completions",
+                                abort_event=abort_event,
+                                headers={"Authorization": f"Bearer {API_KEY}",
+                                         "Content-Type": "application/json"},
+                                json=fallback_body,
+                            )
+                            if r2 is None:
+                                return None
+                            r2.raise_for_status()
+                            data2 = r2.json()
+                            content2 = data2["choices"][0]["message"].get("content") or ''
+                            print(f"[call_llama] tools-less fallback succeeded: {len(content2)} chars", flush=True)
+                            return content2
+                        except Exception as e2:
+                            print(f"[call_llama] tools-less fallback also failed: {type(e2).__name__}: {e2}", flush=True)
                     return f'[llama-server request failed: {e}]'
             if not locals().get('_ns_handled'):
                 try:
