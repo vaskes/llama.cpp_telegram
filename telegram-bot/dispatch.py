@@ -828,9 +828,30 @@ def main():
     # with a single dedicated httpx.AsyncClient, de_json() into Update
     # objects, then call handler functions ourselves (not via dispatcher,
     # to skip process_update's internal queue/worker logic).
-    print('🤖 LlamaBot v2 (no-PTB-poll) started...', flush=True)
+    print('🤖 LlamaBot v2 started...', flush=True)
+
+    # === T25: webhook mode (replaces polling loop) ===
+    # When WEBHOOK_MODE=1, run an aiohttp server bound to
+    # 127.0.0.1:WEBHOOK_PORT. nginx-proxy in front terminates
+    # TLS and forwards POST /tg-webhook/<token> here. The
+    # handler verifies X-Telegram-Bot-Api-Secret-Token and
+    # delegates to the same _dispatch_update() the polling
+    # loop would call. Falling back to polling is as simple
+    # as setting WEBHOOK_MODE=0 (or removing the env var).
+    import config as _config
+    if _config.WEBHOOK_MODE:
+        from webhook import run as _webhook_run
+        print(
+            f"[main] webhook mode: aiohttp on "
+            f"http://{_config.WEBHOOK_HOST}:{_config.WEBHOOK_PORT}"
+            f"{_config.WEBHOOK_PATH}/",
+            flush=True,
+        )
+        asyncio.run(_webhook_run())
+        return
 
     TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+    print('[main] polling mode: long-poll getUpdates', flush=True)
 
     # Graceful shutdown: SIGINT (Ctrl+C) and SIGTERM (docker stop / systemd
     # stop) set this event; the polling loop checks it at the top of each

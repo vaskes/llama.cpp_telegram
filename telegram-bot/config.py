@@ -80,3 +80,25 @@ LLAMABOT_SELFTEST = os.environ.get("LLAMABOT_SELFTEST") == "1"
 # === Donsetch MCP ===
 DONSETCH_URL = os.environ.get("DONSETCH_URL", "http://localhost:8765/mcp")
 DONSETCH_SESSION_ID: Optional[str] = None
+
+# === Webhook mode (T25) ===
+# When WEBHOOK_MODE=1, the bot starts an aiohttp server on
+# 127.0.0.1:WEBHOOK_PORT instead of polling getUpdates. The
+# nginx-proxy in front of the bot terminates TLS and forwards
+# POST /tg-webhook/<secret-token> to this server.
+#
+# WEBHOOK_URL is the public URL Telegram should POST to. The
+# secret token is appended at registration time, not stored
+# in the env directly. WEBHOOK_SECRET_TOKEN is the shared
+# secret Telegram includes as the
+# X-Telegram-Bot-Api-Secret-Token header on every request —
+# the handler must verify it before processing.
+WEBHOOK_MODE = os.environ.get("WEBHOOK_MODE", "0") == "1"
+WEBHOOK_HOST = os.environ.get("WEBHOOK_HOST", "127.0.0.1")
+WEBHOOK_PORT = int(os.environ.get("WEBHOOK_PORT", "8443"))
+# Path component. The secret token is appended at runtime
+# (random or WEBHOOK_SECRET_TOKEN env).
+WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/tg-webhook")
+# Shared secret Telegram sends in X-Telegram-Bot-Api-Secret-Token.
+# If empty, the handler refuses every request (safe-by-default).
+WEBHOOK_SECRET_TOKEN = os.environ.get("WEBHOOK_SECRET_TOKEN", "")
