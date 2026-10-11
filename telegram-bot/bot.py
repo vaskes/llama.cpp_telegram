@@ -716,7 +716,7 @@ async def _selftest():
     # down with it is not a smoke test. Catch every exception, log
     # it, keep going. The production bot should be able to start
     # even if llama-server is unreachable at boot.
-    try:
+    try:  # noqa:  - no local asyncio import
         result = await _b.call_llama(
             parsed_history,
             max_tokens=2048,
@@ -784,7 +784,7 @@ async def _selftest():
     # None so the handler short-circuits before LLM call.
     print('[selftest] running handle_photo NameError regression test...', flush=True)
     hp_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         import bot as _b
         class _FakePhoto:
             file_id = 'fake'
@@ -844,7 +844,7 @@ async def _selftest():
     # broken.
     print('[selftest] running handle_voice _stop_button_markup regression test...', flush=True)
     hv_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         import bot as _b
         async def _fake_route_v(_u, _c):
             return (-1001, '19', True)
@@ -886,7 +886,7 @@ async def _selftest():
     # === handle_document _stop_button_markup regression (v0.7.4) ===
     print('[selftest] running handle_document _stop_button_markup regression test...', flush=True)
     hd_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         import bot as _b
         async def _fake_route_d(_u, _c):
             return (-1001, '19', True)
@@ -938,7 +938,7 @@ async def _selftest():
     # for the full vision response.
     print('[selftest] running call_llama abort during non-streaming POST test...', flush=True)
     ab_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         import bot as _b
         # No 'import asyncio' here - the module-level import (line 10)
         # is already in scope. A local import would shadow the module
@@ -995,13 +995,13 @@ async def _selftest():
     all_ok &= ab_ok
     print(f"[selftest] call_llama abort test: {'all pass' if ab_ok else 'FAILED'}", flush=True)
 
-    # === Storage: known_topics round-trip ===
+    # === Storage: known_topics round-trip ===    # === Storage: known_topics round-trip ===
     # Add a topic, list it, find it by name, remove it. Catches
     # typos in the SQL and the new known_topics methods (commit 8).
     print('[selftest] running known_topics round-trip...', flush=True)
     SELFTEST_CHAT = -1001
     SELFTEST_TOPIC_ID = 999999
-    try:
+    try:  # noqa:  - no local asyncio import
         await asyncio.to_thread(
             _b.store.add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
         )
@@ -1078,7 +1078,7 @@ async def _selftest():
     TRIM_LOW = _storage_mod.TRIM_LOW
     LAZY_CHAT = -1002
     LAZY_THREAD = "lazy-test"
-    try:
+    try:  # noqa:  - no local asyncio import
         # Wipe any leftover rows
         await asyncio.to_thread(_b.store.delete_thread, LAZY_CHAT, LAZY_THREAD)
         # Insert TRIM_HIGH + 50 rows
@@ -1108,7 +1108,7 @@ async def _selftest():
     print('[selftest] running rating round-trip...', flush=True)
     RATING_CHAT = -1003
     RATING_THREAD = "rating-test"
-    try:
+    try:  # noqa:  - no local asyncio import
         await asyncio.to_thread(_b.store.delete_thread, RATING_CHAT, RATING_THREAD)
         await asyncio.to_thread(
             _b.store.add_message, RATING_CHAT, RATING_THREAD,
@@ -1305,7 +1305,7 @@ async def _selftest():
     # permits are taken. We hold N=2 permits, then try a 3rd.
     print('[selftest] running per-user semaphore test...', flush=True)
     sem_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         sem = _b._user_semaphore(123, 456)
         # Manually lock it to simulate 2 in-flight requests
         for _ in range(_b._PER_USER_SEMAPHORE_LIMIT):
@@ -1428,7 +1428,7 @@ async def _selftest():
     }
     upd = Update.de_json(fake_cm, None)
     mock_bot = _MockBot()
-    try:
+    try:  # noqa:  - no local asyncio import
         await _b._handle_chat_member_update(upd, mock_bot)
         # Expect 2 calls: one to chat_id, one to user_id
         if len(mock_bot.calls) != 2:
@@ -1471,7 +1471,7 @@ async def _selftest():
     }
     upd2 = Update.de_json(fake_leave, None)
     mock_bot2 = _MockBot()
-    try:
+    try:  # noqa:  - no local asyncio import
         await _b._handle_chat_member_update(upd2, mock_bot2)
         if len(mock_bot2.calls) != 0:
             print(f"  [FAIL] leave event triggered {len(mock_bot2.calls)} calls, expected 0", flush=True)
@@ -1494,7 +1494,7 @@ async def _selftest():
     }
     upd3 = Update.de_json(fake_bot_join, None)
     mock_bot3 = _MockBot()
-    try:
+    try:  # noqa:  - no local asyncio import
         await _b._handle_chat_member_update(upd3, mock_bot3)
         if len(mock_bot3.calls) != 0:
             print(f"  [FAIL] bot-join triggered {len(mock_bot3.calls)} calls, expected 0", flush=True)
@@ -1514,7 +1514,7 @@ async def _selftest():
     # then verify it can be retrieved and popped.
     print('[selftest] running edit-replace test...', flush=True)
     er_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         # Save the existing map and clear it for the test
         import bot as _b
         saved = dict(_b._bot_replies)
@@ -1563,7 +1563,7 @@ async def _selftest():
     # mock File object, without needing a real Telegram file.
     print('[selftest] running _download_with_limit test...', flush=True)
     dl_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         import bot as _b
         # The F3 module split made _download_with_limit's internal
         # `await _reply(update, ...)` resolve to handlers._reply
@@ -1663,7 +1663,7 @@ async def _selftest():
     # sender_name=NULL and fall back to a generic "user" prefix.
     print('[selftest] running sender-name flow test...', flush=True)
     sn_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         import bot as _b
         from telegram import User as _U
 
@@ -1796,7 +1796,7 @@ async def _selftest():
     # patterns we have seen in production logs.
     print('[selftest] running malformed tool-call JSON rejection test...', flush=True)
     rej_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         # Replicate the dispatcher block (it's a closure inside
         # call_llama; we don't have a real round-trip harness here).
         async def dispatch_one_tool(raw_args, fn_name="donsetch_web_fetch"):
@@ -1909,7 +1909,7 @@ async def _selftest():
     # tool-calling loop.
     print('[selftest] running react_to_message tool test...', flush=True)
     react_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         from unittest.mock import MagicMock
         mock_calls = []
 
@@ -2016,7 +2016,7 @@ async def _selftest():
     # that the executor runs.
     print('[selftest] running non-streaming tool_call regression test...', flush=True)
     ns_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         from unittest.mock import patch, AsyncMock
         from bot import call_llama
 
@@ -2155,7 +2155,7 @@ async def _selftest():
 
     print('[selftest] running GROUP_CONTEXT injection test...', flush=True)
     ctx_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         # Inspect the call_llama source to make sure GROUP_CONTEXT
         # is referenced in both the unconditional injection and the
         # rating branch.
@@ -2265,7 +2265,7 @@ async def _selftest():
     # handler has its own slot.
     print('[selftest] running per-handler abort_event key test...', flush=True)
     aek_ok = True
-    try:
+    try:  # noqa:  - no local asyncio import
         import bot as _b
         saved = dict(_b._abort_events)
         _b._abort_events.clear()
@@ -2328,7 +2328,7 @@ async def _selftest():
     lru_ok = True
     saved_aes = dict(_b._abort_events)
     _b._abort_events.clear()
-    try:
+    try:  # noqa:  - no local asyncio import
         for i in range(250):
             _b._register_abort_event(0, i, asyncio.Event())
         if len(_b._abort_events) != 200:
@@ -2349,6 +2349,127 @@ async def _selftest():
         _b._abort_events.update(saved_aes)
     all_ok &= lru_ok
     print(f"[selftest] F4 LRU bound: {'all pass' if lru_ok else 'FAILED'}", flush=True)
+
+    # === handle_text abort_event discard (post-won race) ===
+    # v0.8.0 fix: handler discards non-None response if abort_event
+    # was set during call_llama. Otherwise the user sees a bot
+    # response AFTER clicking Stop — confusing UX. The fix lives in
+    # all 4 handlers (text/photo/voice/document); we test handle_text
+    # because it's the simplest (no media download) and exercises the
+    # exact code path.
+    #
+    # IMPORTANT: this test patches several module-level attrs on _b
+    # and _h. We save originals and restore in finally so we don't
+    # pollute later tests (this is the LAST test, but still good
+    # hygiene in case the test order changes).
+    print('[selftest] running handle_text post-race abort discard test...', flush=True)
+    ar_ok = True
+    saved = {}
+    try:  # noqa:  - no local asyncio import
+        import bot as _b
+        import handlers as _h
+
+        class _FakeMessage:
+            text = 'user query'
+            caption = None
+            message_thread_id = 19
+            from_user = type('U', (), {'id': 286293081, 'is_bot': False, 'username': 'V', 'first_name': 'V', 'last_name': 'L'})()
+            chat = type('C', (), {'id': -1001, 'send_action': lambda self, **kw: asyncio.sleep(0)})()
+        class _FakeUser:
+            id = 286293081
+            is_bot = False
+            username = 'V'
+            first_name = 'V'
+            last_name = 'L'
+        class _FakeChat:
+            id = -1001
+            type = 'private'
+        class _FakeUpdate:
+            effective_chat = _FakeChat()
+            effective_user = _FakeUser()
+            message = _FakeMessage()
+        class _FakeContext:
+            bot = type('B', (), {'id': 1})()
+        class _ThinkingMsg:
+            message_id = 42
+            async def edit_text(self, *a, **k): return None
+            async def delete(self): return None
+
+        # Save originals
+        for owner, name in [
+            (_b, '_register_abort_event'),
+            (_b, '_route_to_thread'),
+            (_b, '_check_user_slot'),
+            (_b, '_get_global_llm_sem'),
+            (_b, '_apply_rating_and_persist'),
+            (_h, '_reply'),
+            (_h, 'send_reply'),
+            (_h, '_persist_message'),
+            (_h, '_load_history'),
+            (_h, '_sender_display_name'),
+            (_h, '_is_rating_active'),
+            (_h, '_stop_button_markup'),
+            (_h, 'call_llama'),
+        ]:
+            saved[(id(owner), name)] = getattr(owner, name, None)
+
+        # Patch
+        captured = []
+        def _capture(chat_id, msg_id, ev):
+            captured.append(ev)
+        _b._register_abort_event = _capture
+        async def _route(_u, _c): return (-1001, '19', False)
+        _b._route_to_thread = _route
+        class _FakeSem:
+            def release(self): pass
+        async def _slot(*a, **k): return _FakeSem()
+        _b._check_user_slot = _slot
+        sent_texts = []
+        async def _reply(_u, text, **kw):
+            sent_texts.append(text)
+            return _ThinkingMsg()
+        _h._reply = _reply
+        _h.send_reply = _reply
+        async def _persist(*a, **k): return None
+        _h._persist_message = _persist
+        async def _load_hist(*a, **k): return []
+        _h._load_history = _load_hist
+        _b._apply_rating_and_persist = lambda *a, **k: a[4]  # 5th arg is bot_response
+        _h._sender_display_name = lambda u: 'V'
+        _h._is_rating_active = lambda u: False
+        _h._stop_button_markup = lambda: None
+        class _DummySem:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+        _b._get_global_llm_sem = lambda: _DummySem()
+        RACE = 'POST_RACE_RESPONSE_SHOULD_BE_DISCARDED'
+        async def _race(*a, **k):
+            # Simulate user clicked Stop during call_llama
+            if captured:
+                captured[0].set()
+            return RACE
+        _h.call_llama = _race
+
+        await _h.handle_text(_FakeUpdate(), _FakeContext())
+        if any(RACE in str(t) for t in sent_texts):
+            print(f"  [FAIL] post-race response was sent: {sent_texts}", flush=True)
+            ar_ok = False
+        else:
+            print(f"  [OK] post-race response discarded (sent {len(sent_texts)} non-race texts)", flush=True)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"  [FAIL] test error: {type(e).__name__}: {e!r}", flush=True)
+        ar_ok = False
+    finally:
+        # Restore originals
+        for owner in ({_b, _h} if 'ar_ok' in dir() and '_h' in dir() else []):
+            for (oid, name), orig in saved.items():
+                if id(owner) == oid and orig is not None:
+                    setattr(owner, name, orig)
+    all_ok &= ar_ok
+    print(f"[selftest] post-race abort discard: {'all pass' if ar_ok else 'FAILED'}", flush=True)
+
 
 
 
