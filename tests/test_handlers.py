@@ -35,6 +35,8 @@ import pytest
 
 # === handle_text rollback ===
 
+
+
 @pytest.mark.asyncio
 async def test_handle_text_rollback_on_abort(monkeypatch, tmp_path):
     """v0.9.2: Stop click during text LLM call should roll back the persisted user message."""
@@ -49,7 +51,6 @@ async def test_handle_text_rollback_on_abort(monkeypatch, tmp_path):
     # instance (which would point at the default /app/data path).
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
-    monkeypatch.setattr(_pers, "_store_instance", None) if hasattr(_pers, "_store_instance") else None
     store = Storage(db)
     store.create_thread(1, "main")
     monkeypatch.setattr(_st, "get_store", lambda: store)
@@ -143,7 +144,6 @@ async def test_handle_voice_rollback_on_abort(monkeypatch, tmp_path):
     # instance (which would point at the default /app/data path).
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
-    monkeypatch.setattr(_pers, "_store_instance", None) if hasattr(_pers, "_store_instance") else None
     store = Storage(db)
     store.create_thread(1, "main")
     monkeypatch.setattr(_st, "get_store", lambda: store)
@@ -249,7 +249,6 @@ async def test_handle_document_rollback_on_abort(monkeypatch, tmp_path):
     # instance (which would point at the default /app/data path).
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
-    monkeypatch.setattr(_pers, "_store_instance", None) if hasattr(_pers, "_store_instance") else None
     store = Storage(db)
     store.create_thread(1, "main")
     monkeypatch.setattr(_st, "get_store", lambda: store)
@@ -338,7 +337,6 @@ async def test_handle_photo_rollback_on_abort(monkeypatch, tmp_path):
     # instance (which would point at the default /app/data path).
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
-    monkeypatch.setattr(_pers, "_store_instance", None) if hasattr(_pers, "_store_instance") else None
     store = Storage(db)
     store.create_thread(1, "main")
     monkeypatch.setattr(_st, "get_store", lambda: store)
@@ -426,7 +424,6 @@ async def test_handle_voice_successful_flow_keeps_transcript(monkeypatch, tmp_pa
     # instance (which would point at the default /app/data path).
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
-    monkeypatch.setattr(_pers, "_store_instance", None) if hasattr(_pers, "_store_instance") else None
     store = Storage(db)
     store.create_thread(1, "main")
     monkeypatch.setattr(_st, "get_store", lambda: store)
@@ -521,7 +518,6 @@ async def test_text_abort_registers_abort_event_with_thinking_message_id(monkeyp
     # instance (which would point at the default /app/data path).
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
-    monkeypatch.setattr(_pers, "_store_instance", None) if hasattr(_pers, "_store_instance") else None
     store = Storage(db)
     store.create_thread(1, "main")
     monkeypatch.setattr(_st, "get_store", lambda: store)
@@ -593,7 +589,6 @@ async def test_text_successful_flow_keeps_message(monkeypatch, tmp_path):
     # instance (which would point at the default /app/data path).
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
-    monkeypatch.setattr(_pers, "_store_instance", None) if hasattr(_pers, "_store_instance") else None
     store = Storage(db)
     store.create_thread(1, "main")
     monkeypatch.setattr(_st, "get_store", lambda: store)

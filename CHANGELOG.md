@@ -804,6 +804,61 @@ Total pytest count: 12 -> 32+ tests, all in 0.3-0.4s.
 None. The fixes are additive. The comprehensive test suite
 lets the operator skip the manual smoke test for these
 scenarios on future releases.
+## [v0.9.5] — 2026-10-12 — test suite polish + coverage expansion
+
+v0.9.4 review (REVIEW-MINIMAX-v10, wave 12) caught 7 P3 items
+in the new test suite. v0.9.5 closes 6 of them. T1 (DRY up
+handler test setup) is deferred — the fixture approach had
+subtle ordering issues that need a deeper investigation, and
+the inlined setup is small enough (12 lines × 7 tests) to
+be acceptable for now.
+
+### Fixed (v0.9.5)
+
+- **Dead `_pers._store_instance` line in 7 handler tests** (T2).
+  The line was a no-op because `persistence.py` doesn't have
+  `_store_instance`; it was an artefact of a previous pattern.
+  Removed all 7 instances.
+
+- **conftest.py comment said "35+" tests, actual is 36** (T6).
+  One-word fix.
+
+### Tests added (v0.9.5)
+
+- `test_auto_register_handles_empty_current_url` (T3) — first-deploy
+  case. getWebhookInfo returns `{"result": {"url": ""}}` and the
+  helper proceeds with setWebhook without printing a WARNING
+  (because the existing webhook is empty, not different).
+
+- 3 tests for `call_llama._abortable_post` (T4):
+  - `test_abortable_post_returns_response_when_post_finishes_first`
+  - `test_abortable_post_returns_none_when_abort_fires_first` —
+    exercises the v0.7.6 race condition fix.
+  - `test_abortable_post_passes_through_when_no_abort_event`
+
+- 3 tests for `storage` known_topics (T5):
+  - `test_known_topics_round_trip` — add / find by name / find by id
+    / remove
+  - `test_known_topics_list_per_chat` — list_known_topics returns
+    only topics for the given chat
+  - `test_known_topics_returns_none_for_missing`
+
+Total pytest count: 36 -> 43 tests, all in 0.48s.
+
+### Documentation added
+
+- `docs/REVIEW-MINIMAX-v10.md` (T7) — the v0.9.4 test suite
+  review wave that surfaced the 7 P3 items.
+
+### Deferred to a future release
+
+- **T1: DRY up test_handlers.py setup** (P2, 30 min).
+  The 12-line DB setup block is repeated 7 times. The reviewer
+  suggested a pytest fixture (`fresh_store`) but the fixture
+  approach caused test isolation issues (the fixture's
+  monkeypatch+Storage setup interfered with the test's inlined
+  setup). Will revisit with a context-manager approach
+  (`with fresh_db() as store:`) in a follow-up.
 ## [v0.8.0] — 2026-10-10 — v0.7.8 → v0.7.9b + v0.8.0 → v0.8.2 chain
 
 Hotfix chain documented in v0.9.0 above. This entry

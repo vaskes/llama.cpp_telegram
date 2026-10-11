@@ -456,3 +456,44 @@ def test_auto_register_uses_json_body_not_form(monkeypatch):
     body = _json.loads(set_call.data.decode("utf-8"))
     assert isinstance(body["allowed_updates"], list)
     assert isinstance(body["drop_pending_updates"], bool)
+
+
+def test_auto_register_handles_empty_current_url(monkeypatch, capsys):
+    """v0.9.4: first-deploy case. getWebhookInfo returns empty url.
+    No WARNING, just register. (P3 review note from wave 12.)"""
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "BOT_TOKEN", "test:token")
+    import dispatch
+
+    class FakeResponseEmpty:
+        status = 200
+        def read(self):
+            return _json.dumps({"ok": True, "result": {"url": ""}}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    set_called = [False]
+    class FakeSetResponse:
+        status = 200
+        def read(self): return b'{"ok": true, "result": true}'
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    def fake_urlopen(req, timeout=10):
+        if "setWebhook" in req.full_url:
+            set_called[0] = True
+            return FakeSetResponse()
+        return FakeResponseEmpty()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    dispatch._webhook_auto_register_sync(
+        "https://example.com/tg-webhook", "secret"
+    )
+
+    assert set_called[0], "setWebhook should have been called (first deploy)"
+    out = capsys.readouterr().out
+    # No warning, no "already registered" — just a clean register
+    assert "WARNING" not in out, f"unexpected WARNING on first deploy: {out}"
+    assert "already registered" not in out
+    assert "auto-registered" in out

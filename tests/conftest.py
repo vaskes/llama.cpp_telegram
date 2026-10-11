@@ -22,7 +22,7 @@ def _reset_module_state():
     caused one of these to be set, subsequent tests see a stale
     instance and assert the wrong thing.
 
-    This is autouse so all 35+ tests in tests/ get the reset without
+    This is autouse so all 36 tests in tests/ get the reset without
     having to declare the fixture.
     """
     import storage as _st
