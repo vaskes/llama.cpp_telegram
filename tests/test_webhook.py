@@ -497,3 +497,47 @@ def test_auto_register_handles_empty_current_url(monkeypatch, capsys):
     assert "WARNING" not in out, f"unexpected WARNING on first deploy: {out}"
     assert "already registered" not in out
     assert "auto-registered" in out
+
+
+@pytest.mark.asyncio
+async def test_backpressure_returns_503_when_queue_full(monkeypatch):
+    """v0.10.1 (Qwen wave-2 review): when the pending dispatch queue
+    is full, the webhook returns 503 (not 200) so Telegram retries
+    with backoff. The semaphores cap concurrency, not queue depth."""
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "WEBHOOK_SECRET_TOKEN", "secret")
+    import webhook
+    import asyncio
+    
+    # Simulate queue full
+    saved_max = webhook._MAX_PENDING_DISPATCH
+    saved_tasks = set(webhook._pending_dispatch_tasks)
+    webhook._MAX_PENDING_DISPATCH = 2
+    # Create 2 fake pending tasks
+    fake1 = asyncio.create_task(asyncio.sleep(10))
+    fake2 = asyncio.create_task(asyncio.sleep(10))
+    webhook._pending_dispatch_tasks.add(fake1)
+    webhook._pending_dispatch_tasks.add(fake2)
+    try:
+        # Now a request should get 503
+        req = _make_request(
+            {"X-Telegram-Bot-Api-Secret-Token": "secret"},
+            body=b'{"update_id": 999}',
+            content_length=20,
+        )
+        resp = await webhook._handle(req)
+        assert resp.status == 503, f"expected 503 when queue full, got {resp.status}"
+        assert b"busy" in resp.body.lower() or b"retry" in resp.body.lower()
+    finally:
+        webhook._MAX_PENDING_DISPATCH = saved_max
+        webhook._pending_dispatch_tasks.clear()
+        fake1.cancel()
+        fake2.cancel()
+        try:
+            await fake1
+        except (asyncio.CancelledError, Exception):
+            pass
+        try:
+            await fake2
+        except (asyncio.CancelledError, Exception):
+            pass

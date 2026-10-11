@@ -703,34 +703,6 @@ def _is_reply_to_other_user(update, bot_id: int) -> bool:
         return False
     return True
 
-# === _PER_USER_SEMAPHORE_LIMIT ===
-_PER_USER_SEMAPHORE_LIMIT = 2
-
-# === _GLOBAL_LLM_SEM_LIMIT ===
-_GLOBAL_LLM_SEM_LIMIT = 4
-
-# === _get_global_llm_sem ===
-def _get_global_llm_sem():
-    """Return the module-level semaphore, lazy-initialised because
-    asyncio primitives cannot be created at module import time
-    (no running event loop)."""
-    global _global_llm_sem
-    if _global_llm_sem is None:
-        _global_llm_sem = asyncio.Semaphore(_GLOBAL_LLM_SEM_LIMIT)
-    return _global_llm_sem
-
-# === _user_semaphore ===
-def _user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
-    """Return the per-(chat_id, user_id) asyncio.Semaphore, creating
-    it on first use. Lazy init because we cannot create asyncio
-    primitives at module-import time (no running event loop)."""
-    key = (chat_id, user_id)
-    sem = _user_semaphores.get(key)
-    if sem is None:
-        sem = asyncio.Semaphore(_PER_USER_SEMAPHORE_LIMIT)
-        _user_semaphores[key] = sem
-    return sem
-
 # === _rate_limit_send ===
 # v0.7.9: Telegram rate-limits the bot to ~20 messages/minute per chat.
 # A burst of queued messages (the v0.7.8 fix) can produce replies

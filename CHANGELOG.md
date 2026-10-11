@@ -906,6 +906,107 @@ Before v0.9.6: 18/20 test groups pass (2 pre-existing failures:
 "plain answer" and "[[TYPE:unknown]]").
 
 After v0.9.6: **20/20 test groups pass** (T28 closed).
+## [v0.10.1] — 2026-10-12 — Qwen wave-2 review fixes
+
+Three real issues from the wave-2 review that I dismissed in
+v0.10.0 but turned out to be real concerns, plus cleanup of
+the v0.9.6 / v0.10.0 deploy confusion.
+
+### Real issues fixed (Qwen wave-2 was right)
+
+**P0-4 race in Stop button (1-line fix in handlers.py).**
+Between the post-await `abort_event.is_set()` check and
+`send_reply()`, there's an `_apply_rating_and_persist()` call
+(SQLite write, takes time). A Stop click in that window
+would send the response. Fixed by adding the abort check
+right before `send_reply()` in all 4 handlers (handle_text,
+handle_photo, handle_voice, handle_document). v0.9.1 had the
+aborts-in-abort-branch rollback but missed the post-write
+pre-send window.
+
+**P0-5 explicit transactions in storage.delete_thread().**
+The previous code relied on Python sqlite3's implicit
+transaction (default `isolation_level=""` holds an implicit
+txn across DML). This worked but was undocumented and not
+protected by a test. v0.10.1 wraps in explicit
+`BEGIN`/`COMMIT` with `ROLLBACK` on exception, so the
+contract is obvious and survives a future refactor that might
+flip `isolation_level` to autocommit. Regression test added
+in test_storage.py.
+
+**P0-6 backpressure cap on webhook queue.**
+`asyncio.create_task()` with no counter meant a flood could
+spawn 1000+ tasks waiting in memory for a semaphore slot.
+The semaphores (`_GLOBAL_LLM_SEM_LIMIT=4`, per-user=2) cap
+CONCURRENCY, not QUEUE DEPTH — the queue could grow without
+bound for up to 5 minutes (per `MAX_QUEUE_WAIT_SEC`).
+
+v0.10.1 adds `_MAX_PENDING_DISPATCH=50` (10s of burst at
+normal Telegram rate). Beyond that, `_handle()` returns 503
+"bot busy, retry later" — Telegram retries with backoff.
+This is the right HTTP status: bot is alive but overloaded,
+so Telegram doesn't mark the webhook as broken.
+
+### Cleanup
+
+**Dead code in dispatch.py removed.**
+The `_get_global_llm_sem` and `_user_semaphore` re-exports
+in `dispatch.py` were F3 stage 5 leftovers. After v0.10.0's
+LRU additions, the same functions live in `state.py`. v0.10.1
+deletes the dispatch.py copies and updates `bot.py` and
+`handlers.py` to import from `state` directly. Single source
+of truth, no shim.
+
+### What the LRU limit of 500 actually means
+
+Qwen wave-2 (N-3) asked "why 500, not 200 or 1000?" — fair.
+The reasoning:
+- `_abort_events` uses 200 because each entry holds a
+  waiting `asyncio.Event` that the handler resolves within
+  a few seconds. 200 = ~50 messages/s for 4s of in-flight.
+- `_user_semaphores` and `_bot_replies` use 500 because
+  they're keyed on (chat_id, user_id) or (chat_id, msg_id)
+  and stay alive much longer. 500 = ~10x what `_abort_events`
+  holds, generous headroom.
+
+The new test `test_user_semaphores_at_actual_500_limit_evicts`
+verifies that the LRU logic is correct (using a smaller
+test maxsize for speed; the assertion checks the production
+default is 500).
+
+### Held-semaphore eviction risk (Qwen wave-2 1.2)
+
+The reviewer noted: if a semaphore is evicted while held
+(`sem.locked() == True`), the next message from the same
+user creates a NEW sem with full budget (4 slots instead
+of 2). This is a real concern in a public fork with many
+users. For the current deployment with `ALLOWED_USER_IDS=2,1`
+and 5-10 entries, eviction never happens. **Documented as
+accepted risk in `_get_user_semaphore()` docstring**, not
+implemented (would add complexity for a scenario that
+doesn't occur in the current deployment).
+
+### Tests added (57 total, was 52)
+
+- `test_delete_thread_happy_path` — verifies all 3 tables cleared
+- `test_delete_thread_idempotent_on_missing_thread` — deleting
+  a non-existent thread returns 0
+- `test_delete_thread_uses_explicit_transaction` — verifies
+  BEGIN/COMMIT pattern via `set_trace_callback`
+- `test_user_semaphores_at_actual_500_limit_evicts` — LRU
+  eviction at the production limit
+- `test_backpressure_returns_503_when_queue_full` — webhook
+  queue overflow
+
+The 3 prompts tests in v0.10.0 (test_prompts_has_long_*) were
+updated to check SEMANTIC MARKERS instead of string length
+(Qwen N-2: length check is fragile).
+
+### Bundle
+
+v0.10.1 contains everything from v0.9.6 + v0.9.7 + v0.10.0 +
+the wave-2 fixes. **The operator only needs to deploy v0.10.1
+to get all fixes.**
 ## [v0.8.0] — 2026-10-10 — v0.7.8 → v0.7.9b + v0.8.0 → v0.8.2 chain
 
 Hotfix chain documented in v0.9.0 above. This entry

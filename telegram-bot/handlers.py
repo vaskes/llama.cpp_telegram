@@ -609,7 +609,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_response = await _apply_rating_and_persist(
             context, update, chat_id, thread_id, bot_response, rating_active,
         )
-        if bot_response:
+        # v0.10.1 (Qwen wave-2 review): final abort check before sending.
+        if bot_response and not abort_event.is_set():
             # In rating mode the response is short (no chunking needed).
             # The original 4000-char chunking applied to voice transcripts
             # which are unlikely to exceed 4k after going through the LLM
@@ -820,7 +821,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user, _user_semaphore
+    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user
+    from state import _get_user_semaphore as _user_semaphore
     print(f"[handle_text] ENTRY user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text={update.message.text!r}", flush=True)
     result = await _route_to_thread(update, context)
     if result is None:
@@ -952,7 +954,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_response = await _apply_rating_and_persist(
             context, update, chat_id, thread_id, bot_response, rating_active,
         )
-        if bot_response:
+        # v0.10.1 (Qwen wave-2 review): final abort check before sending.
+        if bot_response and not abort_event.is_set():
             if len(bot_response) > 4000:
                 for i in range(0, len(bot_response), 4000):
                     await _reply(update, bot_response[i:i+4000])

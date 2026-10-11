@@ -38,6 +38,29 @@ log = logging.getLogger(__name__)
 # OOM the bot by streaming a huge body.
 _MAX_BODY_BYTES = 1 * 1024 * 1024
 
+# v0.10.1 (Qwen wave-2 review): backpressure cap on pending dispatch
+# tasks. _GLOBAL_LLM_SEM_LIMIT=4 and per-user sem=2 cap CONCURRENCY
+# (how many LLM calls run at once), not QUEUE DEPTH (how many tasks
+# wait in memory for a slot). Without this cap, a flood that
+# produces 1000 messages in 10s would spawn 1000 asyncio.create_task
+# objects, each holding the Update + history + closures. The semaphores
+# would still cap in-flight LLM calls to 4-6, but the other ~994
+# tasks would sit in memory waiting their turn.
+#
+# MAX_PENDING_DISPATCH caps the queue. 50 is generous (≈10s of
+# burst at Telegram's normal rate) but bounded. Beyond that we
+# reject with 503 and let Telegram retry the update (it will, with
+# backoff). 503 is the right status — it tells Telegram the bot is
+# alive but busy, so Telegram doesn't mark the webhook as broken.
+_MAX_PENDING_DISPATCH = 50
+_pending_dispatch_tasks: "set[asyncio.Task]" = set()
+
+
+def _register_pending(task: "asyncio.Task") -> None:
+    """Add a dispatch task to the pending set with auto-cleanup on completion."""
+    _pending_dispatch_tasks.add(task)
+    task.add_done_callback(_pending_dispatch_tasks.discard)
+
 
 def _check_secret(request: web.Request) -> bool:
     """Constant-time compare of X-Telegram-Bot-Api-Secret-Token
@@ -105,7 +128,18 @@ async def _handle(request: web.Request) -> web.Response:
     # would use. We don't await — Telegram expects 200 within
     # ~5s and LLM calls can take 30s+; fire-and-forget is the
     # only sane pattern.
-    asyncio.create_task(_safe_dispatch())
+    #
+    # v0.10.1: cap pending tasks. If the queue is full, reject
+    # with 503 — Telegram will retry with backoff. This is the
+    # right HTTP status for "alive but overloaded".
+    if len(_pending_dispatch_tasks) >= _MAX_PENDING_DISPATCH:
+        log.warning(
+            "[webhook] rejected: %d pending tasks >= %d cap",
+            len(_pending_dispatch_tasks), _MAX_PENDING_DISPATCH,
+        )
+        return web.Response(status=503, text="bot busy, retry later")
+    task = asyncio.create_task(_safe_dispatch())
+    _register_pending(task)
     return web.Response(status=200, text="ok")
 
 

@@ -96,13 +96,17 @@ from call_llama import (
 import dispatch
 from dispatch import (
     main, _dispatch_update, _handle_chat_member_update, _register_bot_menu,
-    cmd_callback, _check_user_slot, _get_global_llm_sem, _user_semaphore,
+    cmd_callback, _check_user_slot,
     _is_group_chat, _should_mute_in_group, _is_reply_to_other_user,
     _stop_button_markup, is_authorized, reject_if_unauthorized,
     _parse_subtalk_arg, _parse_topic_arg,
     start, reset, cmd_help, stats, cmd_newsub, cmd_sub, cmd_here,
     cmd_subs, cmd_delsub,
 )
+# v0.10.1: import from state instead of dispatch shim re-exports.
+# state.py is the single source of truth; the dispatch re-exports
+# were F3 stage 5 leftovers and are now deleted.
+from state import _get_global_llm_sem, _get_user_semaphore as _user_semaphore
 import handlers
 from handlers import (
     handle_document, handle_photo, handle_text, handle_voice,

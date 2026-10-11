@@ -266,25 +266,40 @@ class Storage:
             return False
 
     def delete_thread(self, chat_id: int, thread_id: str) -> int:
-        """Returns the number of messages deleted (0 if thread did not exist)."""
+        """Returns the number of messages deleted (0 if thread did not exist).
+
+        v0.10.1 (Qwen wave-2 review): wrapped in explicit BEGIN/COMMIT.
+        Python sqlite3 with default isolation_level="" actually holds
+        an implicit transaction across multiple DML statements, so the
+        three DELETEs here were already atomic against process kill
+        in practice. But this was not documented and not protected by
+        a test. The explicit BEGIN/COMMIT + try/except ROLLBACK makes
+        the contract obvious and survives a future refactor that might
+        flip isolation_level to autocommit.
+        """
         c = self._conn()
-        cur = c.execute(
-            "DELETE FROM messages WHERE chat_id = ? AND thread_id = ?",
-            (chat_id, thread_id),
-        )
-        msg_count = cur.rowcount
-        c.execute(
-            "DELETE FROM chat_threads WHERE chat_id = ? AND thread_id = ?",
-            (chat_id, thread_id),
-        )
-        # If this was the active thread, clear the active row so
-        # get_active_thread() falls back to most-recent.
-        c.execute(
-            "DELETE FROM active_thread WHERE chat_id = ? AND thread_id = ?",
-            (chat_id, thread_id),
-        )
-        c.commit()
-        return msg_count
+        try:
+            c.execute("BEGIN")
+            cur = c.execute(
+                "DELETE FROM messages WHERE chat_id = ? AND thread_id = ?",
+                (chat_id, thread_id),
+            )
+            msg_count = cur.rowcount
+            c.execute(
+                "DELETE FROM chat_threads WHERE chat_id = ? AND thread_id = ?",
+                (chat_id, thread_id),
+            )
+            # If this was the active thread, clear the active row so
+            # get_active_thread() falls back to most-recent.
+            c.execute(
+                "DELETE FROM active_thread WHERE chat_id = ? AND thread_id = ?",
+                (chat_id, thread_id),
+            )
+            c.commit()
+            return msg_count
+        except Exception:
+            c.rollback()
+            raise
 
     def list_threads(self, chat_id: int) -> list[dict]:
         """Returns [{'thread_id', 'created_at', 'last_used', 'msg_count'}, ...]
