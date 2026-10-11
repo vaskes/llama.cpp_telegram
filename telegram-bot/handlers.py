@@ -214,7 +214,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result is None:
         print("[handle_photo] REJECTED", flush=True)
         return
-    chat_id, thread_id = result[:2]  # is_group unused
+    chat_id, thread_id, is_group = result  # handle_photo uses is_group in print below
     print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}", flush=True)
     sem = await _check_user_slot(chat_id, update.effective_user.id, update)
     if sem is None:
@@ -425,7 +425,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await _route_to_thread(update, context)
     if result is None:
         return
-    chat_id, thread_id = result[:2]  # is_group unused
+    chat_id, thread_id, is_group = result  # handle_photo uses is_group in print below
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be
@@ -523,7 +523,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await _route_to_thread(update, context)
     if result is None:
         return
-    chat_id, thread_id = result[:2]  # is_group unused
+    chat_id, thread_id, is_group = result  # handle_photo uses is_group in print below
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be
@@ -657,7 +657,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result is None:
         print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)
         return
-    chat_id, thread_id = result[:2]  # is_group unused
+    chat_id, thread_id, is_group = result  # handle_photo uses is_group in print below
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be
