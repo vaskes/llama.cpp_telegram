@@ -12,7 +12,16 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN env var is required but not set")
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "")
-TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}" if BOT_TOKEN else ""
+# v0.10.2: TELEGRAM_API is env-driven to support smoke testing with a
+# local mock Telegram server. Default is the real Telegram API.
+# Format: full URL including the /bot<TOKEN> suffix, e.g.
+#   https://api.telegram.org/bot<TOKEN>
+# or for tests:
+#   http://127.0.0.1:18090/bot<TOKEN>
+TELEGRAM_API = os.environ.get(
+    "TELEGRAM_API",
+    f"https://api.telegram.org/bot{BOT_TOKEN}" if BOT_TOKEN else "",
+)
 
 # === LLM endpoints ===
 LLAMA_URL = os.environ.get("LLAMA_URL", "http://localhost:8080/v1")
