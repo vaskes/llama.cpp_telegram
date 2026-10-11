@@ -3,12 +3,14 @@ services:
     image: fedirz/faster-whisper-server:latest-cpu
     container_name: whisper-api
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
-      # Distilled version: fast and accurate, ideal for CPU.
-      # If you want the original large model, replace with: Systran/faster-whisper-large-v3
       - WHISPER_MODEL=Systran/faster-distil-whisper-large-v3
     volumes:
-      # The model (~1.5 GB) is downloaded here on first start
       - ./cache:/root/.cache
+    networks:
+      lan_macvlan:
+        ipv4_address: 192.168.10.3
+
+networks:
+  lan_macvlan:
+    external: true

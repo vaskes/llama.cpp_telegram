@@ -308,6 +308,286 @@ notes at the time; added here retrospectively).
 - Existing abort_event test uses raw insert (gives false
   confidence, fixed in v0.6.3).
 
+## [v0.9.0] — 2026-10-11 — T25 webhook migration (sub-second latency)
+
+Long-polling → webhook transport via aiohttp server + nginx
+reverse-proxy. Production rollout at gw1.kuduza.com (Amsterdam
+DC) with public hostname `bot.kuduza.com`. Single-port
+ingress, secret-token authentication, drop-in TLS
+termination at nginx. Falls back to long-polling by setting
+`WEBHOOK_MODE=0`.
+
+The migration touched every layer (network, secrets,
+process supervision, deploy packaging), so it was released
+as a major version bump rather than a hotfix.
+
+### Added
+
+- **`webhook.py`** (119 lines) — aiohttp server module.
+  `make_app()` builds the app with two routes:
+  `POST /tg-webhook/{tail:.*}` (verifies
+  `X-Telegram-Bot-Api-Secret-Token` via constant-time
+  `hmac.compare_digest`, then `asyncio.create_task` to
+  `_dispatch_update()` and returns 200 immediately — fire-
+  and-forget, since Telegram expects 200 within ~5s and
+  LLM calls routinely take 30s+); and `GET /healthz` for
+  operator liveness probes.
+
+- **`dispatch.py` main branch** — when `WEBHOOK_MODE=1`,
+  starts aiohttp server on `0.0.0.0:WEBHOOK_PORT`
+  (default 8443) via `web.AppRunner` + `web.TCPSite` and
+  blocks on `asyncio.Event().wait()`. When `WEBHOOK_MODE=0`,
+  the original long-poll loop runs unchanged. The split is
+  a single `if/else` at the top of `_run()`; everything
+  below it (handlers, call_llama, state) is shared.
+
+- **`config.py` webhook fields** — `WEBHOOK_MODE`,
+  `WEBHOOK_HOST`, `WEBHOOK_PORT` (default 8443),
+  `WEBHOOK_PATH` (default `/tg-webhook`),
+  `WEBHOOK_SECRET_TOKEN`. All read from env, no defaults
+  that would silently misconfigure production.
+
+- **Operator-facing docs** — `docs/WEBHOOK.md` (initially
+  ~15 KB, generic public/industry-standard form after
+  v0.9.0.1) covers the full deploy: nginx server block,
+  `setWebhook()` call, secret-token generation, log
+  diagnostics for the common failure modes
+  (Connection timed out / 502 Bad Gateway / 403 forbidden).
+
+- **`requirements.txt`** — `aiohttp==3.9.5` for the webhook
+  server. The polling loop already used `httpx`; aiohttp
+  was added rather than refactoring the existing httpx
+  client.
+
+- **Webhook boot selftest** — new `_selftest` group
+  exercises `make_app()` via `aiohttp.test_utils`:
+  spins up a `TestServer`, hits `/healthz` and a POST with
+  right + wrong secret, asserts 200/403/400 correctly.
+  Webhook regression is now caught at boot.
+
+### Changed
+
+- **`dispatch.py` `_dispatch_update(upd_dict)`** — was the
+  inner function called by the polling loop. Now also
+  called by the webhook handler. No signature change;
+  it already took a dict, not an `Update` object, so
+  webhooks and polling share the same dispatch path.
+
+- **`docker-compose.yml`** — bot moved from `network_mode:
+  host` to `lan_macvlan` (static IP 192.168.10.5) so
+  outgoing Telegram API calls get a stable source IP for
+  PBR / stateful inspection; nginx in front terminates
+  TLS, bot speaks plain HTTP on :8443. `WEBHOOK_MODE=1`
+  and `WEBHOOK_SECRET_TOKEN=...` added to the env.
+
+- **Production deploy packaging** — `/opt/telegram-bot/`
+  on llmhost2 is the single source of truth; the worktree
+  at `/opt/llama.cpp_telegram/` is rebuilt into a Docker
+  image and `docker compose up -d` deploys. Two-directory
+  layout (worktree ≠ deploy) is documented in
+  `OPERATOR-TESTS-MORNING.md`.
+
+### Fixed (hotfix chain v0.7.8 → v0.8.2)
+
+This release was 11 hotfixes deep before it shipped.
+Each was a regression caught by the in-tree `_selftest`
+or by operator UI testing; the chain is the audit trail.
+
+- **v0.7.8** — `_check_user_slot` rejected the third
+  concurrent message with "Бот уже обрабатывает 2 твоих
+  запросов". Replaced the `if in_flight >= MAX: reject`
+  with `asyncio.wait_for(sem.acquire(), timeout=300)`. The
+  bot runs in an asyncio task, so the wait doesn't block
+  the polling/webhook loop; messages just queue per-user
+  and `💭 думаю…` updates keep coming.
+
+- **v0.7.9** — Telegram's flood-control rejected bot sends
+  with `RetryAfter` after 7+ messages in a burst. `_reply`
+  now catches `RetryAfter` and retries up to 3 times with
+  `sleep(retry_after + 1)`.
+
+- **v0.7.9b** — `cmd_callback`'s `edit_message_text("⏹ Уже завершено")`
+  also hits the same flood-control path. Added a sliding-
+  window `_rate_limit_send(chat_id)` (60s × 15 sends) and
+  made the edit retry the same way.
+
+- **v0.8.0** — `handle_photo`, `handle_voice`,
+  `handle_document` all had a race: if the LLM call
+  returned microseconds after the user clicked Stop, the
+  bot would still send the response. Each handler now
+  checks `abort_event.is_set()` after `call_llama()`
+  returns and discards the response even if non-`None`.
+  `handle_voice` was also missing an `if bot_response is
+  None` check; that branch crashed before the abort check
+  could run. New regression test in `_selftest` exercises
+  the post-race discard path.
+
+- **v0.8.1** — llama-server returned `HTTP 500` on some
+  vision requests when the PEG grammar parser rejected
+  malformed tool-call JSON. `call_llama` now retries
+  once without tools offered: without tools in the
+  request, the model can't produce tool calls, so the
+  grammar has nothing to reject. User-visible: vision
+  requests that previously 500'd now transparently
+  succeed.
+
+- **v0.8.2** — CodeQL alert `actions/missing-workflow-
+  permissions` (CWE-275, Medium) on `.github/workflows/
+  lint.yml`. Added explicit `permissions: contents: read`
+  block. `GITHUB_TOKEN` is now downscoped to read-only;
+  no write operations are possible with it.
+
+### Fixed (production hotfixes v0.7.4 → v0.7.7)
+
+These landed before the v0.7.8 chain but were bundled
+into v0.9.0 for release coherence.
+
+- **v0.7.4** — added `_stop_button_markup` helper; the
+  Stop inline button (callback_data="stop:<chat_id>:
+  <user_id>:<update_id>") is now sticky: even after
+  `Stop` is clicked and the message is deleted, the
+  user sees the next LLM reply with the same button
+  attached until the bot's own LLM is fully cancelled.
+
+- **v0.7.5** — `handle_voice` was missing the Stop
+  button markup entirely. The voice handler was
+  emitting `final_text` but not wrapping it in
+  `ReplyKeyboardMarkup` for the reply. Fixed by going
+  through the same `_reply` helper that the other
+  three handlers use.
+
+- **v0.7.6** — Stop button clicked but the LLM call
+  continued. Root cause: `httpx.AsyncClient.post()` is
+  blocking — by the time `call_llama()` returned, the
+  LLM had already finished. New `_abortable_post`
+  helper races `client.post()` against
+  `abort_event.wait()` via `asyncio.wait(...)` with
+  `return_when=FIRST_COMPLETED`. If abort wins, the
+  in-flight POST is cancelled and `None` is returned.
+
+- **v0.7.7** — `handle_photo` crashed with `TypeError:
+  object of type 'NoneType' has no len()` on abort.
+  The handler did `print(f"...{len(content)}...")`
+  for logging, but `content` was `None` because
+  `_abortable_post` returned `None` on abort. Guarded
+  with `if content else 0`.
+
+### Known limitations
+
+- **macvlan isolation** — the bot container on
+  `lan_macvlan` cannot reach the parent host's
+  `192.168.10.7` (kernel-level isolation: macvlan
+  sub-interfaces cannot ARP their parent). `WHISPER_URL
+  =http://192.168.10.7:8000` is therefore unreachable;
+  voice messages don't transcribe. Workaround: move
+  whisper to its own macvlan with a free IP (`.5`, `.8`),
+  or onto the llama-server host (`.6`).
+
+- **`ip_address` in `getWebhookInfo` shows `85.136.112.144`,
+  not the bot's LAN source** — bot's outgoing NAT goes
+  through the gw1 egress path. Cosmetic; doesn't affect
+  webhook delivery.
+
+- **Telegram-specific scrubbing risk** — gw1's hosting
+  provider may run JA3-based anti-bot on the network
+  edge. The bot is reachable from the bot host and
+  from regular curl/Chrome traffic, but Telegram's Go
+  net/http TLS fingerprint is distinct. If `last_error
+  =Connection timed out` reappears and `nginx -T` shows
+  the right server block, the immediate workaround is
+  Cloudflare Tunnel in front of the bot, which terminates
+  TLS on Cloudflare's edge and re-originates over a
+  long-lived outbound connection from `cloudflared` to
+  the bot host. CF egress IP is universally whitelisted
+  by Russian/EU hosters; the bot's source IP is no longer
+  exposed to the public internet.
+
+## [v0.9.1] — 2026-10-11 — T25 hotfix: image abort rollback, whisper on macvlan
+
+Two operator-caught regressions from the v0.9.0 rollout,
+fixed at the end of the gw1 deployment cycle. The first
+was a real code bug (image persisted to history before
+abort_event was registered); the second was an infra
+miss (whisper still on the parent host, unreachable
+from the macvlan bot container).
+
+### Fixed (v0.9.1, hotfix chain)
+
+- **Image abort leaves orphan in history** (operator
+  report, 2026-10-11 ~21:50 MSK). On `handle_photo`,
+  `await _persist_message(...)` was called *before*
+  `thinking = await _reply(...)` and `_register_abort_event`.
+  If the user clicked Stop after the image was already
+  saved to history but before the LLM call returned, the
+  image stayed in history. The next text-only message
+  was answered about the (cancelled) image because the
+  LLM still had the photo in its context. **Fix in
+  \`handlers.py:handle_photo\`**: reordered so the thinking
+  message is sent and the abort_event is registered
+  *first*; `_persist_message` only runs after both are
+  in place. Added two rollback paths: in the `except`
+  block (any exception after persist) and in the abort
+  branch (Stop button after persist). Both call the
+  new `Storage.delete_last_user_message(chat_id,
+  thread_id)` (added in `storage.py`) which deletes the
+  most recent `user`-role row in a thread. **Regression
+  test**: post a bad `file_id` via the webhook, then
+  send a follow-up text — the bot's response is no
+  longer about the (phantom) image.
+
+- **Voice (whisper) unreachable from macvlan bot**.
+  whisper-api was running with `network_mode: host` on
+  192.168.10.7:8000, but the bot is in `lan_macvlan`
+  with static IP 192.168.10.5. macvlan sub-interfaces
+  cannot ARP their parent host (well-known kernel
+  isolation), so `socket.create_connection((192.168.10.7,
+  8000))` from the bot timed out. **Fix**: moved
+  whisper-api to `lan_macvlan` with static IP
+  192.168.10.3 (the IP previously used by the dev
+  nginx container, now decommissioned). Updated
+  `WHISPER_URL=http://192.168.10.3:8000` in the bot's
+  `docker-compose.yml`. whisper's model cache volume
+  (`./cache`) was preserved across the move, so no
+  1.5 GB re-download.
+
+### Known limitations (unchanged from v0.9.0)
+
+- macvlan bot cannot reach 192.168.10.7 (parent host)
+  for any non-macvlan service. The remaining
+  parent-host service is the bot's own `data/` and
+  `files/` bind mounts, which work because they're
+  filesystem-level not network-level.
+
+## [v0.8.0] — 2026-10-10 — v0.7.8 → v0.7.9b + v0.8.0 → v0.8.2 chain
+
+Hotfix chain documented in v0.9.0 above. This entry
+exists so the chain has a single-versioned anchor for
+`git tag` purposes; the actual changes are in v0.9.0.
+
+## [v0.7.0] — 2026-10-09 — production hardening baseline
+
+First production-grade run. Code that survived three
+operator-test waves plus one set of in-tree `_selftest`
+regressions. Predecessor of v0.9.0 (F3 + webhook + hotfix
+chain).
+
+### Added
+
+- **5 pytest tests** in `tests/test_selftest.py` covering
+  `_selftest()` runs end-to-end, the store singleton
+  invariant, the constants module, the F4 LRU bound
+  (200 entries max), and the rating parser's body-
+  extraction path.
+
+- **19 in-tree selftest groups** in `bot.py:_selftest()`,
+  all 19/19 PASS in Docker at this version. Documented
+  the selftest bootstrap sequence in `OPERATOR-TESTS-
+  MORNING.md`.
+
+- **CodeQL workflow** at `.github/workflows/lint.yml`
+  running `ruff` + `mypy` on every push and PR.
+
+
 ## [v0.5.0] — 2026-10-10 — Qwen migration, GROUP_CONTEXT, react_to_message
 
 Big wave: model switch (Ornith → Qwen3.8-27B-Ultra-Heretic-MTP-256k),

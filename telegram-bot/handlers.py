@@ -243,6 +243,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.chat.send_action(action='typing')
     thinking = None
+    persisted = False  # v0.9.1: track whether image was added to history
     try:
         photo = update.message.photo[-1]
         # Telegram sends multiple PhotoSize entries; we want the
@@ -282,18 +283,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"type": "text", "text": caption},
             {"type": "image_url", "image_url": {"url": photo_data_url}}
         ]
+        # v0.9.1 fix: send thinking message and register abort_event FIRST,
+        # BEFORE any operation that can crash (download, parse, persist).
+        # If a later step raises, the Stop button still works — handler
+        # can edit thinking to an error message and clean up. Without this,
+        # a BadRequest on get_file() (wrong file_id, expired) registered
+        # no abort_event, and the next text message answered about the
+        # (now-orphaned) image that was already persisted to history.
+        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+        abort_event = asyncio.Event()
+        _register_abort_event(chat_id, thinking.message_id, abort_event)
         thread_id = thread_id  # already resolved by _route_to_thread
         sender_name = _sender_display_name(update.message.from_user)
+        # Persist AFTER abort is registered. If download/persist raises,
+        # the except block edits thinking to an error and clears the
+        # abort slot so a stale Stop click does not affect future calls.
         await _persist_message(chat_id, thread_id, 'user', photo_content, sender_name=sender_name)
+        persisted = True
         history = await _load_history(chat_id, thread_id)
         # When recalling image turns in later text-only messages, the
         # images themselves cannot be re-sent from history (no id
         # retained), so the model falls back to its own description.
-        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
         print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
-        # Per-task abort event for the Stop button.
-        abort_event = asyncio.Event()
-        _register_abort_event(chat_id, thinking.message_id, abort_event)
         # Compute rating_active here (before call_llama) so we
         # can pass it to the model AND use it in the dispatcher.
         rating_active = _is_rating_active(update)
@@ -321,6 +332,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
+            # v0.9.1: if we already persisted the image to history,
+            # roll it back. The user explicitly asked the bot to
+            # NOT process this image (Stop = cancel). Leaving the
+            # image in history would mean the next text message
+            # gets answered about the (cancelled) image.
+            if persisted:
+                try:
+                    store = get_store()
+                    await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                    print(f"[handle_photo] rolled back persisted image for {chat_id}/{thread_id} (Stop button)", flush=True)
+                except Exception as rb:
+                    print(f"[handle_photo] rollback on Stop failed: {type(rb).__name__}: {rb!r}", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
             except Exception:
@@ -415,6 +438,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[ERR photo] {type(e).__name__}: {e}", flush=True)
         import traceback
         traceback.print_exc()
+        # v0.9.1: if we already persisted the image to history, roll
+        # it back so the next user message does not get answered
+        # about an image the bot never actually analyzed.
+        if persisted:
+            try:
+                store = get_store()
+                await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                print(f"[ERR photo] rolled back persisted image for {chat_id}/{thread_id}", flush=True)
+            except Exception as rb:
+                print(f"[ERR photo] rollback failed: {type(rb).__name__}: {rb!r}", flush=True)
         try:
             await _reply(update, f'❌ Error: {e}')
         except Exception:

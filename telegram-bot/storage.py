@@ -545,6 +545,26 @@ class Storage:
         ).fetchone()
         return dict(row) if row else None
 
+    def delete_last_user_message(self, chat_id: int, thread_id: str) -> bool:
+        """Delete the most recent user-role message in a thread.
+
+        Used by handle_photo to roll back a persisted image when
+        downstream processing (download, parse, LLM call) crashes
+        after persist. Without this rollback, the next user message
+        gets answered about an image the bot never actually saw.
+        Returns True if a row was deleted, False if nothing matched.
+        """
+        c = self._conn()
+        cur = c.execute(
+            "DELETE FROM messages WHERE id = ("
+            "  SELECT id FROM messages WHERE chat_id = ? AND thread_id = ? "
+            "  AND role = 'user' ORDER BY id DESC LIMIT 1"
+            ")",
+            (chat_id, thread_id),
+        )
+        c.commit()
+        return cur.rowcount > 0
+
 
 # === Module-level singleton instance ===
 # v0.5.2 bot.py did `store = storage.Storage(DB_PATH)` at module

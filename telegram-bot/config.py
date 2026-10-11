@@ -94,7 +94,7 @@ DONSETCH_SESSION_ID: Optional[str] = None
 # X-Telegram-Bot-Api-Secret-Token header on every request —
 # the handler must verify it before processing.
 WEBHOOK_MODE = os.environ.get("WEBHOOK_MODE", "0") == "1"
-WEBHOOK_HOST = os.environ.get("WEBHOOK_HOST", "127.0.0.1")
+WEBHOOK_HOST = os.environ.get("WEBHOOK_HOST", "0.0.0.0")
 WEBHOOK_PORT = int(os.environ.get("WEBHOOK_PORT", "8443"))
 # Path component. The secret token is appended at runtime
 # (random or WEBHOOK_SECRET_TOKEN env).
