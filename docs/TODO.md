@@ -393,3 +393,79 @@ After v0.7.2 the pattern should stop: every claim in the
 commit message is verified by a passing test, every test
 in the in-tree selftest runs, and pytest is the CI entry
 point.
+
+---
+
+## Code freeze (2026-10-12, post-v0.10.2)
+
+**Status:** Code is frozen at v0.10.2. No more fixes or features
+until operator completes manual testing on 2026-10-12 and files
+bug reports.
+
+### Qwen wave-3 final report — items for next cycle
+
+Qwen issued a final report after three review waves (15 of 20
+items closed in v0.10.0–v0.10.2). Per operator directive, all
+items below are recorded for the next cycle, **not** addressed
+now.
+
+#### Accepted as documented risk (no fix needed)
+
+- [ ] **T-FREEZE-1** Held-sem eviction protection on
+      `_user_semaphores`. Currently the LRU evicts even a held
+      sem, so the next message from the same user gets a NEW sem
+      with the full `_PER_USER_SEMAPHORE_LIMIT` budget. Acceptable
+      for current deployment with `ALLOWED_USER_IDS=2,1` (5–10
+      entries, never reach the 500 cap). Revisit if deployment
+      scales to many users.
+
+- [ ] **T-FREEZE-2** `call_llama()` god function (~400 lines,
+      cyclomatic complexity ~100). `DO NOT REFACTOR without
+      reading docs/CALL_LLAMA.md` comment is real — the function
+      has 9 responsibilities, the comments warn that refactoring
+      without reading the docs will break things. Should be
+      refactored into modules once it has been observed in
+      production long enough to confirm what can be split.
+
+- [ ] **T-FREEZE-3** `BOT_COMMANDS` mixed Russian/English.
+      Cosmetic, intentional (Russian descriptions with English
+      technical terms "sub-talk"). Leave as-is.
+
+#### False alarms (Qwen was wrong, no action)
+
+- [ ] **T-FREEZE-4** `_RATING_PREFIX_RE` and `_EMOJI_CHAR_RE`
+      are unified after v0.10.0 cleanup. Already correct.
+
+#### Manual testing checklist (operator's job, 2026-10-12)
+
+23-point checklist from Qwen's final report. Operator will
+execute; bug reports → new TODO items.
+
+- [ ] **T-FREEZE-MT-1..23** (see Qwen report sections:
+      smoke test, rating, stop button, media, sub-talks, empty
+      response, group). Operator runs; results back as bug
+      reports or "all green".
+
+#### Test automation (Qwen recommended 3 variants; operator
+chose to defer until after manual testing cycle completes)
+
+- [ ] **T-FREEZE-AUTO-1** `scripts/smoke_test.py` — Variant 1
+      from Qwen: real Telegram API + `getUpdates` polling. 80% of
+      cases covered, no mocking required. Recommended first
+      automation step.
+
+- [ ] **T-FREEZE-AUTO-2** `tests/test_integration.py` —
+      Variant 2 from Qwen: pytest integration tests with
+      `@pytest.mark.integration` marker, opt-in via
+      `-m integration`. Better isolation than smoke test, runs
+      in CI.
+
+- [ ] **T-FREEZE-AUTO-3** `.github/workflows/deploy.yml` —
+      Variant 3 from Qwen: CI/CD with auto-deploy on tag push.
+      Requires GitHub secrets for the deploy SSH key.
+
+#### Documentation
+
+- [ ] **T-FREEZE-DOC-1** Update `docs/TROUBLESHOOTING.md` with
+      post-v0.10.2 known issues and workarounds (e.g., new
+      LLM behaviour in group, longer prompts now active).
