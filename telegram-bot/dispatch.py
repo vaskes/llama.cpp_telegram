@@ -731,6 +731,39 @@ def _user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
         _user_semaphores[key] = sem
     return sem
 
+# === _rate_limit_send ===
+# v0.7.9: Telegram rate-limits the bot to ~20 messages/minute per chat.
+# A burst of queued messages (the v0.7.8 fix) can produce replies
+# faster than Telegram accepts them, triggering RetryAfter. We keep
+# a 60s window of send timestamps; if the window is full, we sleep
+# until the oldest entry ages out before sending.
+from collections import deque
+import time as _time
+_send_window: dict = {}  # chat_id -> deque[float]
+_RATE_WINDOW_SEC = 60.0
+_RATE_MAX_PER_WINDOW = 15  # conservative: 15 sends per 60s, leaves 5 for user-originated overhead
+
+async def _rate_limit_send(chat_id: int) -> None:
+    """Sleep if chat_id is over its per-60s rate. Returns when
+    the next send would be within budget."""
+    now = _time.monotonic()
+    window = _send_window.setdefault(chat_id, deque())
+    # Drop timestamps older than 60s
+    while window and now - window[0] > _RATE_WINDOW_SEC:
+        window.popleft()
+    if len(window) >= _RATE_MAX_PER_WINDOW:
+        # Sleep until oldest entry ages out + 0.5s headroom
+        sleep_for = _RATE_WINDOW_SEC - (now - window[0]) + 0.5
+        if sleep_for > 0:
+            print(
+                f"[rate_limit] chat={chat_id} window full ({len(window)} sends in {_RATE_WINDOW_SEC}s); "
+                f"sleeping {sleep_for:.1f}s before next send",
+                flush=True,
+            )
+            await asyncio.sleep(sleep_for)
+    window.append(_time.monotonic())
+
+
 # === _check_user_slot ===
 async def _check_user_slot(chat_id: int, user_id: int, update):
     """Claim one of the user's concurrency slots, queuing if all
@@ -1200,10 +1233,24 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"(handler may have already finished)",
                 flush=True,
             )
-            try:
-                await update.callback_query.edit_message_text("⏹ Уже завершено")
-            except Exception:
-                pass
+            # v0.7.9: retry on RetryAfter for edit_message_text
+            from telegram.error import RetryAfter as _RA
+            _edited_ok = False
+            for _att in range(3):
+                try:
+                    await update.callback_query.edit_message_text("⏹ Уже завершено")
+                    _edited_ok = True
+                    break
+                except _RA as _e:
+                    await asyncio.sleep(float(getattr(_e, 'retry_after', 1)) + 1.0)
+                except Exception:
+                    break
+            if not _edited_ok:
+                print(
+                    f"[callback stop] edit_message_text failed for key={key}; "
+                    f"thinking message likely already deleted",
+                    flush=True,
+                )
             return
         event.set()
         print(
