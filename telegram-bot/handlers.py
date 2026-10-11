@@ -208,7 +208,7 @@ def _sender_display_name(user) -> str | None:
 
 # === handle_photo ===
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _check_user_slot
+    from dispatch import _check_user_slot, _stop_button_markup
     print(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}", flush=True)
     result = await _route_to_thread(update, context)
     if result is None:
@@ -421,7 +421,7 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
 
 # === handle_voice ===
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _check_user_slot
+    from dispatch import _check_user_slot, _stop_button_markup
     result = await _route_to_thread(update, context)
     if result is None:
         return
@@ -519,7 +519,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === handle_document ===
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _check_user_slot
+    from dispatch import _check_user_slot, _stop_button_markup
     result = await _route_to_thread(update, context)
     if result is None:
         return
