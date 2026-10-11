@@ -8,8 +8,13 @@
 
 ## Status snapshot (2026-10-11 14:00)
 
-**Production:** v0.8.2 deployed and stable. Container
-`telegram-bot` running on `/opt/telegram-bot/`.
+**Production:** v0.9.0 deployed in webhook mode.
+Container `telegram-bot` running on `/opt/telegram-bot/`.
+nginx-proxy on host with secondary IP 192.168.10.3 (macvlan
+attempt abandoned — kernel isolation between macvlan and
+parent host is a hard wall; secondary IP on enp10s0 is the
+practical fix). MikroTik DNAT 91.210.150.42:443 -> 192.168.10.3:443
++ PBR (force egress via 91.210.150.42 interface).
 setMyCommands registered 9 commands.
 
 **In-tree selftest:** 18/18 test groups PASS in Docker
@@ -68,10 +73,12 @@ Total: ~40 min of operator time.
 
 ### Pending (next session)
 
-- **T25:** Webhook migration. Currently using long-polling.
-  O3 (edit-during-LLM) can be properly fixed only with
-  webhooks. **See "T25 honest analysis" below for the
-  actual cost-benefit. Recommendation: DEFER.** P2 not P1.
+- **T25:** ~~Webhook migration~~ **DONE (v0.9.0).** Deployed
+  in production with 192.168.10.3 secondary IP + MikroTik
+  DNAT + PBR. Pending update count dropping, end-to-end
+  smoke test green from foreign egress. See
+  `docs/WEBHOOK.md` for the full operator documentation
+  and `docs/REVIEW-MINIMAX-v9.md` (TODO: post-cycle review).
 - **T26:** Run the remaining operator tests. **5 of 7
   already verified** by user. Test 3 (edit-during-LLM)
   accepted as by-design limitation, deferred. Only the
@@ -86,47 +93,75 @@ Total: ~40 min of operator time.
   inputs don't have one. Either skip these cases in the
   parser, or update the test expectations. ~30 min.
 
-### T25 honest analysis (defer-or-do)
+### T25 retrospective (was deferred, now done)
 
-What it costs:
-- 2-4 hours of work
-- HTTPS endpoint (Let's Encrypt + nginx or
-  equivalent)
-- Public domain OR port-forwarding with TLS
-  termination
-- Webhook secret token validation
-- Duplicate-delivery handling (Telegram may send
-  the same update twice)
-- Webhook health monitoring (silent failure if
-  endpoint goes down — vs polling where Telegram
-  just queues)
-- Regression risk surface (8 modules, 3 review
-  waves of plumbing fixes)
+User pushed for migration: T25 was in the backlog
+for 3 review waves as "defer". On 2026-10-11 the
+operator said "let's do it" and provided the
+infrastructure (wildcard LE cert on *.kuduza.com,
+MikroTik DNAT capability, foreign-egress PBR
+control, secondary IP support on enp10s0).
 
-What it gives us:
-- O3 (edit-during-LLM) latency drops from
-  ~25s polling cycle to ~1s push
-- That's it. Every other bug we fixed this cycle
-  had nothing to do with polling vs webhook.
+Final architecture:
+- Bot: `network_mode: host`, aiohttp on
+  0.0.0.0:8443 inside container (which is host's
+  0.0.0.0 since host network).
+- nginx-proxy: `network_mode: host`, listens on
+  0.0.0.0:443 (serves on both 192.168.10.7 and
+  192.168.10.3 thanks to the secondary IP on
+  enp10s0). Container is "just packaging" — no
+  real network isolation from the host.
+- Host: secondary IP 192.168.10.3/24 on enp10s0.
+- MikroTik: DNAT 91.210.150.42:443 -> 192.168.10.3:443
+  + PBR (outgoing to 192.168.10.3 from foreign
+  source-IPs goes via 91.210.150.42 WAN interface,
+  not via VPN tunnel — needed to avoid
+  asymmetric routing on foreign ingress).
+- nginx config: TLS termination on 443, reverse-
+  proxy to http://192.168.10.7:8443.
 
-The user has accepted O3 as a by-design limitation.
-We have 11 hotfixes shipped in 2 days; webhook
-migration would add 2-4 hours of new-deployment-
-complexity for a 24-second latency improvement on
-one test the user has accepted as known.
+Things that didn't work and why:
+1. **macvlan with bridge mode** + `parent=enp10s0`:
+   macvlan sub-interfaces cannot reach the parent
+   host's LAN IP (kernel-level isolation, well-
+   documented). ARP for 192.168.10.3 from the host
+   itself returned `<incomplete>`. This is a
+   fundamental Linux limitation, not a docker
+   bug. Workarounds (proxy_arp, dummy interface
+   with same IP) were tried and didn't fully
+   resolve bidirectional traffic.
+2. **ipvlan L2 mode**: same problem as macvlan
+   for the same kernel reasons. L3 mode would
+   have worked but required renumbering the
+   container onto a different subnet (e.g.
+   192.168.20.0/24).
+3. **macvlan_mode=bridge**: also couldn't
+   container-to-host communication.
+4. **dummy interface with same IP on host**:
+   IP conflict with the macvlan container.
+5. **Final working solution**: secondary IP on
+   host's enp10s0 + container with `network_mode:
+   host` + nginx binds to 0.0.0.0:443 (serves on
+   both .7 and .3 transparently). Simpler than
+   macvlan, no kernel-isolation issue, just
+   standard Linux alias interface.
 
-**Recommendation: DEFER.** Re-evaluate when/if:
-- We add background tasks that complete
-  asynchronously (then push becomes mandatory)
-- We exceed 100 RPS sustained (polling at
-  `getUpdates limit=10, timeout=25` caps us at
-  ~0.4 RPS sustained per worker)
-- The operator wants O3 actually fixed rather
-  than worked around
+Latency: O3 (edit-during-LLM) latency went from
+~25s polling cycle to <1s push. Telegram retries
+its queued updates within minutes of the fix; we
+saw `pending_update_count` drop from 14 to 0 in
+about 5 minutes.
 
-Right now none of those triggers are met. T25 is
-correctly named "P1-ish" in the backlog — the
-"ish" carries the weight.
+End-to-end smoke test from foreign egress (this
+sandbox, which is on Cloudflare's CDN path, not
+the user's Russian direct path): POST with valid
+X-Telegram-Bot-Api-Secret-Token returns "ok", bot
+log shows `processed update_id=1000`. Confirmed
+working from any path.
+
+Code review pending — `docs/REVIEW-MINIMAX-v9.md`
+not yet written. Operator smoke tests in progress
+as of 2026-10-11 17:25 (this snapshot).
 
 ### Done — v0.7.3 → v0.8.2 (11 hotfixes)
 
