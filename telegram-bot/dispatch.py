@@ -56,9 +56,9 @@ from handlers import (
     _reject_in_group,
 )
 
-# _abort_events and _bot_replies still live in bot.py (cross-module state
-# used by both handlers and the polling loop's cmd_callback). They will
-# move to a state module in Stage 6.
+# _abort_events and _bot_replies live in state.py (cross-module state
+# used by both handlers and the polling loop's cmd_callback).
+# See state.py for the LRU-bounded implementation.
 
 # === is_authorized ===
 def is_authorized(update: Update) -> bool:

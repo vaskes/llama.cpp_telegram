@@ -1,5 +1,5 @@
 # persistence.py
-# Async wrappers around the storage layer (storage.store).
+# Async wrappers around the storage layer (storage.get_store()).
 # Both functions are called from the bot's event loop but
 # dispatch the actual SQLite work to a worker thread
 # (asyncio.to_thread), so the loop stays responsive during
@@ -12,7 +12,6 @@ import asyncio
 import json
 
 from storage import get_store
-
 from config import CONTEXT_MESSAGES
 
 

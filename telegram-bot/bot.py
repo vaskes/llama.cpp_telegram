@@ -332,13 +332,8 @@ RATING_MODE: bool = os.environ.get("RATING_MODE", "0") == "1"
 # by setMessageReaction. 1=💩 (spam), 10=🔥 (insightful). Mid
 # values step through facial reactions so the spread is visible
 # in chat without needing the rating column to be displayed.
-RATING_EMOJI = {
-    1: "💩", 2: "🤮", 3: "😡", 4: "😢", 5: "😐",
-    6: "🤔", 7: "👍", 8: "👏", 9: "❤️", 10: "🔥",
-}
 
 # Default emoji for bloat messages (no rating, just acknowledge).
-BLOAT_EMOJI = "😐"
 
 # === Rating rules ===
 # This string is the system prompt injected when RATING_MODE=1

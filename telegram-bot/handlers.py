@@ -102,7 +102,7 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
       - chat_id = effective_chat.id (the group id, negative).
       - thread_id = str(message_thread_id) -- the Telegram topic id.
     """
-    from dispatch import _is_group_chat
+    from dispatch import _is_group_chat, reject_if_unauthorized
     msg = update.message
     if _is_group_chat(update):
         # Group mode. Telegram is the source of truth for thread
