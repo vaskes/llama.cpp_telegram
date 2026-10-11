@@ -94,9 +94,12 @@ Key differences:
 - **Telegram initiates** the connection. The bot is purely a server.
 - **TLS terminates at your edge** (nginx, Caddy, Traefik, etc.). Telegram
   sees a cert signed by a trusted CA (Let's Encrypt is the standard).
-- **aiohttp on 127.0.0.1:<webhook-port>** only — the bot is never
-  directly exposed. The reverse proxy is the only process listening on
-  the public port.
+- **aiohttp on WEBHOOK_HOST:WEBHOOK_PORT** (default `0.0.0.0:8443`) —
+  the bot is exposed on the loopback or the macvlan IP, never directly
+  on a public interface. The reverse proxy is the only process listening
+  on the public port. Set `WEBHOOK_HOST=127.0.0.1` if you run the bot
+  on the same host as the reverse proxy (single-host dev) or leave the
+  default `0.0.0.0` if the bot and proxy are on a shared macvlan.
 - **Shared secret in URL + header**: `X-Telegram-Bot-Api-Secret-Token`
   header is verified on every request. URL leak doesn't grant access.
 
@@ -166,8 +169,11 @@ plain-HTTP-301-to-HTTPS redirect. Otherwise, just 443.
 
 ### 4.3 Reverse proxy
 
-The bot's aiohttp server listens on `127.0.0.1:8443` only. The reverse
-proxy terminates TLS and forwards to it.
+The bot's aiohttp server listens on `WEBHOOK_HOST:WEBHOOK_PORT`
+(default `0.0.0.0:8443`). For single-host dev, set
+`WEBHOOK_HOST=127.0.0.1` and have the proxy talk to
+`http://127.0.0.1:8443`. For macvlan (production), the bot
+gets a stable container IP and the proxy talks to that.
 
 Example nginx config (replace `<your-domain>` and adjust paths):
 
@@ -224,19 +230,71 @@ server {
 
 Reload nginx: `nginx -s reload` or `docker exec <nginx> nginx -s reload`.
 
-### 4.4 Bot configuration
+### 4.3.1 macvlan network (production layout)
 
-Add two env vars to the bot's `docker-compose.yml`:
+If the bot and reverse proxy are on different hosts, give the bot
+a stable macvlan IP and forward to that IP from the proxy:
+
+```bash
+# Create the macvlan network once on the docker host
+docker network create -d macvlan \
+  --subnet=192.168.10.0/24 --gateway=192.168.10.1 \
+  -o parent=enp0s3 \
+  lan_macvlan
+```
+
+In `telegram-bot/docker-compose.yml`:
 
 ```yaml
-- WEBHOOK_MODE=1
-- WEBHOOK_SECRET_TOKEN=<32+ random hex chars>
+services:
+  telegram-bot:
+    networks:
+      lan_macvlan:
+        ipv4_address: 192.168.10.5
+    # ... and the reverse proxy on 192.168.10.3 (or wherever) talks
+    # to http://192.168.10.5:8443
 ```
+
+The macvlan sub-interface cannot ARP the parent host, so any
+service the bot reaches by IP (llama-server, whisper, donsetch)
+must be either on the same macvlan network or on a host the
+macvlan can reach. See docs/TROUBLESHOOTING.md for the full
+macvlan story.
+
+### 4.4 Bot configuration
+
+Add three env vars to the bot's `.env` (see `telegram-bot/.env.example`):
+
+```env
+WEBHOOK_MODE=1
+WEBHOOK_SECRET_TOKEN=<32+ random hex chars>
+WEBHOOK_URL=https://<your-subdomain>.<your-domain>/tg-webhook
+```
+
+`WEBHOOK_URL` (v0.9.2) is the public URL Telegram should POST to.
+If set, the bot auto-registers the webhook with Telegram on
+startup via `bot.setWebhook(...)`. If empty, register manually
+in step 4.5 below.
+
+Generate a secret token with: `openssl rand -hex 16`
 
 Generate the secret with `openssl rand -hex 16` (32 hex chars). Keep
 it secret — anyone with this token can forge updates.
 
 ### 4.5 Register the webhook with Telegram
+
+```bash
+curl -s -X POST \
+  "https://api.telegram.org/bot<bot-token>/setWebhook" \
+  -d "url=https://<your-subdomain>.<your-domain>/tg-webhook/<your-webhook-secret-token>" \
+  -d "secret_token=<your-webhook-secret-token>" \
+  -d "drop_pending_updates=false" \
+  | jq
+```
+
+If `WEBHOOK_URL` is set in your `.env`, the bot auto-registers
+on startup. Skip this step. If you left it empty (e.g., for a
+multi-bot shared webhook), register manually:
 
 ```bash
 BOT_TOKEN="..."

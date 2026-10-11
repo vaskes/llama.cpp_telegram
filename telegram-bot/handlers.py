@@ -236,7 +236,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result is None:
         print("[handle_photo] REJECTED", flush=True)
         return
-    chat_id, thread_id, is_group = result  # handle_photo uses is_group in print below
+    chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
     print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}", flush=True)
     sem = await _check_user_slot(chat_id, update.effective_user.id, update)
     if sem is None:
@@ -506,7 +506,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await _route_to_thread(update, context)
     if result is None:
         return
-    chat_id, thread_id, is_group = result  # handle_photo uses is_group in print below
+    chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be
@@ -548,21 +548,23 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if voice_bytes is None:
             return
         transcript = await transcribe_voice(voice_bytes)
+        # v0.9.2: persisted flag tracks whether _persist_message ran.
+        # Used for rollback in the abort and except branches below.
+        persisted = False
         # No parse_mode — transcript is user-generated and may contain
         # '*', '_', '[', '`', which would break Markdown rendering.
         await _reply(update, f'🎤 Transcript:\n{transcript}')
         sender_name = _sender_display_name(update.message.from_user)
-        await _persist_message(chat_id, thread_id, 'user', transcript, sender_name=sender_name)
-        history = await _load_history(chat_id, thread_id)
-        print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
+        # click during the LLM call can roll the transcript back. See
+        # handle_photo for the same pattern.
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-        # Per-task abort event for the Stop button. handle_voice
-        # didn't have this in v0.5.2 either; the F4 fix in v0.6.0
-        # added it to handle_photo / handle_document / handle_text
-        # but missed voice. Adding it here so the Stop button
-        # works for voice messages too.
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
+        await _persist_message(chat_id, thread_id, 'user', transcript, sender_name=sender_name)
+        persisted = True
+        history = await _load_history(chat_id, thread_id)
+        print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
@@ -583,6 +585,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 print(f"[handle_voice] ABORTED by user via Stop button, moving to next", flush=True)
+            # v0.9.2: roll back the persisted transcript so the next
+            # user message is not answered about the (cancelled) voice.
+            if persisted:
+                try:
+                    store = get_store()
+                    await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                    print(f"[handle_voice] rolled back persisted transcript for {chat_id}/{thread_id}", flush=True)
+                except Exception as rb:
+                    print(f"[handle_voice] rollback failed: {type(rb).__name__}: {rb!r}", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
             except Exception:
@@ -610,6 +621,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR voice] {type(e).__name__}: {e}", flush=True)
+        if persisted:
+            try:
+                store = get_store()
+                await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                print(f"[handle_voice] rolled back persisted transcript on exception for {chat_id}/{thread_id}", flush=True)
+            except Exception as rb:
+                print(f"[handle_voice] rollback on exception failed: {type(rb).__name__}: {rb!r}", flush=True)
         await _reply(update, f'❌ Error: {e}')
     finally:
         if thinking is not None:
@@ -625,7 +643,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await _route_to_thread(update, context)
     if result is None:
         return
-    chat_id, thread_id, is_group = result  # handle_photo uses is_group in print below
+    chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be
@@ -654,6 +672,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     tmp_path = None
     thinking = None
+    # v0.9.2: rollback flag for persisted document content
+    persisted = False
     try:
         ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
         with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
@@ -664,13 +684,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = update.message.caption or 'Read the document and answer questions.'
         user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
         sender_name = _sender_display_name(update.message.from_user)
-        await _persist_message(chat_id, thread_id, 'user', user_content, sender_name=sender_name)
-        history = await _load_history(chat_id, thread_id)
-        print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        # v0.9.2: persist AFTER thinking+abort_event are wired so a
+        # Stop click during the LLM call can roll the document back.
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-        rating_active = _is_rating_active(update)
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
+        await _persist_message(chat_id, thread_id, 'user', user_content, sender_name=sender_name)
+        persisted = True
+        history = await _load_history(chat_id, thread_id)
+        print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
@@ -688,6 +711,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 print(f"[handle_document] ABORTED by user via Stop button, moving to next", flush=True)
+            # v0.9.2: roll back the persisted document so the next user
+            # message is not answered about the (cancelled) document.
+            if persisted:
+                try:
+                    store = get_store()
+                    await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                    print(f"[handle_document] rolled back persisted document for {chat_id}/{thread_id}", flush=True)
+                except Exception as rb:
+                    print(f"[handle_document] rollback failed: {type(rb).__name__}: {rb!r}", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
             except Exception:
@@ -716,6 +748,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     print(f"[handle_document] ABORTED on retry, moving to next", flush=True)
+                # v0.9.2: rollback also on retry-abort
+                if persisted:
+                    try:
+                        store = get_store()
+                        await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                        print(f"[handle_document] rolled back persisted document on retry-abort for {chat_id}/{thread_id}", flush=True)
+                    except Exception as rb:
+                        print(f"[handle_document] rollback on retry-abort failed: {type(rb).__name__}: {rb!r}", flush=True)
                 try:
                     await thinking.edit_text('⏹ Остановлено')
                 except Exception:
@@ -760,6 +800,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR doc] {type(e).__name__}: {e}", flush=True)
+        if persisted:
+            try:
+                store = get_store()
+                await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                print(f"[handle_document] rolled back persisted document on exception for {chat_id}/{thread_id}", flush=True)
+            except Exception as rb:
+                print(f"[handle_document] rollback on exception failed: {type(rb).__name__}: {rb!r}", flush=True)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -779,7 +826,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result is None:
         print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)
         return
-    chat_id, thread_id, is_group = result  # handle_photo uses is_group in print below
+    chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
     # The actual user id, not the chat id. In private mode these
     # are equal (Telegram uses the same value for both), but in
     # group mode chat_id is the group's id and user_id must be
@@ -792,23 +839,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sem is None:
         return
     user_message = update.message.text
+    # v0.9.2: rollback flag for persisted user message
+    persisted = False
     try:
         await update.message.chat.send_action(action='typing')
     except Exception as e:
         print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
     sender_name = _sender_display_name(update.message.from_user)
-    await _persist_message(chat_id, thread_id, 'user', user_message, sender_name=sender_name)
-    history = await _load_history(chat_id, thread_id)
-    print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+    # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
+    # click during the LLM call can roll the message back.
     thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-    # Register per-task abort event so the Stop button on the
-    # thinking message can interrupt the LLM call. Cleaned up
-    # in the finally block to avoid leaking the event into the
-    # next handler call (the semaphore allows the same user to
-    # have at most 2 in-flight requests, so the dict shouldn't
-    # grow without bound).
     abort_event = asyncio.Event()
     _register_abort_event(chat_id, thinking.message_id, abort_event)
+    await _persist_message(chat_id, thread_id, 'user', user_message, sender_name=sender_name)
+    persisted = True
+    history = await _load_history(chat_id, thread_id)
+    print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
     try:
         rating_active = _is_rating_active(update)
         # T1 (P0-1): wrap call_llama in the global semaphore so
@@ -830,6 +876,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 print(f"[handle_text] ABORTED by user via Stop button, moving to next", flush=True)
+            # v0.9.2: roll back the persisted user message so the next
+            # message is not answered about the (cancelled) one.
+            if persisted:
+                try:
+                    store = get_store()
+                    await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                    print(f"[handle_text] rolled back persisted message for {chat_id}/{thread_id}", flush=True)
+                except Exception as rb:
+                    print(f"[handle_text] rollback failed: {type(rb).__name__}: {rb!r}", flush=True)
             try:
                 await thinking.edit_text('⏹ Остановлено')
             except Exception:
@@ -858,6 +913,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 else:
                     print(f"[handle_text] ABORTED on retry, moving to next", flush=True)
+                # v0.9.2: rollback also on retry-abort
+                if persisted:
+                    try:
+                        store = get_store()
+                        await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                        print(f"[handle_text] rolled back persisted message on retry-abort for {chat_id}/{thread_id}", flush=True)
+                    except Exception as rb:
+                        print(f"[handle_text] rollback on retry-abort failed: {type(rb).__name__}: {rb!r}", flush=True)
                 try:
                     await thinking.edit_text('⏹ Остановлено')
                 except Exception:
@@ -897,6 +960,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_reply(update, bot_response)
     except Exception as e:
         print(f"[ERR text] {type(e).__name__}: {e}", flush=True)
+        if persisted:
+            try:
+                store = get_store()
+                await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
+                print(f"[handle_text] rolled back persisted message on exception for {chat_id}/{thread_id}", flush=True)
+            except Exception as rb:
+                print(f"[handle_text] rollback on exception failed: {type(rb).__name__}: {rb!r}", flush=True)
         await _reply(update, f'❌ Error: {e}')
     finally:
         try:

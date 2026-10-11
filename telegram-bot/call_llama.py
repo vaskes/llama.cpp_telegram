@@ -327,14 +327,18 @@ async def _abortable_post(client, url, abort_event=None, **kwargs):
             post_task.cancel()
             try:
                 await post_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
             return None
         else:
             abort_task.cancel()
             try:
                 await abort_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
             return post_task.result()
     except Exception:
@@ -343,7 +347,9 @@ async def _abortable_post(client, url, abort_event=None, **kwargs):
                 t.cancel()
                 try:
                     await t
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
                     pass
         raise
 

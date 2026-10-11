@@ -83,17 +83,21 @@ DONSETCH_SESSION_ID: Optional[str] = None
 
 # === Webhook mode (T25) ===
 # When WEBHOOK_MODE=1, the bot starts an aiohttp server on
-# 127.0.0.1:WEBHOOK_PORT instead of polling getUpdates. The
-# nginx-proxy in front of the bot terminates TLS and forwards
-# POST /tg-webhook/<secret-token> to this server.
+# WEBHOOK_HOST:WEBHOOK_PORT (default 0.0.0.0:8443) instead of
+# polling getUpdates. The nginx-proxy in front of the bot
+# terminates TLS and forwards POST <WEBHOOK_PATH>/<secret-token>
+# to this server.
 #
-# WEBHOOK_URL is the public URL Telegram should POST to. The
-# secret token is appended at registration time, not stored
-# in the env directly. WEBHOOK_SECRET_TOKEN is the shared
-# secret Telegram includes as the
-# X-Telegram-Bot-Api-Secret-Token header on every request —
-# the handler must verify it before processing.
+# WEBHOOK_URL is the PUBLIC URL Telegram should POST to. If set
+# (e.g. https://bot.example.com/tg-webhook), the bot auto-registers
+# the webhook with Telegram on startup via bot.setWebhook(url=...,
+# secret_token=...). If empty, the operator must register manually
+# (see docs/WEBHOOK.md). The secret token is NOT appended to the
+# URL — Telegram stores it separately and sends it on every request
+# as the X-Telegram-Bot-Api-Secret-Token header. The handler must
+# verify that header before processing.
 WEBHOOK_MODE = os.environ.get("WEBHOOK_MODE", "0") == "1"
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 WEBHOOK_HOST = os.environ.get("WEBHOOK_HOST", "0.0.0.0")
 WEBHOOK_PORT = int(os.environ.get("WEBHOOK_PORT", "8443"))
 # Path component. The secret token is appended at runtime

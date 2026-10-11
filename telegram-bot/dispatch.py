@@ -847,6 +847,29 @@ def main():
             f"{_config.WEBHOOK_PATH}/",
             flush=True,
         )
+        # v0.9.2: auto-register the webhook with Telegram if WEBHOOK_URL
+        # is set. The operator can skip this and register manually
+        # (see docs/WEBHOOK.md) by leaving WEBHOOK_URL empty. The bot
+        # Application is initialized eagerly here so we have a Bot
+        # object to call set_webhook on; subsequent dispatches reuse it.
+        if _config.WEBHOOK_URL and _config.WEBHOOK_SECRET_TOKEN:
+            async def _auto_register():
+                try:
+                    global _dispatcher
+                    if _dispatcher is None:
+                        from telegram.ext import Application
+                        app = Application.builder().token(BOT_TOKEN).build()
+                        await app.initialize()
+                        _dispatcher = app
+                    await _dispatcher.bot.set_webhook(
+                        url=_config.WEBHOOK_URL,
+                        secret_token=_config.WEBHOOK_SECRET_TOKEN,
+                        drop_pending_updates=False,
+                    )
+                    print(f"[main] webhook auto-registered: {_config.WEBHOOK_URL}", flush=True)
+                except Exception as e:
+                    print(f"[main] webhook auto-register FAILED: {type(e).__name__}: {e!r}", flush=True)
+            asyncio.run(_auto_register())
         asyncio.run(_webhook_run())
         return
 

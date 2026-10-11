@@ -1,8 +1,10 @@
 # webhook.py
 # T25: aiohttp server that receives Telegram webhook POSTs and
 # hands them to the same _dispatch_update() the polling loop
-# uses. Listening on 127.0.0.1:WEBHOOK_PORT only — nginx-proxy
-# in front of us terminates TLS and reverse-proxies here.
+# uses. Listening on WEBHOOK_HOST:WEBHOOK_PORT (default 0.0.0.0:8443)
+# — when the bot is in lan_macvlan, the nginx-proxy reverse-proxies
+# to its macvlan IP. When the bot is on host network, the reverse
+# proxy forwards to 127.0.0.1:8443.
 #
 # Authentication: every request from Telegram carries the
 # X-Telegram-Bot-Api-Secret-Token header set at setWebhook() time.
@@ -16,8 +18,8 @@
 # what we want for webhooks (each POST = one update).
 import asyncio
 import hmac
+import json
 import logging
-from typing import Optional
 
 import aiohttp
 from aiohttp import web
@@ -28,6 +30,13 @@ import config
 
 
 log = logging.getLogger(__name__)
+
+
+# Cap incoming bodies. Telegram updates are < 100 KB; we allow 1 MB
+# as a generous margin but no more — without a cap, a malicious
+# request that bypasses the secret check (or a future bug) could
+# OOM the bot by streaming a huge body.
+_MAX_BODY_BYTES = 1 * 1024 * 1024
 
 
 def _check_secret(request: web.Request) -> bool:
@@ -52,9 +61,24 @@ async def _handle(request: web.Request) -> web.Response:
             request.remote,
         )
         return web.Response(status=403, text="forbidden")
+    # Body size cap. aiohttp enforces client_max_size globally,
+    # but we also re-check here so the JSON parse never sees a
+    # pathologically large string.
+    if request.content_length and request.content_length > _MAX_BODY_BYTES:
+        log.warning(
+            "[webhook] rejected request: body %d > %d from %s",
+            request.content_length, _MAX_BODY_BYTES, request.remote,
+        )
+        return web.Response(status=413, text="payload too large")
     try:
         body = await request.read()
-        upd = Update.de_json(__import__("json").loads(body), None)
+        if len(body) > _MAX_BODY_BYTES:
+            log.warning(
+                "[webhook] rejected request: body %d > %d from %s",
+                len(body), _MAX_BODY_BYTES, request.remote,
+            )
+            return web.Response(status=413, text="payload too large")
+        upd = Update.de_json(json.loads(body), None)
     except Exception as e:
         log.warning("[webhook] de_json failed: %s: %r", type(e).__name__, e)
         return web.Response(status=400, text="bad update")
@@ -63,24 +87,43 @@ async def _handle(request: web.Request) -> web.Response:
     # Late import: dispatch.py imports bot.py which would
     # circularly import webhook.py if we did this at module load.
     from dispatch import _dispatch_update
+
+    # v0.9.2: wrap the dispatch task in a try/except so a future
+    # bug in a handler doesn't get silently swallowed by the loop's
+    # default exception handler. We still return 200 to Telegram
+    # because the request itself was valid; the operator sees the
+    # traceback in `docker logs`.
+    async def _safe_dispatch():
+        try:
+            await _dispatch_update(upd.to_dict())
+        except Exception:
+            log.exception(
+                "[webhook] dispatch failed: update_id=%s", upd.update_id
+            )
+
     # Spawn the update on the same event loop the polling loop
     # would use. We don't await — Telegram expects 200 within
     # ~5s and LLM calls can take 30s+; fire-and-forget is the
     # only sane pattern.
-    asyncio.create_task(_dispatch_update(upd.to_dict()))
+    asyncio.create_task(_safe_dispatch())
     return web.Response(status=200, text="ok")
 
 
 async def _healthz(request: web.Request) -> web.Response:
     """Health check for the operator. Returns 200 with the
     version string. Nginx doesn't need to proxy this; the
-    operator can hit it via 127.0.0.1:8443 from the host.
+    operator can hit it via 127.0.0.1:8443 from the host, or
+    via the macvlan IP from another LAN host.
     """
     return web.Response(text=f"webhook-ok mode=webhook")
 
 
 def make_app() -> web.Application:
-    app = web.Application()
+    # client_max_size caps body size at the aiohttp layer. We also
+    # re-check in _handle() because client_max_size is enforced
+    # when reading, and we want an explicit 413 response rather
+    # than a generic "payload too large" exception.
+    app = web.Application(client_max_size=_MAX_BODY_BYTES)
     # Match the path prefix WEBHOOK_PATH so any secret token
     # suffix is accepted (Telegram appends random bytes).
     app.router.add_post(config.WEBHOOK_PATH + r"/{tail:.*}", _handle)
@@ -96,8 +139,10 @@ async def run() -> None:
     site = web.TCPSite(runner, config.WEBHOOK_HOST, config.WEBHOOK_PORT)
     await site.start()
     log.info(
-        "[webhook] listening on http://%s:%d%s/  (secret-token enforced)",
+        "[webhook] listening on http://%s:%d%s/  (secret-token enforced, "
+        "body cap %d KB)",
         config.WEBHOOK_HOST, config.WEBHOOK_PORT, config.WEBHOOK_PATH,
+        _MAX_BODY_BYTES // 1024,
     )
     # Block forever. The runner keeps the loop alive.
     try:

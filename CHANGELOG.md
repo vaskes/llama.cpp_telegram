@@ -558,6 +558,128 @@ from the macvlan bot container).
   `files/` bind mounts, which work because they're
   filesystem-level not network-level.
 
+## [v0.9.2] — 2026-10-11 — review hotfix chain: handlers rollback + webhook hardening
+
+Pre-release review (REVIEW-MINIMAX-v7) caught 4 P0 issues
+that block a clean public release. v0.9.2 closes all of them
+plus 2 P1 issues and adds 7 unit tests.
+
+### Fixed (v0.9.2)
+
+- **handle_voice + handle_document had the same bug v0.9.1
+  fixed in handle_photo** (P0-1). Persist happened BEFORE the
+  thinking message and abort_event registration; a Stop click
+  during the LLM call left the transcript / document content
+  in history, so the next user message was answered about the
+  (cancelled) voice or document. Applied the same
+  reordering + `Storage.delete_last_user_message` rollback
+  in both abort and except branches. handle_text also got the
+  same fix for consistency. `handlers.py` total change:
+  ~120 lines across the three handlers.
+
+- **webhook.py used `__import__("json")` instead of
+  top-level `import json`** (P0-2). The pattern was a copy-
+  paste artefact with no circular-import justification (json
+  is stdlib). Replaced with a normal `import json` at the top
+  of the module. One-line behavioural change, no logic diff.
+
+- **webhook.py had no body size limit** (P0-3). A
+  `request.read()` with no cap lets a malicious actor who
+  learns the secret token (or finds a path that bypasses
+  the check) OOM the bot. Added a 1 MB cap both via
+  `web.Application(client_max_size=1*1024*1024)` and an
+  explicit re-check in `_handle()`. Telegram updates are
+  < 100 KB; 1 MB is 10x the legitimate max.
+
+- **webhook.py fire-and-forget task silently swallowed
+  exceptions** (P1-1). If `_dispatch_update` raised, the
+  loop's default handler logged `Task exception was never
+  retrieved` to stderr but the operator never saw it because
+  the webhook had already returned 200 OK. Wrapped the
+  dispatch task body in a try/except that calls
+  `log.exception(...)`. The webhook still returns 200
+  (the request itself was valid); the traceback is now
+  in `docker logs`.
+
+- **config.py referenced a non-existent `WEBHOOK_URL`
+  constant** (P1-2). The comment said "WEBHOOK_URL is the
+  public URL Telegram should POST to" but no such constant
+  existed. Defined it: `WEBHOOK_URL = os.environ.get(...)`.
+  In `dispatch.py:main()`, if `WEBHOOK_URL` is set AND
+  `WEBHOOK_SECRET_TOKEN` is set, the bot auto-registers
+  the webhook with Telegram on startup via
+  `bot.setWebhook(url=..., secret_token=...)`. If
+  `WEBHOOK_URL` is empty, register manually (see
+  docs/WEBHOOK.md section 4.5).
+
+- **call_llama.py: `_abortable_post` caught
+  `asyncio.CancelledError` in a combined except clause
+  with `Exception`**. Split into two except blocks: bare
+  `asyncio.CancelledError: pass` and `Exception: pass`.
+  The combined clause was correct in practice but
+  unnecessarily broad; the split makes the cancellation
+  intent explicit and matches the canonical asyncio pattern.
+
+- **handlers.py: handle_text comment "handle_photo uses
+  is_group in print below" was misleading** — handle_text
+  does not use `is_group` in any print. Replaced with
+  "is_group is unused in this handler (tuple shape kept
+  for symmetry)".
+
+- **handlers.py: handle_voice had no `persisted` flag** —
+  now added; handle_document and handle_text also have it.
+
+### Test coverage added (v0.9.2)
+
+7 new pytest tests in `tests/test_selftest.py`:
+
+- `test_delete_last_user_message_removes_persisted_image` —
+  writes a user message, calls `delete_last_user_message`,
+  asserts the row is gone.
+- `test_delete_last_user_message_returns_false_when_empty` —
+  empty thread, asserts return value is `False`.
+- `test_delete_last_user_message_only_removes_user_role` —
+  writes user + bot + tool rows, asserts only the user
+  row is removed (regression test for the bot/tool rows
+  being accidentally deleted on rollback).
+- `test_webhook_check_secret_accepts_valid_token` —
+  `monkeypatch` sets `WEBHOOK_SECRET_TOKEN`, request
+  has matching header, asserts `_check_secret` returns True.
+- `test_webhook_check_secret_rejects_invalid_token` —
+  header has different value, asserts False.
+- `test_webhook_check_secret_rejects_missing_token` —
+  no header, asserts False.
+- `test_webhook_check_secret_rejects_when_unconfigured` —
+  `WEBHOOK_SECRET_TOKEN` empty, asserts False for any
+  header value (safe-by-default behaviour).
+
+All 12 tests pass in 0.22s.
+
+### Documentation updates (v0.9.2)
+
+- `docs/WEBHOOK.md` — `127.0.0.1` claim replaced with
+  `WEBHOOK_HOST:WEBHOOK_PORT` and a note that the default
+  is `0.0.0.0` for macvlan production. Added new section 4.3.1
+  covering the `docker network create -d macvlan` setup.
+  Section 4.4 updated to include `WEBHOOK_URL` and document
+  auto-registration. Section 4.5 now points to the
+  auto-register path first and the manual curl as the
+  fallback.
+- `CHANGELOG.md` — this section.
+
+### Operator action required
+
+None for the public repo. The previous v0.9.1 (commit
+`20b5cd9`) already moved secrets to `.env` and rotated the
+Telegram bot token. v0.9.2 adds no new env vars that must
+be set; `WEBHOOK_URL` is optional. If you want auto-
+register on startup, set:
+
+```
+WEBHOOK_URL=https://<your-subdomain>.<your-domain>/tg-webhook
+```
+
+in `telegram-bot/.env` and restart.
 ## [v0.8.0] — 2026-10-10 — v0.7.8 → v0.7.9b + v0.8.0 → v0.8.2 chain
 
 Hotfix chain documented in v0.9.0 above. This entry

@@ -84,3 +84,107 @@ def test_rating_parser_returns_body():
     assert "body" in result, f"_parse_rating_response must return 'body' key, got {sorted(result.keys())}"
     assert "rest" not in result, f"_parse_rating_response must NOT return 'rest' key, got {sorted(result.keys())}"
     assert result["body"] == "plain answer"
+import os
+import json
+import asyncio
+import hmac
+from unittest.mock import MagicMock
+
+import pytest
+
+# === test_delete_last_user_message ===
+@pytest.mark.asyncio
+async def test_delete_last_user_message_removes_persisted_image(tmp_path):
+    """v0.9.2 regression test: write user message, delete it, assert gone."""
+    from storage import Storage
+    db = str(tmp_path / "test.db")
+    s = Storage(db)
+    s.create_thread(1, "main")
+    s.add_message(1, "main", "user", "What's the weather?", sender_name="test")
+    rows = s.get_messages(1, "main", limit=10)
+    assert len(rows) == 1
+    assert rows[0]["content"] == "What's the weather?"
+    ok = s.delete_last_user_message(1, "main")
+    assert ok is True
+    rows = s.get_messages(1, "main", limit=10)
+    assert rows == [], f"row not deleted, got {rows}"
+
+
+@pytest.mark.asyncio
+async def test_delete_last_user_message_returns_false_when_empty(tmp_path):
+    """Empty thread: delete returns False (no row to delete)."""
+    from storage import Storage
+    db = str(tmp_path / "test.db")
+    s = Storage(db)
+    s.create_thread(1, "main")
+    ok = s.delete_last_user_message(1, "main")
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_delete_last_user_message_only_removes_user_role(tmp_path):
+    """The function must NOT remove a 'bot' or 'tool' row even if it's
+    the most recent message. This protects the LLM response from being
+    accidentally deleted by an abort rollback."""
+    from storage import Storage
+    db = str(tmp_path / "test.db")
+    s = Storage(db)
+    s.create_thread(1, "main")
+    s.add_message(1, "main", "user", "user msg", sender_name="test")
+    s.add_message(1, "main", "bot", "bot reply", sender_name="bot")
+    s.add_message(1, "main", "tool", "tool output", sender_name="tool")
+    ok = s.delete_last_user_message(1, "main")
+    assert ok is True
+    rows = s.get_messages(1, "main", limit=10)
+    # The 'tool' row stays (most recent but not 'user' role)
+    # The 'user' row is gone
+    # The 'bot' row stays
+    assert len(rows) == 2
+    roles = {r["role"] for r in rows}
+    assert "user" not in roles
+    assert "bot" in roles
+    assert "tool" in roles
+
+
+# === test_webhook_check_secret ===
+def _make_request(headers):
+    """Build a minimal aiohttp.web.Request mock for _check_secret."""
+    import aiohttp.web
+    request = MagicMock(spec=aiohttp.web.Request)
+    request.headers.get = lambda name, default="": headers.get(name, default)
+    return request
+
+
+def test_webhook_check_secret_accepts_valid_token(monkeypatch):
+    """v0.9.2 regression test: when X-Telegram-Bot-Api-Secret-Token
+    matches WEBHOOK_SECRET_TOKEN, _check_secret returns True."""
+    monkeypatch.setattr("config.WEBHOOK_SECRET_TOKEN", "deadbeef-1234")
+    import webhook
+    req = _make_request({"X-Telegram-Bot-Api-Secret-Token": "deadbeef-1234"})
+    assert webhook._check_secret(req) is True
+
+
+def test_webhook_check_secret_rejects_invalid_token(monkeypatch):
+    """v0.9.2 regression test: when the header doesn't match,
+    _check_secret returns False."""
+    monkeypatch.setattr("config.WEBHOOK_SECRET_TOKEN", "deadbeef-1234")
+    import webhook
+    req = _make_request({"X-Telegram-Bot-Api-Secret-Token": "not-the-right-token"})
+    assert webhook._check_secret(req) is False
+
+
+def test_webhook_check_secret_rejects_missing_token(monkeypatch):
+    """v0.9.2 regression test: when the header is absent, returns False."""
+    monkeypatch.setattr("config.WEBHOOK_SECRET_TOKEN", "deadbeef-1234")
+    import webhook
+    req = _make_request({})  # no headers at all
+    assert webhook._check_secret(req) is False
+
+
+def test_webhook_check_secret_rejects_when_unconfigured(monkeypatch):
+    """v0.9.2 regression test: when WEBHOOK_SECRET_TOKEN is empty
+    (misconfigured bot), every request is refused."""
+    monkeypatch.setattr("config.WEBHOOK_SECRET_TOKEN", "")
+    import webhook
+    req = _make_request({"X-Telegram-Bot-Api-Secret-Token": "anything"})
+    assert webhook._check_secret(req) is False
