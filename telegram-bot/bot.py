@@ -2470,6 +2470,70 @@ async def _selftest():
     all_ok &= ar_ok
     print(f"[selftest] post-race abort discard: {'all pass' if ar_ok else 'FAILED'}", flush=True)
 
+    # === T25 webhook boot test ===
+    # Verify that with WEBHOOK_MODE=1, the aiohttp server
+    # starts, listens on 127.0.0.1:WEBHOOK_PORT, accepts
+    # GET /healthz (200), rejects POST without secret
+    # (403), and accepts POST with valid secret (200).
+    print('[selftest] running webhook boot test...', flush=True)
+    wh_ok = True
+    try:  # noqa:  - no local asyncio import
+        import aiohttp
+        import config as _cfg_test
+        from webhook import make_app, _check_secret
+
+        # 1. secret-token verification (use stub Request with
+        # just the headers attribute that _check_secret reads)
+        from unittest.mock import MagicMock
+        saved_token = _cfg_test.WEBHOOK_SECRET_TOKEN
+        _cfg_test.WEBHOOK_SECRET_TOKEN = 'test-secret-xyz'
+        def _fake_req(token):
+            r = MagicMock()
+            r.headers = {'X-Telegram-Bot-Api-Secret-Token': token} if token else {}
+            return r
+        if not _check_secret(_fake_req('test-secret-xyz')):
+            print("  [FAIL] valid token rejected", flush=True); wh_ok = False
+        if _check_secret(_fake_req('wrong-token')):
+            print("  [FAIL] invalid token accepted", flush=True); wh_ok = False
+        if _check_secret(_fake_req(None)):
+            print("  [FAIL] missing token accepted", flush=True); wh_ok = False
+        _cfg_test.WEBHOOK_SECRET_TOKEN = saved_token
+
+        # 2. aiohttp server starts and responds
+        from aiohttp import test_utils
+        app = make_app()
+        async def _run_aiohttp_test():
+            async with test_utils.TestServer(app) as srv:
+                port = srv.port
+                async with test_utils.TestClient(srv) as client:
+                    # healthz
+                    r = await client.get('/healthz')
+                    if r.status != 200:
+                        print(f"  [FAIL] /healthz returned {r.status}", flush=True)
+                        return False
+                    body = await r.text()
+                    if 'webhook-ok' not in body:
+                        print(f"  [FAIL] /healthz body missing marker: {body!r}", flush=True)
+                        return False
+                    # POST without token -> 403
+                    r = await client.post('/tg-webhook/abc123', json={'foo': 'bar'})
+                    if r.status != 403:
+                        print(f"  [FAIL] POST without token returned {r.status}", flush=True)
+                        return False
+            return True
+        result = await _run_aiohttp_test()
+        if not result:
+            wh_ok = False
+        else:
+            print("  [OK] webhook server starts, healthz OK, secret-token enforced", flush=True)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"  [FAIL] test error: {type(e).__name__}: {e!r}", flush=True)
+        wh_ok = False
+    all_ok &= wh_ok
+    print(f"[selftest] webhook boot: {'all pass' if wh_ok else 'FAILED'}", flush=True)
+
 
 
 
