@@ -1,14 +1,20 @@
 # llama.cpp_telegram
 
-> **State at v0.5.0 (Oct 2026):** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
-> `192.168.10.6:8080`, Whisper on `192.168.10.7:8000`, donsetch v4.7.4
-> (split-shape) on `127.0.0.1:8765`. Private + group-with-Topics modes.
-> GROUP_CONTEXT system prompt locked. react_to_message tool available
-> in non-rating mode. Per-handler Stop button race fixed. PTB 21
-> download compat. ~75 selftest cases on every container start.
+> **State at v0.9.0 (Oct 2026):** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
+> any OpenAI-compatible endpoint, Whisper on any faster-whisper
+> server, donsetch MCP for web tools. Private + group-with-Topics
+> modes. GROUP_CONTEXT system prompt locked. react_to_message tool
+> available in non-rating mode. Per-handler Stop button race fixed.
+> **Webhook transport** supported (v0.9.0) alongside long-polling.
+> 19/19 selftest groups + 5/5 pytest in CI.
 
 A Telegram bot wrapper around the [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-compatible API
 plus a local Whisper server for voice transcription.
+
+**Two transports:** long-polling (default, no infrastructure required)
+and webhook (sub-second latency, requires a public endpoint with TLS).
+See [docs/WEBHOOK.md](docs/WEBHOOK.md) for when to use which and how
+to set up webhook mode.
 
 ## What is this
 
@@ -40,13 +46,27 @@ The bot can:
   - **Private chat** — 1 user, multi-thread via `/newsub` `/sub` `/subs` (in-DB sub-talks)
   - **Group with Telegram Topics** — N users, native forum topics via `/newsub` (creates a Telegram topic), `/subs` (lists topics), `/delsub` (deletes a topic). Replies stay in the topic where the user is.
 
+## Transports
+
+The bot can receive Telegram updates via two mechanisms:
+
+| Transport | Latency | Setup | When to use |
+|---|---|---|---|
+| **Long-polling** (default) | Up to 25s | None — just run the bot | You don't have a public domain/TLS, behind strict NAT, or doing development |
+| **Webhook** | <1s | DNS + reverse proxy + `WEBHOOK_MODE=1` | You have a public domain with TLS and want real-time updates |
+
+Polling has been the default for years and is rock-solid. Webhook
+became available in v0.9.0 and is recommended for production where
+real-time response matters. See [docs/WEBHOOK.md](docs/WEBHOOK.md)
+for the full setup guide.
+
 ## Architecture
 
 ```
 ┌──────────┐    HTTP     ┌──────────────┐   chat/completions   ┌─────────────┐
 │ Telegram │◀───────────▶│  telegram-   │──────────────────────▶│  llama.cpp  │
 │  user    │  Bot API    │  bot (host   │  +tool_calls loop    │  server     │
-└──────────┘             │   network)   │                      │  (8080)     │
+└──────────┘             │   network)   │                      │  (8080)     │  (any)
                          │              │   /v1/audio/         │             │
                          │              │   transcriptions     │             │
                          │              │─────────────────────▶│  whisper-   │
@@ -77,6 +97,7 @@ sudo systemctl start telegram-bot-compose
 
 ## Documentation
 
+- **[docs/WEBHOOK.md](docs/WEBHOOK.md)** — webhook transport: when to use, how to set up, security, fallback
 - **[docs/SETUP.md](docs/SETUP.md)** — installing on a fresh host (for humans); also covers group-mode deployment
 - **[docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)** — short command reference for AI agents
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — what's inside bot.py at a high level; covers both private and group modes
@@ -98,9 +119,8 @@ sudo systemctl start telegram-bot-compose
 ## Where to get llama-server
 
 This repository does **not** include llama.cpp itself. Any OpenAI-compatible
-endpoint will work. Recommended for Radeon 780M:
-**[vaskes/llama.cpp-rocm-780m](https://github.com/vaskes/llama.cpp-rocm-780m)** —
-a ready Docker build with native gfx1103 support.
+endpoint will work. For a self-hosted setup, see your llama.cpp
+distributor's documentation.
 
 ## Related
 
