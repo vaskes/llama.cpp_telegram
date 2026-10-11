@@ -1,12 +1,12 @@
 # llama.cpp_telegram
 
-> **State at v0.9.0 (Oct 2026):** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
+> **State at v0.9.1 (Oct 2026):** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
 > any OpenAI-compatible endpoint, Whisper on any faster-whisper
 > server, donsetch MCP for web tools. Private + group-with-Topics
 > modes. GROUP_CONTEXT system prompt locked. react_to_message tool
 > available in non-rating mode. Per-handler Stop button race fixed.
 > **Webhook transport** supported (v0.9.0) alongside long-polling.
-> 19/19 selftest groups + 5/5 pytest in CI.
+> Image abort rollback (v0.9.1). 19/19 selftest groups + 5/5 pytest in CI.
 
 A Telegram bot wrapper around the [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-compatible API
 plus a local Whisper server for voice transcription.
@@ -18,12 +18,13 @@ to set up webhook mode.
 
 ## What is this
 
-A ready-to-deploy bundle of two containers:
+A ready-to-deploy Telegram bot that talks to your local LLM. Bring your
+own model server; the bot works with any OpenAI-compatible endpoint.
 
-| Service | Port | Purpose |
+| Service | What it does | How it's deployed |
 |---|---|---|
-| `telegram-bot` | (none) | Polls Telegram, talks to the LLM, supports tool-calling |
-| `whisper-api` | 8000 | Transcribes voice messages via faster-whisper, returns the transcript to the bot |
+| `telegram-bot` | Polls (or receives webhooks from) Telegram, talks to the LLM, executes tool calls | Docker container |
+| `whisper-api` | Transcribes voice messages via faster-whisper, returns the transcript to the bot | Docker container (optional) |
 
 The bot can:
 
@@ -39,7 +40,7 @@ The bot can:
 - 🧠 **GROUP_CONTEXT system prompt** — LlmChatPlace rules (10-step rating scale, [llm] tag, truth-over-style, no tone policing) injected on every call_llama, in both tool and rating modes. Survives model switches and /reset.
 - 👍 **react_to_message tool** — LLM can set a single-emoji Telegram reaction on any message in the current chat (standard 10-step scale, default message_id = user's current). Available in non-rating mode.
 - 🛡 **Malformed tool-call JSON rejection** — defensive parse in the dispatcher; runaway Qwen-500 loops (10× duplicated keys) caught and rejected with feedback to the LLM.
-- ⏹ **Per-handler Stop button** — the ⏹ on a thinking message aborts THAT handler only. Keyed on (chat_id, thinking.message_id), not (chat_id, user_id) so concurrent handlers don't overwrite each other.
+- ⏹ **Per-handler Stop button** — the ⏹ on a thinking message aborts THAT handler only. Keyed on (chat_id, thinking.message_id), not (chat_id, user_id) so concurrent handlers don't overwrite each other. **v0.9.1**: image abort now also rolls back the persisted user message, so the next text prompt is not answered about the cancelled image.
 - 🎬 **Non-streaming tool-call path** — vision tasks (handle_photo) now run the unified tool loop instead of returning empty when the LLM emits a tool_call on a non-streaming POST.
 - 🤖 **Donsetch 4.7.4 split-shape** — `DONSETCH_MCP__TEXT_ONLY=false` in the compose file gives back the human-readable text response that the bot's `donsetch_call` was designed for.
 - 🧵 **Two deployment modes**:
@@ -62,23 +63,69 @@ for the full setup guide.
 
 ## Architecture
 
+The bot is one process. It owns four network connections: one to
+Telegram, one to the LLM, one to Whisper (voice only), and one to
+donsetch-http (web tools only). The exact addressing is a
+deployment choice; the diagram below shows the conceptual wiring.
+
 ```
-┌──────────┐    HTTP     ┌──────────────┐   chat/completions   ┌─────────────┐
-│ Telegram │◀───────────▶│  telegram-   │──────────────────────▶│  llama.cpp  │
-│  user    │  Bot API    │  bot (host   │  +tool_calls loop    │  server     │
-└──────────┘             │   network)   │                      │  (8080)     │  (any)
-                         │              │   /v1/audio/         │             │
-                         │              │   transcriptions     │             │
-                         │              │─────────────────────▶│  whisper-   │
-                         │              │                      │  api (8000) │
-                         │              │   /mcp (search/fetch)│             │
-                         │              │─────────────────────▶│  donsetch-  │
-                         └──────────────┘                      │  http(8765) │
-                                                               └─────────────┘
+                          ┌───────────────────────────────────────┐
+                          │           Your host / LAN            │
+                          │                                       │
+  ┌──────────┐  Bot API   │   ┌──────────────────────┐            │
+  │ Telegram │◀──────────▶│   │   telegram-bot       │            │
+  │  user    │  (HTTPS)   │   │   (Python)           │            │
+  └──────────┘            │   │                      │            │
+       ▲                  │   │                      │            │
+       │  (long-poll:     │   │  chat/completions    │  ┌────┐    │
+       │   bot → TG)      │   │ ────────────────────▶│  │LLM │    │
+       │  (webhook:       │   │  +tool_calls loop    │  │    │    │
+       │   TG → bot,      │   │                      │  └────┘    │
+       │   via reverse    │   │  audio/transcriptions│  ┌─────┐   │
+       │   proxy on a     │   │ ────────────────────▶│  │Whis│   │
+       │   public domain) │   │  (voice only)        │  │per │   │
+                          │   │                      │  └─────┘   │
+                          │   │  MCP /mcp            │  ┌─────┐   │
+                          │   │ ────────────────────▶│  │Don- │   │
+                          │   │  (web tools)         │  │setch│   │
+                          │   │                      │  └─────┘   │
+                          │   └──────────────────────┘            │
+                          │                                       │
+                          └───────────────────────────────────────┘
 ```
 
-`network_mode: host` — the bot sees llama / whisper / donsetch as localhost.
-That is the simplest setup for a single host running all three services.
+**Each arrow is one of:**
+
+- **Telegram ↔ bot** — `api.telegram.org`. Direction depends on the
+  transport: in long-polling mode the bot pulls updates; in webhook
+  mode Telegram POSTs to a public URL on a reverse proxy that forwards
+  to the bot.
+- **bot → LLM** — `POST /v1/chat/completions` (OpenAI-compatible).
+  The bot runs its own tool-call loop on top of whatever the server
+  exposes.
+- **bot → Whisper** — `POST /v1/audio/transcriptions`
+  (OpenAI-compatible). The bot downloads the voice file from
+  Telegram, sends it to Whisper, gets the text back, then feeds the
+  text into the LLM call as a normal user message.
+- **bot → donsetch-http** — `POST /mcp` (JSON-RPC over HTTP, MCP
+  protocol). Exposes `web_search`, `web_fetch`, `web_crawl`,
+  `web_screenshot`. The bot executes the tool calls the LLM emits.
+
+**Network layout:** the bot does not require any particular
+container networking mode. The two reference layouts are
+
+1. **Single host** — all four services run on the same host; the
+   bot container uses `network_mode: host` and reaches the others
+   via `localhost`. Simplest setup, no extra plumbing.
+2. **Split across containers** — each service in its own container
+   on a shared `macvlan` network. The bot gets a static IP on
+   that network; the other services are reached by IP. This is
+   what you want when the bot is behind a webhook reverse proxy
+   that needs to forward to a stable container address.
+
+Either layout works. The exact `docker-compose.yml` depends on
+your host topology; see `telegram-bot/docker-compose.yml` and
+`whisper-api/docker-compose.yml` for the reference files.
 
 ## Quick start
 
