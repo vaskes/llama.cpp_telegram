@@ -820,38 +820,90 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
 
 # === main ===
 def _webhook_auto_register_sync(url: str, secret_token: str) -> None:
-    """Register the webhook with Telegram using a synchronous HTTP call.
+    """Register the webhook with Telegram using synchronous HTTP calls.
 
-    This is a one-shot startup call, so it does not need the
-    persistent async Bot object that _webhook_run() uses for
-    normal message traffic. The Bot is lazily initialized inside
-    the webhook event loop; if we used an async set_webhook
-    here in a separate event loop, the Bot httpx client would
-    be closed by the time the webhook loop started, and every
-    bot.send_message() call would fail.
+    Two-step process (v0.9.4):
 
-    Includes `allowed_updates` so Telegram delivers callback_query
-    updates (the Stop button) and chat_member updates (new-member
-    join). Without this, Telegram defaults to message-only and
-    the Stop button is silently broken.
+    1. Call `getWebhookInfo` to see the current webhook. If it
+       matches the desired URL, skip setWebhook (idempotent).
+       If different, print a clear WARNING before overwriting —
+       the operator might have a different WEBHOOK_URL in env
+       than what's actually serving production, and overwriting
+       a working webhook is a destructive action.
+    2. Call `setWebhook` with the desired URL, including
+       `allowed_updates` (callback_query is the Stop button),
+       `drop_pending_updates=False` (don't drop messages that
+       arrived during the bot restart), and the secret_token.
+
+    Both calls use a JSON body via Content-Type: application/json
+    (v0.9.4 switched from form-encoded data). JSON is cleaner
+    (drop_pending_updates is a real Bool, allowed_updates is a
+    real list, not a stringified one) and Telegram parses
+    response bodies the same way regardless of request body
+    format.
+
+    The Bot is lazily initialized inside the webhook event
+    loop. If we used an async set_webhook here in a separate
+    event loop, the Bot httpx client would be closed by the
+    time the webhook loop started, and every bot.send_message()
+    call would fail.
     """
     import urllib.request
-    import urllib.parse
     import json as _json
-    api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+    bot_api = f"https://api.telegram.org/bot{BOT_TOKEN}"
+    headers = {"Content-Type": "application/json"}
+
+    # Step 1: check the current webhook
+    current_url = None
+    try:
+        req = urllib.request.Request(f"{bot_api}/getWebhookInfo", method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            info = _json.loads(resp.read().decode("utf-8"))
+            current_url = info.get("result", {}).get("url", "")
+    except Exception as e:
+        # If getWebhookInfo fails (network, transient Telegram error),
+        # we proceed with setWebhook anyway. Better to risk a duplicate
+        # register than to fail to start the bot.
+        print(f"[main] getWebhookInfo failed (continuing): {type(e).__name__}: {e!r}", flush=True)
+
+    # Idempotent: same URL, nothing to do
+    if current_url == url:
+        print(f"[main] webhook already registered: {url}", flush=True)
+        return
+    # Different URL: warn before overwriting
+    if current_url:
+        print(f"[main] WARNING: overwriting existing webhook", flush=True)
+        print(f"[main]   current: {current_url}", flush=True)
+        print(f"[main]   new:     {url}", flush=True)
+
+    # Step 2: register
     payload = {
         "url": url,
         "secret_token": secret_token,
-        "allowed_updates": _json.dumps([
+        "allowed_updates": [
             "message", "edited_message", "callback_query", "chat_member",
-        ]),
-        "drop_pending_updates": "false",
+        ],
+        "drop_pending_updates": False,
     }
-    data = urllib.parse.urlencode(payload).encode("utf-8")
+    data = _json.dumps(payload).encode("utf-8")
     try:
-        req = urllib.request.Request(api_url, data=data, method="POST")
+        req = urllib.request.Request(
+            f"{bot_api}/setWebhook", data=data, method="POST", headers=headers,
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            print(f"[main] webhook auto-registered: {url} (status={resp.status})", flush=True)
+            body_text = resp.read().decode("utf-8", errors="replace")
+            try:
+                body = _json.loads(body_text)
+                if body.get("ok"):
+                    print(f"[main] webhook auto-registered: {url}", flush=True)
+                else:
+                    err = body.get("description", "(no description)")
+                    print(f"[main] webhook auto-register REJECTED: {err}", flush=True)
+            except _json.JSONDecodeError:
+                print(f"[main] webhook auto-registered: {url} (status={resp.status}, body not JSON)", flush=True)
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="replace")
+        print(f"[main] webhook auto-register FAILED: HTTP {e.code} {body_text[:200]}", flush=True)
     except Exception as e:
         print(f"[main] webhook auto-register FAILED: {type(e).__name__}: {e!r}", flush=True)
 

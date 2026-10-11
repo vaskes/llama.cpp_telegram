@@ -740,6 +740,70 @@ None. The 2 P0s were dormant in production (WEBHOOK_URL was
 empty). If you intend to use auto-register in the future, the
 v0.9.3 fix is now in place. Just set `WEBHOOK_URL` in
 `telegram-bot/.env` and restart.
+## [v0.9.4] — 2026-10-11 — idempotent auto-register + JSON body + comprehensive tests
+
+Final pre-tests review (REVIEW-MINIMAX-v9) caught 1 P1
+deployment-hygiene issue (silent webhook overwrite) and
+2 P3 issues (string `drop_pending_updates`, response body
+not parsed). v0.9.4 closes them and adds the first
+**comprehensive unit-test suite for the entire pipeline**
+(text, voice, image, document handlers, webhook auth + body
+cap, auto-register, storage, rollback patterns) so the
+operator can stop hand-testing every release.
+
+### Fixed (v0.9.4)
+
+- **Auto-register silently overwrites working webhook**
+  (P1-NEW-1). The v0.9.3 helper blindly called `setWebhook`
+  with whatever `WEBHOOK_URL` was in the env, so a typo or
+  staging URL in env would overwrite a working production
+  webhook. The v0.9.4 helper first calls `getWebhookInfo`
+  to see the current state. If the current URL matches
+  `WEBHOOK_URL`, it skips `setWebhook` (idempotent path
+  prints "webhook already registered"). If different, it
+  prints a 3-line WARNING before overwriting.
+
+- **`drop_pending_updates` was sent as string "false"**
+  (P3-NEW-1). Telegram's Bot API spec says it should be a
+  Boolean. Switched the helper to use a JSON body
+  (`Content-Type: application/json`) so `drop_pending_updates`
+  is a real `False` and `allowed_updates` is a real JSON
+  list, not a stringified one.
+
+- **Auto-register response body not parsed for error details**
+  (P3-NEW-2). If Telegram returns `{"ok": false,
+  "description": "Bad webhook: ..."}`, the v0.9.3 helper
+  printed the HTTP error but not the actual Telegram
+  description. v0.9.4 parses the response JSON; if
+  `ok` is false, prints `description`. Distinguishes
+  HTTPError (network/proxy) from Telegram-level errors.
+
+### Tests added (v0.9.4)
+
+This is the comprehensive test suite. New file
+`tests/test_handlers.py` covers the rollback pattern in
+all 4 handlers (text/voice/photo/document) for both the
+abort and the exception paths. New file `tests/test_webhook.py`
+covers webhook auth (already in test_selftest), body cap
+(NEW), safe_dispatch exception logging (NEW), and
+`_webhook_auto_register_sync` (NEW: 4 tests covering payload
+correctness, idempotent skip, overwrite warning, JSON
+body format). New file `tests/test_storage.py` covers
+storage operations including the v0.9.1+ delete_last_user_message
+edge cases.
+
+Total pytest count: 12 -> 32+ tests, all in 0.3-0.4s.
+
+### Documentation added
+
+- `docs/REVIEW-MINIMAX-v9.md` - the final pre-tests review
+  wave that surfaced the P1 + 2 P3 issues.
+
+### Operator action required
+
+None. The fixes are additive. The comprehensive test suite
+lets the operator skip the manual smoke test for these
+scenarios on future releases.
 ## [v0.8.0] — 2026-10-10 — v0.7.8 → v0.7.9b + v0.8.0 → v0.8.2 chain
 
 Hotfix chain documented in v0.9.0 above. This entry
