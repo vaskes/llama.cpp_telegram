@@ -136,11 +136,33 @@ async def _reply(update, text, **kwargs):
     through to sendMessage, so replies in group mode would land
     in the General topic instead of staying in the user's topic.
     This helper fixes that.
+
+    v0.7.9: also retries on telegram.error.RetryAfter (Telegram
+    flood control). If a burst of queued messages produces
+    replies faster than Telegram accepts, RetryAfter is raised;
+    we sleep retry_after+1s and retry up to 3 times.
     """
+    from telegram.error import RetryAfter
     from dispatch import _is_group_chat
     if _is_group_chat(update):
         kwargs.setdefault('message_thread_id', update.message.message_thread_id)
-    return await update.message.reply_text(text, **kwargs)
+    last_err = None
+    for attempt in range(3):
+        try:
+            return await update.message.reply_text(text, **kwargs)
+        except RetryAfter as e:
+            last_err = e
+            wait_s = float(getattr(e, 'retry_after', 1)) + 1.0
+            print(
+                f"[_reply] RetryAfter attempt {attempt+1}/3, sleeping {wait_s:.1f}s",
+                flush=True,
+            )
+            await asyncio.sleep(wait_s)
+    # Exhausted retries — re-raise so the caller's except block
+    # runs. The bot will skip the error message if Telegram
+    # still rate-limits; the user already saw the LLM response
+    # if at least one try went through.
+    raise last_err
 
 # === _reject_in_group ===
 async def _reject_in_group(update) -> bool:
