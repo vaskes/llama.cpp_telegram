@@ -86,8 +86,8 @@ from rating import (
 # === F3 stage 3: re-export call_llama module ===
 import call_llama
 from call_llama import (
-    CUSTOM_TOOLS, DONSETCH_TOOLS, call_llama, get_weather,
-    transcribe_voice, _tag_sender,
+    CUSTOM_TOOLS, DONSETCH_TOOLS, call_llama, donsetch_call, get_weather,
+    transcribe_voice, _donsetch_init, _donsetch_session_id, _tag_sender,
 )
 
 # === F3 stage 4: re-export handlers module ===
@@ -2020,7 +2020,7 @@ async def _selftest():
                 assert 'Example Domain' in r2, f'web_fetch missing "Example Domain": {r2[:200]}'
                 print(f'  [OK] web_fetch: {len(r2)} chars, markdown content delivered', flush=True)
 
-            asyncio.run(_rt())
+            await _rt()
         except AssertionError as e:
             print(f"  [FAIL] {e!r}", flush=True)
             rt_ok = False
