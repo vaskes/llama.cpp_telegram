@@ -1342,16 +1342,32 @@ async def _selftest():
     dl_ok = True
     try:
         import bot as _b
-        class _FakeUpdate:
-            pass
-
-        async def _run(coro):
-            return await coro
-
+        # The F3 module split made _download_with_limit's internal
+        # `await _reply(update, ...)` resolve to handlers._reply
+        # (local name in handlers.py), not bot._reply. So patching
+        # _b._reply = _fake_reply doesn't work. Instead, use a
+        # _FakeUpdate that satisfies what the real _reply() reads:
+        # update.effective_chat (via _is_group_chat) and
+        # update.message (for the actual sendMessage call, which
+        # we never let reach the network because _is_group_chat
+        # returns False for chat=None).
         captured_replies = []
-        async def _fake_reply(update, text):
-            captured_replies.append(text)
-        _b._reply = _fake_reply
+        async def _fake_send_message(**kwargs):
+            captured_replies.append(kwargs.get('text', ''))
+            class _Sent:
+                message_id = 999
+            return _Sent()
+
+        class _FakeMessage:
+            async def reply_text(self, text, **kwargs):
+                return await _fake_send_message(text=text, **kwargs)
+
+        class _FakeChat:
+            id = 12345
+
+        class _FakeUpdate:
+            effective_chat = None  # private mode -> _is_group_chat returns False
+            message = _FakeMessage()
 
         # Case 1: file_size set + over max_bytes -> reject without download.
         class _BigFile:
@@ -1457,7 +1473,13 @@ async def _selftest():
         await _b._persist_message(SN_CHAT, SN_THREAD, 'user', 'hi from dima', sender_name=n_dima)
         await _b._persist_message(SN_CHAT, SN_THREAD, 'assistant', 'hello both', None)
         history = await _b._load_history(SN_CHAT, SN_THREAD)
-        if len(history) != 3 or history[0]['_sender_name'] != n_vasya or history[1]['_sender_name'] != n_dima or history[2]['_sender_name'] is not None:
+        # Use .get() (not []) so a missing key is a no-op (test continues
+        # with sn_ok=False) instead of crashing the whole selftest with
+        # a KeyError. Defensive against future schema changes.
+        if (len(history) != 3
+                or history[0].get('_sender_name') != n_vasya
+                or history[1].get('_sender_name') != n_dima
+                or history[2].get('_sender_name') is not None):
             print(f"  [FAIL] persist+load: {[h.get('_sender_name') for h in history]!r}", flush=True)
             sn_ok = False
         else:
