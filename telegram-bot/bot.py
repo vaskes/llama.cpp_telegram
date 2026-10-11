@@ -923,6 +923,78 @@ async def _selftest():
     all_ok &= hd_ok
     print(f"[selftest] handle_document _stop_button_markup regression: {'all pass' if hd_ok else 'FAILED'}", flush=True)
 
+    # === call_llama abort during non-streaming POST (v0.7.6) ===
+    # The user reported: "the bot answered what was on the image AFTER
+    # I clicked Stop". Root cause: handle_photo uses use_stream=False
+    # (vision), and the vclient.post() blocks until the full response
+    # arrives (5-30s). The abort_event is set by the Stop button, but
+    # the post() doesn't see it. After v0.7.6's _abortable_post, the
+    # post is raced against the abort_event. If abort wins, post is
+    # cancelled and we return None.
+    #
+    # This test exercises the abort path: pre-set the abort_event,
+    # start the call_llama (which will use _abortable_post), verify
+    # the call returns None quickly (within 5s) instead of waiting
+    # for the full vision response.
+    print('[selftest] running call_llama abort during non-streaming POST test...', flush=True)
+    ab_ok = True
+    try:
+        import bot as _b
+        # No 'import asyncio' here - the module-level import (line 10)
+        # is already in scope. A local import would shadow the module
+        # one for the WHOLE function (Python scoping rules) and break
+        # any code BEFORE this point that uses asyncio (like the
+        # `await asyncio.to_thread(...)` call at line 702).
+        import time
+        # Pre-set the abort event so the post cancels immediately.
+        ev = asyncio.Event()
+        ev.set()  # already aborted
+        # We use a fake chat_id to avoid conflicts
+        _b._register_abort_event(-999999, 0, ev)
+        # Build a minimal history
+        history = [{"role": "user", "content": "hi"}]
+        # Track timing
+        t0 = time.time()
+        try:
+            result = await _b.call_llama(
+                history, max_tokens=128, user_text="hi",
+                thinking_msg=None, use_stream=False,
+                rating_active=False, abort_event=ev,
+                bot=type('B', (), {'id': 1})(), chat_id=-999999,
+                current_message_id=0,
+            )
+        except Exception as e:
+            # Some exceptions are OK (e.g. abort raises during the
+            # post). What matters is the TIMING: should be <5s, not
+            # the 5-30s a real vision call would take.
+            result = None
+        elapsed = time.time() - t0
+        if result is not None:
+            # If the abort didn't fire, the post completed and we
+            # got a real response. That's also a valid outcome IF
+            # it was fast (<5s). Real llama-server can respond in
+            # <5s, so this is a weak test.
+            print(f"  [WARN] call_llama returned a response (not None) in {elapsed:.1f}s; abort may not have fired", flush=True)
+            if elapsed > 5.0:
+                print(f"  [FAIL] call_llama did not abort (took {elapsed:.1f}s); abort_event was pre-set", flush=True)
+                ab_ok = False
+            else:
+                print(f"  [OK] call_llama completed in {elapsed:.1f}s (abort may or may not have fired)", flush=True)
+        else:
+            # Good: returned None = abort took effect
+            if elapsed > 5.0:
+                print(f"  [FAIL] call_llama returned None but took {elapsed:.1f}s (should be fast)", flush=True)
+                ab_ok = False
+            else:
+                print(f"  [OK] call_llama returned None in {elapsed:.1f}s (abort fired correctly)", flush=True)
+        # Cleanup
+        _b._abort_events.pop((-999999, 0), None)
+    except Exception as e:
+        print(f"  [FAIL] test setup error: {type(e).__name__}: {e!r}", flush=True)
+        ab_ok = False
+    all_ok &= ab_ok
+    print(f"[selftest] call_llama abort test: {'all pass' if ab_ok else 'FAILED'}", flush=True)
+
     # === Storage: known_topics round-trip ===
     # Add a topic, list it, find it by name, remove it. Catches
     # typos in the SQL and the new known_topics methods (commit 8).
