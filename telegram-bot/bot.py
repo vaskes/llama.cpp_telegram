@@ -772,6 +772,67 @@ async def _selftest():
         all_ok &= ok
         print(f"  [{'OK' if ok else 'FAIL'}] {label}: is_group={got} (expected {expected})", flush=True)
 
+    # === handle_photo NameError regression test (v0.6.3 T11 bug) ===
+    # The v0.6.3 T11 cleanup dropped is_group from all 4 message
+    # handlers with the comment "is_group unused". But handle_photo
+    # uses is_group on the next line (a print statement). Every
+    # photo message since v0.6.3 crashed at the first print, so
+    # the bot never replied to images. This test calls handle_photo
+    # with a fake Update and asserts no NameError on is_group.
+    # We patch _b._route_to_thread to return a 3-tuple so the
+    # destructure works, and patch _b._check_user_slot to return
+    # None so the handler short-circuits before LLM call.
+    print('[selftest] running handle_photo NameError regression test...', flush=True)
+    hp_ok = True
+    try:
+        import bot as _b
+        class _FakePhoto:
+            file_id = 'fake'
+            file_size = 12345
+            async def download_as_bytearray(self):
+                return bytearray(b'fake-photo-bytes')
+        class _FakeMessage:
+            photo = [_FakePhoto()]
+            caption = 'что на фото?'
+            message_thread_id = 19
+            chat = type('C', (), {'id': -1001, 'send_action': lambda self, **kw: asyncio.sleep(0)})()
+        class _FakeUser:
+            id = 286293081
+            is_bot = False
+            username = 'V_bot'
+            first_name = 'Vasisualy'
+            last_name = 'Lohankin'
+        class _FakeChat:
+            id = -1001
+            type = 'supergroup'
+        class _FakeUpdate:
+            effective_chat = _FakeChat()
+            effective_user = _FakeUser()
+            message = _FakeMessage()
+        class _FakeContext:
+            bot = type('B', (), {'id': 1})()
+        async def _fake_route(_u, _c):
+            return (-1001, '19', True)  # is_group=True
+        async def _fake_slot(*args, **kwargs):
+            return None  # short-circuit before LLM
+        _b._route_to_thread = _fake_route
+        _b._check_user_slot = _fake_slot
+        await _b.handle_photo(_FakeUpdate(), _FakeContext())
+        print('  [OK] handle_photo does not NameError on is_group', flush=True)
+    except NameError as e:
+        if 'is_group' in str(e):
+            print(f"  [FAIL] handle_photo regressed: NameError on is_group: {e!r}", flush=True)
+            hp_ok = False
+        else:
+            print(f"  [FAIL] handle_photo NameError (not is_group): {e!r}", flush=True)
+            hp_ok = False
+    except Exception as e:
+        # Other exceptions are OK (e.g. _check_user_slot returning None
+        # short-circuits, or asyncio.CancelledError from send_action)
+        print(f"  [OK] handle_photo reached past is_group (other exception: {type(e).__name__})", flush=True)
+    all_ok &= hp_ok
+    print(f"[selftest] handle_photo NameError regression: {'all pass' if hp_ok else 'FAILED'}", flush=True)
+
     # === Storage: known_topics round-trip ===
     # Add a topic, list it, find it by name, remove it. Catches
     # typos in the SQL and the new known_topics methods (commit 8).
