@@ -9,6 +9,15 @@ on:
 jobs:
   ruff:
     runs-on: ubuntu-latest
+    # v0.8.2: explicit minimum-privilege permissions. CodeQL
+    # flagged 'actions/missing-workflow-permissions' (CWE-275)
+    # because the workflow had no permissions block, so the
+    # default token scope was used (read-write). With this block
+    # the GITHUB_TOKEN can only read repo contents - cannot
+    # push, create issues, or write packages. Future steps
+    # that need write access must opt in explicitly.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/ruff-action@v1
