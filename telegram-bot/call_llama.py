@@ -295,6 +295,59 @@ async def _ensure_model() -> str:
     return MODEL
 
 
+
+
+async def _abortable_post(client, url, abort_event=None, **kwargs):
+    """httpx POST that can be cancelled by an asyncio.Event.
+
+    The plain client.post() blocks until the full response arrives
+    (5-30s for vision). The Stop button sets the abort_event, but
+    the post() doesn't see it. This helper races the post against
+    the abort_event:
+
+    - If abort_event fires first, cancel the post task and
+      return None (handler treats None as "aborted, don't send").
+    - If the post completes first, return the response.
+
+    Why not asyncio.wait_for? Because abort_event doesn't fire a
+    timeout; it's a manual trigger. We need to actually race it.
+    """
+    if abort_event is None:
+        return await client.post(url, **kwargs)
+
+    post_task = asyncio.create_task(client.post(url, **kwargs))
+    abort_task = asyncio.create_task(abort_event.wait())
+    try:
+        done, pending = await asyncio.wait(
+            {post_task, abort_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if abort_task in done:
+            # User clicked Stop. Cancel the post and return None.
+            post_task.cancel()
+            try:
+                await post_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return None
+        else:
+            abort_task.cancel()
+            try:
+                await abort_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return post_task.result()
+    except Exception:
+        for t in (post_task, abort_task):
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+        raise
+
+
 async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None, bot=None, chat_id=None, current_message_id=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
@@ -699,12 +752,25 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                         timeout=600.0,
                         limits=httpx.Limits(max_keepalive_connections=0, max_connections=1),
                     ) as vclient:
-                        r = await vclient.post(
-                            f"{LLAMA_URL}/chat/completions",
+                        # v0.7.6: race the post against abort_event.
+                        # The plain vclient.post() blocks until the
+                        # full response arrives (5-30s for vision).
+                        # The Stop button sets abort_event, but the
+                        # post() doesn't see it. With _abortable_post,
+                        # we detect abort as soon as the user clicks.
+                        r = await _abortable_post(
+                            vclient, f"{LLAMA_URL}/chat/completions",
+                            abort_event=abort_event,
                             headers={"Authorization": f"Bearer {API_KEY}",
                                      "Content-Type": "application/json"},
                             content=payload_bytes,
                         )
+                        if r is None:
+                            # User clicked Stop. Return None so the
+                            # handler treats this as "aborted" and
+                            # doesn't send a partial response.
+                            print(f"[call_llama] abort_event fired during non-streaming iter={iteration}, aborting", flush=True)
+                            return None
                         r.raise_for_status()
                         data = r.json()
                     msg0 = data["choices"][0]["message"]
