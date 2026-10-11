@@ -85,6 +85,10 @@ sudo docker logs whisper-api --tail 20
 - Language — if `language: 'ru'` is hardcoded in `bot.py` and the voice
   is in English, recognition will be off. Change to `language: 'auto'`
   (if upstream supports) or remove `language` entirely
+- Bot is on `lan_macvlan` but whisper is on the host network — the
+  macvlan sub-interface cannot ARP its parent host, so the bot
+  never reaches whisper. See "Networking between containers does
+  not work" above for the macvlan fix.
 
 ## `docker compose build` fails with a pip error
 
@@ -107,8 +111,86 @@ unreachable **at init time** (the bot does `get_me()` at startup).
 
 ## Networking between containers does not work
 
-Make sure `network_mode: "host"` is in `docker-compose.yml`. Without it,
-the container is isolated, and `localhost:8080` ≠ host `localhost:8080`.
+The bot is one Docker container. It needs to reach three other
+endpoints: the LLM, Whisper (voice), and donsetch-http (web
+tools). Which network mode you use depends on how those
+services are deployed.
+
+### Single host (simplest)
+
+All services on the same host, all on host network. The bot
+container uses network_mode: host and reaches everything
+via localhost:
+
+  network_mode: host
+  environment:
+    LLAMA_URL=http://localhost:8080/v1
+    WHISPER_URL=http://localhost:8000
+    DONSETCH_URL=http://localhost:8765/mcp
+
+This is the path of least surprise for development. It is
+NOT compatible with webhook mode if you want a reverse
+proxy on a different container -- see below.
+
+### macvlan (when webhook reverse proxy is on a different container)
+
+Webhook mode requires the bot to be reachable on a stable
+container IP. If the reverse proxy (nginx, Caddy, etc.)
+runs in another container, both containers need to be on a
+macvlan network so the proxy can proxy_pass to the bot
+on its container IP, and so the bot can reach the LLM /
+Whisper / donsetch on the host or on other macvlan IPs.
+
+  docker network create -d macvlan \\
+    --subnet=192.168.10.0/24 --gateway=192.168.10.1 \\
+    -o parent=enp0s3 \\
+    lan_macvlan
+
+  networks:
+    lan_macvlan:
+      ipv4_address: 192.168.10.5
+  environment:
+    LLAMA_URL=http://192.168.10.6:8080/v1
+    WHISPER_URL=http://192.168.10.3:8000
+    DONSETCH_URL=http://192.168.10.6:8765/mcp
+
+**macvlan gotcha: a macvlan sub-interface cannot ARP its
+parent host.** If llama-server or donsetch-http is bound
+to the host main IP, the bot container cannot reach it.
+Solutions:
+
+- Put llama-server / donsetch-http in another macvlan
+  container on the same network (each on its own static
+  IP).
+- Bind those services to 0.0.0.0 and add a static route
+  on the host pointing into the macvlan. Brittle, avoid.
+- Use a regular bridge with network_mode: host for the
+  bot instead, and skip the macvlan path entirely.
+
+When the bot is on macvlan and the LLM is on the host,
+this error in the bot logs is the symptom:
+
+  httpx.ConnectError: All connection attempts failed
+
+on a target that *is* running. That is the macvlan
+isolation. The fix is one of the three above.
+
+### Verify connectivity
+
+From inside the bot container:
+
+  docker exec telegram-bot python3 -c "
+  import socket
+  for name, host, port in [(\"llama\",\"192.168.10.6\",8080),
+                            (\"whisper\",\"192.168.10.3\",8000),
+                            (\"donsetch\",\"192.168.10.6\",8765)]:
+      try:
+          s = socket.create_connection((host, port), timeout=3); s.close()
+          print(f\"{name} OK\")
+      except Exception as e:
+          print(f\"{name} FAIL: {e}\")
+  "
+
 
 ## System limits
 

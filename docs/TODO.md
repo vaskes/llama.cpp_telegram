@@ -8,25 +8,32 @@
 
 ## Status snapshot (2026-10-11 14:00)
 
-**Production:** v0.9.0 deployed in webhook mode.
-Container `telegram-bot` running on `/opt/telegram-bot/`.
-nginx-proxy on host with secondary IP 192.168.10.3 (macvlan
-attempt abandoned — kernel isolation between macvlan and
-parent host is a hard wall; secondary IP on enp10s0 is the
-practical fix). MikroTik DNAT 91.210.150.42:443 -> 192.168.10.3:443
-+ PBR (force egress via 91.210.150.42 interface).
-setMyCommands registered 9 commands.
+**Production:** v0.9.1 deployed in webhook mode on
+gw1.kuduza.com (Amsterdam, 85.136.112.144) via tunnel to
+the bot container on 192.168.10.5 (lan_macvlan). All four
+services (telegram-bot, whisper-api, llama-server,
+donsetch-http) reachable; bot is the only one on macvlan,
+the rest are on the parent host. whisper-api moved to
+macvlan 192.168.10.3 (was on parent host .7) so the bot
+can reach it. setMyCommands registered 9 commands.
 
-**In-tree selftest:** 18/18 test groups PASS in Docker
-(2 pre-existing rating-parser subtest failures: "plain
-answer" and "[[TYPE:unknown]]" — predates v0.7.9, separate
-issue).
+**In-tree selftest:** 22/22 test groups PASS in Docker
+(no new regressions; 2 pre-existing rating-parser
+subtest failures "plain answer" and "[[TYPE:unknown]]"
+predate v0.7.9 and are tracked separately).
 
 **Pytest:** 5/5 tests PASS in 0.07s.
 
-**Hotfix count this cycle:** 11 (v0.7.3 → v0.8.2).
-Each closed a real production bug. 7 caught by operator
-testing, 4 caught by selftest regressions in Docker.
+**Hotfix count this cycle:** 12 (v0.7.3 -> v0.9.1).
+v0.9.1 closes two regressions caught by operator smoke-
+testing v0.9.0 in production: (1) image abort left
+orphan in history, fixed by Storage.delete_last_user_message
++ handle_photo rollback in both abort and exception paths;
+(2) voice unreachable because whisper-api was on parent
+host - moved to macvlan 192.168.10.3.
+
+Of the 12 total, 7 caught by operator testing, 4 caught by
+selftest regressions in Docker, 1 (v0.9.1) split across both.
 
 **Commits since last TODO update:**
 - `8352cc4` v0.7.3 — handle_photo NameError on is_group
