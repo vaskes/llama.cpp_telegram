@@ -733,24 +733,57 @@ def _user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
 
 # === _check_user_slot ===
 async def _check_user_slot(chat_id: int, user_id: int, update):
-    """Try to claim one of the user's concurrency slots. If all
-    slots are taken, sends a 'busy' reply and returns None.
-    Otherwise returns the semaphore which the caller MUST release
-    in a `finally` block.
+    """Claim one of the user's concurrency slots, queuing if all
+    slots are taken.
+
+    Returns the semaphore which the caller MUST release in a
+    `finally` block, OR None if the wait timed out.
+
+    v0.7.8: the previous version rejected the message with a
+    "Бот уже обрабатывает..." reply when the semaphore was
+    locked. That was a fairness bug: the 3rd+ message from a
+    user was dropped even though the bot was going to be free
+    in a few seconds. The user had to manually re-send.
+
+    Now: if the semaphore is locked, await sem.acquire() with
+    a timeout. The handler is already running as an asyncio
+    task (dispatch creates it via asyncio.create_task), so
+    waiting in the task doesn't block the polling loop or
+    other users' messages. After MAX_QUEUE_WAIT_SEC the wait
+    gives up and we drop with a log line, so a flood of
+    messages can't OOM the bot.
 
     Private mode: chat_id == user_id (1:1 chat), so the slot is
     effectively per-user. Group mode: keyed on (chat_id, user_id)
     so a user active in two groups has separate budgets per group.
     """
+    import asyncio
+    MAX_QUEUE_WAIT_SEC = 300  # 5 minutes — LLM calls are usually <60s
     sem = _user_semaphore(chat_id, user_id)
-    if sem.locked():
-        await _reply(update,
-            f"⏳ Бот уже обрабатывает {_PER_USER_SEMAPHORE_LIMIT} твоих "
-            f"запросов параллельно. Подожди пока один из них завершится."
+    if not sem.locked():
+        # Fast path: free slot available
+        await sem.acquire()
+        return sem
+    # Slow path: all slots taken, queue this message
+    try:
+        user_label = (update.effective_user.username or update.effective_user.id) if update.effective_user else "?"
+    except Exception:
+        user_label = "?"
+    print(
+        f"[check_user_slot] queueing message for user={user_label} chat={chat_id} "
+        f"(slots all in use); will process when a slot frees (timeout {MAX_QUEUE_WAIT_SEC}s)",
+        flush=True,
+    )
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=MAX_QUEUE_WAIT_SEC)
+        return sem
+    except asyncio.TimeoutError:
+        print(
+            f"[check_user_slot] queue timeout for user={user_label} chat={chat_id} "
+            f"after {MAX_QUEUE_WAIT_SEC}s; dropping message",
+            flush=True,
         )
         return None
-    await sem.acquire()
-    return sem
 
 # === main ===
 def main():
