@@ -179,6 +179,14 @@ browser rendering. The deprecated SearXNG-based stack is in
 [vaskes/llama.cpp_search](https://github.com/vaskes/llama.cpp_search) for
 historical reference only.
 
+## Credits
+
+- **Developer:** Mavis Agent powered by Minimax M3
+- **Code reviews:** Mavis Agent powered by Minimax M3 and Qwen 3.8-Max
+- **Vibecoding:** Vaskes
+- **Network infra:** Vaskes
+- **Deployments and implementation:** Vaskes
+
 ## License
 
 MIT
