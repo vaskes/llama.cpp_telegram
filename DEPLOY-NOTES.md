@@ -1,32 +1,36 @@
-# Deploy notes for v0.10.1 — 2026-10-12 morning
+# Deploy notes for v0.10.2 — 2026-10-12 morning
 
-**v0.10.1 is the SINGLE bundle. It contains all fixes from v0.9.6,
-v0.9.7, v0.10.0, and the Qwen wave-2 review. Just deploy v0.10.1
-and you're done.**
+**v0.10.2 is the FINAL bundle. It contains all fixes from v0.9.6,
+v0.9.7, v0.10.0, v0.10.1, AND v0.10.2. Just deploy v0.10.2 and
+you're done.**
 
-## What v0.10.1 contains
+## What v0.10.2 adds (over v0.10.1)
 
-**From v0.9.6 (T28 fix):** `parse_rating_response` maps unknown
-types to "question" — fixes 2 pre-existing in-tree selftest
-failures (P0-3 from Qwen review).
+**Two real blocking bugs caught by the wave-3 review that both
+earlier waves missed:**
 
-**From v0.10.0 (P0-3 from Qwen wave-1):** `prompts.py` now has
-the LONG version of `GROUP_CONTEXT` (4786 chars vs old 2672).
-Production LLM is no longer under-instructed. Dead code
-(-291 lines) removed from `bot.py`. LRU eviction added for
-`_user_semaphores` and `_bot_replies` (OrderedDict, maxsize=500).
+1. **`EMPTY_RESPONSE_FALLBACK` NameError** — `handlers.py:send_reply`
+   used an undefined constant. Would have crashed the bot on any
+   empty LLM response. Moved to `config.py`, added regression
+   test.
 
-**From v0.10.1 (Qwen wave-2 fixes):**
-- 1-line `abort_event.is_set()` check before `send_reply()` in
-  all 4 handlers (closes residual race window)
-- Explicit `BEGIN`/`COMMIT` in `storage.delete_thread()` with
-  `ROLLBACK` on exception (was relying on implicit transaction)
-- 50-task backpressure cap on webhook queue (was: unbounded
-  `asyncio.create_task` per incoming POST)
-- Dead code in `dispatch.py` removed (F3 stage 5 shims, no
-  longer needed)
-- 3 prompt tests updated to check semantic markers, not length
-- Test for LRU eviction at the actual 500 limit
+2. **`_rate_limit_send` defined but never called** — full per-chat
+   rate limiter was dead code. Bot unprotected from Telegram
+   rate limit. Integrated into `send_reply`.
+
+**Plus 6 non-blocking improvements:**
+
+3. `_tag_sender` strips `_*` fields before LLM API (no internal
+   marker leaks)
+4. `transcribe_voice` language configurable via `WHISPER_LANGUAGE`
+   env var (empty = autodetect)
+5. `fetch_tools_from_llama` URL via `urlparse` (was: fragile
+   `.replace('/v1', '')`)
+6. `_check_user_slot` sends user message on queue timeout
+   (was: silent drop)
+7. `set_active_thread` wrapped in `BEGIN`/`COMMIT`
+8. Webhook mode has SIGINT/SIGTERM signal handlers for graceful
+   shutdown
 
 ## How to deploy
 
@@ -34,7 +38,7 @@ Production LLM is no longer under-instructed. Dead code
 cd /opt/telegram-bot
 sudo docker compose stop telegram-bot
 
-# Copy the new code (4 files)
+# Copy the new code (5 files)
 sudo cp /opt/llama.cpp_telegram/telegram-bot/handlers.py \
         /opt/telegram-bot/telegram-bot/handlers.py
 sudo cp /opt/llama.cpp_telegram/telegram-bot/dispatch.py \
@@ -43,6 +47,10 @@ sudo cp /opt/llama.cpp_telegram/telegram-bot/storage.py \
         /opt/telegram-bot/telegram-bot/storage.py
 sudo cp /opt/llama.cpp_telegram/telegram-bot/webhook.py \
         /opt/telegram-bot/telegram-bot/webhook.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/call_llama.py \
+        /opt/telegram-bot/telegram-bot/call_llama.py
+sudo cp /opt/llama.cpp_telegram/telegram-bot/config.py \
+        /opt/telegram-bot/telegram-bot/config.py
 sudo cp /opt/llama.cpp_telegram/telegram-bot/rating.py \
         /opt/telegram-bot/telegram-bot/rating.py
 sudo cp /opt/llama.cpp_telegram/telegram-bot/prompts.py \
@@ -59,17 +67,28 @@ Or simpler: rebuild the image.
 
 ## Risk
 
-MEDIUM. The prompts change (long GROUP_CONTEXT) will visibly
-change LLM behaviour in group mode (more [llm] tag adherence,
-better rating scale, no tone policing). The behavioural change
-is the INTENDED one. Watch for any 24h after deploy.
+LOW-MEDIUM. The 2 blocking bugs would have crashed the bot on
+specific inputs (empty LLM response, queue overflow). Both are
+fixed and protected by regression tests. The non-blocking
+changes are additive (rate limit is now active, more fields
+filtered, etc.) — no behaviour regression for the happy path.
 
 ## Test status
 
 ```
 $ cd /opt/llama.cpp_telegram && sudo python3 -m pytest tests/
-... 57 passed in 0.50s
+... 60 passed in 0.51s
 ```
+
+## What to monitor after deploy
+
+- 24h: any `NameError` or `RetryAfter` in logs (the two blocking
+  bugs are now fixed; if you see them post-deploy, that's a
+  different bug)
+- Group behaviour change: more `[llm]`-tagged replies (the
+  longer prompt is now active)
+- Rating scale: more accurate 1-10 distributions (the rules
+  are no longer truncated)
 
 ## What I did NOT do (by request)
 
@@ -77,7 +96,6 @@ $ cd /opt/llama.cpp_telegram && sudo python3 -m pytest tests/
 - Did NOT restart the bot
 - Did NOT touch `/opt/whisper-api/`
 - Did NOT change nginx config
-- Did NOT rotate API_KEY / WEBHOOK_SECRET_TOKEN (still in old
-  history cache; should rotate next time you have 5 min)
+- Did NOT rotate API_KEY / WEBHOOK_SECRET_TOKEN
 
 Production is still on v0.9.4 as of last check.
