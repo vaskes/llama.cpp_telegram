@@ -86,6 +86,41 @@ def test_rating_parser_returns_body():
     assert "rest" not in result, f"_parse_rating_response must NOT return 'rest' key, got {sorted(result.keys())}"
     assert result["body"] == "plain answer"
 
+
+def test_rating_parser_handles_unknown_type_as_question():
+    """T28 (v0.9.5): 2 pre-existing in-tree selftest failures.
+    The parser previously returned type='unknown' for both
+    unprefixed text and an explicit '[[TYPE:unknown]]' prefix,
+    but the in-tree selftest expected type='question' in both
+    cases. The fix: map unknown to 'question' (sane default)
+    and return the whole text as body (not just post-prefix).
+    """
+    import bot
+
+    # Case 1: unprefixed text -> question, whole text as body
+    r1 = bot._parse_rating_response("plain answer")
+    assert r1["type"] == "question", f"unprefixed: expected 'question', got {r1['type']!r}"
+    assert r1["body"] == "plain answer"
+    assert r1["rating"] is None
+
+    # Case 2: explicit '[[TYPE:unknown]]' -> question, whole text as body
+    r2 = bot._parse_rating_response("[[TYPE:unknown]]")
+    assert r2["type"] == "question", f"unknown type: expected 'question', got {r2['type']!r}"
+    assert r2["body"] == "[[TYPE:unknown]]", f"expected whole text as body, got {r2['body']!r}"
+    assert r2["rating"] is None
+
+    # Case 3: empty string -> question, empty body (no crash)
+    r3 = bot._parse_rating_response("")
+    assert r3["type"] == "question"
+    assert r3["body"] == ""
+    assert r3["rating"] is None
+
+    # Case 4: valid prefix still works (regression)
+    r4 = bot._parse_rating_response("[[TYPE:info]] [[RATE:7]]")
+    assert r4["type"] == "info"
+    assert r4["rating"] == 7
+    assert r4["emoji"]  # non-empty
+
 # === test_delete_last_user_message ===
 @pytest.mark.asyncio
 async def test_delete_last_user_message_removes_persisted_image(tmp_path):

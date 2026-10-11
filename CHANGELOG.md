@@ -859,6 +859,53 @@ Total pytest count: 36 -> 43 tests, all in 0.48s.
   monkeypatch+Storage setup interfered with the test's inlined
   setup). Will revisit with a context-manager approach
   (`with fresh_db() as store:`) in a follow-up.
+## [v0.9.6] — 2026-10-12 — T28 fixed, in-tree selftest at 20/20
+
+v0.9.5 review (autonomous sweep) found T28 — the 2 pre-existing
+rating parser failures that have been quietly in the in-tree
+selftest since v0.7.9. Fixed.
+
+### Fixed (v0.9.6)
+
+- **T28: parse_rating_response fall-back behaviour.** Two
+  pre-existing in-tree selftest failures:
+  - `("plain answer", "question", None, "plain answer")` — the
+    parser was returning `type="unknown"` for unprefixed text,
+    but the selftest expected `type="question"`.
+  - `("[[TYPE:unknown]]", "question", None, "[[TYPE:unknown]]")`
+    — the parser was matching the literal `[[TYPE:unknown]]`
+    prefix and returning `type="unknown"` with an empty body,
+    but the selftest expected `type="question"` with the
+    whole text as the body.
+
+  The fix: map any non-known type (including "unknown" and
+  the literal `[[TYPE:unknown]]` from a misbehaving LLM) to
+  `type="question"`, and return the whole input text as the
+  body. This matches the `apply_rating_and_persist` dispatch
+  which already routes any non-(info|statement|bloat) type
+  to the "persist full response + reply with it" branch.
+
+  Verified with the same 10-case in-tree selftest suite that
+  was previously failing on cases #1 and #10. Now passes
+  10/10.
+
+### Tests added (v0.9.6)
+
+- `test_rating_parser_handles_unknown_type_as_question` — covers
+  all 4 cases:
+  - unprefixed text → question + whole body
+  - `[[TYPE:unknown]]` → question + whole body
+  - empty string → question + empty body (no crash)
+  - valid `[[TYPE:info]] [[RATE:7]]` still works (regression)
+
+Total pytest count: 43 → 44 tests, all in 0.48s.
+
+### In-tree selftest status
+
+Before v0.9.6: 18/20 test groups pass (2 pre-existing failures:
+"plain answer" and "[[TYPE:unknown]]").
+
+After v0.9.6: **20/20 test groups pass** (T28 closed).
 ## [v0.8.0] — 2026-10-10 — v0.7.8 → v0.7.9b + v0.8.0 → v0.8.2 chain
 
 Hotfix chain documented in v0.9.0 above. This entry

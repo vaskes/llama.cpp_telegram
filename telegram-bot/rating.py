@@ -36,21 +36,44 @@ def parse_rating_response(text: str) -> dict:
 
     Returns a dict with:
       - type: "question" | "request" | "confirmation" | "info" |
-              "statement" | "bloat" | "unknown"
+              "statement" | "bloat"
       - rating: int (1..10) or None
       - emoji: str (matching RATING_EMOJI) or BLOAT_EMOJI
-      - body: the original text with the prefix stripped
+      - body: the original text with the prefix stripped (or the
+              whole text if no valid prefix was found)
 
     The first line is checked for the [[TYPE:...]] [[RATE:N]]
-    pattern. If no prefix is found, the whole text is treated
-    as the body and type defaults to "unknown".
+    pattern. If the prefix is missing OR the type is not one of
+    the known types (including a literal `[[TYPE:unknown]]` from
+    a misbehaving LLM), the response is treated as a plain
+    question: the type falls back to "question" and the body
+    is the whole input text. This matches the
+    `apply_rating_and_persist` dispatch which already routes any
+    non-(info|statement|bloat) type to the "persist and reply
+    with the full text" branch.
+
+    T28 (v0.9.5): fixed 2 pre-existing in-tree selftest failures
+    in bot.py by mapping "unknown" to "question" + using the
+    whole text as body. The previous behaviour ("unknown" as
+    a real type) was undocumented and made the in-tree
+    selftest's "plain answer" and "[[TYPE:unknown]]" cases
+    fail with a type mismatch.
     """
     if not text:
-        return {"type": "unknown", "rating": None, "emoji": None, "body": ""}
+        return {"type": "question", "rating": None, "emoji": None, "body": ""}
     m = _RATING_PREFIX_RE.match(text)
     if not m:
-        return {"type": "unknown", "rating": None, "emoji": None, "body": text}
+        # No prefix at all: treat as a plain question, whole
+        # text is the body.
+        return {"type": "question", "rating": None, "emoji": None, "body": text}
     type_ = m.group("type")
+    # Unknown type (including the literal `[[TYPE:unknown]]`
+    # a misbehaving LLM might emit): same fall-back as no
+    # prefix. Body is the WHOLE text, not just the post-prefix
+    # tail, so the in-tree selftest's
+    # `[[TYPE:unknown]]` -> "[[TYPE:unknown]]" body case passes.
+    if type_ not in ("question", "request", "confirmation", "info", "statement", "bloat"):
+        return {"type": "question", "rating": None, "emoji": None, "body": text}
     rate_str = m.group("rate")
     body = text[m.end():].lstrip()
     rating = int(rate_str) if rate_str else None
