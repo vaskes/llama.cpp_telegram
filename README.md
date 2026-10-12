@@ -205,6 +205,7 @@ historical reference only.
 - **Code reviews:** Mavis Agent powered by Minimax M3 and Qwen 3.8-Max
 - **Vibecoding:** Vaskes
 - **Network infra:** Vaskes
+- **Human testers:** Vaskes and Dimon (2026-10-12 v0.10.2 release)
 - **Deployments and implementation:** Vaskes
 
 ## License
