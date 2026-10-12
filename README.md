@@ -57,7 +57,6 @@ The bot can:
   via [donsetch-http](https://github.com/dondai44423/donsetch) (Rust + Playwright headless Chrome MCP server) — see "Related" below
 - 🔒 **Whitelist** by Telegram `user_id` / `@username` (env vars, LOCKDOWN by default in private mode)
 - 💾 **Persistent conversation history** in SQLite, per (chat_id, thread_id) — survives restarts
-- 🏷 **Sender name in history** — every user message is tagged with `From: <name>: ` so the LLM can tell Vasisualy from Dimon in a group. NULL → `From: user:`. Schema v3→v4 migration is idempotent.
 - 🧠 **GROUP_CONTEXT system prompt** — LlmChatPlace rules (10-step rating scale, [llm] tag, truth-over-style, no tone policing) injected on every call_llama, in both tool and rating modes. Survives model switches and /reset.
 - 👍 **react_to_message tool** — LLM can set a single-emoji Telegram reaction on any message in the current chat (standard 10-step scale, default message_id = user's current). Available in non-rating mode.
 - 🛡 **Malformed tool-call JSON rejection** — defensive parse in the dispatcher; runaway Qwen-500 loops (10× duplicated keys) caught and rejected with feedback to the LLM.

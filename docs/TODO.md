@@ -111,6 +111,25 @@ Total: ~40 min of operator time.
   `scripts/verify.py` to confirm the tool list shrinks
   and no regression. ~20 min. Tracked from operator
   decision 2026-10-12.
+- **T30:** Remove sender-name tagging. Every user message
+  is currently prefixed with `From: <name>: ` before
+  being sent to the LLM, so the model can tell different
+  users apart in group chats. Feature crept in during
+  early multi-user support, hasn't been needed in
+  practice (operator finds it noisy in logs and
+  confusing in traces), and bloats context for every
+  message. Action: (1) drop the `sender_name` column +
+  all references in `persistence.py` / `storage.py`;
+  (2) remove the `From: <name>: ` prepend in
+  `call_llama.py`; (3) strip the `_sender_name`
+  internal marker handling in `bot.py` /
+  `call_llama.py`; (4) update tests in `test_call_llama.py`
+  / `test_selftest.py` / `test_storage.py` that pass
+  `sender_name=`; (5) run `scripts/verify.py` + full
+  selftest + pytest; (6) document in CHANGELOG that
+  v0.11 removes the feature and breaks the v3→v4
+  schema migration path. ~45 min. Tracked from
+  operator decision 2026-10-12.
 
 ### T25 retrospective (was deferred, now done)
 
