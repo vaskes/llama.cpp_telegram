@@ -5,6 +5,67 @@ Format: [Semantic Versioning](https://semver.org/) + sections
 per release. The repo's `git log` is the granular record;
 this file is the human-readable summary.
 
+> ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
+> The default branch is bleeding-edge and may include
+> unreleased refactors. Pin to a stable tag:
+> `git clone --branch v0.10.2-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
+> Bleeding edge is for contributors only; the general public
+> should always use a stable tag.
+
+## [v0.10.2-stable] — 2026-10-11 — Initial human-tested release
+
+**Status:** `v0.10.2-stable` is the first release that has been
+manually tested end-to-end by humans (Vasiually + Vaskes) on
+both private and group-with-Topics modes. Code freeze declared
+in commit `7efab9b` (TODO.md: Record code freeze state +
+Qwen wave-3 deferred items).
+
+This is the recommended tag for production deploys and for
+anyone evaluating the bot. Tagged at `b8ed356` (v0.10.2 last
+code commit); the freeze marker `7efab9b` is included as a
++1 on top of `b8ed356` and contains no functional changes
+(only TODO.md update + CHANGELOG.md reorg + this README
+warning).
+
+### Known minor issues (will fix in future release)
+
+- **`/subs` in group mode shows only bot-created topics.**
+  In a forum-enabled supergroup, `/subs@<bot>` lists topics
+  from the local `known_topics` table, which is **only
+  populated by `/newsub`** (when the bot calls
+  `createForumTopic`). Topics created via the Telegram UI
+  before the bot saw a message in them are not enumerated.
+  This is a soft limitation of `Telegram Bot API` (no
+  `listForumTopics` method exposed to bots), not a SQLite
+  bug. Workaround: send `/start` in each topic you want
+  tracked (the bot responds but does not yet persist the
+  `message_thread_id` to `known_topics` — see fix plan
+  below). Severity: **minor** (UX only, no data loss, no
+  security impact). Fix planned: register `(chat_id,
+  message_thread_id)` to `known_topics` in the `/start` /
+  `handle_text` path with a placeholder name; expose
+  `/topic <newname>` to rename without creating a new
+  Telegram topic.
+
+- **Other v0.10.2 deferred items** — see `TODO.md` for the
+  full Qwen wave-3 backlog.
+
+### Added in v0.10.2 (since v0.10.1)
+
+- `scripts/verify.py` — production `healthz` probe + 5/5
+  pytest in 1.5s. Wired into `systemd` `OnFailure` for
+  incident triage.
+- Qwen wave-3 final review fixes (memory leak LRU hardening,
+  P0-3 prompts drift correction, editForumTopic hot path).
+- `TELEGRAM_API` now env-driven (was hard-coded in dispatch).
+
+See `DEPLOY-NOTES.md` for the v0.10.2 deployment bundle
+(v0.9.6 + v0.9.7 + v0.10.0 + v0.10.1 + v0.10.2 = the single
+recommended bundle).
+
+---
+
 ## [v0.6.0] — 2026-10-10 — F3 module split, F4 LRU eviction, cross-module cleanup
 
 Big refactor + 7 hotfix commits. The 5 518-line `bot.py` is

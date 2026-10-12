@@ -1,12 +1,33 @@
 # llama.cpp_telegram
 
-> **State at v0.9.1 (Oct 2026):** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
-> any OpenAI-compatible endpoint, Whisper on any faster-whisper
-> server, donsetch MCP for web tools. Private + group-with-Topics
-> modes. GROUP_CONTEXT system prompt locked. react_to_message tool
-> available in non-rating mode. Per-handler Stop button race fixed.
-> **Webhook transport** supported (v0.9.0) alongside long-polling.
-> Image abort rollback (v0.9.1). 19/19 selftest groups + 5/5 pytest in CI.
+> **Stable release: `v0.10.2-stable` (Oct 2026).** First release
+> that has been manually tested end-to-end by humans on both
+> private and group-with-Topics modes. Code freeze declared at
+> commit `7efab9b`.
+>
+> ⚠️ **Do NOT `git clone <url>` without `--branch`.** The default
+> branch is bleeding-edge and may include unreleased refactors
+> that have not been human-tested. Pin to a stable tag:
+> ```bash
+> git clone --branch v0.10.2-stable https://github.com/vaskes/llama.cpp_telegram.git
+> ```
+> Bleeding edge is for contributors only. See [Releases](../../releases)
+> for the full stable-tag history.
+>
+> **Known minor issue in `v0.10.2-stable`:** `/subs` in group mode
+> shows only bot-created topics; UI-created topics are not
+> enumerated (Telegram Bot API limitation, not a SQLite bug).
+> Fix planned in the next release. See `CHANGELOG.md` for details.
+
+**What `v0.10.2-stable` is:** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
+any OpenAI-compatible endpoint, Whisper on any faster-whisper
+server, donsetch MCP for web tools. Private + group-with-Topics
+modes. GROUP_CONTEXT system prompt locked. react_to_message tool
+available in non-rating mode. Per-handler Stop button race fixed.
+**Webhook transport** supported (v0.9.0) alongside long-polling.
+Image abort rollback (v0.9.1). 19/19 selftest groups + 5/5 pytest
+in CI. Plus: `scripts/verify.py` for production health checks,
+Qwen wave-3 fixes, env-driven `TELEGRAM_API`.
 
 A Telegram bot wrapper around the [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-compatible API
 plus a local Whisper server for voice transcription.
