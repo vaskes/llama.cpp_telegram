@@ -416,7 +416,7 @@ async def _selftest():
     # down with it is not a smoke test. Catch every exception, log
     # it, keep going. The production bot should be able to start
     # even if llama-server is unreachable at boot.
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         result = await _b.call_llama(
             parsed_history,
             max_tokens=2048,
@@ -484,7 +484,7 @@ async def _selftest():
     # None so the handler short-circuits before LLM call.
     print('[selftest] running handle_photo NameError regression test...', flush=True)
     hp_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import bot as _b
         class _FakePhoto:
             file_id = 'fake'
@@ -544,7 +544,7 @@ async def _selftest():
     # broken.
     print('[selftest] running handle_voice _stop_button_markup regression test...', flush=True)
     hv_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import bot as _b
         async def _fake_route_v(_u, _c):
             return (-1001, '19', True)
@@ -586,7 +586,7 @@ async def _selftest():
     # === handle_document _stop_button_markup regression (v0.7.4) ===
     print('[selftest] running handle_document _stop_button_markup regression test...', flush=True)
     hd_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import bot as _b
         async def _fake_route_d(_u, _c):
             return (-1001, '19', True)
@@ -638,7 +638,7 @@ async def _selftest():
     # for the full vision response.
     print('[selftest] running call_llama abort during non-streaming POST test...', flush=True)
     ab_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import bot as _b
         # No 'import asyncio' here - the module-level import (line 10)
         # is already in scope. A local import would shadow the module
@@ -701,7 +701,7 @@ async def _selftest():
     print('[selftest] running known_topics round-trip...', flush=True)
     SELFTEST_CHAT = -1001
     SELFTEST_TOPIC_ID = 999999
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         await asyncio.to_thread(
             _b.store.add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
         )
@@ -778,7 +778,7 @@ async def _selftest():
     TRIM_LOW = _storage_mod.TRIM_LOW
     LAZY_CHAT = -1002
     LAZY_THREAD = "lazy-test"
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         # Wipe any leftover rows
         await asyncio.to_thread(_b.store.delete_thread, LAZY_CHAT, LAZY_THREAD)
         # Insert TRIM_HIGH + 50 rows
@@ -808,7 +808,7 @@ async def _selftest():
     print('[selftest] running rating round-trip...', flush=True)
     RATING_CHAT = -1003
     RATING_THREAD = "rating-test"
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         await asyncio.to_thread(_b.store.delete_thread, RATING_CHAT, RATING_THREAD)
         await asyncio.to_thread(
             _b.store.add_message, RATING_CHAT, RATING_THREAD,
@@ -1005,7 +1005,7 @@ async def _selftest():
     # permits are taken. We hold N=2 permits, then try a 3rd.
     print('[selftest] running per-user semaphore test...', flush=True)
     sem_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         sem = _b._user_semaphore(123, 456)
         # Manually lock it to simulate 2 in-flight requests
         for _ in range(_b._PER_USER_SEMAPHORE_LIMIT):
@@ -1128,7 +1128,7 @@ async def _selftest():
     }
     upd = Update.de_json(fake_cm, None)
     mock_bot = _MockBot()
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         await _b._handle_chat_member_update(upd, mock_bot)
         # Expect 2 calls: one to chat_id, one to user_id
         if len(mock_bot.calls) != 2:
@@ -1171,7 +1171,7 @@ async def _selftest():
     }
     upd2 = Update.de_json(fake_leave, None)
     mock_bot2 = _MockBot()
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         await _b._handle_chat_member_update(upd2, mock_bot2)
         if len(mock_bot2.calls) != 0:
             print(f"  [FAIL] leave event triggered {len(mock_bot2.calls)} calls, expected 0", flush=True)
@@ -1194,7 +1194,7 @@ async def _selftest():
     }
     upd3 = Update.de_json(fake_bot_join, None)
     mock_bot3 = _MockBot()
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         await _b._handle_chat_member_update(upd3, mock_bot3)
         if len(mock_bot3.calls) != 0:
             print(f"  [FAIL] bot-join triggered {len(mock_bot3.calls)} calls, expected 0", flush=True)
@@ -1214,7 +1214,7 @@ async def _selftest():
     # then verify it can be retrieved and popped.
     print('[selftest] running edit-replace test...', flush=True)
     er_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         # Save the existing map and clear it for the test
         import bot as _b
         saved = dict(_b._bot_replies)
@@ -1263,7 +1263,7 @@ async def _selftest():
     # mock File object, without needing a real Telegram file.
     print('[selftest] running _download_with_limit test...', flush=True)
     dl_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import bot as _b
         # The F3 module split made _download_with_limit's internal
         # `await _reply(update, ...)` resolve to handlers._reply
@@ -1363,7 +1363,7 @@ async def _selftest():
     # sender_name=NULL and fall back to a generic "user" prefix.
     print('[selftest] running sender-name flow test...', flush=True)
     sn_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import bot as _b
         from telegram import User as _U
 
@@ -1496,7 +1496,7 @@ async def _selftest():
     # patterns we have seen in production logs.
     print('[selftest] running malformed tool-call JSON rejection test...', flush=True)
     rej_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         # Replicate the dispatcher block (it's a closure inside
         # call_llama; we don't have a real round-trip harness here).
         async def dispatch_one_tool(raw_args, fn_name="donsetch_web_fetch"):
@@ -1609,7 +1609,7 @@ async def _selftest():
     # tool-calling loop.
     print('[selftest] running react_to_message tool test...', flush=True)
     react_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         from unittest.mock import MagicMock
         mock_calls = []
 
@@ -1716,7 +1716,7 @@ async def _selftest():
     # that the executor runs.
     print('[selftest] running non-streaming tool_call regression test...', flush=True)
     ns_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         from unittest.mock import patch, AsyncMock
         from bot import call_llama
 
@@ -1855,7 +1855,7 @@ async def _selftest():
 
     print('[selftest] running GROUP_CONTEXT injection test...', flush=True)
     ctx_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         # Inspect the call_llama source to make sure GROUP_CONTEXT
         # is referenced in both the unconditional injection and the
         # rating branch.
@@ -1965,7 +1965,7 @@ async def _selftest():
     # handler has its own slot.
     print('[selftest] running per-handler abort_event key test...', flush=True)
     aek_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import bot as _b
         saved = dict(_b._abort_events)
         _b._abort_events.clear()
@@ -2028,7 +2028,7 @@ async def _selftest():
     lru_ok = True
     saved_aes = dict(_b._abort_events)
     _b._abort_events.clear()
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         for i in range(250):
             _b._register_abort_event(0, i, asyncio.Event())
         if len(_b._abort_events) != 200:
@@ -2065,7 +2065,7 @@ async def _selftest():
     print('[selftest] running handle_text post-race abort discard test...', flush=True)
     ar_ok = True
     saved = {}
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import bot as _b
         import handlers as _h
 
@@ -2177,7 +2177,7 @@ async def _selftest():
     # (403), and accepts POST with valid secret (200).
     print('[selftest] running webhook boot test...', flush=True)
     wh_ok = True
-    try:  # noqa:  - no local asyncio import
+    try:  # noqa
         import aiohttp
         import config as _cfg_test
         from webhook import make_app, _check_secret
