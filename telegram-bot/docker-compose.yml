@@ -8,7 +8,7 @@ services:
     # to network_mode: host and remove the networks block.
     networks:
       lan_macvlan:
-        ipv4_address: 192.168.10.5
+        ipv4_address: 192.168.X.Y
     env_file:
       - .env
     environment:
