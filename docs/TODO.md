@@ -99,6 +99,18 @@ Total: ~40 min of operator time.
   in this cycle. The parser expects a TYPE marker; these
   inputs don't have one. Either skip these cases in the
   parser, or update the test expectations. ~30 min.
+- **T29:** Remove `get_weather` (wttr.in) tool. The tool
+  was added early as a "trivial demo" for tool-calling,
+  but it crept in and stayed. It is narrow (single
+  endpoint, no caching, no location awareness beyond
+  free-form city text) and now redundant given the
+  general `web_search` / `web_fetch` tools via donsetch.
+  Action: remove from `_TOOLS_CACHE` definitions, drop
+  from system prompt examples, delete any direct call
+  sites in `call_llama.py` or `dispatch.py`, run
+  `scripts/verify.py` to confirm the tool list shrinks
+  and no regression. ~20 min. Tracked from operator
+  decision 2026-10-12.
 
 ### T25 retrospective (was deferred, now done)
 
