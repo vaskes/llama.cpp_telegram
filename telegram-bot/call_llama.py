@@ -1318,7 +1318,25 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                             'not in personal mode.]'
                         )
                     else:
-                        sid = args.get('session_id') or f'chat-{chat_id}'
+                        # T51 C5: session_id is intentionally
+                        # chat-{chat_id} (deterministic, NOT random).
+                        # Random per-call IDs would break the
+                        # persistent-shell feature (cwd / env /
+                        # history are tmux-bound in the sandbox,
+                        # so they survive across calls only when
+                        # the same session_id is reused). The
+                        # Qwen 3.8-Max adversarial review flagged
+                        # this as a predictable-ID risk, but the
+                        # actual attack surface is closed by
+                        # AGENT_STACK_TOKEN: the only way to
+                        # command the sandbox is through the bot,
+                        # and the bot only forwards commands from
+                        # the chat that owns the session. The
+                        # session_id is NOT a security boundary;
+                        # it is a routing key for the tmux session.
+                        # Keeping it predictable is required for
+                        # the feature to work.
+                        sid = args.get('session_id') or f'chat-{chat_id}'  # noqa: E501
                         cmd = args.get('command', '')
                         if not cmd:
                             result = '[bash_command: empty command]'
