@@ -845,7 +845,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[handle_text] REFUSE: (chat={chat_id_check}, user={user_id_check}) is in split-pending state; dropping message of length {len(update.message.text or '')}", flush=True)
         try:
             await update.message.reply_text(
-                "🚫 ваш предыдущий сообщение было 4060–4096 байт (вероятно обрезано Telegram). Сообщение не обработано, чтобы избежать двух независимых ответов. /reset сбросить это состояние, либо отправьте короче."
+                "🚫 Your previous message was 4060–4096 bytes (likely auto-split by Telegram). This message was NOT processed to avoid two independent half-answers. The split-pending state clears after 30 seconds, on /reset, or on /start. Resend a shorter prompt, or use the Telegram Bot API directly to bypass the 4096-char UI cap."
             )
         except Exception as e:
             print(f"[handle_text] split-pending reply failed: {type(e).__name__}: {e!r}", flush=True)
@@ -861,7 +861,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _mark_split_pending(chat_id_check, user_id_check)
         try:
             await update.message.reply_text(
-                "🚫 обнаружена возможная обрезка промпта Telegram (4060–4096 байт, разбивает на границе предложения). Сообщение не обработано. Если это ошибка, /reset и отправьте короче."
+                "🚫 Detected a possible Telegram auto-split (this message is 4060–4096 bytes, near the 4096-char per-message cap where Telegram splits at sentence boundaries). Message NOT processed. The split-pending state clears after 30 seconds, on /reset, or on /start. If this is a false alarm, run /reset and resend a shorter prompt."
             )
         except Exception as e:
             print(f"[handle_text] split-mark reply failed: {type(e).__name__}: {e!r}", flush=True)
