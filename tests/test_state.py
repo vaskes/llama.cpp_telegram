@@ -249,7 +249,7 @@ def test_split_pending_evicts_expired_on_new_mark():
 def test_split_pending_window_constants():
     """The window [4060, 4096] covers Telegram's auto-split zone."""
     from state import _SPLIT_WINDOW_MIN, _SPLIT_WINDOW_MAX
-    assert 4060 <= _SPLIT_WINDOW_MIN < _SPLIT_WINDOW_MAX <= 4096
+    assert 3500 <= _SPLIT_WINDOW_MIN < _SPLIT_WINDOW_MAX <= 4096
     # The window is the last 36 bytes of the 4096 limit, matching
     # what Telegram clients do when splitting at sentence boundaries.
 

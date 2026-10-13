@@ -135,7 +135,7 @@ def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
 # in docs/KNOWN-LIMITATIONS.md.
 import time
 _SPLIT_TTL_SECONDS = 30.0
-_SPLIT_WINDOW_MIN = 4060
+_SPLIT_WINDOW_MIN = 3500  # 2026-10-13: observed Telegram split at 3910 bytes (see test logs for 6K prompt); expanded from 4060 to 3500 to cover that case. 3500-4096 is the realistic split zone for clients that split at sentence boundaries, not at the 4096 byte cap.
 _SPLIT_WINDOW_MAX = 4096
 _split_pending: "OrderedDict[tuple[int, int], float]" = OrderedDict()
 
