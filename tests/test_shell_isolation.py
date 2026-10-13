@@ -21,8 +21,8 @@ import pytest
 
 
 TESTS_DIR = pathlib.Path("/home/git/llama.cpp_telegram/tests")
-TI_PATH = pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot/tool_isolation.py")
-CALL_LLAMA = pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot/call_llama.py")
+TI_PATH = pathlib.Path(__file__).parent.parent / "telegram-bot" / "tool_isolation.py"
+CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
 
 
 def test_known_tool_names_exact_set():

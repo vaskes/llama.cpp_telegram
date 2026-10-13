@@ -384,7 +384,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
             if isinstance(_result, dict):
                 bot_response = _result.get("text") or ""
                 _exec = _result.get("executed_tools") or []
@@ -652,7 +652,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
             if isinstance(_result, dict):
                 bot_response = _result.get("text") or ""
                 _exec = _result.get("executed_tools") or []
@@ -791,7 +791,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
             if isinstance(_result, dict):
                 bot_response = _result.get("text") or ""
                 _exec = _result.get("executed_tools") or []
@@ -1023,7 +1023,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 50 different users in a group can only cause 4
         # concurrent LLM forwards on the same GPU.
         async with _get_global_llm_sem():
-            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
             if isinstance(_result, dict):
                 bot_response = _result.get("text") or ""
                 _exec = _result.get("executed_tools") or []

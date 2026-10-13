@@ -181,3 +181,40 @@ If the token leaks:
 The revoked token stops working immediately. All in-flight
 polling requests with the old token will return 401, and the
 bot will log `[poll] HTTP error: 401` until restarted.
+
+## 3.5 bash_command (personal mode only)
+
+**WARNING: this section is for `LLAMABOT_DEPLOYMENT_PROFILE=personal`
+ONLY.** Public mode does not have this tool, regardless of what is in
+`/opt/telegram-bot/.env`.
+
+If you set `LLAMABOT_DEPLOYMENT_PROFILE=personal`, the security model
+of the bot changes. The `bash_command` tool gives the LLM a general-
+purpose remote-code-execution surface inside a hardened sandbox
+container. The blast radius is contained by the sandbox, but the
+blast radius is real: a misbehaving user can read files in /workspace,
+run network requests, install packages, persist state across calls.
+
+Before switching to personal mode, read [docs/BASH-SANDBOX.md](BASH-SANDBOX.md)
+and [docs/TOOL-ISOLATION.md](TOOL-ISOLATION.md). The key rules:
+
+  - **Never** enable personal mode in a group chat that includes
+    non-whitelisted members. The bot does not enforce per-chat
+    profile downgrade; the env-based gate is process-wide. The
+    chat-type guard in `call_bash_command` refuses groups, but
+    defence in depth means: do not test the guard in production.
+  - **Never** expose `AGENT_STACK_TOKEN` to anyone other than the
+    bot and the sandbox side-car. It is a bearer credential.
+  - **Never** bind-mount anything from the host into the sandbox
+    container's `/workspace` except through the documented
+    named-volume path. Bind-mounts from `/etc`, `/home`, or
+    `/root` are escape hatches.
+  - **Always** treat the sandbox as a soft trust boundary. Audit
+    the `agent_api.py` log file weekly for unexpected commands.
+  - **Always** keep `LLAMABOT_BASH_RPM` at the documented default
+    (10/min) or lower. Higher values weaken the rate-limit
+    defence.
+
+The bot's per-chat guard in `personal_tools/bash_command.py:177-188`
+refuses non-private chats regardless of the deployment profile. This
+is defence in depth on top of the env gate.

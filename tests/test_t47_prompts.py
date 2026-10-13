@@ -7,7 +7,7 @@ whitelisted tool calls. The reframed version must:
 """
 import pathlib
 
-PROMPTS = pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot/prompts.py")
+PROMPTS = pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompts.py"
 src = PROMPTS.read_text()
 
 

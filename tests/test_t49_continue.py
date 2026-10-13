@@ -13,7 +13,7 @@ import ast
 import pathlib
 
 
-CALL_LLAMA = pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot/call_llama.py")
+CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
 src = CALL_LLAMA.read_text()
 
 
