@@ -1027,7 +1027,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await send_reply(update, bot_response)
     except Exception as e:
+        import traceback
         print(f"[ERR text] {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
         if persisted:
             try:
                 store = get_store()

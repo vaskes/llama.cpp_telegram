@@ -1209,8 +1209,22 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     )
                     r3.raise_for_status()
                     data3 = r3.json()
-                msg3 = data3['choices'][0]['message']
-                return msg3.get('content') or (
+                # T32b (2026-10-13): guard. Without this, a 200 OK
+                # with choices:[] (rate limit / content filter /
+                # context overflow on the summarize call) would
+                # produce 'list index out of range' in the bot's
+                # reply, the same regression T32 was supposed to
+                # close. This is the 5th call site that needed
+                # the guard.
+                _choices3b = data3.get("choices") or []
+                if not _choices3b:
+                    print(f"[call_llama] summarize fallback: empty choices, returning explanatory error", flush=True)
+                    return ("[bot: the model returned no choices on the summarize call — "
+                            "the prompt may have exceeded the context window, hit a rate limit, "
+                            "or been blocked by a content filter. Try a shorter prompt or "
+                            "try again in a minute.]")
+                msg3 = _choices3b[0].get("message") or {}
+                return msg3.get("content") or (
                     '[bot: search returned no useful data. '
                     'For live data (flight prices, news, stocks), please use a direct service '
                     'like Aviasales, Google Flights, or your browser.]'
