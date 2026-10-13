@@ -244,6 +244,64 @@ deploy the sandbox side-car separately. See
   matrix.
 
 
+
+#### T52 — Mavis wave-1 review (commit 76df436)
+
+Applied all 12 fixes from Mavis's wave-1 review of the
+bash-sandbox integration:
+  * #H1 per-chat gate (call_bash_command refuses non-private)
+  * #H2 personal_tools bind-mount :ro (closes persistence vector)
+  * #H3 SECURITY.md §3.5 documents the bash_command threat model
+  * #M1-M7 hardening: rate limit LRU/TTL, .env.example completeness,
+    AGENT_STACK_TOKEN env-capture doc, /start copy in groups,
+    tool def dedup, env-overridable rate limit, test path cleanup
+  * #N6 expanded refusal list in prompts.py
+  * #C4 per-user session_id in groups: skipped (groups refused at
+    #H1, code path unreachable; documented in BASH-SANDBOX.md)
+
+#### T53 — Mavis wave-2 + wave-3 review (commits 4eedfa7 + this)
+
+Wave-2 (commit 4eedfa7):
+  * #R1 hardcoded /home/git paths in tests (4 files cleaned up;
+    also fixed dispatch.py syntax error that was live on prod)
+  * #S1 sender-name prompt injection defence
+    (_safe_sender_label + _tag_sender data-only header)
+  * #R2 data/ and files/ writable surfaces
+    (files/ :ro, data/ -> named volume bot_data)
+  * #S2 command validation (non-string, oversized, NUL rejected)
+  * #S3 session_id validation ([A-Za-z0-9._-]{1,128})
+
+Wave-3 (this commit, critical):
+  * #R3 **CRITICAL** — call_llama signature was missing chat_type
+    kwarg that T52 added to all 4 handlers. The bot was crashing
+    on every message with TypeError. Fixed via sentinel default
+    + explicit TypeError raise in the function body.
+  * #R4 — chat_type default "private" is fail-open; made it
+    required (no default) on both call_llama and call_bash_command.
+  * #R5 — test_tag_sender_list_content_vision expected old
+    S0 format; updated for S1 data-only header.
+  * #R6 — added data/ -> bot_data migration block to
+    scripts/update.sh so `git pull && bash update.sh` doesn't
+    lose chat history.
+  * #R7 — added CI pytest job to .github/workflows/lint.yml
+    that gates merges on green pytest (no more silent
+    continue-on-error).
+
+#### New integration test: tests/test_t53_chat_type_signature.py
+
+7 AST-level tests that pin the fail-closed contract for
+chat_type:
+  * call_llama accepts chat_type kwarg
+  * call_llama chat_type is fail-closed (no permissive default)
+  * call_llama raises TypeError without chat_type
+  * every await call_llama(...) in handlers.py passes chat_type
+  * call_bash_command chat_type is required (no default)
+  * call_bash_command refuses non-private chat
+  * dispatch /start shows bash-unavailable line in groups
+
+These tests would have caught #R3 at the original T52 commit
+time. Cheap (milliseconds), no I/O, no monkey-patching.
+
 ## [v0.6.0] — 2026-10-10 — F3 module split, F4 LRU eviction, cross-module cleanup
 
 Big refactor + 7 hotfix commits. The 5 518-line `bot.py` is

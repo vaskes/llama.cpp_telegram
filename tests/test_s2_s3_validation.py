@@ -13,7 +13,9 @@ tmux sessions, escape the sandbox's session-id parser, or
 collide with system sessions.
 
 These tests cover _validate_command() and _validate_session_id()
-and the full call_bash_command() path with the bad inputs.
+and the full call_bash_command(,
+        chat_type="private",
+    ) path with the bad inputs.
 """
 import asyncio
 import sys

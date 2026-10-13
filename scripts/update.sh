@@ -35,10 +35,45 @@ echo ">>> copy updated files into $WHISPER_DIR"
 sudo cp whisper-api/docker-compose.yml "$WHISPER_DIR/docker-compose.yml"
 # We do NOT touch whisper-api/.env either; the same reasoning.
 
+echo ">>> migrate data/ -> named volume bot_data (T52 #R2)"
+# After the R2 change, /app/data inside the container is backed
+# by a named Docker volume (bot_data), not a host bind-mount.
+# On first deploy with the new compose, the named volume is
+# empty and the bot would start with no chat history.
+# Seed the volume from the existing bind-mount contents at
+# /opt/telegram-bot/data/ so the conversation history survives
+# the migration.
+if sudo test -d "$BOT_DIR/data" && sudo test -f "$BOT_DIR/data/conversations.db"; then
+  # Create the volume (idempotent: no-op if it already exists).
+  sudo docker volume inspect bot_data >/dev/null 2>&1 || \
+      sudo docker volume create bot_data >/dev/null
+  # Check whether the volume is already seeded (has a
+  # conversations.db inside). If yes, skip migration.
+  if ! sudo docker run --rm -v bot_data:/check alpine:latest \
+      test -f /check/conversations.db 2>/dev/null; then
+    echo "  [MIGRATE] seeding bot_data volume from $BOT_DIR/data/"
+    sudo docker run --rm \
+        -v bot_data:/target \
+        -v "$BOT_DIR/data":/source:ro \
+        alpine:latest \
+        cp -a /source/. /target/
+    echo "  [MIGRATE] done. Old bind-mount at $BOT_DIR/data is left in place as a safety net."
+  else
+    echo "  [MIGRATE] bot_data already seeded, skipping"
+  fi
+fi
+
 echo ">>> rebuild & restart telegram-bot"
 cd "$BOT_DIR"
 sudo docker compose build telegram-bot
 sudo docker compose up -d --no-deps --force-recreate telegram-bot
+
+echo ">>> verify the bot came up clean"
+sleep 3
+if sudo docker logs telegram-bot --tail 20 2>&1 | grep -iE "TypeError|SyntaxError|Traceback" >/dev/null; then
+  echo "  [WARN] bot log contains errors. Run:"
+  echo "    sudo docker logs -f telegram-bot"
+fi
 
 echo ">>> restart whisper-api (it doesn't need a rebuild unless the image changed)"
 cd "$WHISPER_DIR"

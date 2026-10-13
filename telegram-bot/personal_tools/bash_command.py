@@ -259,7 +259,7 @@ async def call_bash_command(
     *,
     session_id: str | None = None,
     timeout: float = 70.0,
-    chat_type: str = "private",
+    chat_type: str,  # T53 #R4: required, no default (fail-closed)
 ) -> dict[str, Any]:
     """Forward a bash call to the sandbox side-car and return the
     parsed JSON response.

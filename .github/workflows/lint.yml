@@ -49,3 +49,44 @@ jobs:
           # not per-job, so 'continue-on-error: true' on the job
           # was not enough). Findings are still visible in the
           # Actions log.
+
+  pytest:
+    # T53 #R7: pytest job to catch integration-level bugs that
+    # unit tests miss. The T52 #H1 commit broke the bot in
+    # production because every test that called handlers.call_llama
+    # monkey-patched the function, so the real signature was
+    # never exercised. A pytest job on every push would have
+    # caught it (the failing test_tag_sender_list_content_vision
+    # was the only signal). Gate on this: no green pytest, no
+    # merge to main.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r telegram-bot/requirements.txt
+          pip install pytest pytest-asyncio httpx
+      - name: Run tests that do not need a live llama-server
+        env:
+          CONVERSATIONS_DB: /tmp/pytest.db
+          AGENT_STACK_TOKEN: ""
+        run: |
+          # Run everything that is not a live-sandbox test.
+          # The live-sandbox tests (test_shell_integration.py)
+          # require a running vaskes/OpenWebUI-bash-sandbox
+          # side-car, which CI does not have. They are run
+          # manually on a staging host before tagging stable.
+          pytest tests/ \
+              --ignore=tests/test_shell_integration.py \
+              --ignore=tests/test_limits.py \
+              --ignore=tests/test_selftest.py \
+              --ignore=tests/test_call_llama.py \
+              -q --tb=short

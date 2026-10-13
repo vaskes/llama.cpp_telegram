@@ -144,7 +144,8 @@ def test_no_network_call_when_rate_limited():
     for _ in range(10):
         asyncio.run(bash_command.call_bash_command(
             "echo drain", session_id=test_sid,
-        ))
+        chat_type="private",
+    ))
 
     # Now mock httpx.AsyncClient.post to track if it's called
     mock_post = MagicMock()
@@ -154,7 +155,8 @@ def test_no_network_call_when_rate_limited():
         )
         result = asyncio.run(bash_command.call_bash_command(
             "echo should not run", session_id=test_sid,
-        ))
+        chat_type="private",
+    ))
 
     assert result["ok"] is False
     assert "rate limit" in result["error"].lower()

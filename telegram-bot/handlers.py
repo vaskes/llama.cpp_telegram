@@ -548,6 +548,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 thinking_msg=thinking, use_stream=False,
                 rating_active=rating_active, abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
+                chat_type=update.effective_chat.type,
             )
             if retry_response is None or abort_event.is_set():
                 # v0.8.0: same discard-on-abort as primary
@@ -935,6 +936,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 thinking_msg=thinking, rating_active=rating_active,
                 abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
+                chat_type=update.effective_chat.type,
             )
             if retry_response is None or abort_event.is_set():
                 # v0.8.0: same discard-on-abort as primary
@@ -1167,6 +1169,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 thinking_msg=thinking, rating_active=rating_active,
                 abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
+                chat_type=update.effective_chat.type,
             )
             if retry_response is None or abort_event.is_set():
                 # v0.8.0: same discard-on-abort as primary
