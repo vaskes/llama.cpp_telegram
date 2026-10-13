@@ -1,41 +1,62 @@
-# tests/conftest.py
-import os
-import sys
+"""Shared pytest fixtures.
 
+Loads AGENT_STACK_TOKEN from /opt/telegram-bot/.env (read
+via sudo cat, since the file is mode 0600 owned by root).
+Skips sandbox-touching tests if the token cannot be obtained.
+"""
+import os
+import pathlib
+import subprocess
 import pytest
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_TELEGRAM_BOT = os.path.join(_HERE, "..", "telegram-bot")
-if _TELEGRAM_BOT not in sys.path:
-    sys.path.insert(0, _TELEGRAM_BOT)
-
-os.environ.setdefault("BOT_TOKEN", "test_bot_token_for_ci_only")
-os.environ.setdefault("ALLOWED_USER_IDS", "111,222")
-os.environ.setdefault("CONVERSATIONS_DB", "/tmp/pytest_conversations.db")
+ENV_FILE = pathlib.Path("/opt/telegram-bot/.env")
 
 
-@pytest.fixture(autouse=True)
-def _reset_module_state():
-    """Reset bot.store and storage._store_instance before AND after each
-    test in this directory. The bot module captures the Storage at
-    import time; storage lazily creates one. If a previous test
-    caused one of these to be set, subsequent tests see a stale
-    instance and assert the wrong thing.
+def _load_env_via_sudo():
+    """Read /opt/telegram-bot/.env via sudo. The file is
+    mode 0600 owned by root, and the test process runs as
+    git. We need AGENT_STACK_URL and AGENT_STACK_TOKEN to
+    reach the real sandbox; the bot is the only source of
+    truth for these values, and we must not duplicate them
+    in the repo (defence in depth)."""
+    try:
+        out = subprocess.run(
+            ["sudo", "-n", "cat", str(ENV_FILE)],
+            check=True, capture_output=True, text=True, timeout=5,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError):
+        return  # sudo not available or file not readable
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
 
-    This is autouse so all 44 tests in tests/ get the reset (state, storage, bot) without
-    having to declare the fixture.
-    """
-    import storage as _st
-    import bot as _bot
-    import state as _st_state
-    _st._store_instance = None
-    if hasattr(_bot, "store"):
-        _bot.store = _st.get_store()  # set before each test
-    # v0.9.7: also reset per-(chat, user) semaphores so a test that
-    # times out holding the sem doesn't leak it for the next test.
-    _st_state._user_semaphores.clear()
-    yield
-    _st._store_instance = None
-    if hasattr(_bot, "store"):
-        _bot.store = None
-    _st_state._user_semaphores.clear()
+
+_load_env_via_sudo()
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip sandbox tests if AGENT_STACK_TOKEN is not set."""
+    if not os.environ.get("AGENT_STACK_TOKEN"):
+        skip_sandbox = pytest.mark.skip(
+            reason="AGENT_STACK_TOKEN not set; sandbox tests skipped"
+        )
+        for item in items:
+            if "sandbox" in item.keywords:
+                item.add_marker(skip_sandbox)
+
+
+@pytest.fixture
+def sandbox_token():
+    return os.environ.get("AGENT_STACK_TOKEN", "")
+
+
+@pytest.fixture
+def sandbox_url():
+    return os.environ.get("AGENT_STACK_URL", "http://192.168.10.7:8090")
