@@ -642,10 +642,36 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f'❌ Error: {e}')
     finally:
         if thinking is not None:
+            # T41: prefer editing the thinking message into the
+            # final answer over deleting it. Delete fails silently
+            # sometimes (Telegram rate limit, message too old, race
+            # with the user clicking the Stop button), leaving the
+            # user with TWO messages: a thinking block with the
+            # reasoning text and a separate [llm] answer. The
+            # intent has always been to leave the chat with only
+            # the final answer. Edit accomplishes that; if the
+            # edit itself fails (e.g. message was deleted by the
+            # user mid-stream), fall back to delete so we still
+            # try to clean up.
             try:
-                await thinking.delete()
-            except Exception:
-                pass
+                if 'bot_response' in dir() and bot_response:
+                    await thinking.edit_text(bot_response)
+                else:
+                    await thinking.delete()
+            except Exception as e:
+                print(
+                    f'[T41] thinking.edit_text failed, '
+                    f'falling back to delete: {type(e).__name__}: {e!r}',
+                    flush=True,
+                )
+                try:
+                    await thinking.delete()
+                except Exception as e2:
+                    print(
+                        f'[T41] thinking.delete also failed '
+                        f'(giving up): {type(e2).__name__}: {e2!r}',
+                        flush=True,
+                    )
         sem.release()
 
 # === handle_document ===
