@@ -3,67 +3,49 @@ services:
     build: .
     container_name: telegram-bot
     restart: unless-stopped
-    # W3.1: `init: true` makes Docker use tini as PID 1. tini's
-    # job is to forward signals to children and reap zombies.
-    # Without it, our `command: sh -c "python ... | tee ..."` made
-    # `sh` the PID 1, and `sh` does not forward SIGTERM to the
-    # python process in the pipeline. `docker stop` (which sends
-    # SIGTERM, waits 10s, then SIGKILL) was therefore killing
-    # python without giving it a chance to flush, close the SQLite
-    # db, or run any in-flight LLM abort path. The SHUTDOWN_EVENT
-    # check in call_llama (which aborts a long reasoning run
-    # cleanly on user /stop) was effectively unreachable from
-    # `docker stop`. With tini, SIGTERM hits the python process
-    # and the abort path works as designed.
     init: true
-    networks:
-      lan_macvlan:
-        ipv4_address: 192.168.10.5
+    # 2026-10-13: switch from lan_macvlan (static 192.168.10.5) to
+    # host network. The previous macvlan setup existed for PBR / DNAT
+    # routing reasons that are no longer in use; today, the only
+    # consumer of the bot's webhook address is nginx on the same
+    # host, which forwards bot.kuduza.com:443 -> host_ip:8443.
+    #
+    # With network_mode: host, the python process binds 0.0.0.0:8443
+    # on the host's interfaces directly. The `ports:` directive is
+    # ignored in this mode (Docker does not publish ports when the
+    # container is sharing the host network stack).
+    #
+    # Why host network instead of bridge: the bot must reach the
+    # vaskes/OpenWebUI-bash-sandbox openapi-proxy at 192.168.10.7:8090
+    # (the side-car binds only to that LAN IP, not 0.0.0.0, by
+    # design). Inside host network, 192.168.10.7 is just the host's
+    # own LAN address and is reachable from the bot's process.
+    # Inside bridge, the bot would have to go through the bridge
+    # gateway (172.17.0.1) which is not bound for 8090. We chose
+    # NOT to touch the agent-stack compose (different repo, different
+    # owner) just to widen its bind address.
+    network_mode: host
     env_file:
-      - .env
+    - .env
     environment:
-      - PYTHONUNBUFFERED=1
-    # Override CMD: pipe through `tee` so logs are BOTH:
-    #   1. visible in `docker logs telegram-bot` (docker's json-file
-    #      driver captures the pipe's stdout)
-    #   2. appended to /var/log/bot/bot.log on the host (bind-mount)
-    # `python -u` sets unbuffered at the interpreter level; `tee`
-    # would otherwise block-buffer its stdout, defeating the purpose.
-    # `stdbuf -oL` forces line-buffering on tee (otherwise coreutils
-    # tee uses 4KB block buffering on stdout even when stdin is a
-    # pipe).
-    #
-    # Why bind-mount instead of just docker's json-file driver:
-    # `docker compose up -d --force-recreate` (used by the systemd
-    # ExecReload) creates a new container with a new ID; the old
-    # container's json-file log is left orphaned in
-    # /var/lib/docker/containers/<old_id>/ and `docker logs
-    # telegram-bot` (which addresses by container_name -> the
-    # current ID) silently hides it. With a bind-mount to
-    # /var/log/bot on the host, every recreate appends to the same
-    # file on the host; the operator can `tail -F
-    # /var/log/telegram-bot/bot.log` and never lose a line to a
-    # restart.
-    #
-    # On the host, /var/log/telegram-bot must be owned by uid 1000
-    # (matching the `bot` user in the Dockerfile). A named volume
-    # would let Docker handle the ownership, but bind-mount keeps
-    # the log file on the host filesystem where it can be tailed
-    # from outside the container and rotated by the host logrotate.
+    - PYTHONUNBUFFERED=1
+    # 2026-10-13: AGENT_STACK_URL points at the openapi-proxy LAN
+    # bind. From inside host network this is a loopback-ish
+    # call to the same machine; the openapi-proxy is reachable on
+    # 192.168.10.7 (host LAN IP). If the side-car is later moved,
+    # change this to its new address.
+    - AGENT_STACK_URL=http://192.168.10.7:8090
     command:
-      - sh
-      - -c
-      - "exec python -u bot.py 2>&1 | stdbuf -oL tee -a /var/log/bot/bot.log"
+    - sh
+    - -c
+    - exec python -u bot.py 2>&1 | stdbuf -oL tee -a /var/log/bot/bot.log
     volumes:
-      - ./files:/app/files
-      - ./data:/app/data
-      - /var/log/telegram-bot:/var/log/bot
+    - ./files:/app/files
+    - ./data:/app/data
+    - /var/log/telegram-bot:/var/log/bot
+    - ./personal_tools:/app/personal_tools
     logging:
       driver: json-file
       options:
-        max-size: "50m"
-        max-file: "5"
-
-networks:
-  lan_macvlan:
-    external: true
+        max-size: 50m
+        max-file: '5'
