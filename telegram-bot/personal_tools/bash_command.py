@@ -52,15 +52,22 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
             "Run a shell command in a persistent, sandboxed Linux "
             "environment. State (cwd, env vars, history, running "
             "processes) is preserved across calls in the same chat. "
-            "The sandbox is read-only outside its workspace, runs as "
-            "non-root with no capabilities, has a 60s per-command "
-            "timeout, a 2GB memory cap, a 256-PID cap, and a 60 rpm "
-            "rate limit. Use it for: running scripts, inspecting files "
-            "in /workspace, git operations, building projects, "
-            "fetching public web pages with curl/wget. Do NOT use it "
-            "for: anything that would need sudo, anything that needs "
-            "to write outside /workspace, or anything that needs to "
-            "run for more than a minute."
+            "T57 #S23+#S24 (Mavis wave-5 drift): the bot-side "
+            "rate limit is 10 commands per minute per session_id "
+            "(env-overridable via LLAMABOT_BASH_RPM; set 0 to "
+            "disable, NOT recommended). The sandbox side-car has "
+            "its own coarser rate limit (60 rpm, see "
+            "docs/BASH-SANDBOX.md). The sandbox's per-command "
+            "timeout, memory cap, and PID cap are documented in "
+            "docs/BASH-SANDBOX.md \"Sandbox limits\" - do not "
+            "hardcode them here; if the sandbox changes its limits, "
+            "this tool def would otherwise drift. Use it for: "
+            "running scripts, inspecting files in /workspace, "
+            "git operations, building projects, fetching public "
+            "web pages with curl/wget. Do NOT use it for: anything "
+            "that would need sudo, anything that needs to write "
+            "outside /workspace, or anything that needs to run for "
+            "more than a minute."
         ),
         "parameters": {
             "type": "object",
@@ -282,17 +289,15 @@ async def call_bash_command(
                 "bash_command is only enabled for LLAMABOT_DEPLOYMENT_PROFILE=personal"
             ),
         }
-    # T51 C4: per-session rate limit. 10 commands per
-    # minute per session_id. Returns an error before
-    # spending a network round trip to the sandbox.
-    if not _t51_check_rate_limit(session_id or "default"):
-        return {
-            "ok": False,
-            "error": (
-                f"bash_command rate limit exceeded for session "
-                f"({_T51_RATE_LIMIT_PER_MIN}/min). Wait a few seconds and retry."
-            ),
-        }
+    # T57 #S19: chat_type check runs BEFORE rate_limit. A
+    # non-private caller previously consumed a rate-limit
+    # token before being refused; an attacker in a group
+    # chat could exhaust the legitimate user's rate-limit
+    # budget for the session_id, denying service to the
+    # private chat that owns that session_id. The eviction
+    # logic on the rate-limit dict (every 64 calls) also
+    # paid for by the legitimate user when group attackers
+    # bulk-call. Order: profile -> chat_type -> rate_limit.
     # T52 #H1: per-chat gate. bash_command is only
     # available in private (1:1) chats, NEVER in groups,
     # channels, or supergroups, regardless of deployment
@@ -308,6 +313,18 @@ async def call_bash_command(
             "error": (
                 f"bash_command is only available in private chats. "
                 f"This chat_type is {chat_type!r}. See docs/BASH-SANDBOX.md."
+            ),
+        }
+    # T57 #S19: rate_limit now runs AFTER chat_type (was
+    # before). 10 commands per minute per session_id.
+    # Returns an error before spending a network round
+    # trip to the sandbox.
+    if not _t51_check_rate_limit(session_id or "default"):
+        return {
+            "ok": False,
+            "error": (
+                f"bash_command rate limit exceeded for session "
+                f"({_T51_RATE_LIMIT_PER_MIN}/min). Wait a few seconds and retry."
             ),
         }
     # T52 #S2: validate the command shape before spending a

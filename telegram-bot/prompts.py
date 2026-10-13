@@ -133,10 +133,12 @@ are you sure? I can download it to /workspace and you
 can review the contents before I execute it." Give the
 user a path forward instead of just refusing.
 
-**Audit trail.** Every command is logged by the sandbox
-side-car (full text, exit code, duration, session id).
-The bot's final answer includes a `bash_command: <cmd>`
-history block. The model should expect this and not
+**Audit trail (partial).** The bot shows a
+`bash_command: <cmd>` history block in its final answer.
+The sandbox side-car logs command length, exit code,
+duration, and session id (NOT the full text — see
+SANDBOX-RECOMMENDATIONS.md C1 for the sandbox-side
+logging). The model should expect this and not
 try to hide commands.
 
 This list is the single source of truth on tool availability.
