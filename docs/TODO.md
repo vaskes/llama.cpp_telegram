@@ -150,49 +150,48 @@ infrastructure (wildcard LE cert, router-level DNAT
 capability, foreign-egress PBR control, secondary
 IP support on the LAN interface).
 
-Final architecture:
-- Bot: `network_mode: host`, aiohttp on
-  0.0.0.0:8443 inside container (which is host's
-  0.0.0.0 since host network).
+Final architecture (host/IPs redacted):
+- Bot: `network_mode: host`, aiohttp on 0.0.0.0:8443
+  inside container (which is the host's 0.0.0.0 since
+  host network).
 - nginx-proxy: `network_mode: host`, listens on
-  0.0.0.0:443 (serves on both 192.168.10.7 and
-  192.168.10.3 thanks to the secondary IP on
-  enp10s0). Container is "just packaging" — no
+  0.0.0.0:443. Container is "just packaging" — no
   real network isolation from the host.
-- Host: secondary IP 192.168.10.3/24 on enp10s0.
-- MikroTik: DNAT 91.210.150.42:443 -> 192.168.10.3:443
-  + PBR (outgoing to 192.168.10.3 from foreign
-  source-IPs goes via 91.210.150.42 WAN interface,
-  not via VPN tunnel — needed to avoid
-  asymmetric routing on foreign ingress).
+- Host: secondary LAN IP for public-facing traffic.
+- Router: DNAT public-WAN:443 -> host-LAN-IP:443 +
+  PBR (outgoing to that secondary IP from foreign
+  source-IPs goes via the public WAN interface, not
+  via any VPN tunnel — needed to avoid asymmetric
+  routing on foreign ingress).
 - nginx config: TLS termination on 443, reverse-
-  proxy to http://192.168.10.7:8443.
+  proxy to http://127.0.0.1:8443 (the bot's aiohttp
+  server on the host).
 
 Things that didn't work and why:
-1. **macvlan with bridge mode** + `parent=enp10s0`:
+1. **macvlan with bridge mode** + parent=<lan-iface>:
    macvlan sub-interfaces cannot reach the parent
    host's LAN IP (kernel-level isolation, well-
-   documented). ARP for 192.168.10.3 from the host
+   documented). ARP for the secondary IP from the host
    itself returned `<incomplete>`. This is a
-   fundamental Linux limitation, not a docker
-   bug. Workarounds (proxy_arp, dummy interface
-   with same IP) were tried and didn't fully
-   resolve bidirectional traffic.
-2. **ipvlan L2 mode**: same problem as macvlan
-   for the same kernel reasons. L3 mode would
-   have worked but required renumbering the
-   container onto a different subnet (e.g.
-   192.168.20.0/24).
-3. **macvlan_mode=bridge**: also couldn't
+   fundamental Linux limitation, not a docker bug.
+   Workarounds (proxy_arp, dummy interface with same
+   IP) were tried and didn't fully resolve
+   bidirectional traffic.
+2. **ipvlan L2 mode**: same problem as macvlan for
+   the same kernel reasons. L3 mode would have
+   worked but required renumbering the container onto
+   a different subnet.
+3. **macvlan_mode=bridge**: also couldn't do
    container-to-host communication.
-4. **dummy interface with same IP on host**:
-   IP conflict with the macvlan container.
-5. **Final working solution**: secondary IP on
-   host's enp10s0 + container with `network_mode:
-   host` + nginx binds to 0.0.0.0:443 (serves on
-   both .7 and .3 transparently). Simpler than
-   macvlan, no kernel-isolation issue, just
-   standard Linux alias interface.
+4. **dummy interface with same IP on host**: IP
+   conflict with the macvlan container.
+5. **Final working solution**: secondary IP on the
+   host's LAN interface + container with
+   `network_mode: host` + nginx binds to 0.0.0.0:443
+   (serves on both primary and secondary IPs
+   transparently). Simpler than macvlan, no
+   kernel-isolation issue, just standard Linux alias
+   interface.
 
 Latency: O3 (edit-during-LLM) latency went from
 ~25s polling cycle to <1s push. Telegram retries
