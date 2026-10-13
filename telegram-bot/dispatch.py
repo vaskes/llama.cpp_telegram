@@ -23,7 +23,7 @@ from telegram.ext import (
 import call_llama
 from storage import get_store
 import state
-from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores
+from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores, _get_user_semaphore
 import handlers
 
 # === Module-level state (lazy singleton) ===
@@ -764,7 +764,7 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
     """
     import asyncio
     MAX_QUEUE_WAIT_SEC = 300  # 5 minutes — LLM calls are usually <60s
-    sem = _user_semaphore(chat_id, user_id)
+    sem = _get_user_semaphore(chat_id, user_id)
     if not sem.locked():
         # Fast path: free slot available
         await sem.acquire()
