@@ -21,7 +21,8 @@ import time
 from telegram.ext import ContextTypes
 
 from call_llama import call_llama, transcribe_voice, _tag_sender
-import state  # cross-module state (see state.py)
+import state
+import limits  # cross-module state (see state.py)
 from storage import get_store
 from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event, _register_bot_reply
 from rating import _is_rating_active, _apply_rating_and_persist
@@ -319,7 +320,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            bot_response = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         # None-safe: when user clicks Stop, call_llama returns None.
         # The previous print(f"...len(bot_response)...") crashed with
         # TypeError on None (caught by the outer except and surfaced
@@ -376,7 +377,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             retry_response = await call_llama(
-                history, max_tokens=16384, user_text=caption,
+                history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption,
                 thinking_msg=thinking, use_stream=False,
                 rating_active=rating_active, abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
@@ -577,7 +578,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            bot_response = await call_llama(history, max_tokens=16384, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            bot_response = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         # v0.8.0: handle_voice had no abort check at all (handle_photo/
         # handle_document/handle_text had `if bot_response is None` but
         # voice didn't). When call_llama returns None on abort,
@@ -706,7 +707,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            bot_response = await call_llama(history, max_tokens=16384, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            bot_response = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         if bot_response is None or abort_event.is_set():
             # v0.8.0: also discard if abort_event was set, even when
             # call_llama returned a non-None response (post won the
@@ -743,7 +744,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             retry_response = await call_llama(
-                history, max_tokens=16384, user_text=caption,
+                history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption,
                 thinking_msg=thinking, rating_active=rating_active,
                 abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
@@ -928,7 +929,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 50 different users in a group can only cause 4
         # concurrent LLM forwards on the same GPU.
         async with _get_global_llm_sem():
-            bot_response = await call_llama(history, max_tokens=32768, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
+            bot_response = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id)
         if bot_response is None or abort_event.is_set():
             # v0.8.0: also discard if abort_event was set, even when
             # call_llama returned a non-None response (post won the
@@ -965,7 +966,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             retry_response = await call_llama(
-                history, max_tokens=32768, user_text=user_message,
+                history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message,
                 thinking_msg=thinking, rating_active=rating_active,
                 abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,

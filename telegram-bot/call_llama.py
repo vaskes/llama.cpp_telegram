@@ -16,6 +16,7 @@ import urllib.parse
 from typing import Any
 
 import httpx
+import limits
 
 from config import (
     API_KEY, DISABLED_TOOLS, DONSETCH_SESSION_ID, DONSETCH_URL,
@@ -29,7 +30,7 @@ from rating import _execute_react_to_message
 async def _discover_default_model(base_url: str, api_key: str) -> str:
     """Query /v1/models and return the first model id."""
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=limits.LLAMA_MODELS_TIMEOUT_SEC) as client:
         r = await client.get(f"{base_url}/models", headers=headers)
         r.raise_for_status()
         data = r.json()
@@ -92,7 +93,7 @@ async def donsetch_call(tool_name: str, arguments: dict) -> str:
             except Exception as e:
                 return f'[donsetch init error: {e}]'
         for attempt in range(2):
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=limits.TRANSCRIBE_TIMEOUT_SEC) as client:
                 try:
                     r = await client.post(
                         DONSETCH_URL,
@@ -338,7 +339,7 @@ async def _abortable_post(client, url, abort_event=None, **kwargs):
         raise
 
 
-async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None, bot=None, chat_id=None, current_message_id=None):
+async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None, bot=None, chat_id=None, current_message_id=None):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
@@ -579,7 +580,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     final_fallback = None
     prev_calls = []  # detect identical-call loops
     loop_start = time.monotonic()
-    LOOP_BUDGET_SEC = 600  # 10 min total wall-clock, then bail regardless of iter count
+    LOOP_BUDGET_SEC = limits.LOOP_BUDGET_SEC  # configurable via LLAMABOT_LOOP_BUDGET_SEC; default 600 (10 min)
 
     # Accumulated reasoning across iterations (for the live feed)
     accumulated_reasoning = ""
@@ -652,7 +653,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             print(f"[call_llama] abort_event set, aborting tool loop at iteration {iteration}", flush=True)
             return None
         # --- request body ---
-        async with httpx.AsyncClient(timeout=600.0) as client:
+        async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client:
             req_body = {
                 "model": MODEL,
                 "messages": msgs,
@@ -725,7 +726,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                 try:
                     payload_bytes = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
                     async with httpx.AsyncClient(
-                        timeout=600.0,
+                        timeout=limits.LLAMA_HTTP_TIMEOUT_SEC,
                         limits=httpx.Limits(max_keepalive_connections=0, max_connections=1),
                     ) as vclient:
                         # v0.7.6: race the post against abort_event.
@@ -924,7 +925,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     print(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming", flush=True)
                     # Fall back to non-streaming request
                     try:
-                        async with httpx.AsyncClient(timeout=600.0) as client2:
+                        async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client2:
                             r2 = await client2.post(
                                 f"{LLAMA_URL}/chat/completions",
                                 headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -1195,7 +1196,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                     ),
                 })
                 # Final non-streamed summarize call (no tools — we want a plain answer)
-                async with httpx.AsyncClient(timeout=600.0) as client3:
+                async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client3:
                     r3 = await client3.post(
                         f"{LLAMA_URL}/chat/completions",
                         headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},

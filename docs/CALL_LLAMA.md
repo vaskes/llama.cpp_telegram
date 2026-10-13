@@ -517,3 +517,53 @@ dict had three problems that the new design fixes:
 
 `/reset` used to mean "wipe everything for this user"; now it
 means "wipe this sub-talk only, keep the rest".
+
+## Tunable limits (limits.py)
+
+As of 2026-10-13, all hardcoded LLM-gateway limits have been
+moved to a dedicated `telegram-bot/limits.py` module. Every
+value is overridable via environment variable without code
+changes.
+
+### Why a separate module
+
+These are *model-facing* limits (tokens, timeouts, tool-loop
+wall clock), distinct from the *Telegram-facing* limits in
+`config.py` (BOT_TOKEN, MAX_PHOTO_BYTES, allowed user IDs).
+Operators tune them in tight feedback loops while debugging a
+particular prompt class. Keeping them in one place lets an
+operator look at a single file and see "what can I make
+bigger or smaller to fix this behaviour".
+
+### Defaults
+
+All defaults match the current production llama-server
+(Qwen3.8-27B-Ultra-Heretic-MTP at 256k context):
+
+| constant | default | env var | meaning |
+|---|---|---|---|
+| `MAX_TOKENS_DEFAULT` | 32768 | `LLAMABOT_MAX_TOKENS` | max_tokens for plain text (handle_text) |
+| `MAX_TOKENS_CAPTION` | 16384 | `LLAMABOT_MAX_TOKENS_CAPTION` | max_tokens for photo/voice/document captions |
+| `LOOP_BUDGET_SEC` | 600 | `LLAMABOT_LOOP_BUDGET_SEC` | tool-loop wall clock, 10 min |
+| `LLAMA_HTTP_TIMEOUT_SEC` | 600.0 | `LLAMABOT_LLAMA_HTTP_TIMEOUT` | httpx timeout to llama-server |
+| `LLAMA_MODELS_TIMEOUT_SEC` | 10.0 | `LLAMABOT_LLAMA_MODELS_TIMEOUT` | httpx timeout for /v1/models discovery |
+| `TRANSCRIBE_TIMEOUT_SEC` | 120.0 | `LLAMABOT_TRANSCRIBE_TIMEOUT` | httpx timeout for whisper |
+| `REASONING_RATIO_HARD_LIMIT` | 0.5 | `LLAMABOT_REASONING_RATIO_LIMIT` | if reasoning > 50% of max_tokens AND no content, surface a clear error |
+
+### Operational policy
+
+The defaults are the *max* the current llama-server can
+handle, not arbitrary safe-floor values. That way out of
+the box the bot does the same thing the underlying model
+would do, which is what the operator asked for
+("Ограничением для бота должны быть параметры llama,
+если лама не смогла бот - не смог.").
+
+If the operator wants a bigger window, set the env var and
+restart, no code change.
+
+### SELFTEST_MAX_TOKENS
+
+`limits.SELFTEST_MAX_TOKENS = 2048` is intentionally NOT
+env-overridable. The in-tree selftest must be deterministic
+across deployments.
