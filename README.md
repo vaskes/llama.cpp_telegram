@@ -90,8 +90,9 @@ The bot can:
 - 🖼 Image analysis (vision models in llama.cpp)
 - 🎤 Voice messages via Whisper
 - 📄 Document reading (TXT, PDF — text layer)
-- 🛠 **Tool-calling**: `get_weather` (wttr.in) + `web_search` / `web_fetch` / `web_crawl` / `web_screenshot`
-  via [donsetch-http](https://github.com/dondai44423/donsetch) (Rust + Playwright headless Chrome MCP server) — see "Related" below
+- 🛠 **Tool-calling**: `web_search` / `web_fetch` / `web_crawl` / `web_screenshot`
+  via [donsetch-http](https://github.com/dondai44423/donsetch) (Rust + Playwright headless Chrome MCP server) — see "Related" below.
+  `bash_command` (sandboxed shell, personal mode only) is the killer feature; see [Killer feature](#-killer-feature-bash_command-personal-mode-only) above.
 - 🔒 **Whitelist** by Telegram `user_id` / `@username` (env vars, LOCKDOWN by default in private mode)
 - 💾 **Persistent conversation history** in SQLite, per (chat_id, thread_id) — survives restarts
 - 🧠 **GROUP_CONTEXT system prompt** — LlmChatPlace rules (10-step rating scale, [llm] tag, truth-over-style, no tone policing) injected on every call_llama, in both tool and rating modes. Survives model switches and /reset.

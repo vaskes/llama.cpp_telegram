@@ -132,64 +132,81 @@ This is the path of least surprise for development. It is
 NOT compatible with webhook mode if you want a reverse
 proxy on a different container -- see below.
 
-### macvlan (when webhook reverse proxy is on a different container)
+### Network layout (since 2026-10-13)
 
-Webhook mode requires the bot to be reachable on a stable
-container IP. If the reverse proxy (nginx, Caddy, etc.)
-runs in another container, both containers need to be on a
-macvlan network so the proxy can proxy_pass to the bot
-on its container IP, and so the bot can reach the LLM /
-Whisper / donsetch on the host or on other macvlan IPs.
+**Current layout:** the bot and whisper-api both run with
+`network_mode: host`. No Docker bridge network, no static
+container IPs, no macvlan. The bot binds to `0.0.0.0:8443`
+on the host. The reverse proxy (nginx, also on host) proxies
+HTTPS 443 -> aiohttp 8443 via `127.0.0.1` (or via the
+host LAN IP if the proxy is on a different host).
 
-  docker network create -d macvlan \\
-    --subnet=192.168.10.0/24 --gateway=192.168.10.1 \\
-    -o parent=enp0s3 \\
-    lan_macvlan
+**Why we dropped macvlan:** macvlan L2 isolation made the
+bot unable to reach services on the same host (whisper,
+the bash-sandbox side-car, and even llama-server when
+bound to the host main IP) without elaborate PBR/DNAT
+routing on the router. The macvlan sub-interface cannot
+ARP the parent host, so any service on the host main IP
+was unreachable from the bot container.
 
-  networks:
-    lan_macvlan:
-      ipv4_address: 192.168.10.5
-  environment:
-    LLAMA_URL=http://<llama-host>:8080/v1
-    WHISPER_URL=http://<whisper-host>:8000
-    DONSETCH_URL=http://<donsetch-host>:8765/mcp
+**For your reverse proxy:** point it at `127.0.0.1:8443`
+if it runs on the same host, or at `<host-lan-ip>:8443` if
+it runs on a different host on the same LAN. Both work
+without any special routing.
 
-**macvlan gotcha: a macvlan sub-interface cannot ARP its
-parent host.** If llama-server or donsetch-http is bound
-to the host main IP, the bot container cannot reach it.
-Solutions:
+**Historical (pre-2026-10-13):** before the host-network
+switch, the bot was on a `lan_macvlan` Docker network with
+a static IP (192.168.10.5). The reverse proxy reached it at
+that IP. This worked when all other services were also on
+the same macvlan, but broke the moment any service moved
+to the host. See git history if you need to roll back; do
+not start fresh with macvlan. See [docs/WEBHOOK.md](WEBHOOK.md)
+section 4.3.1 for the production layout note.
 
-- Put llama-server / donsetch-http in another macvlan
-  container on the same network (each on its own static
-  IP).
-- Bind those services to 0.0.0.0 and add a static route
-  on the host pointing into the macvlan. Brittle, avoid.
-- Use a regular bridge with network_mode: host for the
-  bot instead, and skip the macvlan path entirely.
+**Symptom of a misconfigured network:** bot logs show
+`httpx.ConnectError: All connection attempts failed` on
+a target that is running. Fix by checking that:
 
-When the bot is on macvlan and the LLM is on the host,
-this error in the bot logs is the symptom:
-
-  httpx.ConnectError: All connection attempts failed
-
-on a target that *is* running. That is the macvlan
-isolation. The fix is one of the three above.
+1. The target service is bound to `0.0.0.0`, not just
+   `127.0.0.1` or a specific interface IP.
+2. The host firewall allows traffic on the target port
+   from the host itself (loopback is usually open, but
+   if you are reaching a remote host, the remote firewall
+   must allow it).
+3. If the target is on a different host, the URL in
+   `.env` is the LAN IP of that host, not `localhost`.
 
 ### Verify connectivity
 
-From inside the bot container:
+From the bot host (or any host on the same LAN):
+
+  for name, host, port in [("llama", "<llama-host-lan-ip>", 8080),
+                            ("whisper", "<whisper-host-lan-ip>", 8000),
+                            ("donsetch", "<donsetch-host-lan-ip>", 8765),
+                            ("sandbox", "<sandbox-host-lan-ip>", 8090)]:
+      if timeout 3 bash -c "echo > /dev/tcp/$host/$port" 2>/dev/null; then
+          echo "$name OK"
+      else
+          echo "$name FAIL"
+      fi
+
+For an in-container test (use `network_mode: host` so the
+container sees the host network namespace; otherwise exec
+into a side-car container that does):
 
   docker exec telegram-bot python3 -c "
   import socket
-  for name, host, port in [(\"llama\",\"192.168.10.6\",8080),
-                            (\"whisper\",\"192.168.10.3\",8000),
-                            (\"donsetch\",\"192.168.10.6\",8765)]:
+  for name, host, port in [("llama","<llama-host-lan-ip>",8080),
+                            ("whisper","<whisper-host-lan-ip>",8000),
+                            ("donsetch","<donsetch-host-lan-ip>",8765),
+                            ("sandbox","<sandbox-host-lan-ip>",8090)]:
       try:
           s = socket.create_connection((host, port), timeout=3); s.close()
-          print(f\"{name} OK\")
+          print(f"{name} OK")
       except Exception as e:
-          print(f\"{name} FAIL: {e}\")
+          print(f"{name} FAIL: {e}")
   "
+
 
 
 ## System limits

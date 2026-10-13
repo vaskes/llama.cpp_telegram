@@ -109,9 +109,10 @@ Open Telegram, find your bot, send `/start`.
 You should get the welcome text.
 
 Then:
-- "weather in Yalta" — bot will use donsetch_web_fetch to query wttr.in (or similar)
 - "what's new in AI" — if donsetch-http is up, bot will call `web_search`
+- "fetch https://example.com/article" — bot will use `donsetch_web_fetch`
 - voice message — bot will transcribe via Whisper and reply to the text
+- (personal mode only) "pwd" or "ls -la /opt" — bot will use `bash_command` to run the shell in the sandbox side-car (see [docs/BASH-SANDBOX.md](BASH-SANDBOX.md))
 
 ## 8. Logs and updates
 

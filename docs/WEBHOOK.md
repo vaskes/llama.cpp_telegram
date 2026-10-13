@@ -95,11 +95,14 @@ Key differences:
 - **TLS terminates at your edge** (nginx, Caddy, Traefik, etc.). Telegram
   sees a cert signed by a trusted CA (Let's Encrypt is the standard).
 - **aiohttp on WEBHOOK_HOST:WEBHOOK_PORT** (default `0.0.0.0:8443`) —
-  the bot is exposed on the loopback or the macvlan IP, never directly
-  on a public interface. The reverse proxy is the only process listening
-  on the public port. Set `WEBHOOK_HOST=127.0.0.1` if you run the bot
-  on the same host as the reverse proxy (single-host dev) or leave the
-  default `0.0.0.0` if the bot and proxy are on a shared macvlan.
+  the bot binds to the loopback when the reverse proxy is on the
+  same host, or to the host LAN IP when the proxy is on a different
+  host. With `network_mode: host` (the current setup since
+  2026-10-13), the bot has no container IP; it just listens on the
+  host's interfaces. The reverse proxy is the only process that
+  should listen on the public port. Set `WEBHOOK_HOST=127.0.0.1`
+  for the single-host dev case, or the host LAN IP for the
+  cross-host case.
 - **Shared secret in URL + header**: `X-Telegram-Bot-Api-Secret-Token`
   header is verified on every request. URL leak doesn't grant access.
 
@@ -230,36 +233,49 @@ server {
 
 Reload nginx: `nginx -s reload` or `docker exec <nginx> nginx -s reload`.
 
-### 4.3.1 macvlan network (production layout)
+### 4.3.1 Network layout (since 2026-10-13)
 
-If the bot and reverse proxy are on different hosts, give the bot
-a stable macvlan IP and forward to that IP from the proxy:
+**Current layout:** the bot and whisper-api both run with
+`network_mode: host`. No Docker bridge network, no static
+container IPs, no macvlan. The bot binds to `0.0.0.0:8443`
+on the host. The reverse proxy (nginx, also on host) proxies
+HTTPS 443 -> aiohttp 8443 via `127.0.0.1` (or via the
+host's LAN IP if the proxy is on a different host).
 
-```bash
-# Create the macvlan network once on the docker host
-docker network create -d macvlan \
-  --subnet=192.168.10.0/24 --gateway=192.168.10.1 \
-  -o parent=enp0s3 \
-  lan_macvlan
-```
+**Why we dropped macvlan:** macvlan L2 isolation made the
+bot unable to reach services on the same host (whisper, the
+sandbox side-car, and even llama-server when bound to the
+host main IP) without elaborate PBR/DNAT routing on the
+router. The macvlan sub-interface cannot ARP the parent
+host, so any service on the host main IP was unreachable
+from the bot container. The fix was either:
+  - run every service in its own macvlan container with
+    a static IP, OR
+  - switch to `network_mode: host`.
 
-In `telegram-bot/docker-compose.yml`:
+We picked host networking because:
+  1. The bot already needs to be reachable from the reverse
+     proxy, and putting it on the host network is the
+     simplest way to expose it.
+  2. The bot is a single-tenant tool; the network isolation
+     that macvlan would give us is not worth the
+     configuration complexity.
+  3. All the dependent services (llama, whisper, donsetch,
+     bash-sandbox) are already on the host LAN and reachable
+     from any process bound to 0.0.0.0.
 
-```yaml
-services:
-  telegram-bot:
-    networks:
-      lan_macvlan:
-        ipv4_address: 192.168.10.5
-    # ... and the reverse proxy on 192.168.10.3 (or wherever) talks
-    # to http://192.168.10.5:8443
-```
+**For your reverse proxy:** point it at `127.0.0.1:8443`
+if it runs on the same host, or at `<host-lan-ip>:8443` if
+it runs on a different host on the same LAN. Both work
+without any special routing.
 
-The macvlan sub-interface cannot ARP the parent host, so any
-service the bot reaches by IP (llama-server, whisper, donsetch)
-must be either on the same macvlan network or on a host the
-macvlan can reach. See docs/TROUBLESHOOTING.md for the full
-macvlan story.
+**Historical (pre-2026-10-13):** before the host-network
+switch, the bot was on a `lan_macvlan` Docker network with
+a static IP (192.168.10.5). The reverse proxy reached it at
+that IP. This worked when all other services were also on
+the same macvlan, but broke the moment any service moved
+to the host. See git history if you need to roll back; do
+not start fresh with macvlan.
 
 ### 4.4 Bot configuration
 
