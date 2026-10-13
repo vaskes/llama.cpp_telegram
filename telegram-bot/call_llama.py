@@ -822,8 +822,33 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             if iteration == 0 and not use_stream:
                 # Count the bytes that would be sent (without ever writing them).
                 try:
+                    # T54: sanitise lone surrogates before serialising.
+                    # The model sometimes returns tool_call arguments
+                    # with Python-style lone surrogates for non-BMP
+                    # characters (e.g. emoji U+1F44D as \uD83D\uDC4D
+                    # instead of UTF-8 bytes). ensure_ascii=False
+                    # passes these through, producing JSON that
+                    # llama-server's parser rejects with 500.
+                    # Walk the dict once, replacing lone surrogates
+                    # with U+FFFD (the Unicode replacement char).
+                    def _scrub_surrogates(obj):
+                        if isinstance(obj, str):
+                            return obj.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
+                        if isinstance(obj, dict):
+                            return {k: _scrub_surrogates(v) for k, v in obj.items()}
+                        if isinstance(obj, list):
+                            return [_scrub_surrogates(v) for v in obj]
+                        return obj
+                    req_body = _scrub_surrogates(req_body)
                     raw = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
-                    print(f"[LLAMA] iter=0 payload_bytes={len(raw)} (image bytes masked)", flush=True)
+                    print(f"[LLAMA] iter={iteration} payload_bytes={len(raw)} (image bytes masked)", flush=True)
+                    if os.environ.get("LLAMABOT_DEBUG_PAYLOAD") == "1":
+                        head = raw[:400].decode('utf-8', errors='replace')
+                        # Find the column where the bad JSON starts by scanning
+                        # for known key patterns. Most useful for diagnosing
+                        # 500 from llama-server: this prints the head so we
+                        # can see what we sent before the parser gave up.
+                        print(f"[LLAMA-DEBUG] iter={iteration} first 400 bytes:\n{head}", flush=True)
                 except Exception as e:
                     print(f"[LLAMA] iter=0 cannot size payload: {e}", flush=True)
             # W2.1: the previous version built a deepcopy of req_body
