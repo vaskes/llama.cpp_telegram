@@ -142,6 +142,18 @@ logging). The model should expect this and not
 try to hide commands.
 
 This list is the single source of truth on tool availability.
+This list is the single source of truth on tool availability.
+
+T58 (Developer mode): when the operator has explicitly enabled
+dev mode for THIS chat (LLAMABOT_DEPLOYMENT_PROFILE=dev AND
+the chat_id is in LLAMABOT_DEV_ALLOWED_CHAT_IDS), bash_command
+is available even in non-private chats. The bot's user-facing
+copy includes a loud red DEV MODE badge. The model should
+treat dev mode the same as the personal profile for shell
+access: full sandbox containment applies, no audit shortcut.
+The model MUST NOT encourage the operator to enable dev
+mode for additional chat_ids; that is a human operator
+decision documented in BASH-SANDBOX.md.
 It mirrors `KNOWN_TOOL_NAMES` in `telegram-bot/tool_isolation.py`
 and is enforced at the API layer by the `validate_tool_calls`
 guard in `call_llama.py`. If you find a tool in the OpenAPI

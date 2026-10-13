@@ -93,6 +93,16 @@ async def send_reply(update: Update, text: str):
     chat_id = update.effective_chat.id if update.effective_chat else None
     if chat_id is not None:
         await _rate_limit_send(chat_id)
+    # T58: prepend the dev mode badge. The operator asked for
+    # "раскрасить красным - не влезай убьет" (paint it red, do not
+    # touch or you'll die). Every bot response in a dev-mode chat
+    # gets the loud red prefix. is_dev_mode_chat is the single
+    # source of truth; it returns True only when BOTH env vars
+    # are set (LLAMABOT_DEPLOYMENT_PROFILE=dev AND
+    # LLAMABOT_DEV_ALLOWED_CHAT_IDS includes this chat_id).
+    from dispatch import is_dev_mode_chat, dev_mode_badge
+    if is_dev_mode_chat(chat_id):
+        text = dev_mode_badge(chat_id) + text
     text = (text or '').strip()
     if not text:
         text = EMPTY_RESPONSE_FALLBACK
@@ -803,6 +813,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # The original 4000-char chunking applied to voice transcripts
             # which are unlikely to exceed 4k after going through the LLM
             # in this mode.
+            # T58: prefix with dev mode badge (only on first chunk
+            # so the user sees the badge once, not on every 4000-char
+            # block).
+            from dispatch import is_dev_mode_chat, dev_mode_badge
+            chat_id_for_dev = update.effective_chat.id if update.effective_chat else None
+            if is_dev_mode_chat(chat_id_for_dev):
+                bot_response = dev_mode_badge(chat_id_for_dev) + bot_response
             if len(bot_response) > 4000:
                 for i in range(0, len(bot_response), 4000):
                     await _reply(update, bot_response[i:i+4000])
@@ -1222,6 +1239,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         # v0.10.1 (Qwen wave-2 review): final abort check before sending.
         if bot_response and not abort_event.is_set():
+            # T58: prefix with dev mode badge (only on first chunk
+            # so the user sees the badge once, not on every 4000-char
+            # block).
+            from dispatch import is_dev_mode_chat, dev_mode_badge
+            chat_id_for_dev = update.effective_chat.id if update.effective_chat else None
+            if is_dev_mode_chat(chat_id_for_dev):
+                bot_response = dev_mode_badge(chat_id_for_dev) + bot_response
             if len(bot_response) > 4000:
                 for i in range(0, len(bot_response), 4000):
                     await _reply(update, bot_response[i:i+4000])
