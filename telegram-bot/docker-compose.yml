@@ -3,19 +3,50 @@ services:
     build: .
     container_name: telegram-bot
     restart: unless-stopped
-    # macvlan network: stable IP, reachable from a reverse-proxy
-    # container on the same macvlan. For single-host dev, switch
-    # to network_mode: host and remove the networks block.
     networks:
       lan_macvlan:
-        ipv4_address: 192.168.X.Y
+        ipv4_address: 192.168.10.5
     env_file:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
+    # Override CMD: pipe through `tee` so logs are BOTH:
+    #   1. visible in `docker logs telegram-bot` (docker's json-file
+    #      driver captures the pipe's stdout)
+    #   2. appended to /var/log/bot/bot.log on the host (bind-mount)
+    # `python -u` sets unbuffered at the interpreter level; `tee`
+    # would otherwise block-buffer its stdout, defeating the purpose.
+    # `stdbuf -oL` forces line-buffering on tee (otherwise coreutils
+    # tee uses 4KB block buffering on stdout even when stdin is a
+    # pipe).
+    #
+    # Why bind-mount instead of just docker's json-file driver:
+    # `docker compose up -d --force-recreate` (used by the systemd
+    # ExecReload) creates a new container with a new ID; the old
+    # container's json-file log is left orphaned in
+    # /var/lib/docker/containers/<old_id>/ and `docker logs
+    # telegram-bot` (which addresses by container_name -> the
+    # current ID) silently hides it. With the bind-mount to
+    # /var/log/bot on the host, every recreate appends to the same
+    # file on the host; the operator can `tail -F
+    # /var/log/telegram-bot/bot.log` and never lose a line to a
+    # restart.
+    #
+    # The 2026-10-13 4K Newton's-cradle debug session lost iter>=1
+    # logs because of this exact gap.
+    command:
+      - sh
+      - -c
+      - "exec python -u bot.py 2>&1 | stdbuf -oL tee -a /var/log/bot/bot.log"
     volumes:
       - ./files:/app/files
       - ./data:/app/data
+      - /var/log/telegram-bot:/var/log/bot
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 networks:
   lan_macvlan:
