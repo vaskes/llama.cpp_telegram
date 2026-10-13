@@ -45,3 +45,17 @@ To test the positive case, send `test-prompt-en.md` (or
 `-ru.md`) verbatim via the Telegram app. Paste the file's
 text contents into a Telegram message; the client will
 auto-split if it exceeds 4096.
+
+## 6K test (two-chunk split)
+
+- `test-prompt-6k-en.md` (6410 bytes) — Newton's Cradle
+  prompt in English, ~1.5x the size of the 4K test prompt.
+  Telegram will auto-split this into two consecutive messages:
+  roughly **4096 bytes + 2314 bytes**. The first chunk lands
+  in the [4060, 4096] window and triggers the split-pending
+  heuristic. The second chunk (~2314 bytes) is well below
+  the window, so the heuristic relies on the pending state
+  to drop it, not on a second window check. This verifies
+  the "second half of a split is dropped even if it is
+  short" path.
+
