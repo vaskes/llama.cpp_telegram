@@ -111,25 +111,18 @@ Total: ~40 min of operator time.
   `scripts/verify.py` to confirm the tool list shrinks
   and no regression. ~20 min. Tracked from operator
   decision 2026-10-12.
-- **T30:** Remove sender-name tagging. Every user message
-  is currently prefixed with `From: <name>: ` before
-  being sent to the LLM, so the model can tell different
-  users apart in group chats. Feature crept in during
-  early multi-user support, hasn't been needed in
-  practice (operator finds it noisy in logs and
-  confusing in traces), and bloats context for every
-  message. Action: (1) drop the `sender_name` column +
-  all references in `persistence.py` / `storage.py`;
-  (2) remove the `From: <name>: ` prepend in
-  `call_llama.py`; (3) strip the `_sender_name`
-  internal marker handling in `bot.py` /
-  `call_llama.py`; (4) update tests in `test_call_llama.py`
-  / `test_selftest.py` / `test_storage.py` that pass
-  `sender_name=`; (5) run `scripts/verify.py` + full
-  selftest + pytest; (6) document in CHANGELOG that
-  v0.11 removes the feature and breaks the v3→v4
-  schema migration path. ~45 min. Tracked from
-  operator decision 2026-10-12.
+- **T30 (reverted):** Earlier this entry proposed
+  *removing* the sender-name tagging feature. Operator
+  confirmed on 2026-10-13 that this is a load-bearing
+  feature: the rating system uses sender_name to know
+  whose rating is whose, and the model uses it to tell
+  group members apart. **Do not remove.** Closing the
+  ticket as not-a-bug.
+
+  (Original 2026-10-12 ask was just: drop the bullet
+  from README + add a TODO entry confirming the feature
+  exists. The first half was done in 0fd2e59; this
+  entry is the corrected second half.)
 
 - **T31:** Remove `docs/REVIEW-MINIMAX.md` and
   `docs/REVIEW-MINIMAX-v2.md`. The first two review
