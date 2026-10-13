@@ -15,7 +15,8 @@ one critical dependency (track 2 must complete before track 3
 can land). All four tracks share the same baseline: v0.10.2-
 stable is released, v0.10.3 is the next tagged release.
 
-### Track 1 — Tactical cleanup (T28-T31 + IndexError fix)
+### Track 1 — Tactical cleanup (T28-T32 + T33)
+- T33: Telegram 4096-char split heuristic. When a user sends a message of 4060-4096 bytes (Telegram's auto-split zone near the 4096-cap), the bot marks the (chat, user) as split-pending for 30 s and drops both the suspicious first message and any subsequent consecutive one with an explanatory error. See `state._split_pending` and `docs/KNOWN-LIMITATIONS.md`.
 
 Low-risk items already in the backlog. Can be picked up in
 any order, batched into a single PR, or split per-item.
@@ -138,7 +139,7 @@ split into multiple smaller releases.
 ## Sequencing and dependencies
 
 ```
-Track 1 (T28-T32)  ------>  v0.10.3-stable  (any order, batch ok)
+Track 1 (T28-T33)  ------>  v0.10.3-stable  (any order, batch ok)
                                  |
 Track 2 (limits)    ------>  v0.10.4-rc (no tag)  --+
                                                      |

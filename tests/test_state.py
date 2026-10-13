@@ -199,3 +199,57 @@ def test_prompts_has_long_welcome_text():
     assert "🔥" in WELCOME_TEXT
     # The long version explains multi-LLM consensus
     assert "multi" in WELCOME_TEXT.lower() or "consensus" in WELCOME_TEXT.lower(),         "missing multi-LLM explanation"
+
+
+# === _split_pending: Telegram 4096-char split workaround ===
+# Tests the heuristic that catches prompts auto-split by Telegram
+# into multiple consecutive messages. See state.py and the
+# handler in handlers.py handle_text() for usage.
+
+def test_split_pending_marks_on_first_message():
+    """First message of length 4060-4096 bytes marks pending."""
+    from state import _is_split_pending, _mark_split_pending
+    chat_id, user_id = 100, 200
+    assert not _is_split_pending(chat_id, user_id)
+    _mark_split_pending(chat_id, user_id)
+    assert _is_split_pending(chat_id, user_id)
+
+
+def test_split_pending_returns_false_for_other_chats():
+    """Marking chat A does not affect chat B for the same user."""
+    from state import _is_split_pending, _mark_split_pending
+    _mark_split_pending(100, 200)
+    assert _is_split_pending(100, 200)
+    assert not _is_split_pending(101, 200)
+    assert not _is_split_pending(100, 201)
+
+
+def test_split_pending_ttl_expires():
+    """Pending state expires after _SPLIT_TTL_SECONDS."""
+    import time
+    from state import _is_split_pending, _mark_split_pending, _SPLIT_TTL_SECONDS
+    chat_id, user_id = 200, 300
+    _mark_split_pending(chat_id, user_id)
+    assert _is_split_pending(chat_id, user_id)
+    from state import _split_pending
+    _split_pending[(chat_id, user_id)] = time.monotonic() - _SPLIT_TTL_SECONDS - 1
+    assert not _is_split_pending(chat_id, user_id)
+
+
+def test_split_pending_evicts_expired_on_new_mark():
+    """Marking a new (chat, user) evicts any already-expired entries."""
+    import time
+    from state import _is_split_pending, _mark_split_pending, _SPLIT_TTL_SECONDS, _split_pending
+    _split_pending[(1, 1)] = time.monotonic() - _SPLIT_TTL_SECONDS - 100
+    _mark_split_pending(2, 2)
+    assert (1, 1) not in _split_pending
+    assert (2, 2) in _split_pending
+
+
+def test_split_pending_window_constants():
+    """The window [4060, 4096] covers Telegram's auto-split zone."""
+    from state import _SPLIT_WINDOW_MIN, _SPLIT_WINDOW_MAX
+    assert 4060 <= _SPLIT_WINDOW_MIN < _SPLIT_WINDOW_MAX <= 4096
+    # The window is the last 36 bytes of the 4096 limit, matching
+    # what Telegram clients do when splitting at sentence boundaries.
+

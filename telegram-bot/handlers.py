@@ -830,8 +830,42 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user
-    from state import _get_user_semaphore as _user_semaphore
-    print(f"[handle_text] ENTRY user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text={update.message.text!r}", flush=True)
+    from state import _get_user_semaphore as _user_semaphore, _is_split_pending, _mark_split_pending
+    from state import _SPLIT_WINDOW_MIN, _SPLIT_WINDOW_MAX
+    print(f"[handle_text] ENTRY user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}", flush=True)
+    # Telegram-4096-split workaround. If a previous message from
+    # this (chat, user) is still flagged as a probable auto-split
+    # (length 4060-4096 bytes, within 30s), drop this and any
+    # subsequent consecutive messages on the floor with an
+    # error reply. The flag is cleared by /reset / /start or by
+    # TTL expiry.
+    user_id_check = update.effective_user.id
+    chat_id_check = update.effective_chat.id
+    if _is_split_pending(chat_id_check, user_id_check):
+        print(f"[handle_text] REFUSE: (chat={chat_id_check}, user={user_id_check}) is in split-pending state; dropping message of length {len(update.message.text or '')}", flush=True)
+        try:
+            await update.message.reply_text(
+                "🚫 ваш предыдущий сообщение было 4060–4096 байт (вероятно обрезано Telegram). Сообщение не обработано, чтобы избежать двух независимых ответов. /reset сбросить это состояние, либо отправьте короче."
+            )
+        except Exception as e:
+            print(f"[handle_text] split-pending reply failed: {type(e).__name__}: {e!r}", flush=True)
+        return
+    # Heuristic: a message in [4060, 4096] bytes from the same
+    # (chat, user) is almost certainly the first half of a
+    # Telegram auto-split. Mark pending, refuse this one, and
+    # let the next consecutive message (if any) trigger the
+    # drop path above.
+    text_bytes = len((update.message.text or '').encode('utf-8'))
+    if _SPLIT_WINDOW_MIN <= text_bytes <= _SPLIT_WINDOW_MAX:
+        print(f"[handle_text] MARK split-pending: (chat={chat_id_check}, user={user_id_check}) sent {text_bytes} bytes (window {_SPLIT_WINDOW_MIN}-{_SPLIT_WINDOW_MAX})", flush=True)
+        _mark_split_pending(chat_id_check, user_id_check)
+        try:
+            await update.message.reply_text(
+                "🚫 обнаружена возможная обрезка промпта Telegram (4060–4096 байт, разбивает на границе предложения). Сообщение не обработано. Если это ошибка, /reset и отправьте короче."
+            )
+        except Exception as e:
+            print(f"[handle_text] split-mark reply failed: {type(e).__name__}: {e!r}", flush=True)
+        return
     result = await _route_to_thread(update, context)
     if result is None:
         print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)

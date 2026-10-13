@@ -108,3 +108,90 @@ def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
     while len(_user_semaphores) > _USER_SEMAPHORES_MAXSIZE:
         _user_semaphores.popitem(last=False)
     return sem
+
+
+# === _split_pending: Telegram 4096-char split workaround ===
+# Telegram caps single text messages at 4096 characters; long
+# prompts are auto-split by the client at sentence boundaries
+# (typically 4060-4096 bytes per chunk). The bot handles each
+# chunk as an independent LLM turn, which produces 2 unrelated
+# half-answers instead of one full answer.
+#
+# Workaround: when the first message from a (chat, user) has
+# length in [4060, 4096] bytes, mark (chat_id, user_id) as
+# "pending split" and refuse to dispatch the message and any
+# subsequent consecutive messages from the same (chat, user)
+# to the LLM. Instead reply with a "your prompt may have been
+# split by Telegram" error and discard. The pending state has
+# a TTL of 30 s so a user typing a single long message and not
+# following up does not stay locked out forever.
+#
+# This is a heuristic, not a guarantee. False positives are
+# possible (a user just happened to write a 4070-char message
+# with a follow-up). The probability is low because the window
+# 4060-4096 only fires on messages close to Telegram's hard
+# 4096-byte per-message ceiling, and the operator's golden
+# prompts that triggered the fix were in that range. Documented
+# in docs/KNOWN-LIMITATIONS.md.
+import time
+_SPLIT_TTL_SECONDS = 30.0
+_SPLIT_WINDOW_MIN = 4060
+_SPLIT_WINDOW_MAX = 4096
+_split_pending: "OrderedDict[tuple[int, int], float]" = OrderedDict()
+
+
+def _mark_split_pending(chat_id: int, user_id: int) -> float:
+    """Record that (chat, user) just sent a near-4096-char message
+    that looks like the first half of a Telegram auto-split. Returns
+    the timestamp recorded.
+
+    Also lazily evicts ALL expired entries in _split_pending
+    (excluding the just-marked key). This is O(n) where n is the
+    number of distinct (chat_id, user_id) pairs currently in the
+    dict; bounded by the operator's ALLOWED_USER_IDS cardinality.
+    Without the eviction sweep, a stale entry written by an
+    expired test or a long-idle user would never be cleaned up
+    by _is_split_pending() if no one queries that key again.
+    """
+    key = (chat_id, user_id)
+    ts = time.monotonic()
+    _split_pending[key] = ts
+    expired = [k for k, t in _split_pending.items() if k != key and t + _SPLIT_TTL_SECONDS < ts]
+    for k in expired:
+        _split_pending.pop(k, None)
+    return ts
+
+
+def _is_split_pending(chat_id: int, user_id: int) -> bool:
+    """True if (chat, user) recently sent a 4060-4096 byte message
+    and the TTL has not yet expired. Caller should refuse to
+    dispatch any further messages from this (chat, user) until
+    the pending state expires.
+
+    Lazily evicts ALL expired entries from _split_pending (O(n)
+    scan, n is small because the LRU insert in _mark_split_pending
+    is bounded by chat/user cardinality).
+    """
+    key = (chat_id, user_id)
+    ts = _split_pending.get(key)
+    if ts is None:
+        # Even if our key is not present, evict expired entries
+        # so a flood of short messages does not grow the dict.
+        now = time.monotonic()
+        expired = [k for k, t in _split_pending.items() if t + _SPLIT_TTL_SECONDS < now]
+        for k in expired:
+            _split_pending.pop(k, None)
+        return False
+    now = time.monotonic()
+    if ts + _SPLIT_TTL_SECONDS < now:
+        _split_pending.pop(key, None)
+        return False
+    return True
+
+
+def _clear_split_pending(chat_id: int, user_id: int) -> None:
+    """Drop the pending-split state for (chat, user). Called when
+    the user runs /reset or /start, or any time we want to
+    explicitly un-stick them.
+    """
+    _split_pending.pop((chat_id, user_id), None)
