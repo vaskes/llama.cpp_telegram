@@ -1,128 +1,236 @@
 # limits.py
 # Tunable per-deployment limits for the LLM gateway.
 #
-# Why a dedicated module (not in config.py):
-#   - These are *model-facing* limits (tokens, timeouts, tool-loop
-#     wall clock), distinct from the *Telegram-facing* limits in
-#     config.py (BOT_TOKEN, MAX_PHOTO_BYTES, allowed user IDs).
-#   - Operators tune them in tight feedback loops while debugging
-#     a particular prompt class. Keeping them in one place lets
-#     an operator look at a single file and see "what can I make
-#     bigger or smaller to fix this behaviour".
-#   - All defaults match the current production llama-server
-#     (Qwen3.8-27B-Ultra-Heretic-MTP at 256k context). When the
-#     operator changes llama-server (new model, new --ctx-size),
-#     this file is the single place to revisit.
+# This module encodes the bot's policy on:
+#   - what the LLM is allowed to spend per call (max_tokens, timeouts)
+#   - how long the bot is allowed to wait for an answer
+#   - how much context history each user gets
 #
-# Why every value is env-overrideable:
-#   - Operator feedback 2026-10-13 ("Ограничением для бота должны
-#     быть параметры llama, если лама не смогла бот - не смог.
-#     Сам бот не должен ограничивать модель и обрывать
-#     выполнение запросов.") means the bot must not have hidden
-#     caps. If the operator wants a bigger window, they set
-#     LLAMABOT_MAX_TOKENS and restart, no code change.
-#   - Defaults are *max* (what the current llama-server can
-#     handle), not arbitrary safe-floor values. That way out of
-#     the box the bot does the same thing the underlying model
-#     would do, which is what the operator asked for.
+# ============================================================================
+# DEPLOYMENT PROFILES — READ THIS BEFORE TUNING
+# ============================================================================
 #
-# Why no "right answer" tuning here:
-#   - This module is the *tunable surface*. The right values
-#     depend on the model and the workload and are discovered
-#     by stress-testing (see Track 2 in docs/ROADMAP.md). When
-#     Track 2 produces new numbers, they go here as the new
-#     defaults.
+# The bot has *two* canonical deployment profiles. They differ
+# dramatically in defaults, and the right one depends on the
+# operator's threat model, not on the underlying llama-server.
+#
+# Public / multi-user group chat (DEFAULT — what the code ships with):
+#   The bot sits in a forum supergroup with many users. Some are
+#   trusted, some are strangers, some might be adversarial. The
+#   bot's response is broadcast to everyone. A runaway generation
+#   burns GPU time that other users' messages are waiting on; a
+#   too-clever response is a foot-gun if the bot has tools.
+#
+#   Defaults in this profile are CONSERVATIVE: short token caps,
+#   short timeouts, capped history. If the llama-server can do
+#   more, the bot deliberately doesn't ask it to. The user can
+#   always override per-deployment via env vars (see below).
+#
+# Personal / single-user private assistant (opt-in):
+#   The bot is a private assistant for one operator. Root shell,
+#   full file access, sensitive data. The operator WANTS the bot
+#   to push the model to its limits because there is no other
+#   user being starved. The shell-tools feature (Track 3) is
+#   only ever enabled in this profile.
+#
+#   This profile is NOT the default. To opt in, set
+#   LLAMABOT_DEPLOYMENT_PROFILE=personal. The env vars below
+#   then resolve to the personal defaults. Per-env overrides
+#   still win.
+#
+# ============================================================================
+# WHY NOT "MAX BY DEFAULT"
+# ============================================================================
+#
+# Not every operator has an RTX 5090 + 128 GB of RAM. Even if
+# the operator does, max-by-default is a foot-gun in a public
+# chat: a malicious or sloppy user can trigger 8-minute LLM
+# calls, and other users' messages pile up behind the semaphore.
+# In a personal-assistant deployment, that risk is the
+# operator's to take; in a public chat, it is the operator's
+# users' to suffer. So the bot's job is to be SAFE out of the
+# box, not FAST out of the box.
+#
+# ============================================================================
+# WHY EVERY VALUE IS ENV-OVERRIDEABLE
+# ============================================================================
+#
+# Operator feedback 2026-10-13: "Ограничением для бота должны
+# быть параметры llama, если лама не смогла бот - не смог.
+# Сам бот не должен ограничивать модель и обрывать
+# выполнение запросов." — translated: the bot must not have
+# hardcoded caps that hide what llama-server could do. The
+# operator is allowed to tune. env vars are the way.
+#
+# Defaults are *conservative* (safe for public chat), NOT max.
+# The operator who wants max sets the env vars.
+#
+# ============================================================================
+# HOW TO TUNE — operators
+# ============================================================================
+#
+# 1) Identify your profile.
+#    - LLAMABOT_DEPLOYMENT_PROFILE=public  (default; conservative)
+#    - LLAMABOT_DEPLOYMENT_PROFILE=personal (aggressive)
+#
+# 2) If public, the defaults are tuned for ~5-10 concurrent
+#    users in a forum group. If you have more or fewer, scale
+#    the per-handler max_tokens and the loop budget up or down.
+#    The single biggest lever is MAX_TOKENS_DEFAULT — start
+#    there.
+#
+# 3) If personal, defaults already let the model run long.
+#    If even those are not enough (e.g. 4K-char prompts
+#    routinely need 60K+ tokens of output), bump
+#    LLAMABOT_MAX_TOKENS up first, then LLAMABOT_LOOP_BUDGET_SEC
+#    to match.
+#
+# 4) The reasoning budget cap (REASONING_RATIO_HARD_LIMIT) is
+#    the most dangerous one to tune. Qwen 3.8-27B-Ultra-Heretic
+#    MTP can spend its ENTIRE token budget on the
+#    reasoning_content field (observed 2026-10-13: 94K reasoning
+#    chars, 0 content, finish_reason=length on a 4K-char prompt).
+#    If you raise this, you are trusting the model to leave room
+#    for the actual answer. Don't raise it past 0.7 without
+#    a stress test on real prompts.
+#
+# ============================================================================
+# HOW TO TUNE — future maintainers
+# ============================================================================
+#
+# When the operator adds Track 3 (shell-tools), the personal
+# profile is the only place where that feature is reachable.
+# The public profile rejects shell-tool session creation at
+# the handler level. (That check lives in handlers.py /
+# dispatch.py, not here — limits.py is for *numeric* caps only,
+# not feature gates.)
+#
+# When llama-server is upgraded (new model, new --ctx-size),
+# this file is the single place to revisit. The defaults
+# below track the current production llama-server:
+#   - model: Qwen3.8-27B-Ultra-Heretic-MTP
+#   - --ctx-size: 262144
+#   - VRAM: production llama-server is on a single GPU; the
+#     operator has not yet shared the model card with this code,
+#     so "track 2 stress tests" are still pending.
 
 import os
 
 
-# === Output token cap ===
-# Cap on max_tokens passed to llama-server per turn. This is
-# the per-iter budget, NOT the per-conversation budget.
-#
-# Production default: 32768. The reasoning-heavy Qwen 3.8-27B
-# Heretic MTP can spend ~30k tokens on a single thinking block
-# for a 4K-char prompt, leaving very little for the actual
-# answer. A larger cap lets the model finish a long answer
-# without being cut off mid-sentence. A smaller cap forces
-# shorter answers and prevents runaway reasoning.
-#
-# Override: LLAMABOT_MAX_TOKENS
-MAX_TOKENS_DEFAULT = int(os.environ.get("LLAMABOT_MAX_TOKENS", "32768"))
+# === Deployment profile selector ===
+# public    — conservative; default; safe for multi-user groups.
+# personal   — aggressive; opt-in; for single-operator private assistant.
+_DEPLOYMENT_PROFILE = os.environ.get("LLAMABOT_DEPLOYMENT_PROFILE", "public").lower()
+if _DEPLOYMENT_PROFILE not in ("public", "personal"):
+    # Fail loudly rather than silently defaulting to one or the other.
+    raise ValueError(
+        f"LLAMABOT_DEPLOYMENT_PROFILE={_DEPLOYMENT_PROFILE!r} is not a recognised profile. "
+        f"Use 'public' (default, conservative) or 'personal' (aggressive, opt-in)."
+    )
 
-# Cap for caption-style handlers (handle_photo, handle_voice,
-# handle_document) where the user message is shorter and a
-# shorter answer is usually appropriate. Production default:
-# 16384. Captions rarely need 32k of output.
-#
-# Override: LLAMABOT_MAX_TOKENS_CAPTION
-MAX_TOKENS_CAPTION = int(os.environ.get("LLAMABOT_MAX_TOKENS_CAPTION", "16384"))
 
-# Default in call_llama's own signature. Not used by any
-# current caller (every call site overrides), but kept here
-# so a future caller doesn't accidentally trigger the
-# 65536-of-the-past which would mask the new lower default.
-# Production default: MAX_TOKENS_DEFAULT.
-#
-# Override: not exposed; if you want a different default,
-# change MAX_TOKENS_DEFAULT.
+# === Profile-default tables ===
+# Each profile declares its own defaults. Per-env overrides
+# (set after this block) win on top of the chosen profile's
+# defaults. The two tables are intentionally separated so that
+# the *meaning* of a default is obvious in context, not buried
+# in a chain of ternaries.
+_PUBLIC_DEFAULTS = {
+    "MAX_TOKENS_DEFAULT":    2048,    # 8x smaller than personal; protects
+                                       #   the semaphore queue from a single
+                                       #   user's 30K-token generation
+    "MAX_TOKENS_CAPTION":    1024,    # captions are short by design
+    "LOOP_BUDGET_SEC":         120,    # 2 min wall clock per call
+    "LLAMA_HTTP_TIMEOUT_SEC": 150.0,  # > LOOP_BUDGET_SEC, leaves headroom
+    "LLAMA_MODELS_TIMEOUT_SEC": 5.0,
+    "TRANSCRIBE_TIMEOUT_SEC":   60.0,
+    "REASONING_RATIO_HARD_LIMIT": 0.4,  # tighter than personal; Qwen MTP
+                                       #   can burn the budget on thinking
+                                       #   even at moderate prompt sizes
+}
+
+_PERSONAL_DEFAULTS = {
+    "MAX_TOKENS_DEFAULT":    32768,   # matches the current llama-server's
+                                       #   effective ceiling for non-shell
+                                       #   prompts in single-user mode
+    "MAX_TOKENS_CAPTION":    16384,   # photos / voice transcripts
+    "LOOP_BUDGET_SEC":         600,   # 10 min — the model is alone, can
+                                       #   take its time
+    "LLAMA_HTTP_TIMEOUT_SEC": 660.0,  # > LOOP_BUDGET_SEC (10% headroom for httpx
+                                       #   to not fire its own timeout exactly when
+                                       #   the loop budget expires)
+    "LLAMA_MODELS_TIMEOUT_SEC": 10.0,
+    "TRANSCRIBE_TIMEOUT_SEC":  120.0,
+    "REASONING_RATIO_HARD_LIMIT": 0.5, # observed 2026-10-13: Qwen 3.8 MTP
+                                       #   can hit 0.94 reasoning ratio on
+                                       #   a 4K prompt; 0.5 still aborts
+                                       #   "all thinking no answer" cases
+}
+
+_PROFILE_DEFAULTS = (
+    _PERSONAL_DEFAULTS if _DEPLOYMENT_PROFILE == "personal"
+    else _PUBLIC_DEFAULTS
+)
+
+
+def _env_or(env_name, profile_value):
+    """Resolve a limit: env var (full name) wins, else profile default."""
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return profile_value
+    # Preserve the type of the profile default.
+    if isinstance(profile_value, bool):
+        return raw.lower() in ("1", "true", "yes", "on")
+    if isinstance(profile_value, int):
+        return int(raw)
+    if isinstance(profile_value, float):
+        return float(raw)
+    return raw
+
+
+MAX_TOKENS_DEFAULT         = _env_or("LLAMABOT_MAX_TOKENS",          _PROFILE_DEFAULTS["MAX_TOKENS_DEFAULT"])
+MAX_TOKENS_CAPTION         = _env_or("LLAMABOT_MAX_TOKENS_CAPTION",  _PROFILE_DEFAULTS["MAX_TOKENS_CAPTION"])
+LOOP_BUDGET_SEC            = _env_or("LLAMABOT_LOOP_BUDGET_SEC",    _PROFILE_DEFAULTS["LOOP_BUDGET_SEC"])
+LLAMA_HTTP_TIMEOUT_SEC     = _env_or("LLAMABOT_LLAMA_HTTP_TIMEOUT",  _PROFILE_DEFAULTS["LLAMA_HTTP_TIMEOUT_SEC"])
+LLAMA_MODELS_TIMEOUT_SEC   = _env_or("LLAMABOT_LLAMA_MODELS_TIMEOUT", _PROFILE_DEFAULTS["LLAMA_MODELS_TIMEOUT_SEC"])
+TRANSCRIBE_TIMEOUT_SEC     = _env_or("LLAMABOT_TRANSCRIBE_TIMEOUT", _PROFILE_DEFAULTS["TRANSCRIBE_TIMEOUT_SEC"])
+REASONING_RATIO_HARD_LIMIT = _env_or("LLAMABOT_REASONING_RATIO_LIMIT", _PROFILE_DEFAULTS["REASONING_RATIO_HARD_LIMIT"])
+
+
+# === call_llama signature default ===
+# The default in call_llama()'s signature is what a future
+# caller who doesn't specify max_tokens will get. It tracks
+# MAX_TOKENS_DEFAULT so the profile selection propagates to
+# the signature too.
 MAX_TOKENS_CALL_LLAMA_DEFAULT = MAX_TOKENS_DEFAULT
-
-
-# === Wall-clock budgets ===
-# Tool-loop wall clock. After this many seconds in a single
-# call_llama() invocation, the bot bails with a user-readable
-# message even if the model is still iterating. 600 sec = 10
-# min, matches Track 2 design: shell-tool sessions are
-# expected to last <60s, so 10 min is a generous safety net.
-#
-# Override: LLAMABOT_LOOP_BUDGET_SEC
-LOOP_BUDGET_SEC = int(os.environ.get("LLAMABOT_LOOP_BUDGET_SEC", "600"))
-
-# httpx client timeout for any POST to llama-server. Must be
-# greater than LOOP_BUDGET_SEC so the client doesn't fire its
-# own timeout mid-loop. Production default: 600.0 sec = 10
-# min, same as LOOP_BUDGET_SEC.
-#
-# Override: LLAMABOT_LLAMA_HTTP_TIMEOUT
-LLAMA_HTTP_TIMEOUT_SEC = float(os.environ.get("LLAMABOT_LLAMA_HTTP_TIMEOUT", "600.0"))
-
-# httpx client timeout for GET /v1/models (model discovery,
-# called once at first call_llama). 10 sec — this is a local
-# call, llama-server answers in <100ms.
-#
-# Override: LLAMABOT_LLAMA_MODELS_TIMEOUT
-LLAMA_MODELS_TIMEOUT_SEC = float(os.environ.get("LLAMABOT_LLAMA_MODELS_TIMEOUT", "10.0"))
-
-# httpx client timeout for /v1/audio/transcriptions (whisper).
-# 120 sec — 5-min voice messages take ~20s to transcribe.
-#
-# Override: LLAMABOT_TRANSCRIBE_TIMEOUT
-TRANSCRIBE_TIMEOUT_SEC = float(os.environ.get("LLAMABOT_TRANSCRIBE_TIMEOUT", "120.0"))
-
-
-# === Reasoning budget ===
-# Qwen 3.8-27B-Ultra-Heretic MTP can spend its entire token
-# budget on the reasoning_content field, leaving content=""
-# and finish_reason="length". 2026-10-13 4K EN prompt in
-# production: 94797 reasoning chars, 0 content chars, 0 tool
-# calls, finish=length.
-#
-# REASONING_RATIO_HARD_LIMIT is a client-side cap: if reasoning
-# consumed this fraction of max_tokens AND content is empty,
-# we surface a clear error rather than letting the user see a
-# truncated tail of pure thinking. Default 0.5 — if reasoning
-# ate >50% of the budget and there's no content yet, the
-# answer is going to be useless.
-#
-# Override: LLAMABOT_REASONING_RATIO_LIMIT
-REASONING_RATIO_HARD_LIMIT = float(os.environ.get("LLAMABOT_REASONING_RATIO_LIMIT", "0.5"))
 
 
 # === Self-test overrides ===
 # The in-tree selftest uses smaller caps to keep the smoke
 # test fast. NOT for production tuning. These are constants
 # on purpose, not env-driven, because the selftest must be
-# deterministic.
-SELFTEST_MAX_TOKENS = 2048
-SELFTEST_LOOP_BUDGET_SEC = 120
+# deterministic across deployments.
+SELFTEST_MAX_TOKENS = 1024
+SELFTEST_LOOP_BUDGET_SEC = 60
+
+
+# === Self-check at import time ===
+# Catch misconfiguration early instead of at first call.
+if MAX_TOKENS_DEFAULT <= 0:
+    raise ValueError("MAX_TOKENS_DEFAULT must be positive")
+if MAX_TOKENS_CAPTION <= 0:
+    raise ValueError("MAX_TOKENS_CAPTION must be positive")
+if LOOP_BUDGET_SEC <= 0:
+    raise ValueError("LOOP_BUDGET_SEC must be positive")
+if LLAMA_HTTP_TIMEOUT_SEC <= LOOP_BUDGET_SEC:
+    # The httpx timeout must be greater than the loop budget
+    # so the client doesn't fire its own timeout mid-loop.
+    raise ValueError(
+        f"LLAMA_HTTP_TIMEOUT_SEC ({LLAMA_HTTP_TIMEOUT_SEC}) must be "
+        f"strictly greater than LOOP_BUDGET_SEC ({LOOP_BUDGET_SEC})"
+    )
+if not 0 < REASONING_RATIO_HARD_LIMIT < 1:
+    raise ValueError(
+        f"REASONING_RATIO_HARD_LIMIT ({REASONING_RATIO_HARD_LIMIT}) "
+        f"must be in the open interval (0, 1)"
+    )

@@ -1,117 +1,234 @@
-"""Tests for limits.py tunable surface (Track 2).
+"""Tests for limits.py tunable surface (Track 2, T35).
 
-All limits are env-overrideable. Tests verify:
-- defaults match production values (Qwen3.8-27B-Heretec-MTP 256k)
-- env vars override correctly
-- types are correct (int vs float)
-- imports work from call_llama.py and handlers.py
+limits.py defines two deployment profiles (public, personal) and
+resolves every limit through `_env_or(env_name, profile_value)`.
 """
 import os
 import importlib
+import sys
+
+
+_ORIGINAL_ENV = dict(os.environ)
+
+
+def _reload_with(env):
+    """Set env, reload limits, return module."""
+    os.environ.update(env)
+    for mod_name in list(sys.modules):
+        if mod_name == 'limits':
+            del sys.modules[mod_name]
+    import limits
+    importlib.reload(limits)
+    return limits
+
+
+def _restore_env():
+    for k in list(os.environ.keys()):
+        if k not in _ORIGINAL_ENV:
+            os.environ.pop(k, None)
+    for k, v in _ORIGINAL_ENV.items():
+        os.environ[k] = v
 
 
 def test_limits_module_imports():
-    """The limits module loads without error."""
-    import limits
-    assert hasattr(limits, 'MAX_TOKENS_DEFAULT')
-    assert hasattr(limits, 'MAX_TOKENS_CAPTION')
-    assert hasattr(limits, 'LOOP_BUDGET_SEC')
-    assert hasattr(limits, 'LLAMA_HTTP_TIMEOUT_SEC')
-    assert hasattr(limits, 'LLAMA_MODELS_TIMEOUT_SEC')
-    assert hasattr(limits, 'TRANSCRIBE_TIMEOUT_SEC')
-    assert hasattr(limits, 'REASONING_RATIO_HARD_LIMIT')
-    assert hasattr(limits, 'SELFTEST_MAX_TOKENS')
-    assert hasattr(limits, 'SELFTEST_LOOP_BUDGET_SEC')
+    try:
+        import limits
+    finally:
+        _restore_env()
+    for name in ('MAX_TOKENS_DEFAULT', 'MAX_TOKENS_CAPTION', 'LOOP_BUDGET_SEC',
+                 'LLAMA_HTTP_TIMEOUT_SEC', 'LLAMA_MODELS_TIMEOUT_SEC',
+                 'TRANSCRIBE_TIMEOUT_SEC', 'REASONING_RATIO_HARD_LIMIT',
+                 'SELFTEST_MAX_TOKENS', 'SELFTEST_LOOP_BUDGET_SEC'):
+        assert hasattr(limits, name), f'missing {name}'
 
 
-def test_max_tokens_default_is_32768():
-    """Production max_tokens for plain text is 32768."""
-    import limits
-    assert limits.MAX_TOKENS_DEFAULT == 32768
+def test_public_profile_defaults():
+    try:
+        limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'public'})
+        assert limits.MAX_TOKENS_DEFAULT == 2048
+        assert limits.MAX_TOKENS_CAPTION == 1024
+        assert limits.LOOP_BUDGET_SEC == 120
+        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 150.0
+        assert limits.REASONING_RATIO_HARD_LIMIT == 0.4
+    finally:
+        _restore_env()
 
 
-def test_max_tokens_caption_is_16384():
-    """Captions (photo/voice/document) get 16384, half the text budget."""
-    import limits
-    assert limits.MAX_TOKENS_CAPTION == 16384
+def test_personal_profile_defaults():
+    try:
+        limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'personal'})
+        assert limits.MAX_TOKENS_DEFAULT == 32768
+        assert limits.MAX_TOKENS_CAPTION == 16384
+        assert limits.LOOP_BUDGET_SEC == 600
+        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 660.0
+        assert limits.REASONING_RATIO_HARD_LIMIT == 0.5
+    finally:
+        _restore_env()
 
 
-def test_loop_budget_is_600_seconds():
-    """Tool-loop wall clock default is 10 minutes (600 sec)."""
-    import limits
-    assert limits.LOOP_BUDGET_SEC == 600
+def test_default_profile_is_public():
+    try:
+        limits = _reload_with({})
+        assert limits.MAX_TOKENS_DEFAULT == 2048
+    finally:
+        _restore_env()
 
 
-def test_llama_http_timeout_is_600():
-    """httpx timeout to llama-server is 600 sec, matches LOOP_BUDGET."""
-    import limits
-    assert limits.LLAMA_HTTP_TIMEOUT_SEC == 600.0
+def test_env_overrides_profile_default():
+    try:
+        limits = _reload_with({
+            'LLAMABOT_DEPLOYMENT_PROFILE': 'public',
+            'LLAMABOT_MAX_TOKENS': '99999',
+        })
+        assert limits.MAX_TOKENS_DEFAULT == 99999
+        assert limits.MAX_TOKENS_CAPTION == 1024
+    finally:
+        _restore_env()
 
 
-def test_reasoning_ratio_hard_limit_is_half():
-    """Reasoning budget cap: if reasoning > 50% of max_tokens AND no
-    content, surface a clear error instead of truncated tail."""
-    import limits
-    assert limits.REASONING_RATIO_HARD_LIMIT == 0.5
+def test_env_overrides_personal_profile():
+    try:
+        limits = _reload_with({
+            'LLAMABOT_DEPLOYMENT_PROFILE': 'personal',
+            'LLAMABOT_MAX_TOKENS': '12345',
+        })
+        assert limits.MAX_TOKENS_DEFAULT == 12345
+        assert limits.LOOP_BUDGET_SEC == 600
+    finally:
+        _restore_env()
 
 
-def test_selftest_max_tokens_smaller():
-    """Selftest uses 2048 tokens (vs 32768 prod) for fast smoke."""
-    import limits
-    assert limits.SELFTEST_MAX_TOKENS < limits.MAX_TOKENS_DEFAULT
+def test_env_overrides_preserve_type():
+    try:
+        limits = _reload_with({
+            'LLAMABOT_DEPLOYMENT_PROFILE': 'public',
+            'LLAMABOT_LLAMA_HTTP_TIMEOUT': '200.5',
+            'LLAMABOT_LOOP_BUDGET_SEC': '120',
+            'LLAMABOT_MAX_TOKENS': '4096',
+            'LLAMABOT_REASONING_RATIO_LIMIT': '0.33',
+        })
+        assert isinstance(limits.MAX_TOKENS_DEFAULT, int)
+        assert limits.MAX_TOKENS_DEFAULT == 4096
+        assert isinstance(limits.LLAMA_HTTP_TIMEOUT_SEC, float)
+        assert abs(limits.LLAMA_HTTP_TIMEOUT_SEC - 200.5) < 0.001
+        assert isinstance(limits.REASONING_RATIO_HARD_LIMIT, float)
+    finally:
+        _restore_env()
 
 
-def test_env_override_max_tokens(monkeypatch):
-    """LLAMABOT_MAX_TOKENS overrides the default."""
-    monkeypatch.setenv('LLAMABOT_MAX_TOKENS', '99999')
-    importlib.reload(__import__('limits'))
-    import limits
-    assert limits.MAX_TOKENS_DEFAULT == 99999
-    monkeypatch.delenv('LLAMABOT_MAX_TOKENS')
-    importlib.reload(__import__('limits'))
+def test_invalid_profile_rejected():
+    try:
+        try:
+            _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'bogus'})
+        except ValueError as e:
+            assert 'bogus' in str(e)
+            assert 'public' in str(e)
+            assert 'personal' in str(e)
+        else:
+            raise AssertionError('expected ValueError on invalid profile')
+    finally:
+        _restore_env()
 
 
-def test_env_override_loop_budget(monkeypatch):
-    """LLAMABOT_LOOP_BUDGET_SEC overrides the default."""
-    monkeypatch.setenv('LLAMABOT_LOOP_BUDGET_SEC', '120')
-    importlib.reload(__import__('limits'))
-    import limits
-    assert limits.LOOP_BUDGET_SEC == 120
-    monkeypatch.delenv('LLAMABOT_LOOP_BUDGET_SEC')
-    importlib.reload(__import__('limits'))
+def test_http_timeout_must_exceed_loop_budget():
+    try:
+        try:
+            _reload_with({
+                'LLAMABOT_DEPLOYMENT_PROFILE': 'public',
+                'LLAMABOT_LLAMA_HTTP_TIMEOUT': '10',
+                'LLAMABOT_LOOP_BUDGET_SEC': '60',
+            })
+        except ValueError as e:
+            assert 'LLAMA_HTTP_TIMEOUT_SEC' in str(e)
+            assert 'LOOP_BUDGET_SEC' in str(e)
+        else:
+            raise AssertionError('expected ValueError on timeout <= budget')
+    finally:
+        _restore_env()
 
 
-def test_env_override_http_timeout(monkeypatch):
-    """LLAMABOT_LLAMA_HTTP_TIMEOUT overrides the default."""
-    monkeypatch.setenv('LLAMABOT_LLAMA_HTTP_TIMEOUT', '120.5')
-    importlib.reload(__import__('limits'))
-    import limits
-    assert abs(limits.LLAMA_HTTP_TIMEOUT_SEC - 120.5) < 0.001
-    monkeypatch.delenv('LLAMABOT_LLAMA_HTTP_TIMEOUT')
-    importlib.reload(__import__('limits'))
+def test_reasoning_ratio_must_be_in_open_interval():
+    try:
+        try:
+            _reload_with({
+                'LLAMABOT_DEPLOYMENT_PROFILE': 'public',
+                'LLAMABOT_REASONING_RATIO_LIMIT': '1.5',
+            })
+        except ValueError as e:
+            assert 'REASONING_RATIO_HARD_LIMIT' in str(e)
+        else:
+            raise AssertionError('expected ValueError on ratio > 1')
+    finally:
+        _restore_env()
 
 
-def test_call_llama_uses_limits():
-    """call_llama default max_tokens comes from limits, not hardcoded."""
-    import limits
+def test_max_tokens_must_be_positive():
+    try:
+        try:
+            _reload_with({
+                'LLAMABOT_DEPLOYMENT_PROFILE': 'public',
+                'LLAMABOT_MAX_TOKENS': '0',
+            })
+        except ValueError as e:
+            assert 'MAX_TOKENS_DEFAULT' in str(e)
+        else:
+            raise AssertionError('expected ValueError on zero max_tokens')
+    finally:
+        _restore_env()
+
+
+def test_selftest_max_tokens_smaller_than_production():
+    try:
+        limits = _reload_with({})
+        assert limits.SELFTEST_MAX_TOKENS < limits.MAX_TOKENS_DEFAULT
+    finally:
+        _restore_env()
+
+
+def test_call_llama_default_tracks_active_profile():
+    """call_llama signature default max_tokens tracks the active profile.
+
+    Because call_llama is `from call_llama import call_llama` and
+    Python caches the import, we have to drop call_llama from
+    sys.modules so it re-binds the limits module attribute
+    at import time.
+    """
     import inspect
-    from call_llama import call_llama
-    sig = inspect.signature(call_llama)
-    # The default must be the limits constant at import time, not 65536
-    default = sig.parameters['max_tokens'].default
-    assert default == limits.MAX_TOKENS_CALL_LLAMA_DEFAULT
-    assert default == limits.MAX_TOKENS_DEFAULT
-    # Sanity: must NOT be the old 65536 hardcoded value
-    assert default != 65536
+    try:
+        _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'public'})
+        for mod_name in list(sys.modules):
+            if mod_name in ('call_llama', 'limits'):
+                del sys.modules[mod_name]
+        from call_llama import call_llama
+        sig = inspect.signature(call_llama)
+        assert sig.parameters['max_tokens'].default == 2048
+    finally:
+        for mod_name in list(sys.modules):
+            if mod_name in ('call_llama', 'limits'):
+                del sys.modules[mod_name]
+        _restore_env()
+    try:
+        _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'personal'})
+        from call_llama import call_llama
+        sig = inspect.signature(call_llama)
+        assert sig.parameters['max_tokens'].default == 32768
+    finally:
+        for mod_name in list(sys.modules):
+            if mod_name in ('call_llama', 'limits'):
+                del sys.modules[mod_name]
+        _restore_env()
 
 
 def test_call_llama_uses_limits_for_timeouts():
-    """call_llama httpx clients use limits.LLAMA_HTTP_TIMEOUT_SEC, not 600.0."""
-    import limits
-    from call_llama import call_llama
-    import inspect
-    src = inspect.getsource(call_llama)
-    # Must reference the limits constant
-    assert 'limits.LLAMA_HTTP_TIMEOUT_SEC' in src
-    # Must NOT have the old hardcoded 600.0 in a timeout=
-    assert 'timeout=600.0' not in src
+    try:
+        _reload_with({})
+        from call_llama import call_llama
+        import inspect
+        src = inspect.getsource(call_llama)
+        assert 'limits.LLAMA_HTTP_TIMEOUT_SEC' in src
+        assert 'timeout=600.0' not in src
+    finally:
+        for mod_name in list(sys.modules):
+            if mod_name in ('call_llama', 'limits'):
+                del sys.modules[mod_name]
+        _restore_env()
