@@ -1342,8 +1342,7 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                             result = '[bash_command: empty command]'
                         else:
                             r = await _bc.call_bash_command(
-                                cmd, session_id=sid
-                            )
+                                cmd, session_id=sid, chat_type=chat_type)
                             result = _bc.tool_result_to_text(r)
                             _executed_tools_in_turn.append({
                                 "name": "bash_command",

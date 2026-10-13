@@ -43,7 +43,7 @@ services:
     - ./files:/app/files
     - ./data:/app/data
     - /var/log/telegram-bot:/var/log/bot
-    - ./personal_tools:/app/personal_tools
+    - ./personal_tools:/app/personal_tools:ro
     logging:
       driver: json-file
       options:

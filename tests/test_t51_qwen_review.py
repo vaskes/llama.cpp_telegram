@@ -14,9 +14,9 @@ import re
 
 import pytest
 
-PROMPTS = pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot/prompts.py")
-BASH = pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot/personal_tools/bash_command.py")
-CALL_LLAMA = pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot/call_llama.py")
+PROMPTS = pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompts.py"
+BASH = pathlib.Path(__file__).parent.parent / "telegram-bot" / "personal_tools" / "bash_command.py"
+CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
 
 
 def test_c2_safety_rules_in_prompts():
@@ -35,7 +35,12 @@ def test_c4_rate_limit_present():
     # Token bucket: must refill on time
     assert "monotonic" in src
     # Default 10 per minute
-    assert "_T51_RATE_LIMIT_PER_MIN = 10" in src
+    # M6 made this env-overridable; the literal may be
+    # int(os.environ.get("LLAMABOT_BASH_RPM", "10")) instead of 10.
+    import re
+    m = re.search(r"_T51_RATE_LIMIT_PER_MIN\s*=\s*(.+)", src)
+    assert m, "rate limit default missing"
+    assert m.group(1).strip().startswith("int(os.environ.get") or m.group(1).strip() == "10"
 
 
 def test_c4_rate_limit_actually_limits():

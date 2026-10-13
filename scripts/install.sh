@@ -59,6 +59,15 @@ if [[ "${INSTALL_BASH_SANDBOX:-0}" == "1" ]]; then
     echo "         AGENT_STACK_TOKEN in $BOT_DIR/.env and switch the bot's"
     echo "         profile to personal: LLAMABOT_DEPLOYMENT_PROFILE=personal"
     echo "         See docs/BASH-SANDBOX.md for the full setup."
+    echo ""
+    echo "  >>> NEXT: append these to $BOT_DIR/.env (chmod 0600) <<<"
+    echo "LLAMABOT_DEPLOYMENT_PROFILE=personal"
+    echo "AGENT_STACK_URL=http://<sandbox-host-lan-ip>:8090"
+    echo "AGENT_STACK_TOKEN=<copy from /etc/agent-stack.env>"
+    echo "LLAMABOT_BASH_RPM=10"
+    echo ""
+    echo "  Then restart the bot so the new env takes effect:"
+    echo "     sudo systemctl restart telegram-bot-compose.service"
 fi
 
 # 3) systemd units

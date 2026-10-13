@@ -10,7 +10,7 @@ import pathlib
 import re
 
 
-HANDLERS = pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot/handlers.py")
+HANDLERS = pathlib.Path(__file__).parent.parent / "telegram-bot" / "handlers.py"
 src = HANDLERS.read_text()
 
 

@@ -105,11 +105,47 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
 import time as _t51_time
 from collections import defaultdict as _t51_defaultdict
 
-_T51_RATE_LIMIT_PER_MIN = 10
+# T52 #M6: env-overridable. Default 10/min, can be lowered
+# (e.g. LLAMABOT_BASH_RPM=5 for a paranoid operator) or
+# raised (e.g. LLAMABOT_BASH_RPM=30 for a long chained
+# command). Set LLAMABOT_BASH_RPM=0 to disable the limit
+# entirely (NOT recommended).
+_T51_RATE_LIMIT_PER_MIN = int(os.environ.get("LLAMABOT_BASH_RPM", "10"))
 _t51_rate_limit_buckets = _t51_defaultdict(
     lambda: {"tokens": float(_T51_RATE_LIMIT_PER_MIN),
               "last_refill": _t51_time.monotonic()}
 )
+# T52 #M1: cap the bucket dict to a reasonable max number
+# of distinct session_ids, evicting the least-recently-used
+# when the cap is hit. The cap is generous (1000) so this
+# only matters for very long-running bot processes with
+# millions of distinct chat_ids; the LRU keeps memory bounded.
+_T51_RATE_LIMIT_MAX_BUCKETS = 1000
+_T51_RATE_LIMIT_TTL_SEC = 3600  # 1 hour idle -> evict
+
+
+def _t51_evict_buckets():
+    """Drop stale buckets. Called inside the rate-limit check
+    occasionally (every 64 calls) so we do not pay a scan
+    cost on every call."""
+    now = _t51_time.monotonic()
+    stale = [
+        k for k, v in _t51_rate_limit_buckets.items()
+        if now - v["last_refill"] > _T51_RATE_LIMIT_TTL_SEC
+    ]
+    for k in stale:
+        _t51_rate_limit_buckets.pop(k, None)
+    # LRU eviction if still over cap. Sort by last_refill,
+    # drop the oldest until we are at the cap.
+    if len(_t51_rate_limit_buckets) > _T51_RATE_LIMIT_MAX_BUCKETS:
+        by_refill = sorted(
+            _t51_rate_limit_buckets.items(),
+            key=lambda kv: kv[1]["last_refill"],
+        )
+        # Drop the oldest 10% when over cap.
+        to_drop = max(1, len(_t51_rate_limit_buckets) - _T51_RATE_LIMIT_MAX_BUCKETS)
+        for k, _ in by_refill[:to_drop]:
+            _t51_rate_limit_buckets.pop(k, None)
 
 
 def _t51_check_rate_limit(session_id):
@@ -117,6 +153,14 @@ def _t51_check_rate_limit(session_id):
     Refills tokens continuously: 10 per 60 seconds.
     T51 C4."""
     key = session_id or "default"
+    # T52 #M1: periodic eviction of stale buckets. Cheap
+    # to do here because the check runs once per call.
+    if not hasattr(_t51_check_rate_limit, "_calls_since_evict"):
+        _t51_check_rate_limit._calls_since_evict = 0
+    _t51_check_rate_limit._calls_since_evict += 1
+    if _t51_check_rate_limit._calls_since_evict >= 64:
+        _t51_check_rate_limit._calls_since_evict = 0
+        _t51_evict_buckets()
     bucket = _t51_rate_limit_buckets[key]
     now = _t51_time.monotonic()
     elapsed = now - bucket["last_refill"]
@@ -136,6 +180,14 @@ AGENT_STACK_URL = os.environ.get(
     "AGENT_STACK_URL", "http://192.168.10.7:8090"
 )
 AGENT_STACK_TOKEN = os.environ.get("AGENT_STACK_TOKEN", "")
+# T52 #M3: the token is captured at import time. Operators
+# who edit /opt/telegram-bot/.env to rotate the token MUST
+# restart the bot for the new value to take effect:
+#   sudo systemctl restart telegram-bot-compose.service
+# The .env.example file documents this. This is the same
+# pattern as limits.py (LLAMABOT_DEPLOYMENT_PROFILE) and
+# config.py (BOT_TOKEN); env-driven secrets are accepted
+# to be import-time in this codebase.
 
 
 def _active_profile() -> str:
@@ -167,7 +219,14 @@ async def call_bash_command(
     *,
     session_id: str | None = None,
     timeout: float = 70.0,
+    chat_type: str = "private",
 ) -> dict[str, Any]:
+    """T52 #H1: chat_type is required. Pass
+    update.effective_chat.type from the handler so the
+    function can refuse non-private chats. Default is
+    "private" for tests that don't care, but production
+    callers must pass the real chat type. See
+    docs/BASH-SANDBOX.md for the threat model."""
     """Forward a bash call to the sandbox side-car and return the
     parsed JSON response.
 
@@ -198,6 +257,23 @@ async def call_bash_command(
             "error": (
                 f"bash_command rate limit exceeded for session "
                 f"({_T51_RATE_LIMIT_PER_MIN}/min). Wait a few seconds and retry."
+            ),
+        }
+    # T52 #H1: per-chat gate. bash_command is only
+    # available in private (1:1) chats, NEVER in groups,
+    # channels, or supergroups, regardless of deployment
+    # profile. This is defence in depth on top of the
+    # per-deployment-profile gate. Mavis's wave-1 review
+    # pointed out that the env-based gate alone leaves
+    # an operator misconfig (LLAMABOT_DEPLOYMENT_PROFILE=personal
+    # in a group with non-whitelisted members) as a silent
+    # RCE for the whole group. We close that here.
+    if chat_type != "private":
+        return {
+            "ok": False,
+            "error": (
+                f"bash_command is only available in private chats. "
+                f"This chat_type is {chat_type!r}. See docs/BASH-SANDBOX.md."
             ),
         }
     payload: dict[str, Any] = {"command": command, "timeout": 60}
