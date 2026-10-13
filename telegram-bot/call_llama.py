@@ -874,17 +874,32 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                     try:
                         validate_tool_calls(non_stream_tool_calls)
                     except UnknownToolNameError as _e:
-                        print(f"[TOOL-ISOLATION] iter={iteration} {str(_e).splitlines()[0]}", flush=True)
-                        return (
-                            f"[bot refused: llama-server returned a tool_call for a "
-                            f"name not in the bot's whitelist. This means llama-server "
-                            f"is configured with --agent or MCP-servers-config, and the "
-                            f"model is reaching for a native tool the bot does not "
-                            f"manage. The bot's own tools run in a hardened side-car "
-                            f"sandbox; native llama tools would bypass that. Restart "
-                            f"llama-server without --agent / --mcp-servers-config, or "
-                            f"use a separate llama instance for the bot.]"
+                        # T43: soft-reject. Rewrite the unknown tool_calls
+                        # in place to `__rejected__` so the dispatch loop
+                        # below hits its "unhandled tool" branch, and
+                        # inject a synthetic tool result into msgs so the
+                        # model can read it as a tool-role message on the
+                        # next iteration. This gives the model a chance to
+                        # retry with a whitelisted tool instead of
+                        # silently dropping the turn.
+                        bad_names = sorted({(tc.get("function") or {}).get("name") or "" for tc in non_stream_tool_calls})
+                        print(
+                            f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
+                            f"injecting tool result feedback",
+                            flush=True,
                         )
+                        known_list = ", ".join(sorted(KNOWN_TOOL_NAMES))
+                        for tc in non_stream_tool_calls:
+                            fn = (tc.get("function") or {})
+                            if (fn.get("name") or "") not in KNOWN_TOOL_NAMES:
+                                fn["name"] = "__rejected__"
+                                fn["arguments"] = "{}"
+                        saw_unavailable_tool = True
+                        # The dispatch loop below will run for the
+                        # __rejected__ entries and hit the "unhandled"
+                        # branch, which appends a `role: tool` message
+                        # explaining the rejection back to msgs. We do
+                        # NOT return here; the loop continues.
                     print(f"[LLAMA] iter={iteration} non-stream finish={data['choices'][0].get('finish_reason')} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}", flush=True)
                     if reasoning and thinking_msg is not None:
                         await push_thinking(accumulated_reasoning + reasoning, force=True)
@@ -1068,14 +1083,19 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                         try:
                             validate_tool_calls(tool_calls)
                         except UnknownToolNameError as _e:
-                            print(f"[TOOL-ISOLATION] iter={iteration} {str(_e).splitlines()[0]}", flush=True)
-                            return (
-                                f"[bot refused: llama-server returned a tool_call for a "
-                                f"name not in the bot's whitelist. This means llama-server "
-                                f"is configured with --agent or MCP-servers-config. "
-                                f"Restart without those flags or use a separate instance "
-                                f"for the bot.]"
+                            # T43: soft-reject (same as site 1).
+                            bad_names = sorted({(tc.get("function") or {}).get("name") or "" for tc in tool_calls})
+                            print(
+                                f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
+                                f"injecting tool result feedback",
+                                flush=True,
                             )
+                            for tc in tool_calls:
+                                fn = (tc.get("function") or {})
+                                if (fn.get("name") or "") not in KNOWN_TOOL_NAMES:
+                                    fn["name"] = "__rejected__"
+                                    fn["arguments"] = "{}"
+                            saw_unavailable_tool = True
                         if not tool_calls:
                             if msg.get("content"):
                                 return msg["content"]
@@ -1115,18 +1135,24 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                 # stream chunks. Reject any unknown name BEFORE building the
                 # tool_calls list that we will execute or send back to the model.
                 if tc["name"] not in __import__("tool_isolation").KNOWN_TOOL_NAMES:
+                    # T43: soft-reject (same as site 1, applied to the
+                    # streaming chunk that just arrived). We skip this
+                    # tool call but keep the iteration alive by
+                    # appending a synthetic tool result that names the
+                    # offending tool and the available set.
                     print(
-                        f"[TOOL-ISOLATION] iter={iteration} refusing unknown streamed "
-                        f"tool name {tc['name']!r}; this indicates llama-server is "
-                        f"running --agent or MCP-servers-config",
+                        f"[TOOL-ISOLATION] iter={iteration} soft-reject streamed "
+                        f"tool name {tc['name']!r}; injecting tool result feedback",
                         flush=True,
                     )
-                    return (
-                        f"[bot refused: llama-server streamed a tool_call for "
-                        f"{tc['name']!r}, which is not in the bot's whitelist. "
-                        f"Restart llama-server without --agent / --mcp-servers-config, "
-                        f"or use a separate llama instance for the bot.]"
-                    )
+                    bad_name = tc["name"]
+                    tc["name"] = "__rejected__"
+                    saw_unavailable_tool = True
+                    # We can't easily inject a tool-role message here
+                    # because the streaming buffer is being filled in
+                    # real time; the unhandled-tool branch further down
+                    # the loop will add the role:tool message with the
+                    # rejection text. Just continue the iteration.
                 args_str = tc["arguments"]
                 try:
                     args_obj = json.loads(args_str) if args_str else {}
