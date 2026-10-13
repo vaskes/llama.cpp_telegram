@@ -22,6 +22,7 @@ Run with: cd /home/git/llama.cpp_telegram && \
 """
 import asyncio
 import os
+import pathlib
 import sys
 import uuid
 
@@ -38,8 +39,8 @@ pytestmark = [
 
 # Add the bot source to path so we can import the actual
 # bash_command module (not a mock).
-sys.path.insert(0, "/home/git/llama.cpp_telegram/telegram-bot")
-sys.path.insert(0, "/home/git/llama.cpp_telegram/telegram-bot/personal_tools")
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "telegram-bot"))
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "telegram-bot" / "personal_tools"))
 
 # Force the env vars from /opt/telegram-bot/.env (the conftest
 # already does this at import time, but be explicit here for

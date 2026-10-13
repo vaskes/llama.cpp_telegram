@@ -4,7 +4,7 @@ import sys
 import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
-sys.path.insert(0, str(pathlib.Path("/home/git/llama.cpp_telegram/telegram-bot")))
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "telegram-bot"))
 
 # Skip these tests if telegram package is not installed in
 # the test environment (it's installed in /app but not

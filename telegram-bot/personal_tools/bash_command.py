@@ -102,6 +102,7 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
 # session_id, refilled continuously. Excess calls get an
 # immediate {"ok": False, "error": "rate limit exceeded"}
 # response with no network call to the sandbox.
+import re
 import time as _t51_time
 from collections import defaultdict as _t51_defaultdict
 
@@ -122,6 +123,45 @@ _t51_rate_limit_buckets = _t51_defaultdict(
 # millions of distinct chat_ids; the LRU keeps memory bounded.
 _T51_RATE_LIMIT_MAX_BUCKETS = 1000
 _T51_RATE_LIMIT_TTL_SEC = 3600  # 1 hour idle -> evict
+
+
+# T52 #S2 / #S3: bash tool argument validation.
+# The LLM crafts both `command` and `session_id`. We constrain
+# them to a strict shape here so a misbehaving LLM cannot:
+#  - send a non-string command (e.g. an arbitrarily nested dict
+#    that the JSON encoder happily serialises and the sandbox
+#    has to reject at the parser level);
+#  - send a megabyte-long command that fills the LLM context
+#    and DoS'es the next iteration;
+#  - send a session_id that hijacks another chat's persistent
+#    tmux session, escapes the sandbox's session-id parser, or
+#    collides with a system session.
+_BASH_COMMAND_MAX_LEN = 8192
+_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _validate_command(command):
+    """T52 #S2. Return (ok, normalised_command, error_message)."""
+    if not isinstance(command, str):
+        return False, None, f"command must be a string, got {type(command).__name__}"
+    if not command:
+        return False, None, "command must be a non-empty string"
+    if len(command) > _BASH_COMMAND_MAX_LEN:
+        return False, None, f"command too long ({len(command)} > {_BASH_COMMAND_MAX_LEN} chars)"
+    if "\x00" in command:
+        return False, None, "command contains NUL byte"
+    return True, command, None
+
+
+def _validate_session_id(session_id):
+    """T52 #S3. Return (ok, normalised_session_id, error_message)."""
+    if session_id is None:
+        return True, None, None
+    if not isinstance(session_id, str):
+        return False, None, f"session_id must be a string, got {type(session_id).__name__}"
+    if not _SESSION_ID_PATTERN.match(session_id):
+        return False, None, "session_id must match [A-Za-z0-9._-]{1,128}"
+    return True, session_id, None
 
 
 def _t51_evict_buckets():
@@ -221,12 +261,6 @@ async def call_bash_command(
     timeout: float = 70.0,
     chat_type: str = "private",
 ) -> dict[str, Any]:
-    """T52 #H1: chat_type is required. Pass
-    update.effective_chat.type from the handler so the
-    function can refuse non-private chats. Default is
-    "private" for tests that don't care, but production
-    callers must pass the real chat type. See
-    docs/BASH-SANDBOX.md for the threat model."""
     """Forward a bash call to the sandbox side-car and return the
     parsed JSON response.
 
@@ -276,6 +310,21 @@ async def call_bash_command(
                 f"This chat_type is {chat_type!r}. See docs/BASH-SANDBOX.md."
             ),
         }
+    # T52 #S2: validate the command shape before spending a
+    # network round trip. The LLM crafts this; a misbehaving
+    # LLM could pass a non-string, a megabyte-long string, or
+    # a NUL-bearing string.
+    ok_cmd, command, err_cmd = _validate_command(command)
+    if not ok_cmd:
+        return {"ok": False, "error": err_cmd}
+    # T52 #S3: validate session_id to [A-Za-z0-9._-]{1,128}.
+    # The sandbox uses session_id as a tmux session key; a
+    # session_id with shell metacharacters could let the LLM
+    # reference arbitrary tmux sessions, escape the sandbox's
+    # session_id parser, or collide with system sessions.
+    ok_sid, session_id, err_sid = _validate_session_id(session_id)
+    if not ok_sid:
+        return {"ok": False, "error": err_sid}
     payload: dict[str, Any] = {"command": command, "timeout": 60}
     if session_id:
         payload["session_id"] = session_id

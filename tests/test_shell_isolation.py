@@ -20,7 +20,7 @@ import pathlib
 import pytest
 
 
-TESTS_DIR = pathlib.Path("/home/git/llama.cpp_telegram/tests")
+TESTS_DIR = pathlib.Path(__file__).parent
 TI_PATH = pathlib.Path(__file__).parent.parent / "telegram-bot" / "tool_isolation.py"
 CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
 
@@ -31,7 +31,7 @@ def test_known_tool_names_exact_set():
     AND shipping a handler. Removing a tool requires
     updating both the whitelist and the system prompt.
     """
-    sys_path = "/home/git/llama.cpp_telegram/telegram-bot"
+    sys_path = str(pathlib.Path(__file__).parent.parent / "telegram-bot")
     import sys
     import sys; sys.path.insert(0, sys_path)
     from tool_isolation import KNOWN_TOOL_NAMES
@@ -49,7 +49,7 @@ def test_known_tool_names_exact_set():
 
 
 def test_validate_tool_calls_accepts_whitelisted():
-    import sys; sys.path.insert(0, "/home/git/llama.cpp_telegram/telegram-bot")
+    import sys; sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "telegram-bot"))
     from tool_isolation import validate_tool_calls, KNOWN_TOOL_NAMES
 
     # Build a list of valid tool calls.
