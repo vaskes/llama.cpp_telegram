@@ -183,8 +183,19 @@ async def _reply(update, text, **kwargs):
     flood control). If a burst of queued messages produces
     replies faster than Telegram accepts, RetryAfter is raised;
     we sleep retry_after+1s and retry up to 3 times.
+
+    T48: also retries on telegram.error.TimedOut (httpx 5s
+    default). When the Telegram Bot API takes longer than 5s
+    to acknowledge a sendMessage, TimedOut is raised even
+    though the message was almost always delivered. The bot
+    used to re-raise this and the handle_text except block
+    would send a second "❌ Error: Timed out" message,
+    producing two messages for one user turn. Now we retry
+    up to 3 times with exponential backoff, and if all
+    attempts time out we return None and log a warning
+    (assuming Telegram will deliver the message anyway).
     """
-    from telegram.error import RetryAfter
+    from telegram.error import RetryAfter, TimedOut
     from dispatch import _is_group_chat
     if _is_group_chat(update):
         kwargs.setdefault('message_thread_id', update.message.message_thread_id)
@@ -200,10 +211,31 @@ async def _reply(update, text, **kwargs):
                 flush=True,
             )
             await asyncio.sleep(wait_s)
-    # Exhausted retries — re-raise so the caller's except block
-    # runs. The bot will skip the error message if Telegram
-    # still rate-limits; the user already saw the LLM response
-    # if at least one try went through.
+        except TimedOut as e:
+            last_err = e
+            # Telegram usually delivered the message; the
+            # timeout is in our read of the response. Exponential
+            # backoff: 1s, 2s, 4s.
+            backoff = 2 ** attempt
+            print(
+                f"[_reply] TimedOut attempt {attempt+1}/3, sleeping {backoff}s",
+                flush=True,
+            )
+            await asyncio.sleep(backoff)
+    # Exhausted retries. For RetryAfter, re-raise so the
+    # caller's except block runs (the user already saw the
+    # LLM response if at least one try went through). For
+    # TimedOut, assume delivered and return None - the user
+    # does NOT get a duplicate "❌ Error" message.
+    if isinstance(last_err, TimedOut):
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        print(
+            f"[_reply] all 3 TimedOut attempts failed; assuming Telegram "
+            f"delivered the message for chat_id={chat_id}. Suppressing "
+            f"duplicate error reply. text_len={len(text)}",
+            flush=True,
+        )
+        return None
     raise last_err
 
 # === _reject_in_group ===
