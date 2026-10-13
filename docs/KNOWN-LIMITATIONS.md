@@ -46,3 +46,23 @@ If your prompt is over 4096 characters:
 The split-detection logic lives in `telegram-bot/state.py` under
 `_split_pending` / `_mark_split_pending` / `_is_split_pending`,
 and is wired into `handle_text` in `telegram-bot/handlers.py`.
+
+**Polling mode and split ordering:** The bot can run in either
+webhook mode (one aiohttp server, single connection) or polling
+mode (long-poll loops on the Telegram Bot API). In webhook
+mode, two halves of an auto-split arrive as two consecutive
+HTTP POSTs within milliseconds of each other, and the
+split-pending 30 s window covers both. In polling mode, two
+halves can land in different poll batches separated by 1-100
+ms (or longer under load); the 30 s TTL is still wide enough
+to cover any realistic gap. The operator confirmed this
+behavior is acceptable: the false-positive rate of "two
+unrelated consecutive messages from the same user within
+30 seconds" is low enough that dropping both is the right
+call.
+
+This is also why the heuristic's 30 s window is generous. A
+tighter window (e.g. 5 s) would risk missing the second half
+in polling mode; a wider one (e.g. 5 min) would block
+legitimate follow-ups. 30 s is the operating point.
+
