@@ -67,9 +67,21 @@ The headline feature of the next sprint. The bot grows the
 ability to **execute shell commands inside a per-user
 sandbox container**, scoped and short-lived.
 
-- **Container lifecycle**: created on first shell-tool call
-  per user-session, destroyed on session end (configurable
-  TTL, default 30 min idle).
+- **Container lifecycle**: a **single shared sandbox**
+  for the whole bot process, created at bot start, destroyed
+  at bot restart. Per-sub-talk model context stays
+  isolated (this is the existing design: each /sub has its
+  own context window, /reset in one sub does not touch the
+  others — operator wants to keep that property), but the
+  shell workspace is shared. Path-jail in the dispatcher
+  scopes each tool call to a per-sub working directory
+  under `/workspace/<user>/<sub>`, so two concurrent
+  contexts writing to the shell cannot collide. This
+  keeps resource cost flat (1 container, not N) at the
+  price of accepting that two LLM turns may race on the
+  filesystem if both touch the same path. The race window
+  is small and the consequences are recoverable (re-run
+  the affected /sub).
 - **Tool surface**: `shell_exec(cmd)`, `shell_read(path)`,
   `shell_write(path, content)`, `shell_list(dir)`, plus a
   sandboxed Python eval for numeric work.
@@ -92,8 +104,11 @@ sandbox container**, scoped and short-lived.
   exhaustion, path-jail violation. Plus pytest covering the
   dispatcher and the audit log.
 - **Operational**: systemd unit or compose profile for
-  the container pool; resource cleanup on bot restart;
-  quota on concurrent sandboxes (default 4, configurable).
+  the single sandbox container; resource cleanup on bot
+  restart; container health-check + auto-restart on
+  failure (single bot == single sandbox == single
+  failure domain — if the sandbox dies, the bot dies
+  with it; respawn handled by systemd).
 
 Total: ~3-4 days. This is the largest single piece of work
 in the sprint. Land as `v0.11.0` (minor version bump
