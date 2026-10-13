@@ -324,3 +324,16 @@ When upgrading or rolling back:
 - [ ] If anything looks wrong, check the bot log at
       `/var/log/telegram-bot/bot.log` for `[TOOL-ISOLATION]`
       and `[tools] loaded N enabled tools` lines.
+
+### Rate limit (T51 C4, T52 #M1)
+
+The bot caps bash_command at **10 commands per minute per
+session_id** (env-overridable via `LLAMABOT_BASH_RPM`; set 0 to
+disable, NOT recommended). After 10 calls in 60 s, the bot
+returns `{"ok": False, "error": "rate limit exceeded"}` without
+forwarding to the sandbox. The bucket dict is LRU-evicted at
+1000 entries with a 1-hour TTL (T52 #M1).
+
+The sandbox side-car itself has `OPENAPI_PROXY_RATE_LIMIT_RPM=60`
+as a coarser second layer. Both layers are documented in the
+operator threat model — see [SECURITY.md §3.5](SECURITY.md#35-bash_command-personal-mode-only).
