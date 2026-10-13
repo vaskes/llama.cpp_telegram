@@ -34,6 +34,33 @@ sudo cp whisper-api/.env.example "$WHISPER_DIR/.env.example"
 sudo chown -R "$USER":"$USER" "$WHISPER_DIR"
 echo "  [OK] whisper-api files in $WHISPER_DIR — edit $WHISPER_DIR/.env if you want a different model"
 
+# 2.5) bash-sandbox (optional, personal mode only)
+# The killer feature bash_command requires the vaskes/OpenWebUI-bash-sandbox
+# side-car. Skip this step if you do not want bash_command.
+if [[ "${INSTALL_BASH_SANDBOX:-ask}" == "ask" ]]; then
+    read -r -p "Install bash-sandbox side-car for bash_command (personal mode)? [y/N] " ans
+    if [[ "$ans" =~ ^[Yy]$ ]]; then
+        INSTALL_BASH_SANDBOX=1
+    else
+        INSTALL_BASH_SANDBOX=0
+    fi
+fi
+if [[ "${INSTALL_BASH_SANDBOX:-0}" == "1" ]]; then
+    if [[ ! -d .git ]] || ! git submodule status sandbox 2>/dev/null | grep -q '^[ -]'; then
+        echo "  [INFO] initialising git submodule for sandbox..."
+        git submodule update --init --recursive
+    fi
+    SANDBOX_DIR="${SANDBOX_DIR:-/opt/bash-sandbox}"
+    sudo mkdir -p "$SANDBOX_DIR"
+    sudo cp -r sandbox/* "$SANDBOX_DIR/"
+    sudo chown -R "$USER":"$USER" "$SANDBOX_DIR"
+    echo "  [OK] bash-sandbox files in $SANDBOX_DIR — follow the upstream README"
+    echo "         to deploy the openapi-proxy. Then set AGENT_STACK_URL and"
+    echo "         AGENT_STACK_TOKEN in $BOT_DIR/.env and switch the bot's"
+    echo "         profile to personal: LLAMABOT_DEPLOYMENT_PROFILE=personal"
+    echo "         See docs/BASH-SANDBOX.md for the full setup."
+fi
+
 # 3) systemd units
 for unit in systemd/telegram-bot-compose.service systemd/whisper-api-compose.service; do
   base="$(basename "$unit")"
@@ -49,10 +76,16 @@ cat <<'NEXT'
 NEXT STEPS:
   1) Edit $BOT_DIR/.env — at minimum set BOT_TOKEN, ALLOWED_USER_IDS, and LLAMA_URL.
      Find your Telegram user_id by messaging @userinfobot.
-  2) Start llama-server (this repo assumes you have one — see the llama.cpp_search
-     repo for the SearXNG side, and llama.cpp-rocm-780m for the GPU build).
+  2) Start llama-server (any OpenAI-compatible endpoint; the bot does
+     not include llama.cpp itself). See docs/SETUP.md for the
+     recommended build.
   3) Start the services:
        sudo systemctl start whisper-api-compose
        sudo systemctl start telegram-bot-compose
-  4) Open Telegram, find your bot, send /start.
+  4) (personal mode only) If you opted into bash-sandbox above,
+     deploy the side-car at $SANDBOX_DIR per its README, then
+     set AGENT_STACK_URL and AGENT_STACK_TOKEN in $BOT_DIR/.env.
+  5) Open Telegram, find your bot, send /start. If you enabled
+     bash-sandbox, you should see the bash_command line in the
+     /start reply; if not, /start shows only web tools + react.
 NEXT

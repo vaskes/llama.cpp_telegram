@@ -9,6 +9,15 @@ WHISPER_DIR="${WHISPER_DIR:-/opt/whisper-api}"
 echo ">>> git pull"
 git pull --rebase --autostash
 
+echo ">>> update submodules (sandbox)"
+# The bash-sandbox submodule may have been bumped. Update it
+# to the recorded SHA if the operator wants the new code.
+# Use --init to handle the case where the submodule was never
+# initialised (e.g. operator started on a pre-submodule tag).
+git submodule update --init --recursive
+echo "  [OK] submodules at:"
+git submodule status
+
 echo ">>> copy updated files into $BOT_DIR"
 sudo cp telegram-bot/bot.py "$BOT_DIR/bot.py"
 sudo cp telegram-bot/Dockerfile "$BOT_DIR/Dockerfile"

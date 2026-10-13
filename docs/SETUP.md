@@ -88,9 +88,8 @@ by setting `DONSETCH_URL=http://localhost:8765/mcp` in `/opt/telegram-bot/.env`.
 The bot will then have `web_search`, `web_fetch`, `web_crawl`, and
 `web_screenshot` available.
 
-The historical SearXNG-based stack in [vaskes/llama.cpp_search](https://github.com/vaskes/llama.cpp_search)
-is deprecated — all major engines CAPTCHA-block Russian IPs. Use donsetch
-instead.
+(The previous SearXNG-based stack was removed in T29 because
+all major engines CAPTCHA-block Russian IPs. Use donsetch.)
 
 ## 6. Start the services
 
