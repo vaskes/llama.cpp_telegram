@@ -451,14 +451,32 @@ async def _abortable_post(client, url, abort_event=None, **kwargs):
         raise
 
 
-async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, user_text='', thinking_msg=None, use_stream=True, shutdown_event=None, rating_active=False, abort_event=None, bot=None, chat_id=None, current_message_id=None):
+async def call_llama(
+    messages,
+    max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT,
+    user_text="",
+    thinking_msg=None,
+    use_stream=True,
+    shutdown_event=None,
+    rating_active=False,
+    abort_event=None,
+    bot=None,
+    chat_id=None,
+    current_message_id=None,
+    chat_type: str | None = None,
+):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
     thinking_msg: optional Telegram Message to update with reasoning text as it streams
                   (throttled internally). Pass None to skip the live reasoning feed.
     use_stream:    if False, do a plain non-streaming POST (better for vision tasks
                   and other cases where streaming may truncate reasoning).
-    shutdown_event: optional asyncio.Event; checked at the top of every iteration
+    chat_type: required. The Telegram chat type ("private", "group",
+             "supergroup", "channel"). Required - no default - so
+             a new caller cannot accidentally enable bash_command
+             in a context that should be locked down. See T52 #H1
+             and T53 #R4 for the threat model.
+shutdown_event: optional asyncio.Event; checked at the top of every iteration
                   so SIGTERM (docker stop) can abort a long call before the 10s
                   SIGKILL grace runs out. Falls back to the module-level
                   SHUTDOWN_EVENT if None.
@@ -473,6 +491,20 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
     docs/CALL_LLAMA.md end-to-end and writing a regression test against
     a captured llama-server response. See also docs/archive/v0.0-v0.4/REVIEW-MINIMAX.md §P3-4 (superseded review; the v0.7+ refactors made most of its P3 findings obsolete — read for historical context only).
     """
+
+    # T53 #R3: chat_type is required. A new caller that forgets
+    # the kwarg would otherwise silently enable bash_command in
+    # a context that should be locked down. The sentinel default
+    # is None and we raise immediately. The T52 commit wired
+    # chat_type through the 4 handlers but forgot to add it to
+    # this signature, which broke the bot in prod.
+    if chat_type is None:
+        raise TypeError(
+            "call_llama() missing required argument: 'chat_type'. "
+            "Pass update.effective_chat.type from the handler. "
+            "See T53 #R3 and T52 #H1."
+        )
+
 
     await _ensure_model()  # lazy first-call discovery
     from dispatch import _stop_button_markup

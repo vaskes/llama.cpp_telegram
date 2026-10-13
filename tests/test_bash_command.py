@@ -120,7 +120,9 @@ async def test_call_bash_command_success(personal_with_token):
             assert json["command"] == "echo hello"
             return FakeResp()
     with patch("personal_tools.bash_command.httpx.AsyncClient", FakeClient):
-        result = await personal_with_token.call_bash_command("echo hello")
+        result = await personal_with_token.call_bash_command("echo hello",
+        chat_type="private",
+    )
     assert result["ok"] is True
     assert result["exit_code"] == 0
     assert "hello" in result["stdout"]
@@ -141,7 +143,9 @@ async def test_call_bash_command_token_rejected_401(personal_with_token):
         async def __aexit__(self, *a): pass
         async def post(self, *a, **kw): return FakeResp()
     with patch("personal_tools.bash_command.httpx.AsyncClient", FakeClient):
-        result = await personal_with_token.call_bash_command("ls")
+        result = await personal_with_token.call_bash_command("ls",
+        chat_type="private",
+    )
     assert result["ok"] is False
     assert "AGENT_STACK_TOKEN" in result["error"] or "rejected" in result["error"]
     assert result["http_status"] == 401
@@ -160,7 +164,9 @@ async def test_call_bash_command_sidecar_unreachable(personal_with_token):
         async def post(self, *a, **kw):
             raise httpx.ConnectError("connection refused")
     with patch("personal_tools.bash_command.httpx.AsyncClient", FakeClient):
-        result = await personal_with_token.call_bash_command("ls")
+        result = await personal_with_token.call_bash_command("ls",
+        chat_type="private",
+    )
     assert result["ok"] is False
     assert "unreachable" in result["error"] or "ConnectError" in result["error"]
 
@@ -170,7 +176,9 @@ async def test_call_bash_command_refused_in_public_profile(public_with_token):
     """Even if a misconfigured caller forgets the profile check, the
     handler itself refuses when not in personal mode.
     """
-    result = await public_with_token.call_bash_command("rm -rf /")
+    result = await public_with_token.call_bash_command("rm -rf /",
+        chat_type="private",
+    )
     assert result["ok"] is False
     assert "personal" in result["error"]
 
