@@ -62,6 +62,31 @@ from handlers import (
 
 # === is_authorized ===
 def is_authorized(update: Update) -> bool:
+    """Return True iff the user is on the allowlist.
+
+    Allowlist matching:
+      * user.id in ALLOWED_USER_IDS (numeric Telegram user_id)
+      * user.username.lower() in ALLOWED_USERNAMES (case-insensitive)
+
+    T56 #S13 (Mavis wave-4, by-design):
+    Username comparison uses .lower() without NFKC Unicode
+    normalization. This is the correct fail-closed trade-off:
+
+      * Telegram usernames per the Bot API spec are
+        [A-Za-z0-9_]{5,32}, so .lower() is sufficient for the
+        spec-compliant case.
+      * For non-spec / legacy usernames that Unicode-normalise
+        differently, the bot REJECTS the user (fail-closed)
+        rather than granting access. The wrong direction for
+        a security check is to "fix" a non-match by adding
+        unicodedata.normalize() — that would let an attacker
+        bypass the allowlist with a username that normalises
+        to an allowed value.
+
+    Do NOT "improve" this with unicodedata.normalize without
+    a security review. The lack of normalization is the
+    defence, not a bug.
+    """
     if LOCKDOWN:
         return False
     user = update.effective_user
