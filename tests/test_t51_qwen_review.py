@@ -46,7 +46,7 @@ def test_c4_rate_limit_present():
 def test_c4_rate_limit_actually_limits():
     """Calling the rate limit 11 times in a row returns False
     on the 11th call. Then refilling must allow more calls."""
-    sys_path = "/home/git/llama.cpp_telegram/telegram-bot"
+    sys_path = str(pathlib.Path(__file__).parent.parent / "telegram-bot")
     import sys
     sys.path.insert(0, sys_path)
     sys.path.insert(0, sys_path + "/personal_tools")
@@ -91,7 +91,7 @@ def test_c6_command_output_for_error():
     """Errors get the short [bash error] prefix, not the
     COMMAND OUTPUT header (no need to confuse the model
     about an error being data)."""
-    sys_path = "/home/git/llama.cpp_telegram/telegram-bot"
+    sys_path = str(pathlib.Path(__file__).parent.parent / "telegram-bot")
     import sys
     sys.path.insert(0, sys_path)
     sys.path.insert(0, sys_path + "/personal_tools")
@@ -106,7 +106,7 @@ def test_c6_command_output_for_error():
 def test_c6_command_output_for_success():
     """Success results get the [COMMAND OUTPUT - data] header
     so the model knows the text is data, not instructions."""
-    sys_path = "/home/git/llama.cpp_telegram/telegram-bot"
+    sys_path = str(pathlib.Path(__file__).parent.parent / "telegram-bot")
     import sys
     sys.path.insert(0, sys_path)
     sys.path.insert(0, sys_path + "/personal_tools")
@@ -128,7 +128,7 @@ def test_no_network_call_when_rate_limited():
     """The rate limit must short-circuit before any network
     call. Mock the httpx client and confirm it's never
     invoked when the rate limit rejects the call."""
-    sys_path = "/home/git/llama.cpp_telegram/telegram-bot"
+    sys_path = str(pathlib.Path(__file__).parent.parent / "telegram-bot")
     import sys
     sys.path.insert(0, sys_path)
     sys.path.insert(0, sys_path + "/personal_tools")

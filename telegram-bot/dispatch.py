@@ -106,12 +106,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         _shell_enabled = False
     if _shell_enabled:
-        shell_line = (
-            if _is_group_chat(update):
-                line = chr(8226) + ' 🚫 **Shell-команды (bash) недоступны в этом чате** — песочница включается только в личке с ботом (by design, см. docs/BASH-SANDBOX.md).' + chr(10)
-            else:
-                line = chr(8226) + ' 🐚 **Запускать shell-команды в изолированной песочнице** (bash_command — личный режим, доступен ТОЛЬКО здесь, в личке с ботом)' + chr(10)
-        )
+        if _is_group_chat(update):
+            # T52 #M4: group chats get a clear "unavailable" line
+            # instead of the misleading "only for you" copy. The
+            # real per-chat guard is in call_bash_command (T52 #H1);
+            # this is just honest user-facing copy.
+            shell_line = (
+                chr(8226) + ' 🚫 **Shell-команды (bash) недоступны '
+                'в этом чате** — песочница включается только в '
+                'личке с ботом (by design, см. docs/BASH-SANDBOX.md).'
+                + chr(10)
+            )
+        else:
+            shell_line = (
+                chr(8226) + ' 🐚 **Запускать shell-команды в '
+                'изолированной песочнице** (bash_command — личный '
+                'режим, доступен ТОЛЬКО здесь, в личке с ботом)'
+                + chr(10)
+            )
     else:
         shell_line = (
             chr(8226) + ' 🚫 **Shell-команды (bash) — недоступны в '

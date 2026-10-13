@@ -40,8 +40,17 @@ services:
     - -c
     - exec python -u bot.py 2>&1 | stdbuf -oL tee -a /var/log/bot/bot.log
     volumes:
-    - ./files:/app/files
-    - ./data:/app/data
+    - ./files:/app/files:ro  # T52 #R2: no bot code writes here; ro closes the host-side writable surface
+    # T52 #R2: replaced host bind-mount with a named Docker
+    # volume. The bind-mount was a host-side writable surface:
+    # a host RCE, an operator typo (rm -rf ./data), or a
+    # misconfigured cron could wipe or tamper the SQLite.
+    # A named volume is owned by Docker and not visible on the
+    # host filesystem; the bot inside the container still has
+    # read/write, so functional behaviour is unchanged.
+    # Migration: docker run --rm -v bot_data:/target -v
+    # /opt/telegram-bot/data:/source alpine cp -a /source/. /target/
+    - bot_data:/app/data
     - /var/log/telegram-bot:/var/log/bot
     - ./personal_tools:/app/personal_tools:ro
     logging:
@@ -49,3 +58,10 @@ services:
       options:
         max-size: 50m
         max-file: '5'
+
+# T52 #R2: named volume for the SQLite conversation store.
+# Persists across container recreates; not visible on the host
+# filesystem (Docker-owned). See comment on the volume mount
+# above for the migration step on first deploy.
+volumes:
+  bot_data:

@@ -218,3 +218,57 @@ and [docs/TOOL-ISOLATION.md](TOOL-ISOLATION.md). The key rules:
 The bot's per-chat guard in `personal_tools/bash_command.py:177-188`
 refuses non-private chats regardless of the deployment profile. This
 is defence in depth on top of the env gate.
+
+### 3.5.1 — T52 #R2: data/ and files/ bind-mount trust model
+
+`files/` (mount `./files -> /app/files`) is **read-only** inside
+the container. No bot code writes to `/app/files`; it is a
+leftover mount from the polling-mode era and is kept only so the
+host directory still exists for the operator to drop notes into.
+
+`data/` (mount `bot_data -> /app/data`) is a **named Docker
+volume**, not a host bind-mount. The named volume is owned by
+Docker, not by the operator's UID on the host, and is not
+visible on the host filesystem. The bot's process inside the
+container has full read/write access (it writes a SQLite row
+on every message).
+
+**Threat model this addresses.** A host-level attacker (host
+RCE, misconfigured cron, operator typo) cannot wipe or tamper
+the SQLite through the host filesystem because the data is not
+on the host filesystem. This is the same defence-in-depth
+pattern as `personal_tools/ :ro` (T52 #H2): remove the
+host-side writable surface.
+
+**Threat model this does NOT address.** RCE inside the bot
+process can still read the SQLite. The defence against that
+is preventing the RCE in the first place: S1 (sender-name
+prompt injection), T42 (tool whitelist in system prompt), T47
+(reframed wording), and the per-chat bash_command gate (T52
+#H1). The long-term PII-at-rest fix is encryption at rest
+(SQLCipher or app-level encryption with key from env), which
+is tracked separately.
+
+**Migration on first deploy with the new compose:**
+
+```bash
+# Stop the bot
+sudo systemctl stop telegram-bot-compose.service
+
+# Seed the named volume from the existing bind-mount
+sudo docker compose -f /opt/telegram-bot/docker-compose.yml up --no-start
+sudo docker compose -f /opt/telegram-bot/docker-compose.yml run --rm \
+    --entrypoint cp \
+    -v bot_data:/target \
+    -v /opt/telegram-bot/data:/source:ro \
+    alpine:latest -a /source/. /target/
+
+# Start the bot
+sudo systemctl start telegram-bot-compose.service
+```
+
+Without the migration, the bot starts with an empty
+`/app/data/conversations.db` and previous chat history is
+gone. The bind-mount contents at `/opt/telegram-bot/data/`
+remain intact on the host (the compose change does not delete
+them) as a safety net.
