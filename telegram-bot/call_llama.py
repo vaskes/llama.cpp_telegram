@@ -196,13 +196,25 @@ def _tag_sender(m):
     tag = (name.strip() if isinstance(name, str) and name.strip() else "user")
     content = m.get("content")
     if isinstance(content, str):
+        # Plain text user message: prepend "From: <name>: " to the
+        # string, strip internal _-prefixed markers, return updated.
         clean = {k: v for k, v in m.items() if not k.startswith("_")}
-    return {**clean, "content": f"From: {tag}: {content}"}
+        return {**clean, "content": f"From: {tag}: {content}"}
     if isinstance(content, list):
+        # Vision case: list of {type: "text"|"image_url", ...} parts.
+        # Prepend the From: tag to the first text part in-place, and
+        # strip _-prefixed internal markers (same as the str branch).
+        # If there is no text part, fall through to the default clean
+        # return (do NOT inject a tag into an image-only message).
+        clean = {k: v for k, v in m.items() if not k.startswith("_")}
         parts = list(content)
         if parts and isinstance(parts[0], dict) and parts[0].get("type") == "text":
             parts[0] = {**parts[0], "text": f"From: {tag}: " + parts[0].get("text", "")}
-            return {**m, "content": parts}
+            return {**clean, "content": parts}
+    # Fallback: not a user message, or content is in an unsupported
+    # shape (None, image-only list, etc). Strip internal markers
+    # and return unchanged. Preserves the pre-Wave-3 contract for
+    # non-user roles and for malformed user rows.
     return {k: v for k, v in m.items() if not k.startswith("_")}
 
 async def fetch_tools_from_llama():
@@ -674,19 +686,27 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                     print(f"[LLAMA] iter=0 payload_bytes={len(raw)} (image bytes masked)", flush=True)
                 except Exception as e:
                     print(f"[LLAMA] iter=0 cannot size payload: {e}", flush=True)
-            # Log what we're about to send — without the image bytes
-            # CRITICAL: build a deep-copy for the log so we don't mutate
-            # req_body (the bug we just hit: this replaced real image_url
-            # with a truncated fake and llama-server 400'd on it).
-            safe_body = copy.deepcopy(req_body)
-            if "messages" in safe_body:
-                for m in safe_body["messages"]:
-                    if isinstance(m.get("content"), list):
-                        for item in m["content"]:
-                            if isinstance(item, dict) and "image_url" in item:
-                                url = item["image_url"].get("url", "")
-                                item["image_url"] = {"url": f"data:image/...,[{len(url)} chars]"}
-            print(f"[LLAMA] iter={iteration} req_body_keys={list(req_body.keys())} tools={'yes ('+str(len(req_tools))+' defs)' if req_tools else 'no'} msgs_count={len(req_body.get('messages',[]))}", flush=True)
+            # W2.1: the previous version built a deepcopy of req_body
+            # here (mutating it to mask image_url bytes for a log line)
+            # but the actual prints read req_body directly, not the
+            # copy. That meant a 256K-token req_body — possibly with
+            # base64 image payloads — was being deep-copied on every
+            # tool-loop iteration, then thrown away. On a 10-iter run
+            # that is 10x the full request size, with no benefit.
+            # Replaced with a small summary that doesn't need a copy.
+            _msgs = req_body.get("messages", [])
+            _imgs = sum(
+                1 for m in _msgs
+                if isinstance(m.get("content"), list)
+                for it in m["content"]
+                if isinstance(it, dict) and "image_url" in it
+            )
+            print(
+                f"[LLAMA] iter={iteration} req_body_keys={list(req_body.keys())} "
+                f"tools={'yes ('+str(len(req_tools))+' defs)' if req_tools else 'no'} "
+                f"msgs_count={len(_msgs)} image_msgs={_imgs}",
+                flush=True,
+            )
             if iteration == 0:
                 # On first iter, also print the first AND last user
                 # message structure (the first to confirm history is

@@ -2,6 +2,7 @@
 File: tests/test_call_llama.py
 """
 import asyncio
+import os
 import pytest
 
 # === _abortable_post ===
@@ -138,3 +139,94 @@ def test_tag_sender_strips_underscore_prefixed_fields():
     assert "_internal_marker" not in out, f"_internal_marker leaked: {out}"
     # The tag should be in content
     assert "Alice" in out["content"] or "From: Alice" in out["content"]
+
+
+def test_tag_sender_list_content_vision():
+    """Wave 3 (Qwen CRITICAL): when content is a list (vision case:
+    a Telegram photo with caption, or an inline image_url), _tag_sender
+    used to raise UnboundLocalError because the return statement was
+    outside the str branch. This test pins the fix: list content
+    must produce a dict with the From: tag prepended to the first
+    text part, never raise.
+    """
+    from call_llama import _tag_sender
+    msg = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "What is this?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+        ],
+        "_sender_name": "Alice",
+    }
+    out = _tag_sender(msg)
+    assert isinstance(out, dict), f"got {type(out).__name__}: {out!r}"
+    assert isinstance(out["content"], list), f"content not list: {out['content']!r}"
+    assert out["content"][0]["text"].startswith("From: Alice: "),         f"first text part not tagged: {out['content'][0]!r}"
+    assert out["content"][1] == msg["content"][1], "image part mutated"
+    assert "_sender_name" not in out, "_sender_name leaked"
+
+
+def test_tag_sender_image_only_list_no_tag():
+    """Wave 3: when content is a list with no text part (image-only),
+    _tag_sender must NOT inject a text part with a From: tag — it
+    just returns the message with internal markers stripped. Adding
+    a text prefix to an image-only message would confuse llama-server.
+    """
+    from call_llama import _tag_sender
+    msg = {
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+        ],
+        "_sender_name": "Bob",
+    }
+    out = _tag_sender(msg)
+    assert isinstance(out["content"], list), f"content shape changed: {out!r}"
+    assert len(out["content"]) == 1, f"text part injected: {out!r}"
+    assert out["content"][0]["type"] == "image_url"
+    assert "_sender_name" not in out
+
+
+def test_env_or_accepts_trailing_dot_zero_on_int():
+    """Wave 3 (W2.2): _env_or must not crash on LLAMABOT_LOOP_BUDGET_SEC=900.0.
+    Operators copy from the example line in the .env comment and sometimes
+    paste a float-typed value into an int-typed slot. The hardened
+    _env_or strips a trailing .0 and warns to stderr but does not raise.
+    """
+    import importlib, sys
+    sys.modules.pop("limits", None)
+    os_environ = dict(os.environ)
+    os.environ["LLAMABOT_LOOP_BUDGET_SEC"] = "900.0"
+    try:
+        import limits
+        assert limits.LOOP_BUDGET_SEC == 900, f"got {limits.LOOP_BUDGET_SEC}"
+        assert isinstance(limits.LOOP_BUDGET_SEC, int)
+    finally:
+        for k, v in os_environ.items():
+            os.environ[k] = v
+        for k in ("LLAMABOT_LOOP_BUDGET_SEC",):
+            os.environ.pop(k, None)
+        sys.modules.pop("limits", None)
+
+
+def test_env_or_falls_back_on_garbage_int():
+    """Wave 3 (W2.2): if the env value is genuinely garbage (e.g.
+    LLAMABOT_LOOP_BUDGET_SEC=banana), the bot must not crash to
+    startup. _env_or should warn and use the profile default.
+    """
+    import importlib, sys
+    sys.modules.pop("limits", None)
+    os_environ = dict(os.environ)
+    os.environ["LLAMABOT_LOOP_BUDGET_SEC"] = "banana"
+    try:
+        import limits
+        # Whatever the active profile is, we should get a sane
+        # positive int back, not raise.
+        assert isinstance(limits.LOOP_BUDGET_SEC, int)
+        assert limits.LOOP_BUDGET_SEC > 0
+    finally:
+        for k, v in os_environ.items():
+            os.environ[k] = v
+        for k in ("LLAMABOT_LOOP_BUDGET_SEC",):
+            os.environ.pop(k, None)
+        sys.modules.pop("limits", None)

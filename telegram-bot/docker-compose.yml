@@ -3,6 +3,19 @@ services:
     build: .
     container_name: telegram-bot
     restart: unless-stopped
+    # W3.1: `init: true` makes Docker use tini as PID 1. tini's
+    # job is to forward signals to children and reap zombies.
+    # Without it, our `command: sh -c "python ... | tee ..."` made
+    # `sh` the PID 1, and `sh` does not forward SIGTERM to the
+    # python process in the pipeline. `docker stop` (which sends
+    # SIGTERM, waits 10s, then SIGKILL) was therefore killing
+    # python without giving it a chance to flush, close the SQLite
+    # db, or run any in-flight LLM abort path. The SHUTDOWN_EVENT
+    # check in call_llama (which aborts a long reasoning run
+    # cleanly on user /stop) was effectively unreachable from
+    # `docker stop`. With tini, SIGTERM hits the python process
+    # and the abort path works as designed.
+    init: true
     networks:
       lan_macvlan:
         ipv4_address: 192.168.10.5
@@ -26,14 +39,17 @@ services:
     # container's json-file log is left orphaned in
     # /var/lib/docker/containers/<old_id>/ and `docker logs
     # telegram-bot` (which addresses by container_name -> the
-    # current ID) silently hides it. With the bind-mount to
+    # current ID) silently hides it. With a bind-mount to
     # /var/log/bot on the host, every recreate appends to the same
     # file on the host; the operator can `tail -F
     # /var/log/telegram-bot/bot.log` and never lose a line to a
     # restart.
     #
-    # The 2026-10-13 4K Newton's-cradle debug session lost iter>=1
-    # logs because of this exact gap.
+    # On the host, /var/log/telegram-bot must be owned by uid 1000
+    # (matching the `bot` user in the Dockerfile). A named volume
+    # would let Docker handle the ownership, but bind-mount keeps
+    # the log file on the host filesystem where it can be tailed
+    # from outside the container and rotated by the host logrotate.
     command:
       - sh
       - -c

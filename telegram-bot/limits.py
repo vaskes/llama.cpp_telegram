@@ -202,17 +202,45 @@ _PROFILE_DEFAULTS = (
 
 
 def _env_or(env_name, profile_value):
-    """Resolve a limit: env var (full name) wins, else profile default."""
+    """Resolve a limit: env var (full name) wins, else profile default.
+
+    Type coercion preserves the type of the profile default. We
+    accept the source string as written (no float() of an int
+    field) but tolerate a stray ".0" on what should be an int
+    — operators copy from the example line in the comment and
+    occasionally paste "900.0" into an int field. Reject other
+    garbage (ValueError from the type constructor) by falling
+    back to the profile default with a stderr warning, so a
+    typo in .env doesn't take the whole bot down.
+    """
     raw = os.environ.get(env_name)
     if raw is None:
         return profile_value
-    # Preserve the type of the profile default.
     if isinstance(profile_value, bool):
         return raw.lower() in ("1", "true", "yes", "on")
     if isinstance(profile_value, int):
-        return int(raw)
+        # Strip an optional trailing ".0" so "900.0" works.
+        if raw.endswith(".0"):
+            raw = raw[:-2]
+        try:
+            return int(raw)
+        except ValueError:
+            print(
+                f"[limits] WARNING: {env_name}={raw!r} is not a valid int; "
+                f"using profile default {profile_value!r}",
+                file=__import__("sys").stderr,
+            )
+            return profile_value
     if isinstance(profile_value, float):
-        return float(raw)
+        try:
+            return float(raw)
+        except ValueError:
+            print(
+                f"[limits] WARNING: {env_name}={raw!r} is not a valid float; "
+                f"using profile default {profile_value!r}",
+                file=__import__("sys").stderr,
+            )
+            return profile_value
     return raw
 
 
