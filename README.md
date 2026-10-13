@@ -172,6 +172,7 @@ sudo systemctl start telegram-bot-compose
 - **[docs/SECURITY.md](docs/SECURITY.md)** — whitelist (private mode), group-mode security, env vars, what NOT to commit
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common issues, including group-mode gotchas
 - **[CHANGELOG.md](CHANGELOG.md)** — release notes for humans
+- **[docs/ROADMAP.md](docs/ROADMAP.md)** — multi-sprint plan (current cycle: cleanup + limits + shell tools + multi-LLM)
 
 ## Requirements
 
