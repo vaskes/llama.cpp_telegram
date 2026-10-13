@@ -834,20 +834,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from state import _get_user_semaphore as _user_semaphore
     from state import _check_burst_split, _record_user_message, _user_recent_msg
     print(f"[handle_text] ENTRY t={time.monotonic():.3f} user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}", flush=True)
-    # T34 burst detection (race fix 2026-10-13). Record the
+    # T34 burst detection (race fix v2, 2026-10-13). Record the
     # current message in _user_recent_msg IMMEDIATELY on entry,
-    # with abort_event=None (we don't have one yet). This way
-    # a follow-up message arriving 60 ms later sees this record
-    # in its burst check. Without this, the follow-up hits an
-    # empty registry and the burst is missed.
-    # Real abort_event is set later via _record_user_message
-    # after the LLM call has been started; that call overwrites
-    # this entry with the same timestamp but real event.
+    # creating the abort_event at the same time. The event is
+    # the SAME one the eventual LLM call receives — if a
+    # follow-up bursts in 60 ms later, its burst check finds
+    # this event, sets it, and the first message's LLM call
+    # (which hasn't even started yet at the time of the burst)
+    # sees is_set() == True and returns None.
+    #
+    # v1 of this fix recorded with abort_event=None. That made
+    # _check_burst_split return None (because the recorded event
+    # was None) so the burst was missed. The event must be
+    # created and registered into _user_recent_msg at the very
+    # entry, not later.
     user_id_check = update.effective_user.id
     chat_id_check = update.effective_chat.id
     text_bytes = len((update.message.text or '').encode('utf-8'))
-    _record_user_message(chat_id_check, user_id_check, text_bytes, None)
-    print(f"[handle_text] EARLY-RECORD t={time.monotonic():.3f} (chat={chat_id_check}, user={user_id_check}, size={text_bytes})", flush=True)
+    early_event = asyncio.Event()
+    _record_user_message(chat_id_check, user_id_check, text_bytes, early_event)
+    print(f"[handle_text] EARLY-RECORD t={time.monotonic():.3f} (chat={chat_id_check}, user={user_id_check}, size={text_bytes}, event_id={id(early_event)})", flush=True)
     # Telegram-split detection (T34, 2026-10-13). Pattern-based:
     # if the SAME (chat, user) sent a >3000-byte message within
     # the last BURST_WINDOW_SEC (2s), the current message is
@@ -856,7 +862,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # previous one, then reply with a clear error.
     prev_event = _check_burst_split(chat_id_check, user_id_check, text_bytes)
     if prev_event is not None:
-        print(f"[handle_text] BURST-SPLIT: (chat={chat_id_check}, user={user_id_check}) current_size={text_bytes}; aborting previous in-flight LLM call and dropping current message", flush=True)
+        print(f"[handle_text] BURST-SPLIT: (chat={chat_id_check}, user={user_id_check}) current_size={text_bytes}; setting prev_event (id={id(prev_event)}) to abort the in-flight LLM call and dropping current message", flush=True)
         prev_event.set()
         # Clear the registry entry so a third consecutive message
         # within the window is not also treated as a split
@@ -896,16 +902,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
     # click during the LLM call can roll the message back.
     thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-    abort_event = asyncio.Event()
+    # T34 race fix v2: REUSE the early_event created at ENTRY
+    # time, so a follow-up that arrived between EARLY-RECORD
+    # and this point (and called set() on early_event) is
+    # observable here. If we created a fresh event now, the
+    # burst-set event would be orphaned and the LLM call
+    # would proceed to a half-answer.
+    abort_event = early_event
     _register_abort_event(chat_id, thinking.message_id, abort_event)
     await _persist_message(chat_id, thread_id, 'user', user_message, sender_name=sender_name)
-    # T34: register this message in the per-(chat, user) burst
-    # registry so a follow-up within 2 s can abort this in-flight
-    # LLM call. Stamped AFTER the abort_event is registered so
-    # _check_burst_split() returns a valid event.
+    # Refresh the registry entry so the abort_event and the
+    # recorded size match (the EARLY-RECORD used text_bytes
+    # of the raw message; LATE-RECORD uses the same value but
+    # keeps the registry authoritative in case of a future
+    # refactor).
     msg_bytes = len(user_message.encode('utf-8'))
     _record_user_message(chat_id, user_id, msg_bytes, abort_event)
-    print(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}) [overwrites EARLY-RECORD with real abort_event]", flush=True)
+    print(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]", flush=True)
     persisted = True
     history = await _load_history(chat_id, thread_id)
     print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
