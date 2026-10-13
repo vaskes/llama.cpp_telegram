@@ -1,25 +1,25 @@
 # llama.cpp_telegram
 
-> **Stable release: `v0.10.2-stable` (Oct 2026).** First release
-> that has been manually tested end-to-end by humans on both
-> private and group-with-Topics modes. Code freeze declared at
-> commit `7efab9b`.
+> **Current: `v0.11.0-pre` (unreleased).** Adds the
+> `bash_command` killer feature (sandboxed shell, personal
+> mode only). Code complete; code review in progress; human
+> pilot testing PENDING. Do not deploy to a public chat.
+>
+> Last stable: `v0.10.2-stable` (Oct 2026, commit `7efab9b`).
+> First release that was manually tested end-to-end by humans
+> on both private and group-with-Topics modes.
 >
 > ⚠️ **Do NOT `git clone <url>` without `--branch`.** The default
 > branch is bleeding-edge and may include unreleased refactors
-> that have not been human-tested. Pin to a stable tag:
+> that have not been human-tested. Pin to a tag:
 > ```bash
 > git clone --branch v0.10.2-stable https://github.com/vaskes/llama.cpp_telegram.git
 > ```
 > Bleeding edge is for contributors only. See [Releases](../../releases)
 > for the full stable-tag history.
 >
-> **Known minor issue in `v0.10.2-stable`:** `/subs` in group mode
-> shows only bot-created topics; UI-created topics are not
-> enumerated (Telegram Bot API limitation, not a SQLite bug).
-> Fix planned in the next release. See `CHANGELOG.md` for details.
 
-**What `v0.10.2-stable` is:** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
+**What `v0.10.2-stable` had:** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
 any OpenAI-compatible endpoint, Whisper on any faster-whisper
 server, donsetch MCP for web tools. Private + group-with-Topics
 modes. GROUP_CONTEXT system prompt locked. react_to_message tool
@@ -28,6 +28,9 @@ available in non-rating mode. Per-handler Stop button race fixed.
 Image abort rollback (v0.9.1). 19/19 selftest groups + 5/5 pytest
 in CI. Plus: `scripts/verify.py` for production health checks,
 Qwen wave-3 fixes, env-driven `TELEGRAM_API`.
+**What `v0.11.0-pre` adds:** the `bash_command` killer feature
+(sandboxed shell, gated to `LLAMABOT_DEPLOYMENT_PROFILE=personal`).
+See [docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md).
 
 A Telegram bot wrapper around the [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-compatible API
 plus a local Whisper server for voice transcription.
@@ -36,10 +39,6 @@ plus a local Whisper server for voice transcription.
 and webhook (sub-second latency, requires a public endpoint with TLS).
 See [docs/WEBHOOK.md](docs/WEBHOOK.md) for when to use which and how
 to set up webhook mode.
-
-## What is this
-A Telegram bot wrapper around the [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-compatible API
-plus a local Whisper server for voice transcription.
 
 ## 🐚 Killer feature: `bash_command` (personal mode only)
 
@@ -74,13 +73,15 @@ plus a local Whisper server for voice transcription.
 > [docs/BASH-SANDBOX.md#repository-dependency](docs/BASH-SANDBOX.md#repository-dependency).
 
 ## What is this
-oy Telegram bot that talks to your local LLM. Bring your
+
+A friendly Telegram bot that talks to your local LLM. Bring your
 own model server; the bot works with any OpenAI-compatible endpoint.
 
 | Service | What it does | How it's deployed |
 |---|---|---|
 | `telegram-bot` | Polls (or receives webhooks from) Telegram, talks to the LLM, executes tool calls | Docker container |
 | `whisper-api` | Transcribes voice messages via faster-whisper, returns the transcript to the bot | Docker container (optional) |
+| `bash-sandbox` (personal only) | Runs `bash_command` tool calls in a hardened side-car container with tmux session persistence | Separate repo + Docker ([vaskes/OpenWebUI-bash-sandbox](https://github.com/vaskes/OpenWebUI-bash-sandbox), git submodule) |
 
 The bot can:
 
@@ -145,6 +146,10 @@ deployment choice; the diagram below shows the conceptual wiring.
                           │   │ ────────────────────▶│  │Don- │   │
                           │   │  (web tools)         │  │setch│   │
                           │   │                      │  └─────┘   │
+                          │   │  POST /bash          │  ┌─────┐   │
+                          │   │ ────────────────────▶│  │bash │   │
+                          │   │  (PERSONAL only,     │  │sandbox│ │
+                          │   │   bearer auth)       │  └─────┘   │
                           │   └──────────────────────┘            │
                           │                                       │
                           └───────────────────────────────────────┘
@@ -166,6 +171,11 @@ deployment choice; the diagram below shows the conceptual wiring.
 - **bot → donsetch-http** — `POST /mcp` (JSON-RPC over HTTP, MCP
   protocol). Exposes `web_search`, `web_fetch`, `web_crawl`,
   `web_screenshot`. The bot executes the tool calls the LLM emits.
+- **bot → bash-sandbox** (personal mode only) — `POST /bash` with
+  `Authorization: Bearer <token>`. The bot forwards the model's
+  `bash_command` tool calls; the sandbox returns stdout / stderr /
+  exit_code. See [docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md) for
+  the full architecture, threat model, and operator runbook.
 
 **Network layout:** the bot does not require any particular
 container networking mode. The two reference layouts are
@@ -209,6 +219,8 @@ sudo systemctl start telegram-bot-compose
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common issues, including group-mode gotchas
 - **[CHANGELOG.md](CHANGELOG.md)** — release notes for humans
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — multi-sprint plan (current cycle: cleanup + limits + shell tools + multi-LLM)
+- **[docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md)** — `bash_command` killer feature: setup, threat model, repository dependency, compatibility matrix, operator runbook (v0.11.0-pre+)
+- **[docs/TOOL-ISOLATION.md](docs/TOOL-ISOLATION.md)** — defence in depth: bot-side tool whitelist against llama-server's native `--agent` / MCP-loaded tools; the security boundary that lets `bash_command` stay safe
 
 ## Requirements
 
@@ -230,9 +242,7 @@ For tool-calling (web search, fetch, crawl, screenshots):
 **[dondai44423/donsetch](https://github.com/dondai44423/donsetch)** —
 Rust MCP server with Playwright headless Chrome; aggregates 6 search engines
 (Bing, DDG, Mojeek, Yahoo, Brave, Google) and bypasses CAPTCHA via real
-browser rendering. The deprecated SearXNG-based stack is in
-[vaskes/llama.cpp_search](https://github.com/vaskes/llama.cpp_search) for
-historical reference only.
+browser rendering.
 
 ## Credits
 
