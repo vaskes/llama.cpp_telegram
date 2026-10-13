@@ -136,17 +136,24 @@ if _DEPLOYMENT_PROFILE not in ("public", "personal"):
 # the *meaning* of a default is obvious in context, not buried
 # in a chain of ternaries.
 _PUBLIC_DEFAULTS = {
-    "MAX_TOKENS_DEFAULT":    2048,    # 8x smaller than personal; protects
-                                       #   the semaphore queue from a single
-                                       #   user's 30K-token generation
-    "MAX_TOKENS_CAPTION":    1024,    # captions are short by design
-    "LOOP_BUDGET_SEC":         120,    # 2 min wall clock per call
-    "LLAMA_HTTP_TIMEOUT_SEC": 150.0,  # > LOOP_BUDGET_SEC, leaves headroom
-    "LLAMA_MODELS_TIMEOUT_SEC": 5.0,
-    "TRANSCRIBE_TIMEOUT_SEC":   60.0,
-    "REASONING_RATIO_HARD_LIMIT": 0.4,  # tighter than personal; Qwen MTP
-                                       #   can burn the budget on thinking
-                                       #   even at moderate prompt sizes
+    # Operator policy 2026-10-13: "выставить максимально возможные
+    # лимиты чтобы бот отрабатывал без падений. их всегда можно
+    # подрезать" — start with the max llama-server can handle, then
+    # trim if abuse shows up in production logs.
+    "MAX_TOKENS_DEFAULT":    32768,   # matches llama-server's effective
+                                       #   ceiling for non-shell prompts
+    "MAX_TOKENS_CAPTION":    16384,   # photos / voice transcripts
+    "LOOP_BUDGET_SEC":         600,   # 10 min wall clock per call
+    "LLAMA_HTTP_TIMEOUT_SEC": 660.0,  # > LOOP_BUDGET_SEC (10% headroom)
+    "LLAMA_MODELS_TIMEOUT_SEC": 10.0,
+    "TRANSCRIBE_TIMEOUT_SEC":  120.0,
+    "REASONING_RATIO_HARD_LIMIT": 0.5, # observed 2026-10-13: Qwen 3.8 MTP
+                                       #   can hit 0.94 reasoning ratio on
+                                       #   a 4K prompt; 0.5 still aborts
+                                       #   "all thinking no answer" cases.
+                                       #   If 4K prompts routinely need
+                                       #   more reasoning headroom, raise
+                                       #   this via LLAMABOT_REASONING_RATIO_LIMIT.
 }
 
 _PERSONAL_DEFAULTS = {

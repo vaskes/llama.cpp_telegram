@@ -45,11 +45,11 @@ def test_limits_module_imports():
 def test_public_profile_defaults():
     try:
         limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'public'})
-        assert limits.MAX_TOKENS_DEFAULT == 2048
-        assert limits.MAX_TOKENS_CAPTION == 1024
-        assert limits.LOOP_BUDGET_SEC == 120
-        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 150.0
-        assert limits.REASONING_RATIO_HARD_LIMIT == 0.4
+        assert limits.MAX_TOKENS_DEFAULT == 32768
+        assert limits.MAX_TOKENS_CAPTION == 16384
+        assert limits.LOOP_BUDGET_SEC == 600
+        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 660.0
+        assert limits.REASONING_RATIO_HARD_LIMIT == 0.5
     finally:
         _restore_env()
 
@@ -69,7 +69,7 @@ def test_personal_profile_defaults():
 def test_default_profile_is_public():
     try:
         limits = _reload_with({})
-        assert limits.MAX_TOKENS_DEFAULT == 2048
+        assert limits.MAX_TOKENS_DEFAULT == 32768
     finally:
         _restore_env()
 
@@ -81,7 +81,7 @@ def test_env_overrides_profile_default():
             'LLAMABOT_MAX_TOKENS': '99999',
         })
         assert limits.MAX_TOKENS_DEFAULT == 99999
-        assert limits.MAX_TOKENS_CAPTION == 1024
+        assert limits.MAX_TOKENS_CAPTION == 16384
     finally:
         _restore_env()
 
@@ -102,15 +102,15 @@ def test_env_overrides_preserve_type():
     try:
         limits = _reload_with({
             'LLAMABOT_DEPLOYMENT_PROFILE': 'public',
-            'LLAMABOT_LLAMA_HTTP_TIMEOUT': '200.5',
-            'LLAMABOT_LOOP_BUDGET_SEC': '120',
+            'LLAMABOT_LLAMA_HTTP_TIMEOUT': '700.5',
+            'LLAMABOT_LOOP_BUDGET_SEC': '600',
             'LLAMABOT_MAX_TOKENS': '4096',
             'LLAMABOT_REASONING_RATIO_LIMIT': '0.33',
         })
         assert isinstance(limits.MAX_TOKENS_DEFAULT, int)
         assert limits.MAX_TOKENS_DEFAULT == 4096
         assert isinstance(limits.LLAMA_HTTP_TIMEOUT_SEC, float)
-        assert abs(limits.LLAMA_HTTP_TIMEOUT_SEC - 200.5) < 0.001
+        assert abs(limits.LLAMA_HTTP_TIMEOUT_SEC - 700.5) < 0.001
         assert isinstance(limits.REASONING_RATIO_HARD_LIMIT, float)
     finally:
         _restore_env()
@@ -201,7 +201,7 @@ def test_call_llama_default_tracks_active_profile():
                 del sys.modules[mod_name]
         from call_llama import call_llama
         sig = inspect.signature(call_llama)
-        assert sig.parameters['max_tokens'].default == 2048
+        assert sig.parameters['max_tokens'].default == 32768
     finally:
         for mod_name in list(sys.modules):
             if mod_name in ('call_llama', 'limits'):
