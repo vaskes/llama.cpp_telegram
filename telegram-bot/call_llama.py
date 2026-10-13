@@ -18,6 +18,75 @@ from typing import Any
 import httpx
 
 from tool_isolation import validate_tool_calls, UnknownToolNameError
+# === T39: bash_command availability helper ===
+# Lazy import + read of the personal_tools.bash_command module so
+# we don't pay the cost (or take the token-check trip) on cold
+# import if the bot never actually goes into a tool loop.
+def _bash_command_tool_enabled() -> bool:
+    """True iff the bash_command tool should be advertised to
+    llama-server in this run. Gated by:
+      - LLAMABOT_DEPLOYMENT_PROFILE=personal
+      - AGENT_STACK_TOKEN is set (non-empty)
+    See telegram-bot/personal_tools/bash_command.py for the
+    single source of truth on this check; this wrapper is just
+    a try/except so a missing module (very old deploys) doesn't
+    take the whole bot down.
+    """
+    try:
+        from personal_tools import bash_command as _bc
+    except Exception:
+        return False
+    return _bc.is_enabled_for_active_profile()
+
+
+# === T39: bash_command tool def (mirrors personal_tools.bash_command.BASH_COMMAND_TOOL_DEF) ===
+# Defined here as a local constant so the import of personal_tools is
+# deferred to call time, not module-load time. personal_tools reads
+# env at import time and we want tool-calling code paths to pay that
+# cost only when actually used.
+_BASH_COMMAND_TOOL_DEF: dict = {
+    "type": "function",
+    "function": {
+        "name": "bash_command",
+        "description": (
+            "Run a shell command in a persistent, sandboxed Linux "
+            "environment. State (cwd, env vars, history, running "
+            "processes) is preserved across calls in the same chat. "
+            "The sandbox is read-only outside its workspace, runs as "
+            "non-root with no capabilities, has a 60s per-command "
+            "timeout, a 2GB memory cap, a 256-PID cap, and a 60 rpm "
+            "rate limit. Use it for: running scripts, inspecting "
+            "files in /workspace, git operations, building projects, "
+            "fetching public web pages. Do NOT use it for: anything "
+            "that would need sudo, anything that needs to write "
+            "outside /workspace, or anything that needs to run for "
+            "more than a minute."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": (
+                        "The shell command to run. Standard bash. "
+                        "Multi-line via embedded \n is fine."
+                    ),
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Stable id for a persistent shell "
+                        "session (cwd, env, history survive across "
+                        "calls). If omitted, a per-chat session id "
+                        "is used automatically."
+                    ),
+                },
+            },
+            "required": ["command"],
+        },
+    },
+}
+
 import limits
 
 from config import (
@@ -481,6 +550,12 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
             }
         },
     ]
+    # T39: append the bash_command tool def ONLY when personal profile
+    # is active AND the sandbox side-car token is configured. In any
+    # other case (public, or personal without token) the LLM never
+    # sees the tool at all, so it cannot reach for it.
+    if _bash_command_tool_enabled():
+        bot_side_tool_defs.append(_BASH_COMMAND_TOOL_DEF)
     all_tools = tools + bot_side_tool_defs
 
     # === Group context (always-injected system message) ===
@@ -1180,12 +1255,43 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                     chat_id=chat_id,
                     default_message_id=current_message_id,
                 )
+            elif fn_name == 'bash_command':
+                # T39: forward to the vaskes/OpenWebUI-bash-sandbox
+                # side-car. The tool_isolation guard earlier in this
+                # iter (see T38.5) has already checked that
+                # 'bash_command' is in KNOWN_TOOL_NAMES, and the
+                # bot_side_tool_defs append above has already
+                # confirmed personal+token. Defence in depth: also
+                # check here in case the call path was reached via a
+                # tools= param from the caller.
+                try:
+                    from personal_tools import bash_command as _bc
+                except Exception as e:
+                    result = f'[bash_command unavailable: {e!r}]'
+                else:
+                    if not _bc.is_enabled_for_active_profile():
+                        result = (
+                            '[bash_command unavailable: requires '
+                            'LLAMABOT_DEPLOYMENT_PROFILE=personal '
+                            'and AGENT_STACK_TOKEN. This chat is '
+                            'not in personal mode.]'
+                        )
+                    else:
+                        sid = args.get('session_id') or f'chat-{chat_id}'
+                        cmd = args.get('command', '')
+                        if not cmd:
+                            result = '[bash_command: empty command]'
+                        else:
+                            r = await _bc.call_bash_command(
+                                cmd, session_id=sid
+                            )
+                            result = _bc.tool_result_to_text(r)
             elif fn_name in CUSTOM_TOOLS:
                 result = await CUSTOM_TOOLS[fn_name](args)
             elif fn_name in DONSETCH_TOOLS:
                 result = await DONSETCH_TOOLS[fn_name](args)
             else:
-                result = f'[tool {fn_name} unavailable in this mode. Bot supports: donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot, react_to_message.]'
+                result = f'[tool {fn_name} unavailable in this mode. Bot supports: donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot, react_to_message, bash_command (personal mode only).]'
                 saw_unavailable_tool = True
             r_str = str(result)
             is_empty = (

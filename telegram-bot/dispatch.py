@@ -94,16 +94,40 @@ async def reject_if_unauthorized(update: Update, context: ContextTypes.DEFAULT_T
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update, context):
         return
-    await _reply(update, 
-        '🤖 **LlamaBot v2 запущен!**\n\n'
-        'Я могу:\n'
-        '• Отвечать на вопросы (с tool-calling)\n'
-        '• Искать в интернете 🌐\n'
-        ''
-        '• Анализировать изображения (отправьте фото)\n'
-        '• Расшифровывать голосовые 🎤\n'
-        '• Читать документы (TXT, PDF)\n\n'
-        'Команды: /reset, /stats'
+    # T39: show the shell tools bullet ONLY in personal profile.
+    # The public profile MUST NEVER see the "available" copy - it
+    # is the single bit of user-facing text that signals the bot
+    # can execute shell commands. The actual enforcement is in
+    # personal_tools.bash_command (profile gate) and tool_isolation
+    # (whitelist); this line is just user-facing copy.
+    try:
+        from personal_tools import bash_command as _bc
+        _shell_enabled = _bc.is_enabled_for_active_profile()
+    except Exception:
+        _shell_enabled = False
+    if _shell_enabled:
+        shell_line = (
+            chr(8226) + ' 🐚 **Запускать shell-команды в изолированной '
+            'песочнице** (bash_command — личный режим, **только для '
+            'тебя, НИКОГДА не для публичных чатов**)' + chr(10)
+        )
+    else:
+        shell_line = (
+            chr(8226) + ' 🚫 **Shell-команды (bash) — недоступны в '
+            'этом режиме**. Песочница включается только в personal '
+            '(LLAMABOT_DEPLOYMENT_PROFILE=personal) и недоступна в '
+            'публичных чатах. Это by design.' + chr(10)
+        )
+    await _reply(update,
+        chr(129302) + ' **LlamaBot v2 запущен!**' + chr(10) + chr(10) +
+        'Я могу:' + chr(10) +
+        chr(8226) + ' Отвечать на вопросы (с tool-calling)' + chr(10) +
+        chr(8226) + ' Искать в интернете ' + chr(127760) + chr(10) +
+        chr(8226) + ' Анализировать изображения (отправьте фото)' + chr(10) +
+        chr(8226) + ' Расшифровывать голосовые ' + chr(127908) + chr(10) +
+        chr(8226) + ' Читать документы (TXT, PDF)' + chr(10) +
+        shell_line + chr(10) +
+        'Команды: /reset, /stats, /help'
     )
 
 # === reset ===
