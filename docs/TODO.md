@@ -8,14 +8,11 @@
 
 ## Status snapshot (2026-10-11 14:00)
 
-**Production:** v0.9.1 deployed in webhook mode on
-gw1.kuduza.com (Amsterdam, 85.136.112.144) via tunnel to
-the bot container on 192.168.10.5 (lan_macvlan). All four
-services (telegram-bot, whisper-api, llama-server,
-donsetch-http) reachable; bot is the only one on macvlan,
-the rest are on the parent host. whisper-api moved to
-macvlan 192.168.10.3 (was on parent host .7) so the bot
-can reach it. setMyCommands registered 9 commands.
+**Production:** v0.9.1 deployed in webhook mode.
+Hosting and IPs are operator-private; see internal runbook
+for current endpoints. The bot is the only service on
+macvlan; the rest are on the parent host. setMyCommands
+registered 9 commands.
 
 **In-tree selftest:** 22/22 test groups PASS in Docker
 (no new regressions; 2 pre-existing rating-parser
@@ -149,9 +146,9 @@ Total: ~40 min of operator time.
 User pushed for migration: T25 was in the backlog
 for 3 review waves as "defer". On 2026-10-11 the
 operator said "let's do it" and provided the
-infrastructure (wildcard LE cert on *.kuduza.com,
-MikroTik DNAT capability, foreign-egress PBR
-control, secondary IP support on enp10s0).
+infrastructure (wildcard LE cert, router-level DNAT
+capability, foreign-egress PBR control, secondary
+IP support on the LAN interface).
 
 Final architecture:
 - Bot: `network_mode: host`, aiohttp on

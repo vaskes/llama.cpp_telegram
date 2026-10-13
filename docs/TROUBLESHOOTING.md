@@ -150,9 +150,9 @@ Whisper / donsetch on the host or on other macvlan IPs.
     lan_macvlan:
       ipv4_address: 192.168.10.5
   environment:
-    LLAMA_URL=http://192.168.10.6:8080/v1
-    WHISPER_URL=http://192.168.10.3:8000
-    DONSETCH_URL=http://192.168.10.6:8765/mcp
+    LLAMA_URL=http://<llama-host>:8080/v1
+    WHISPER_URL=http://<whisper-host>:8000
+    DONSETCH_URL=http://<donsetch-host>:8765/mcp
 
 **macvlan gotcha: a macvlan sub-interface cannot ARP its
 parent host.** If llama-server or donsetch-http is bound

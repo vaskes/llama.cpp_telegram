@@ -118,8 +118,12 @@ If the llama-server does not respond — that is a **separate task**, not relate
 
 ## Known tech debt
 
-- `bot.py` has hardcoded `192.168.10.7:8080` references in comments, but
-  in code it uses env vars `LLAMA_URL` and `WHISPER_URL`. Intentional.
+- `bot.py` had hardcoded LAN-IP-and-port references in comments
+  (e.g. `<lan-ip>:<llama-port>`). These were scrubbed in 2026-10-13
+  because real LAN IPs leaked the internal topology of the
+  deployment into a public GitHub repo. The runtime code
+  already uses env vars `LLAMA_URL` and `WHISPER_URL`; only the
+  comments needed scrubbing. Intentional.
 - Donsetch-http aggregates Bing, DDG, Mojeek, Yahoo, Brave, Google via
   Playwright headless Chrome, so CAPTCHA-blocked engines are bypassed.
   `get_weather` via wttr.in always works as a fallback for weather
