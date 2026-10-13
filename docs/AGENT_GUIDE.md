@@ -126,8 +126,6 @@ If the llama-server does not respond — that is a **separate task**, not relate
   comments needed scrubbing. Intentional.
 - Donsetch-http aggregates Bing, DDG, Mojeek, Yahoo, Brave, Google via
   Playwright headless Chrome, so CAPTCHA-blocked engines are bypassed.
-  `get_weather` via wttr.in always works as a fallback for weather
-  queries even when donsetch is down.
 - Docker `network_mode: host` means the bot has no IP of its own —
   `0.0.0.0` bindings in the container occupy host ports. If something
   starts conflicting, switch to a bridge network + explicit ports.

@@ -39,33 +39,6 @@ async def _discover_default_model(base_url: str, api_key: str) -> str:
         return models[0]["id"]
 
 
-# === Custom tools ===
-async def get_weather(args):
-    """Custom tool: wttr.in для погоды. Always works, no CAPTCHA."""
-    location = args.get('location', '') or args.get('city', '')
-    if not location:
-        return '[weather error: empty location]'
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(f'https://wttr.in/{urllib.parse.quote(location)}?format=j1&lang=ru')
-            r.raise_for_status()
-            data = r.json()
-        cur = data.get('current_condition', [{}])[0]
-        lang_ru = cur.get('lang_ru')
-        if isinstance(lang_ru, list) and lang_ru:
-            desc = lang_ru[0].get('value', '')
-        else:
-            wd = cur.get('weatherDesc', [{}])
-            desc = wd[0].get('value', '') if isinstance(wd, list) and wd else ''
-        temp = cur.get('temp_C', '?')
-        feels = cur.get('FeelsLikeC', '?')
-        humidity = cur.get('humidity', '?')
-        wind = cur.get('windspeedKmph', '?')
-        return f'Weather in {location}: {desc}, {temp}C (feels {feels}C), humidity {humidity}%, wind {wind} km/h'
-    except Exception as e:
-        return f'[wttr error: {e}]'
-
-
 async def _donsetch_init():
     """Initialize MCP session with donsetch-http. Returns session id."""
     global _donsetch_session_id
@@ -395,28 +368,14 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     # bot-side tool implementations" comment. Keeping the legacy variable
     # name as alias so other call sites still work.
     custom_weather_tool = None  # placeholder, see bot_side_tool_defs
-    # Add our bot-side tool implementations (get_weather, donsetch_web_*).
-    # get_weather is a local call; donsetch_web_* talk directly to
+    # Add our bot-side tool implementations (donsetch_web_*).
+    # donsetch_web_* talk directly to
     # donsetch-http at 127.0.0.1:8765/mcp. We do NOT rely on llama.cpp's
     # own MCP integration — that path has been broken (playwright works
     # but donsetch doesn't load, see llama.cpp #13845 or similar). Adding
     # the tools here means the model can call them via tool_calls and we
     # dispatch in this Python process.
     bot_side_tool_defs = [
-        {
-            'type': 'function',
-            'function': {
-                'name': 'get_weather',
-                'description': 'Get current weather in a given city. Uses wttr.in, always works, no CAPTCHA. Use this for any questions about current weather, temperature, precipitation, wind.',
-                'parameters': {
-                    'type': 'object',
-                    'properties': {
-                        'location': {'type': 'string', 'description': 'City name (e.g. "Yalta", "Moscow")'}
-                    },
-                    'required': ['location']
-                }
-            }
-        },
         {
             'type': 'function',
             'function': {
@@ -570,7 +529,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             'content': (
                 GROUP_CONTEXT
                 + '\n\n## Tool use (tools mode)\n'
-                + 'You have access to: get_weather (wttr.in, always works), '
+                + 'You have access to: '
                 + 'donsetch_web_search / donsetch_web_fetch / '
                 + 'donsetch_web_crawl / donsetch_web_screenshot, '
                 + 'and react_to_message (set a Telegram reaction). '
@@ -1122,7 +1081,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
             elif fn_name in DONSETCH_TOOLS:
                 result = await DONSETCH_TOOLS[fn_name](args)
             else:
-                result = f'[tool {fn_name} unavailable in this mode. Bot supports: get_weather, donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot, react_to_message.]'
+                result = f'[tool {fn_name} unavailable in this mode. Bot supports: donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot, react_to_message.]'
                 saw_unavailable_tool = True
             r_str = str(result)
             is_empty = (
@@ -1244,7 +1203,6 @@ async def transcribe_voice(voice_bytes):
 
 
 CUSTOM_TOOLS = {
-    'get_weather': get_weather,
 }
 # === Backward-compat aliases (used by tests and old call sites) ===
 async def call_llama_compat(*args, **kwargs):

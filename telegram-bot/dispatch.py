@@ -99,7 +99,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'Я могу:\n'
         '• Отвечать на вопросы (с tool-calling)\n'
         '• Искать в интернете 🌐\n'
-        '• Узнавать погоду (wttr.in) ☀️\n'
+        ''
         '• Анализировать изображения (отправьте фото)\n'
         '• Расшифровывать голосовые 🎤\n'
         '• Читать документы (TXT, PDF)\n\n'

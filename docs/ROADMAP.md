@@ -22,8 +22,7 @@ any order, batched into a single PR, or split per-item.
 
 - **T28:** Fix 2 pre-existing rating-parser subtest failures
   ("plain answer", "[[TYPE:unknown]]"). ~30 min.
-- **T29:** Remove `get_weather` (wttr.in) tool. Redundant
-  with `web_search`. ~20 min.
+- **T29:** ~~Remove `get_weather` (wttr.in) tool~~ **DONE 2026-10-13.**
 - **T30:** Remove sender-name tagging. Bloats context,
   rarely useful in practice. ~45 min.
 - **T31:** Archive `REVIEW-MINIMAX.md` and `-v2.md`. ~15 min.

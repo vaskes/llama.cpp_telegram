@@ -26,7 +26,6 @@ The cycle:
 4. If finish_reason == "tool_calls" AND req_tools:
      a. For each tool_call:
         - parse name + arguments
-        - execute (HTTP to wttr.in / donsetch-http MCP)
         - append to messages: {role: "tool", tool_call_id, content}
      b. goto 3
 5. If finish_reason == "tool_calls" AND NOT req_tools:
@@ -38,7 +37,6 @@ The cycle:
 
 | Tool | Implementation | Available when |
 |---|---|---|
-| `get_weather` | HTTP GET `https://wttr.in/{location}?format=j1` | Always (custom, added in code) |
 | `web_search` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up |
 | `web_fetch` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up |
 | `web_crawl` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up |

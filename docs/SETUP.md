@@ -109,7 +109,7 @@ Open Telegram, find your bot, send `/start`.
 You should get the welcome text.
 
 Then:
-- "weather in Yalta" — bot will call `get_weather` and return the real temperature
+- "weather in Yalta" — bot will use donsetch_web_fetch to query wttr.in (or similar)
 - "what's new in AI" — if donsetch-http is up, bot will call `web_search`
 - voice message — bot will transcribe via Whisper and reply to the text
 

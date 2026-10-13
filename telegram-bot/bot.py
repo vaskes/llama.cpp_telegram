@@ -86,7 +86,7 @@ from rating import (
 # === F3 stage 3: re-export call_llama module ===
 import call_llama
 from call_llama import (
-    CUSTOM_TOOLS, DONSETCH_TOOLS, call_llama, donsetch_call, get_weather,
+    CUSTOM_TOOLS, DONSETCH_TOOLS, call_llama, donsetch_call,
     transcribe_voice, _donsetch_init, _donsetch_session_id, _tag_sender,
 )
 
