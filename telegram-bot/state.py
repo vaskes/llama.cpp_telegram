@@ -215,9 +215,18 @@ def _record_user_message(chat_id: int, user_id: int, size_bytes: int, abort_even
     now = time.monotonic()
     existing = _user_recent_msg.get(key)
     if existing is not None and size_bytes < _BURST_MIN_FIRST_BYTES and existing[1] >= _BURST_MIN_FIRST_BYTES:
-        # Keep the original size and timestamp; refresh the event.
-        prev_ts, prev_size, _ = existing
-        _user_recent_msg[key] = (prev_ts, prev_size, abort_event)
+        # Keep the original size, timestamp, AND event. Do NOT
+        # refresh the event to the follow-up's early_event:
+        # the abort_event of the FIRST message is what we want
+        # set() to fire on so the first LLM call aborts. If we
+        # refreshed to the follow-up's event, set() would dangle
+        # (the follow-up's LLM call has not started yet, so its
+        # event is not registered in _abort_events; the first
+        # message's LLM call has a DIFFERENT event, untouched).
+        # The follow-up's own LLM call (if it ever starts) is
+        # gated by the burst check itself, not by anything
+        # stored in _user_recent_msg.
+        pass
     else:
         _user_recent_msg[key] = (now, size_bytes, abort_event)
     # Lazy eviction: keep the dict small by dropping entries

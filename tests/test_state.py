@@ -337,8 +337,10 @@ def test_record_does_not_clobber_large_with_small():
     assert size2 == 3910, f"expected 3910 (large preserved), got {size2}"
     # Timestamp must also be preserved
     assert ts2 == ts1, f"expected ts1={ts1}, got ts2={ts2}"
-    # Event must be refreshed to ev2
-    assert ev_after is ev2
+    # Event must NOT be refreshed to ev2 — it must stay as ev1
+    # so that a future burst on the first message aborts the
+    # right LLM call.
+    assert ev_after is ev1, f"expected ev1 (preserved), got {ev_after}"
 
 
 def test_record_overwrites_large_with_large():
