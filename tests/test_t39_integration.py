@@ -79,13 +79,22 @@ def test_bash_command_def_helper_false_when_token_missing(monkeypatch):
 
 
 def test_bash_command_tool_def_is_loaded_in_personal(personal_with_token):
-    """The tool def itself is a module-level constant in
-    call_llama. It exists regardless of profile; the profile
-    only controls whether it is APPENDED to bot_side_tool_defs.
+    """T57 #D7: the bash_command tool def is now a single source
+    of truth in personal_tools/bash_command.py. call_llama
+    lazy-imports it at dispatch time. This test verifies both
+    that the dedup is REAL (no _BASH_COMMAND_TOOL_DEF in
+    call_llama) and that the def is well-formed.
     """
     import call_llama
-    assert hasattr(call_llama, "_BASH_COMMAND_TOOL_DEF")
-    d = call_llama._BASH_COMMAND_TOOL_DEF
+    import personal_tools.bash_command
+    # The dedup is real: no _BASH_COMMAND_TOOL_DEF in call_llama.
+    assert not hasattr(call_llama, "_BASH_COMMAND_TOOL_DEF"), (
+        "T57 #D7: call_llama must NOT have its own copy of the "
+        "bash_command tool def; personal_tools is the single source "
+        "of truth."
+    )
+    # The def lives in personal_tools.
+    d = personal_tools.bash_command.BASH_COMMAND_TOOL_DEF
     assert d["type"] == "function"
     assert d["function"]["name"] == "bash_command"
     assert "sandbox" in d["function"]["description"].lower()
