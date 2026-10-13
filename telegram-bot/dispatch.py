@@ -1518,10 +1518,21 @@ async def _handle_chat_member_update(upd, bot):
         return
     # Build a mention. Telegram allows @username for users with a
     # public username; fall back to a first_name or just "you".
+    #
+    # T54 #D2: sanitise first_name before rendering. A user can
+    # join with a crafted first_name containing newlines, RTL
+    # overrides, or system-prompt-style text ("SYSTEM: ...")
+    # which would be visible to every existing group member in
+    # the welcome message. _safe_sender_label() (T53 S1) strips
+    # Cc/Cf/Cs/Co categories and redacts LLM-control keywords.
+    # It lives in handlers.py; we import it lazily to avoid
+    # an import cycle.
+    from handlers import _safe_sender_label
     if username:
-        mention = f"@{username}"
+        mention = f"@{_safe_sender_label(username)}"
     elif first:
-        mention = first
+        sanitized = _safe_sender_label(first)
+        mention = sanitized if sanitized else "there"
     else:
         mention = "there"
     group_msg = f"👋 {mention}, welcome!\n\n{WELCOME_TEXT}"

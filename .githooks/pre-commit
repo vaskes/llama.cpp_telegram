@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Pre-commit hook: run the unit tests that don't need a live sandbox.
+# Catches wave-3 / wave-4 class regressions before they reach CI.
+# Cheap: ~3s on the operator's workstation.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+mkdir -p /tmp/pytest-precommit
+echo '>>> pre-commit: pytest (unit tests, no live sandbox)'
+CONVERSATIONS_DB=/tmp/pytest-precommit/db_$$.db python3 -m pytest \
+    tests/ \
+    --ignore=tests/test_shell_integration.py \
+    --ignore=tests/test_limits.py \
+    --ignore=tests/test_selftest.py \
+    -q --tb=line 2>&1 | tail -20 || {
+    echo '>>> pre-commit: pytest FAILED. Fix before commit.'
+    exit 1
+}
+echo '>>> pre-commit: OK'

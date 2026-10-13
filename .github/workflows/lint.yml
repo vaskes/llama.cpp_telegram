@@ -88,5 +88,4 @@ jobs:
               --ignore=tests/test_shell_integration.py \
               --ignore=tests/test_limits.py \
               --ignore=tests/test_selftest.py \
-              --ignore=tests/test_call_llama.py \
               -q --tb=short
