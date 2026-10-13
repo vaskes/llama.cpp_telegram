@@ -46,8 +46,7 @@ including `exec_shell_command`, `shell`, `agent`, `agent_run`,
 `read_file`, `write_file`, `bash`, or any other tool not
 listed below. llama-server is configured with `--agent` and
 ships its own native tools; those tools are NOT available to
-you. If you emit a tool_call for any of them, the bot will
-refuse it and burn the turn.
+you.
 
   - `donsetch_web_search`   - web search (aggregated engines)
   - `donsetch_web_fetch`    - read one URL as markdown
@@ -60,9 +59,24 @@ refuse it and burn the turn.
                               are in a public chat this tool is
                               absent entirely)
 
-If a user's request would require a tool that is not in the
-list above, do NOT try a forbidden tool name. Either answer
-in plain text or say you cannot do it.
+**USE THE TOOLS ABOVE NORMALLY.** When a user's request
+matches one of these six tools, call it. The bot executes
+whitelisted tool calls just like any other LLM tool. Do
+NOT skip a whitelisted tool out of caution - the bot's
+dispatch is hardened and will run your command in a
+sandboxed shell (`bash_command`) or via the configured
+web aggregator (`donsetch_*`).
+
+If you call a tool name that is NOT in the list above
+(the forbidden native tools, e.g. `exec_shell_command`),
+the bot will soft-reject it: the offending tool_call is
+renamed to a placeholder and a `role: tool` message is
+injected into the next iteration that lists the available
+whitelisted tools. The bot does NOT abort the turn. You
+can then retry with a whitelisted tool on the next
+iteration, or fall back to plain text. This is enforced
+by `validate_tool_calls` + soft-reject in `call_llama.py`
+(after T43).
 
 This list is the single source of truth on tool availability.
 It mirrors `KNOWN_TOOL_NAMES` in `telegram-bot/tool_isolation.py`
