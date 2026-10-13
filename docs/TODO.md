@@ -125,25 +125,25 @@ Total: ~40 min of operator time.
   exists. The first half was done in 0fd2e59; this
   entry is the corrected second half.)
 
-- **T31:** Remove `docs/REVIEW-MINIMAX.md` and
-  `docs/REVIEW-MINIMAX-v2.md`. The first two review
-  waves (private-mode polish and group-mode migration,
-  pre-v0.5) are long superseded by the later v6-v10
-  waves that cover the v0.7+ code surface. README
-  links to them as if they were current review
-  artefacts; in practice the only authoritative
-  review is the most recent v10. Action: (1) move both
-  files to `docs/archive/reviews/v0.0-v0.4/` (or
-  rename with `.archived.` prefix); (2) update README
-  to drop the now-empty references (already done in
-  this commit); (3) grep for any in-code links —
-  `telegram-bot/call_llama.py` references
-  `docs/REVIEW-MINIMAX.md §P3-4`; if that section is
-  still load-bearing, migrate the citation to
-  REVIEW-MINIMAX-v6 or later; (4) if the P3-4 finding
-  is no longer relevant (post-refactor code has moved
-  on), drop the citation entirely. ~15 min. Tracked
-  from operator decision 2026-10-13.
+- **T31:** ~~Remove `docs/REVIEW-MINIMAX.md` and
+  `docs/REVIEW-MINIMAX-v2.md`~~ **DONE 2026-10-13.**
+  Moved both to `docs/archive/v0.0-v0.4/` (git-mv
+  preserves history). Updated the in-code link in
+  `telegram-bot/call_llama.py` (line 361) to point at
+  the new path; the P3-4 section is now explicitly
+  marked as superseded/historical. README index was
+  already clean (commit 910ef60). Kept the link rather
+  than dropping it — the abort-ladder invariants the
+  review described are still load-bearing for the
+  current code path, even if specific findings moved
+  on. ~15 min.
+
+- **T32:** ~~Guard `data["choices"][0]` in `call_llama.py`~~
+  **DONE 2026-10-13.** Three call sites guarded (primary
+  non-streaming, first-fallback to non-streaming, tools-less
+  fallback). Each guard returns a user-readable message
+  instead of letting `IndexError` propagate. Verified
+  `pytest tests/` -> 60 passed in 0.50s. ~20 min.
 
 ### T25 retrospective (was deferred, now done)
 

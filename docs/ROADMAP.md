@@ -26,10 +26,7 @@ any order, batched into a single PR, or split per-item.
 - **T30:** Remove sender-name tagging. Bloats context,
   rarely useful in practice. ~45 min.
 - **T31:** ~~Archive `REVIEW-MINIMAX.md` and `-v2.md`~~ **DONE 2026-10-13.** Moved to `docs/archive/v0.0-v0.4/`. ~15 min.
-- **T32:** Add `try/except IndexError` around empty-response
-  paths in `call_llama.py` so the bot does not crash with
-  "list index out of range" when a heavy prompt exhausts the
-  context window or the LLM returns `choices: []`. ~20 min.
+- **T32:** ~~Guard `data["choices"][0]` in `call_llama.py`~~ **DONE 2026-10-13.** Three call sites guarded.
 
 Total: ~2.5 hours. Land as `v0.10.3-stable`.
 
