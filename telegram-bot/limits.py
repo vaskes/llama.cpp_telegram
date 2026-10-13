@@ -121,7 +121,7 @@ import os
 # public    — conservative; default; safe for multi-user groups.
 # personal   — aggressive; opt-in; for single-operator private assistant.
 _DEPLOYMENT_PROFILE = os.environ.get("LLAMABOT_DEPLOYMENT_PROFILE", "public").lower()
-if _DEPLOYMENT_PROFILE not in ("public", "personal"):
+if _DEPLOYMENT_PROFILE not in ("public", "personal", "dev"):
     # Fail loudly rather than silently defaulting to one or the other.
     raise ValueError(
         f"LLAMABOT_DEPLOYMENT_PROFILE={_DEPLOYMENT_PROFILE!r} is not a recognised profile. "

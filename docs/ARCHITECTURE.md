@@ -235,6 +235,16 @@ Two profiles, picked at container start via
     history. bash_command is available in private chats. For
     single-operator private assistant where the operator IS
     the only chat participant.
+  * `dev`. Same as `personal` for token caps and timeouts,
+    PLUS bash_command is available in the chat_ids listed
+    in `LLAMABOT_DEV_ALLOWED_CHAT_IDS`, even when the chat
+    is a supergroup or channel. Operator opt-in (T58).
+    Every bot response in a dev-mode chat is prefixed with
+    a loud red DEV MODE badge; the `/start` text shows
+    "DEV MODE ACTIVE" at the top. See BASH-SANDBOX.md
+    "Dev mode" section for the full threat model and
+    requirements (both env vars must be set; AST tests in
+    tests/test_t58_dev_mode.py pin the contract).
 
 Per-env overrides (`LLAMABOT_MAX_TOKENS`,
 `LLAMABOT_LOOP_BUDGET_SEC`, etc.) win on top of the profile

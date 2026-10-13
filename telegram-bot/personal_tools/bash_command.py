@@ -132,6 +132,51 @@ _T51_RATE_LIMIT_MAX_BUCKETS = 1000
 _T51_RATE_LIMIT_TTL_SEC = 3600  # 1 hour idle -> evict
 
 
+# === T58: Developer mode (operator opt-in, hardcoded chat_id list) ===
+# T58 (2026-10-14): the operator's request was "developer mode
+# which unlocks this functionality for my prod [supergroup]".
+# Design:
+#   * LLAMABOT_DEPLOYMENT_PROFILE=dev (a third profile, distinct
+#     from public and personal).
+#   * LLAMABOT_DEV_ALLOWED_CHAT_IDS=-100..,-100.. (comma-separated
+#     list of chat_ids where bash_command is allowed even in
+#     non-private chats). Hardcoded at operator level; requires
+#     bot restart to take effect.
+#   * BOTH conditions must hold (fail-closed). A new caller
+#     cannot accidentally enable bash in arbitrary chats by
+#     setting only one of the two.
+#   * The chat_type='private' gate from T52 #H1 is BYPASSED for
+#     chat_ids in the list. All other gates (rate limit,
+#     validators, per-session auth) still apply.
+# This is the operator's own power-user feature; they are
+# choosing to trust themselves with a specific chat.
+_DEV_MODE_PROFILE = os.environ.get("LLAMABOT_DEPLOYMENT_PROFILE", "public").lower() == "dev"
+_DEV_ALLOWED_CHAT_IDS_RAW = os.environ.get("LLAMABOT_DEV_ALLOWED_CHAT_IDS", "").strip()
+_DEV_ALLOWED_CHAT_IDS: frozenset[int] = frozenset(
+    int(x.strip()) for x in _DEV_ALLOWED_CHAT_IDS_RAW.split(",") if x.strip()
+)
+
+
+def is_dev_mode_chat(chat_id: int | None) -> bool:
+    """True iff the operator has explicitly enabled dev mode
+    AND the current chat is in the allowlist.
+
+    The check is the SINGLE source of truth for the dev-mode
+    gate. Used by call_bash_command to skip the chat_type check
+    and by handlers to add the [DEV MODE] badge prefix.
+
+    Return False if chat_id is None (defence against
+    misconfigured callers).
+    """
+    if chat_id is None:
+        return False
+    if not _DEV_MODE_PROFILE:
+        return False
+    if not _DEV_ALLOWED_CHAT_IDS:
+        return False
+    return int(chat_id) in _DEV_ALLOWED_CHAT_IDS
+
+
 # T52 #S2 / #S3: bash tool argument validation.
 # The LLM crafts both `command` and `session_id`. We constrain
 # them to a strict shape here so a misbehaving LLM cannot:
@@ -247,17 +292,29 @@ def _active_profile() -> str:
 
 def is_enabled_for_active_profile() -> bool:
     """The single check the bot uses to decide whether to advertise
-    this tool. Returns True ONLY when:
-      - LLAMABOT_DEPLOYMENT_PROFILE=personal
-      - AGENT_STACK_TOKEN is set (a non-empty string)
+    this tool. Returns True when:
+      - LLAMABOT_DEPLOYMENT_PROFILE=personal AND AGENT_STACK_TOKEN
+        is set (non-empty), OR
+      - LLAMABOT_DEPLOYMENT_PROFILE=dev AND AGENT_STACK_TOKEN is
+        set AND the allowlist is non-empty (chat_ids are
+        checked per-call, not at this global check).
 
     The public profile is structurally incapable of receiving this
     tool, regardless of what the operator does in .env.
+
+    T58: dev mode added as a third profile. The per-chat gate
+    (is_dev_mode_chat) is applied separately in call_bash_command.
+    This global check just decides whether the tool is advertised
+    at all.
     """
-    if _active_profile() != "personal":
+    profile = _active_profile()
+    if profile == "public":
         return False
     if not AGENT_STACK_TOKEN:
         return False
+    if profile == "dev":
+        # Dev mode requires a non-empty allowlist.
+        return bool(_DEV_ALLOWED_CHAT_IDS)
     return True
 
 
@@ -307,12 +364,25 @@ async def call_bash_command(
     # an operator misconfig (LLAMABOT_DEPLOYMENT_PROFILE=personal
     # in a group with non-whitelisted members) as a silent
     # RCE for the whole group. We close that here.
-    if chat_type != "private":
+    # T58: dev mode bypasses the chat_type gate for chat_ids
+    # the operator has explicitly listed. session_id is
+    # f"chat-{chat_id}" by T57 #S16, so we parse chat_id from it.
+    # If session_id is not in chat-N format (shouldn't happen
+    # after T57 #S16), dev mode is silently skipped and the
+    # chat_type gate applies normally.
+    chat_id_for_dev = None
+    if isinstance(session_id, str) and session_id.startswith("chat-"):
+        try:
+            chat_id_for_dev = int(session_id[len("chat-"):])
+        except ValueError:
+            chat_id_for_dev = None
+    if chat_type != "private" and not is_dev_mode_chat(chat_id_for_dev):
         return {
             "ok": False,
             "error": (
                 f"bash_command is only available in private chats. "
-                f"This chat_type is {chat_type!r}. See docs/BASH-SANDBOX.md."
+                f"This chat_type is {chat_type!r}. See docs/BASH-SANDBOX.md. "
+                f"For dev mode (operator opt-in), see BASH-SANDBOX.md sec 'Dev mode'."
             ),
         }
     # T57 #S19: rate_limit now runs AFTER chat_type (was

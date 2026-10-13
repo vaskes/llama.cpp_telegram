@@ -337,3 +337,60 @@ forwarding to the sandbox. The bucket dict is LRU-evicted at
 The sandbox side-car itself has `OPENAPI_PROXY_RATE_LIMIT_RPM=60`
 as a coarser second layer. Both layers are documented in the
 operator threat model — see [SECURITY.md §3.5](SECURITY.md#35-bash_command-personal-mode-only).
+
+## Dev mode (T58, operator opt-in)
+
+The default `personal` profile refuses `bash_command` in
+non-private chats (T52 #H1). The operator may want to run
+bash in a specific supergroup or channel that they fully
+control. Dev mode is the escape hatch for that.
+
+**Hard requirements (both must be true):**
+  1. `LLAMABOT_DEPLOYMENT_PROFILE=dev` (a third profile,
+     distinct from `public` and `personal`).
+  2. `LLAMABOT_DEV_ALLOWED_CHAT_IDS=-100..,-100..`
+     (comma-separated list of chat_ids where bash is allowed
+     in non-private chats).
+
+**Failure modes:**
+  * If only one of the two env vars is set, dev mode does
+    not activate. The chat-type gate from T52 #H1 still
+    applies normally.
+  * If the allowlist is empty (`LLAMABOT_DEV_ALLOWED_CHAT_IDS=`),
+    dev mode does not activate.
+  * If a chat is not in the allowlist, the chat-type gate
+    still applies even though profile=dev.
+
+**Bot behaviour in a dev-mode chat:**
+  * `/start` shows a big red `🔴 DEV MODE ACTIVE` line at
+    the top, with the word "ENABLED" and a clear "Type with
+    care" warning.
+  * Every bot response is prefixed with `🔴 **DEV MODE**`
+    so the operator can never forget the chat is
+    unrestricted.
+  * The bash_command tool description and rate limit
+    (T51 C4, T52 #M1) are unchanged: 10 cmd/min, 60s
+    timeout, 2GB mem, 256 PIDs, etc.
+
+**When to use dev mode:**
+  * You (the operator) want to test bash in a specific
+    supergroup you control.
+  * You have set up a dedicated "test/dev" supergroup
+    where only you are a member and you accept the risk
+    of unrestricted shell access.
+
+**When NOT to use dev mode:**
+  * Public groups with non-whitelisted members. The
+    profile=public + allowlist combo does NOT work (the
+    allowlist is silently ignored in public profile).
+  * As a substitute for the personal profile in your
+    own private chat. The personal profile is the right
+    choice there; dev mode is for non-private chats only.
+
+**Audit trail:**
+  * Every bash command in a dev-mode chat runs through
+    the same sandbox containment as in personal mode.
+    The bot does NOT add any extra logging in dev mode;
+    operators who need a command audit log should set up
+    the sandbox-side cmd_len log (see
+    SANDBOX-RECOMMENDATIONS.md C1).
