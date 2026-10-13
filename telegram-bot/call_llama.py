@@ -358,7 +358,7 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
     loop, and reasoning-stream push to Telegram. Splitting it prematurely
     loses the abort-ladder invariants. DO NOT REFACTOR without reading
     docs/CALL_LLAMA.md end-to-end and writing a regression test against
-    a captured llama-server response. See also docs/REVIEW-MINIMAX.md §P3-4.
+    a captured llama-server response. See also docs/archive/v0.0-v0.4/REVIEW-MINIMAX.md §P3-4 (superseded review; the v0.7+ refactors made most of its P3 findings obsolete — read for historical context only).
     """
 
     await _ensure_model()  # lazy first-call discovery
@@ -749,7 +749,22 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                             return None
                         r.raise_for_status()
                         data = r.json()
-                    msg0 = data["choices"][0]["message"]
+                    # T32 (2026-10-13): guard against empty 'choices'.
+                    # Heavy prompts that exhaust the context window, or
+                    # rate-limit / content-filter responses, can return
+                    # 200 OK with choices:[] (or with no 'message' key).
+                    # Before this guard, every such response produced
+                    # 'list index out of range' in the bot's reply, and
+                    # the user saw a generic 'Error: list index out of
+                    # range' with no useful info. Surface a clear,
+                    # user-readable message instead.
+                    _choices = data.get("choices") or []
+                    if not _choices:
+                        return ("[model returned no choices — the prompt may have "
+                                "exceeded the context window, hit a rate limit, or "
+                                "been blocked by a content filter. Try a shorter "
+                                "prompt or try again in a minute.]")
+                    msg0 = _choices[0].get("message") or {}
                     content = msg0.get("content") or ""
                     reasoning = msg0.get("reasoning_content") or ""
                     non_stream_tool_calls = msg0.get("tool_calls") or []
@@ -816,7 +831,13 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                                 return None
                             r2.raise_for_status()
                             data2 = r2.json()
-                            content2 = data2["choices"][0]["message"].get("content") or ''
+                            # T32 (2026-10-13): same guard as the primary
+                            # and first-fallback paths.
+                            _choices3 = data2.get("choices") or []
+                            if not _choices3:
+                                print(f"[call_llama] tools-less fallback: empty choices, returning None", flush=True)
+                                return None
+                            content2 = _choices3[0].get("message", {}).get("content") or ''
                             print(f"[call_llama] tools-less fallback succeeded: {len(content2)} chars", flush=True)
                             return content2
                         except Exception as e2:
@@ -911,7 +932,20 @@ async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None
                             )
                             r2.raise_for_status()
                             data = r2.json()
-                        msg = data["choices"][0]["message"]
+                        # T32 (2026-10-13): same guard as the primary
+                        # non-streaming path above — 'choices' may be
+                        # empty on rate-limit / context-overflow / filter
+                        # responses. Without this, the user gets a
+                        # 'list index out of range' on the fallback path
+                        # too, even though we already guarded the
+                        # primary path.
+                        _choices2 = data.get("choices") or []
+                        if not _choices2:
+                            return ("[model returned no choices on fallback — "
+                                    "the prompt may have exceeded the context window, "
+                                    "hit a rate limit, or been blocked by a content "
+                                    "filter. Try a shorter prompt or try again in a minute.]")
+                        msg = _choices2[0].get("message") or {}
                         tool_calls = msg.get("tool_calls") or []
                         if not tool_calls:
                             if msg.get("content"):
