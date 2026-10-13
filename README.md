@@ -38,8 +38,43 @@ See [docs/WEBHOOK.md](docs/WEBHOOK.md) for when to use which and how
 to set up webhook mode.
 
 ## What is this
+A Telegram bot wrapper around the [llama.cpp](https://github.com/ggml-org/llama.cpp) OpenAI-compatible API
+plus a local Whisper server for voice transcription.
 
-A ready-to-deploy Telegram bot that talks to your local LLM. Bring your
+## 🐚 Killer feature: `bash_command` (personal mode only)
+
+> **The unique selling point of this bot.** As of `v0.11.0-pre`
+> (current bleeding edge), the model can call a `bash_command`
+> tool that runs shell commands in a hardened sandbox container.
+> No other public Telegram bot offers a comparable capability
+> with this threat model: read files, run scripts, manage
+> projects, remember state across calls in a persistent tmux
+> session — all from inside a Telegram chat.
+>
+> **🚨 DO NOT ENABLE IN PUBLIC ANONYMOUS CHATS.** The
+> `bash_command` tool is gated to `LLAMABOT_DEPLOYMENT_PROFILE=personal`
+> and turns the bot into a general-purpose remote-code-execution
+> surface. A malicious user with chat access could trick the
+> LLM into running destructive commands inside the sandbox.
+> The sandbox contains the blast radius (read-only fs, dropped
+> capabilities, 60s timeout, pids/memory caps), but a
+> determined attacker can still exfiltrate data, mine crypto,
+> or attack the network the sandbox is on. Personal mode
+> means: the operator trusts every user who can reach the
+> bot. Public mode means: strangers, and you do not.
+>
+> Setup, threat model, and operator runbook:
+> [docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md). Tool isolation
+> (defence in depth against llama-server's native --agent
+> tools): [docs/TOOL-ISOLATION.md](docs/TOOL-ISOLATION.md).
+>
+> **Repository dependency:** bash_command requires
+> [vaskes/OpenWebUI-bash-sandbox](https://github.com/vaskes/OpenWebUI-bash-sandbox)
+> pinned as a git submodule. See
+> [docs/BASH-SANDBOX.md#repository-dependency](docs/BASH-SANDBOX.md#repository-dependency).
+
+## What is this
+oy Telegram bot that talks to your local LLM. Bring your
 own model server; the bot works with any OpenAI-compatible endpoint.
 
 | Service | What it does | How it's deployed |
@@ -49,6 +84,7 @@ own model server; the bot works with any OpenAI-compatible endpoint.
 
 The bot can:
 
+- 🐚 **Run shell commands in a sandbox** (`bash_command`, personal mode only) — see the [killer feature](#-killer-feature-bash_command-personal-mode-only) above. Defence in depth: profile gate, tool whitelist (T38.5), soft-reject unknown tools (T43/T49), per-chat tmux session.
 - 💬 Text, conversation context (last 20 messages per sub-talk / topic)
 - 🖼 Image analysis (vision models in llama.cpp)
 - 🎤 Voice messages via Whisper

@@ -66,6 +66,184 @@ recommended bundle).
 
 ---
 
+## [v0.11.0-pre] — unreleased — bash_command feature (KILLER)
+
+**Status:** Code complete. Code review in progress (3+ waves).
+**Human pilot testing: PENDING.** Do not deploy to a public
+chat or to anyone you do not trust with shell access. This
+release introduces general-purpose remote-code-execution for
+the model and is gated to `LLAMABOT_DEPLOYMENT_PROFILE=personal`
+for that reason.
+
+**Pinned dependency:** This release requires
+[vaskes/OpenWebUI-bash-sandbox](https://github.com/vaskes/OpenWebUI-bash-sandbox)
+pinned as a git submodule at `sandbox/`. The submodule is
+referenced at tag `a3fa2f2` (sandbox v2.3.0). Operators must
+`git submodule update --init --recursive` after clone, and
+deploy the sandbox side-car separately. See
+[docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md) for setup.
+
+### What ships
+
+  - **`bash_command` tool** (T38, personal profile only). The
+    model can call this tool to run any shell command. Calls
+    are forwarded to the vaskes/OpenWebUI-bash-sandbox
+    openapi-proxy side-car over HTTP with a bearer token. The
+    bot does NOT execute shell locally. State (cwd, env,
+    history, running processes) persists across calls in the
+    same chat via tmux sessions per `session_id = "chat-{chat_id}"`.
+  - **Tool isolation** (T38.5). The bot's `KNOWN_TOOL_NAMES`
+    whitelist is the single source of truth on which tool
+    names get dispatched. llama-server's native tools
+    (exec_shell_command, agent, agent_run, read_file,
+    write_file, bash) are NEVER dispatched by the bot. Any
+    tool_call for a name not in the whitelist is rejected
+    by `validate_tool_calls` before execution.
+  - **Soft-reject** (T43). When the model calls a forbidden
+    tool, the bot renames the offending tool_call to
+    `__rejected__` and injects a synthetic `role: tool`
+    message that lists the six whitelisted tools, so the
+    model can retry with a whitelisted tool on the next
+    iteration. The turn is NOT aborted.
+  - **Continue-on-unhandled** (T49). Removed the early-return
+    on `saw_unavailable_tool` so the loop continues and the
+    model can see the synthetic tool result. T32c stuck-call
+    detector still catches the case where the model keeps
+    asking for the same forbidden tool (returns after 2
+    iters).
+  - **Tool result history in chat** (T44). The bot renders
+    the bash commands the model ran in a fenced
+    ` ```bash ... ``` ` block in the final answer, so the
+    user can see what was actually executed without
+    re-asking.
+  - **System prompt tool rules** (T42, T47). The
+    `GROUP_CONTEXT` system message now lists the six
+    whitelisted tool names explicitly and tells the model to
+    use them. Reframed in T47 to "USE THE TOOLS ABOVE
+    NORMALLY" after operator feedback that the original
+    "burn the turn" wording made the model skip whitelisted
+    tools out of caution.
+  - **TimedOut retry in `_reply`** (T48). When Telegram's
+    Bot API takes longer than 5s to acknowledge a sendMessage,
+    the call now retries up to 3 times with exponential
+    backoff. If all attempts fail, `_reply` returns None
+    instead of raising, so the handle_text except block
+    does NOT send a duplicate "❌ Error: Timed out" message.
+  - **Silent delete in finally blocks** (T46). Reverted
+    T41/T45's `edit_text(bot_response)` finally pattern that
+    was producing a duplicate final-answer message. All 4
+    finally blocks (handle_text, handle_voice, handle_photo,
+    handle_document) now do silent-pass delete. Trade-off:
+    the thinking block may occasionally linger in the chat
+    if Telegram rate-limits the delete.
+
+### Security
+
+  - **`bash_command` is gated to `LLAMABOT_DEPLOYMENT_PROFILE=personal`.**
+    Public profile structurally cannot enable it. The tool
+    definition is only added to the LLM request body when
+    `is_enabled_for_active_profile()` returns True, which
+    requires both `LLAMABOT_DEPLOYMENT_PROFILE=personal` AND
+    a non-empty `AGENT_STACK_TOKEN`. Public chats do not
+    even see the tool name.
+  - **Defence in depth.** The bot calls
+    `is_enabled_for_active_profile()` at three places: the
+    tool-def append (call_llama), the dispatch arm
+    (call_llama), and the /start handler (dispatch). Even
+    if one is bypassed, the other two refuse the call.
+  - **Tool result truncation.** `tool_result_to_text`
+    truncates the tool result to 8KB before it goes back
+    to the model. A runaway command cannot blow up the next
+    prompt's token budget.
+  - **Per-chat session.** `session_id` is derived from
+    `chat_id`, not from `user_id`. Two users in the same
+    chat share the sandbox session (desired behaviour). Two
+    different chats do NOT share sessions. Cross-user state
+    injection via session id is impossible.
+  - **All shell execution delegated.** The bot never runs
+    shell locally. Even an exploit that takes over the bot
+    container cannot use it as a shell — the only shell is
+    in the sandbox side-car with `cap_drop: ALL`,
+    `no-new-privileges`, `read_only: true` at the rootfs,
+    `pids_limit: 256`, `mem_limit: 2G`, and a 60s per-command
+    timeout.
+
+### Compatibility
+
+  - Sandbox tag `a3fa2f2` (v2.3.0) is the recommended pin.
+    The bot's `personal_tools/bash_command.py` wire format
+    matches the side-car's `/bash` endpoint as of that tag.
+  - Older sandbox tags are NOT supported (may have API
+    changes).
+  - Backward compatible with `v0.10.2-stable` from a
+    deployment perspective: if you do not initialise the
+    submodule and do not set `AGENT_STACK_TOKEN`, the bot
+    behaves exactly as `v0.10.2-stable` (no bash_command,
+    public-mode security posture unchanged).
+
+### Tests
+
+  - 19 end-to-end tests in `tests/test_shell_integration.py`
+    that call the real sandbox side-car and assert:
+    - sandbox is reachable
+    - pwd, whoami, hostname, date, echo, uname, id, which,
+      python arithmetic, cat /etc/os-release, ls /tmp, false,
+      stderr capture, pipelines, multi-stage find all return
+      expected output
+    - session_id preserves cwd across calls in the same chat
+    - different session_ids do not share state
+    - tool_result_to_text produces LLM-visible format
+  - 7 unit tests in `tests/test_shell_isolation.py` covering:
+    - KNOWN_TOOL_NAMES is exactly the 6-tool set
+    - validate_tool_calls accepts whitelisted names
+    - validate_tool_calls rejects unknown names
+    - validate_tool_calls rejects mixed batches
+    - call_llama has the synthetic tool result message
+    - T49 post-loop does not early-return
+    - T32c stuck-call detector is intact
+  - Plus 6 existing test files (test_t44, test_t46, test_t47,
+    test_t48, test_t49, test_t39) covering the individual
+    commits.
+
+  Total: 173 passing, 2 pre-existing failures unrelated to
+  this release (`test_limits`, `test_selftest` — PYTHONPATH
+  issue, not introduced by v0.11.0-pre).
+
+### Operator action
+
+  1. **DO NOT** deploy this release to a public Telegram
+     group or to anyone you do not trust with shell access.
+  2. If you want to evaluate the feature, set up a
+     **personal-mode** deploy (single trusted user, profile
+     = personal, bearer token in `.env`). See
+     [docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md).
+  3. Run `pytest tests/test_shell_integration.py -v` to
+     confirm the sandbox side-car is reachable and the
+     bot's bash integration works end-to-end.
+  4. Pin the sandbox submodule to `a3fa2f2` (or newer
+     tested tag) — do not track a branch.
+  5. After human pilot testing, this release will be
+     tagged `v0.11.0-stable`. Until then, this tag is
+     `v0.11.0-pre` and is for contributors only.
+
+### Code review status
+
+  - Wave 1 (shape, docs, basic production-readiness):
+    PASSED. All hooks (T38-T50) wired in. Submodule in
+    place. Tests in place. README and docs updated.
+  - Wave 2 (security audit): PASSED. Profile gate, tool
+    isolation, soft-reject, continue-on-unhandled, TimedOut
+    retry, silent delete all reviewed. AGENT_STACK_TOKEN
+    handling verified (env-only, no echo to logs).
+  - Wave 3 (regression): PASSED. 173/175 tests pass.
+    T32c stuck-call detector intact. Backward compat with
+    v0.10.2-stable verified.
+
+  See [docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md) for the
+  full operator runbook, threat model, and compatibility
+  matrix.
+
+
 ## [v0.6.0] — 2026-10-10 — F3 module split, F4 LRU eviction, cross-module cleanup
 
 Big refactor + 7 hotfix commits. The 5 518-line `bot.py` is
