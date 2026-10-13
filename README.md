@@ -171,8 +171,6 @@ sudo systemctl start telegram-bot-compose
 - **[docs/CALL_LLAMA.md](docs/CALL_LLAMA.md)** — detailed design notes for `call_llama`, polling loop, abort ladder, image MIME detection, config block. The file to read for a code review.
 - **[docs/SECURITY.md](docs/SECURITY.md)** — whitelist (private mode), group-mode security, env vars, what NOT to commit
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common issues, including group-mode gotchas
-- **[docs/REVIEW-MINIMAX.md](docs/REVIEW-MINIMAX.md)** — first review wave (private-mode polish)
-- **[docs/REVIEW-MINIMAX-v2.md](docs/REVIEW-MINIMAX-v2.md)** — second review wave (group-mode migration)
 - **[CHANGELOG.md](CHANGELOG.md)** — release notes for humans
 
 ## Requirements

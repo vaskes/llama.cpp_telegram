@@ -131,6 +131,26 @@ Total: ~40 min of operator time.
   schema migration path. ~45 min. Tracked from
   operator decision 2026-10-12.
 
+- **T31:** Remove `docs/REVIEW-MINIMAX.md` and
+  `docs/REVIEW-MINIMAX-v2.md`. The first two review
+  waves (private-mode polish and group-mode migration,
+  pre-v0.5) are long superseded by the later v6-v10
+  waves that cover the v0.7+ code surface. README
+  links to them as if they were current review
+  artefacts; in practice the only authoritative
+  review is the most recent v10. Action: (1) move both
+  files to `docs/archive/reviews/v0.0-v0.4/` (or
+  rename with `.archived.` prefix); (2) update README
+  to drop the now-empty references (already done in
+  this commit); (3) grep for any in-code links —
+  `telegram-bot/call_llama.py` references
+  `docs/REVIEW-MINIMAX.md §P3-4`; if that section is
+  still load-bearing, migrate the citation to
+  REVIEW-MINIMAX-v6 or later; (4) if the P3-4 finding
+  is no longer relevant (post-refactor code has moved
+  on), drop the citation entirely. ~15 min. Tracked
+  from operator decision 2026-10-13.
+
 ### T25 retrospective (was deferred, now done)
 
 User pushed for migration: T25 was in the backlog
