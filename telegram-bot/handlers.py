@@ -17,6 +17,7 @@ import os
 import tempfile
 
 from telegram import Update
+import time
 from telegram.ext import ContextTypes
 
 from call_llama import call_llama, transcribe_voice, _tag_sender
@@ -832,16 +833,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user
     from state import _get_user_semaphore as _user_semaphore
     from state import _check_burst_split, _record_user_message, _user_recent_msg
-    print(f"[handle_text] ENTRY user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}", flush=True)
+    print(f"[handle_text] ENTRY t={time.monotonic():.3f} user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}", flush=True)
+    # T34 burst detection (race fix 2026-10-13). Record the
+    # current message in _user_recent_msg IMMEDIATELY on entry,
+    # with abort_event=None (we don't have one yet). This way
+    # a follow-up message arriving 60 ms later sees this record
+    # in its burst check. Without this, the follow-up hits an
+    # empty registry and the burst is missed.
+    # Real abort_event is set later via _record_user_message
+    # after the LLM call has been started; that call overwrites
+    # this entry with the same timestamp but real event.
+    user_id_check = update.effective_user.id
+    chat_id_check = update.effective_chat.id
+    text_bytes = len((update.message.text or '').encode('utf-8'))
+    _record_user_message(chat_id_check, user_id_check, text_bytes, None)
+    print(f"[handle_text] EARLY-RECORD t={time.monotonic():.3f} (chat={chat_id_check}, user={user_id_check}, size={text_bytes})", flush=True)
     # Telegram-split detection (T34, 2026-10-13). Pattern-based:
     # if the SAME (chat, user) sent a >3000-byte message within
     # the last BURST_WINDOW_SEC (2s), the current message is
     # likely a follow-up of a Telegram auto-split. Drop the
     # current message and ABORT the in-flight LLM call for the
     # previous one, then reply with a clear error.
-    user_id_check = update.effective_user.id
-    chat_id_check = update.effective_chat.id
-    text_bytes = len((update.message.text or '').encode('utf-8'))
     prev_event = _check_burst_split(chat_id_check, user_id_check, text_bytes)
     if prev_event is not None:
         print(f"[handle_text] BURST-SPLIT: (chat={chat_id_check}, user={user_id_check}) current_size={text_bytes}; aborting previous in-flight LLM call and dropping current message", flush=True)
@@ -891,7 +903,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # registry so a follow-up within 2 s can abort this in-flight
     # LLM call. Stamped AFTER the abort_event is registered so
     # _check_burst_split() returns a valid event.
-    _record_user_message(chat_id, user_id, len(user_message.encode('utf-8')), abort_event)
+    msg_bytes = len(user_message.encode('utf-8'))
+    _record_user_message(chat_id, user_id, msg_bytes, abort_event)
+    print(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}) [overwrites EARLY-RECORD with real abort_event]", flush=True)
     persisted = True
     history = await _load_history(chat_id, thread_id)
     print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
