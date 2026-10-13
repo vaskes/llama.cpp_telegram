@@ -727,6 +727,8 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                 print(f"[thinking edit err] {type(e).__name__}: {e}", flush=True)
 
     for iteration in range(max_iter):
+        # T44: per-turn accumulator for executed tools.
+        _executed_tools_in_turn: list[dict] = []
         # Honour graceful shutdown between iterations. Without this, a SIGTERM
         # mid-call_llama is ignored until the current llama-server request
         # finishes (could be 5-7 min for a hard problem). docker stop
@@ -1173,7 +1175,11 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
 
         if not tool_calls:
             if content_buf:
-                return content_buf
+                return {
+                    "text": content_buf,
+                    "executed_tools": list(_executed_tools_in_turn),
+                    "aborted": False,
+                }
             # Empty content but reasoning exists (Ornith burned the whole token budget on
             # reasoning). Surface the reasoning as the answer rather than the generic
             # fallback message — it's still useful info, and tells the user why the bot
@@ -1196,7 +1202,11 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
         if req_tools is None:
             print(f"[LLAMA] iter={iteration} WARNING: model hallucinated tool_calls={len(tool_calls)} with req_tools=None; aborting tool loop", flush=True)
             if content_buf:
-                return content_buf
+                return {
+                    "text": content_buf,
+                    "executed_tools": list(_executed_tools_in_turn),
+                    "aborted": False,
+                }
             return (
                 f'_(модель попыталась вызвать инструмент, хотя в этом turn\'е он не запрашивался; '
                 f'finish_reason={finish_reason}, content_chars={len(content_buf)})_\n\n'
@@ -1281,6 +1291,11 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                     chat_id=chat_id,
                     default_message_id=current_message_id,
                 )
+                _executed_tools_in_turn.append({
+                    "name": "react_to_message",
+                    "args": args if isinstance(args, dict) else {},
+                    "iter": iteration,
+                })
             elif fn_name == 'bash_command':
                 # T39: forward to the vaskes/OpenWebUI-bash-sandbox
                 # side-car. The tool_isolation guard earlier in this
@@ -1312,10 +1327,26 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                                 cmd, session_id=sid
                             )
                             result = _bc.tool_result_to_text(r)
+                            _executed_tools_in_turn.append({
+                                "name": "bash_command",
+                                "args": args if isinstance(args, dict) else {},
+                                "iter": iteration,
+                                "ok": r.get("ok", False),
+                            })
             elif fn_name in CUSTOM_TOOLS:
                 result = await CUSTOM_TOOLS[fn_name](args)
+                _executed_tools_in_turn.append({
+                    "name": fn_name,
+                    "args": args if isinstance(args, dict) else {},
+                    "iter": iteration,
+                })
             elif fn_name in DONSETCH_TOOLS:
                 result = await DONSETCH_TOOLS[fn_name](args)
+                _executed_tools_in_turn.append({
+                    "name": fn_name,
+                    "args": args if isinstance(args, dict) else {},
+                    "iter": iteration,
+                })
             else:
                 result = f'[tool {fn_name} unavailable in this mode. Bot supports: donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot, react_to_message, bash_command (personal mode only).]'
                 saw_unavailable_tool = True
