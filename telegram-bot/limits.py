@@ -157,21 +157,32 @@ _PUBLIC_DEFAULTS = {
 }
 
 _PERSONAL_DEFAULTS = {
-    "MAX_TOKENS_DEFAULT":    32768,   # matches the current llama-server's
-                                       #   effective ceiling for non-shell
-                                       #   prompts in single-user mode
-    "MAX_TOKENS_CAPTION":    16384,   # photos / voice transcripts
-    "LOOP_BUDGET_SEC":         600,   # 10 min — the model is alone, can
-                                       #   take its time
-    "LLAMA_HTTP_TIMEOUT_SEC": 660.0,  # > LOOP_BUDGET_SEC (10% headroom for httpx
-                                       #   to not fire its own timeout exactly when
-                                       #   the loop budget expires)
-    "LLAMA_MODELS_TIMEOUT_SEC": 10.0,
-    "TRANSCRIBE_TIMEOUT_SEC":  120.0,
-    "REASONING_RATIO_HARD_LIMIT": 0.5, # observed 2026-10-13: Qwen 3.8 MTP
-                                       #   can hit 0.94 reasoning ratio on
-                                       #   a 4K prompt; 0.5 still aborts
-                                       #   "all thinking no answer" cases
+    # Operator policy 2026-10-13: "по максимуму чтоб были, чтобы
+    # ризонинг мог сожрать хоть все 256к контекста. мне не жалко,
+    # лишь бы выдал результат". Personal is single-user, single-GPU
+    # — the model has the box to itself, so let it think as long as
+    # it wants. If the resulting generation time becomes a problem
+    # in practice, trim LLAMABOT_LOOP_BUDGET_SEC; do not lower
+    # MAX_TOKENS_DEFAULT until 4K-char prompts have been observed
+    # to use that budget and produce a final answer.
+    "MAX_TOKENS_DEFAULT":    262144,  # == llama-server --ctx-size 262144
+                                       #   we asked the model to handle
+                                       #   up to 256k. Let it output that
+                                       #   much if reasoning needs it.
+    "MAX_TOKENS_CAPTION":    65536,   # captions can be long if a
+                                       #   voice transcript is huge
+    "LOOP_BUDGET_SEC":        1800,   # 30 min — operator said "мне не
+                                       #   жалко". Single-user; nothing
+                                       #   else is waiting on the queue.
+    "LLAMA_HTTP_TIMEOUT_SEC": 1980.0, # 33 min, > LOOP_BUDGET with
+                                       #   10% headroom
+    "LLAMA_MODELS_TIMEOUT_SEC": 30.0,
+    "TRANSCRIBE_TIMEOUT_SEC":  300.0,
+    "REASONING_RATIO_HARD_LIMIT": 1.0, # OFF: let the model eat the whole
+                                       #   budget on reasoning. We only
+                                       #   flag finish=length with empty
+                                       #   content downstream; the ratio
+                                       #   is no longer a guard.
 }
 
 _PROFILE_DEFAULTS = (
@@ -236,8 +247,9 @@ if LLAMA_HTTP_TIMEOUT_SEC <= LOOP_BUDGET_SEC:
         f"LLAMA_HTTP_TIMEOUT_SEC ({LLAMA_HTTP_TIMEOUT_SEC}) must be "
         f"strictly greater than LOOP_BUDGET_SEC ({LOOP_BUDGET_SEC})"
     )
-if not 0 < REASONING_RATIO_HARD_LIMIT < 1:
+if not 0 <= REASONING_RATIO_HARD_LIMIT <= 1:
     raise ValueError(
         f"REASONING_RATIO_HARD_LIMIT ({REASONING_RATIO_HARD_LIMIT}) "
-        f"must be in the open interval (0, 1)"
+        f"must be in the closed interval [0, 1]; 0 = no answer at all, "
+        f"1 = no cap (model can spend the whole budget on reasoning)"
     )

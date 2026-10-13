@@ -1148,7 +1148,13 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
 
         # If the model is asking for the same tool+args as in the previous
         # iteration, it has looped — return whatever we have and stop.
-        if current_calls == prev_calls:
+        # T32c (2026-10-13): guard against current_calls being empty
+        # (e.g. all tool calls in this iter were REJECTED for malformed
+        # args, so current_calls was never appended to). An empty list
+        # equals prev_calls=[] on the first iter, which would trigger
+        # a spurious "stuck" detection and IndexError. Only compare
+        # when there's actually a tool call to compare.
+        if current_calls and current_calls == prev_calls:
             print(f"[loop] iter={iteration} same tool calls as previous iter; aborting", flush=True)
             return (
                 f'[bot: the model asked for the same tool call twice in a row '
