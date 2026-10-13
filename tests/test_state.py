@@ -225,9 +225,11 @@ def test_burst_short_first_message_returns_none():
 def test_burst_long_first_then_quick_followup_returns_event():
     """First > 3000 bytes + follow-up within 2s => burst."""
     import asyncio
+    import time
     from state import _check_burst_split, _record_user_message
     ev = asyncio.Event()
     _record_user_message(100, 200, 3500, ev)
+    time.sleep(0.05)  # past the 10 ms self-guard
     burst = _check_burst_split(100, 200, 100)
     assert burst is ev
 
@@ -285,4 +287,74 @@ def test_burst_record_overwrites_previous():
     assert (100, 200) in _user_recent_msg
     assert len([k for k in _user_recent_msg if k == (100, 200)]) == 1
 
+
+# === self-guard + do-not-clobber (T34 race fix v3) ===
+
+def test_burst_self_guard_does_not_trigger():
+    """Recording a message and immediately calling _check_burst_split
+    on the same (chat, user) must NOT flag a burst. Without the
+    self-guard, EARLY-RECORD writes prev_ts, then the burst check
+    in the same handle_text call finds its own write."""
+    from state import _check_burst_split, _record_user_message
+    _record_user_message(100, 200, 3500, None)
+    # Immediate check: should be None (self-guard)
+    assert _check_burst_split(100, 200, 100) is None
+
+
+def test_burst_detected_after_50ms_delay():
+    """After a 50 ms delay (plenty above the 10 ms self-guard), the
+    burst check should fire. This is the realistic case: the 2nd
+    chunk of a Telegram auto-split arrives tens of ms after the 1st.
+    """
+    import asyncio
+    import time
+    from state import _check_burst_split, _record_user_message
+    ev = asyncio.Event()
+    _record_user_message(100, 200, 3500, ev)
+    time.sleep(0.05)
+    assert _check_burst_split(100, 200, 100) is ev
+
+
+def test_record_does_not_clobber_large_with_small():
+    """A small follow-up message (< _BURST_MIN_FIRST_BYTES) does NOT
+    overwrite a previously recorded large message. The original
+    size and timestamp stay; only the abort_event is refreshed.
+    Without this, the 2nd chunk of a Telegram split (typically
+    smaller than the 1st) would clobber the 1st chunk's size."""
+    import asyncio
+    import time
+    from state import _check_burst_split, _record_user_message, _user_recent_msg, _BURST_MIN_FIRST_BYTES
+    ev1 = asyncio.Event()
+    _record_user_message(100, 200, 3910, ev1)
+    ts1, size1, _ = _user_recent_msg[(100, 200)]
+    assert size1 == 3910
+    # Wait past the self-guard
+    time.sleep(0.05)
+    ev2 = asyncio.Event()
+    _record_user_message(100, 200, 2498, ev2)  # 2498 < 3000
+    ts2, size2, ev_after = _user_recent_msg[(100, 200)]
+    # Size must still be 3910 (the large one), not 2498
+    assert size2 == 3910, f"expected 3910 (large preserved), got {size2}"
+    # Timestamp must also be preserved
+    assert ts2 == ts1, f"expected ts1={ts1}, got ts2={ts2}"
+    # Event must be refreshed to ev2
+    assert ev_after is ev2
+
+
+def test_record_overwrites_large_with_large():
+    """A large message (> _BURST_MIN_FIRST_BYTES) DOES overwrite
+    a previous record, even if the previous was also large. This
+    is the case of a user sending two big messages back-to-back
+    (rare, but valid)."""
+    import asyncio
+    import time
+    from state import _check_burst_split, _record_user_message, _user_recent_msg
+    ev1 = asyncio.Event()
+    _record_user_message(100, 200, 3910, ev1)
+    time.sleep(0.05)
+    ev2 = asyncio.Event()
+    _record_user_message(100, 200, 4500, ev2)  # 4500 > 3000
+    ts, size, ev_after = _user_recent_msg[(100, 200)]
+    assert size == 4500
+    assert ev_after is ev2
 

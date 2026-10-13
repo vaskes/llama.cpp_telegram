@@ -154,6 +154,15 @@ _BURST_MIN_FIRST_BYTES = 3000
 _user_recent_msg: "dict[tuple[int, int], tuple[float, int, asyncio.Event | None]]" = {}
 
 
+# Minimum gap between prev_ts and now for a burst to be considered
+# real. Anything tighter means we are looking at the same handle_text
+# call's own EARLY-RECORD, not a real follow-up message. 10 ms is well
+# below any plausible Telegram inter-message delay (the fastest a
+# user can press Enter twice) and well above the time.monotonic()
+# resolution on a typical Linux host (microseconds).
+_BURST_SELF_GUARD_SEC = 0.010
+
+
 def _check_burst_split(chat_id: int, user_id: int, current_size_bytes: int) -> "asyncio.Event | None":
     """If the current message looks like a follow-up of a Telegram
     auto-split (sent within BURST_WINDOW_SEC of a >3000-byte message
@@ -162,9 +171,14 @@ def _check_burst_split(chat_id: int, user_id: int, current_size_bytes: int) -> "
     should `await` the abort, then reply with a split-detection
     error and drop the current message.
 
-    Returns None if this is not a burst (first message ever seen
-    for this user, or previous message was too long ago, or first
-    message was too short to be a split half).
+    Returns None if this is not a burst:
+    - no previous message for this (chat, user)
+    - previous message was recorded in the same handle_text call
+      (self-guard: EARLY-RECORD writes prev_ts, then the burst
+      check in the same call would otherwise see its own write
+      and falsely flag a burst)
+    - previous message was too long ago
+    - previous message was too short to be a split half
     """
     key = (chat_id, user_id)
     prev = _user_recent_msg.get(key)
@@ -172,6 +186,9 @@ def _check_burst_split(chat_id: int, user_id: int, current_size_bytes: int) -> "
         return None
     prev_ts, prev_size, prev_event = prev
     now = time.monotonic()
+    # Self-guard: same-call EARLY-RECORD + burst check.
+    if now - prev_ts < _BURST_SELF_GUARD_SEC:
+        return None
     if now - prev_ts > _BURST_WINDOW_SEC:
         return None
     if prev_size < _BURST_MIN_FIRST_BYTES:
@@ -184,13 +201,28 @@ def _record_user_message(chat_id: int, user_id: int, size_bytes: int, abort_even
     The abort_event is the in-flight LLM call's abort signal so a
     later burst can cancel it. Pass None if no call is in flight
     (e.g. message was rejected before the LLM was invoked).
+
+    Important: a small follow-up message (< _BURST_MIN_FIRST_BYTES)
+    does NOT overwrite a previously recorded big message. It only
+    refreshes the abort_event (so the next burst check finds a
+    valid event) and leaves the original size and timestamp in
+    place. Without this, the 2nd chunk of a Telegram auto-split
+    (typically smaller than the 1st) would clobber the 1st chunk's
+    size, and the burst check on a 3rd message would see the small
+    size and miss the burst.
     """
     key = (chat_id, user_id)
-    _user_recent_msg[key] = (time.monotonic(), size_bytes, abort_event)
-    # Lazy eviction: keep the dict small by dropping entries
-    # older than BURST_WINDOW_SEC. Cheap O(n) scan, n is bounded
-    # by the operator's ALLOWED_USER_IDS cardinality.
     now = time.monotonic()
+    existing = _user_recent_msg.get(key)
+    if existing is not None and size_bytes < _BURST_MIN_FIRST_BYTES and existing[1] >= _BURST_MIN_FIRST_BYTES:
+        # Keep the original size and timestamp; refresh the event.
+        prev_ts, prev_size, _ = existing
+        _user_recent_msg[key] = (prev_ts, prev_size, abort_event)
+    else:
+        _user_recent_msg[key] = (now, size_bytes, abort_event)
+    # Lazy eviction: keep the dict small by dropping entries
+    # older than 4x the window. Cheap O(n) scan, n is bounded
+    # by the operator's ALLOWED_USER_IDS cardinality.
     expired = [k for k, (ts, _, _) in _user_recent_msg.items() if now - ts > _BURST_WINDOW_SEC * 4]
     for k in expired:
         _user_recent_msg.pop(k, None)
