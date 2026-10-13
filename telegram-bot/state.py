@@ -15,6 +15,7 @@
 # which is a circular import waiting to break.
 
 import asyncio
+import time
 from collections import OrderedDict
 
 _GLOBAL_LLM_SEM_LIMIT = 4
@@ -109,89 +110,88 @@ def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
         _user_semaphores.popitem(last=False)
     return sem
 
-
-# === _split_pending: Telegram 4096-char split workaround ===
-# Telegram caps single text messages at 4096 characters; long
-# prompts are auto-split by the client at sentence boundaries
-# (typically 4060-4096 bytes per chunk). The bot handles each
-# chunk as an independent LLM turn, which produces 2 unrelated
-# half-answers instead of one full answer.
+# === _user_recent_msg: rate-based burst detection for split handling ===
+# Telegram caps a single text message at 4096 characters; long
+# prompts are auto-split by the client at paragraph boundaries
+# (\n\n). The bot cannot predict where the split lands, so any
+# size-window heuristic produces false negatives (e.g. a 6K
+# prompt split as 3910 + 2498) or false positives (any
+# legitimate message in a wide window blocks follow-ups for
+# 30 s).
 #
-# Workaround: when the first message from a (chat, user) has
-# length in [4060, 4096] bytes, mark (chat_id, user_id) as
-# "pending split" and refuse to dispatch the message and any
-# subsequent consecutive messages from the same (chat, user)
-# to the LLM. Instead reply with a "your prompt may have been
-# split by Telegram" error and discard. The pending state has
-# a TTL of 30 s so a user typing a single long message and not
-# following up does not stay locked out forever.
+# New approach (T34, 2026-10-13): detect the BURST PATTERN,
+# not the size. If the SAME (chat, user) sends two messages
+# within BURST_WINDOW_SEC, and the first message was larger
+# than BURST_MIN_FIRST_BYTES, treat the second as a probable
+# follow-up of a Telegram auto-split. Drop the second
+# message and ABORT the in-flight LLM call for the first
+# (via the registered abort_event). Output a clear error
+# so the user understands why both messages were lost.
 #
-# This is a heuristic, not a guarantee. False positives are
-# possible (a user just happened to write a 4070-char message
-# with a follow-up). The probability is low because the window
-# 4060-4096 only fires on messages close to Telegram's hard
-# 4096-byte per-message ceiling, and the operator's golden
-# prompts that triggered the fix were in that range. Documented
-# in docs/KNOWN-LIMITATIONS.md.
-import time
-_SPLIT_TTL_SECONDS = 30.0
-_SPLIT_WINDOW_MIN = 3500  # 2026-10-13: observed Telegram split at 3910 bytes (see test logs for 6K prompt); expanded from 4060 to 3500 to cover that case. 3500-4096 is the realistic split zone for clients that split at sentence boundaries, not at the 4096 byte cap.
-_SPLIT_WINDOW_MAX = 4096
-_split_pending: "OrderedDict[tuple[int, int], float]" = OrderedDict()
+# Why per-(chat, user) and not per-chat: in a group, user A
+# typing a long prompt must not block user B's follow-up.
+#
+# Why 2 s: short enough to not interfere with normal
+# back-and-forth (which is paced by human typing speed, ~3-5
+# s between turns), long enough to cover the gap between two
+# poll batches of a single Telegram update (which can be
+# 100 ms - 2 s apart).
+#
+# Why 3000 bytes: excludes burst patterns of short messages
+# like "ok" + "thanks" (each < 50 bytes). A genuine split
+# always has at least one chunk of >1500 bytes (Telegram
+# roughly halves or thirds a long text); 3000 is conservative
+# (2x the minimum) to keep false positives low.
+#
+# Edge case: a 4095-char prompt does NOT trigger a Telegram
+# split, so the burst check sees only one message. The bot
+# processes it normally. This is a known limitation; users
+# who hit the cap should send via Bot API directly.
+
+import asyncio
+_BURST_WINDOW_SEC = 2.0
+_BURST_MIN_FIRST_BYTES = 3000
+_user_recent_msg: "dict[tuple[int, int], tuple[float, int, asyncio.Event | None]]" = {}
 
 
-def _mark_split_pending(chat_id: int, user_id: int) -> float:
-    """Record that (chat, user) just sent a near-4096-char message
-    that looks like the first half of a Telegram auto-split. Returns
-    the timestamp recorded.
+def _check_burst_split(chat_id: int, user_id: int, current_size_bytes: int) -> "asyncio.Event | None":
+    """If the current message looks like a follow-up of a Telegram
+    auto-split (sent within BURST_WINDOW_SEC of a >3000-byte message
+    from the same (chat, user)), return the abort_event registered
+    for the in-flight LLM call of that first message. The caller
+    should `await` the abort, then reply with a split-detection
+    error and drop the current message.
 
-    Also lazily evicts ALL expired entries in _split_pending
-    (excluding the just-marked key). This is O(n) where n is the
-    number of distinct (chat_id, user_id) pairs currently in the
-    dict; bounded by the operator's ALLOWED_USER_IDS cardinality.
-    Without the eviction sweep, a stale entry written by an
-    expired test or a long-idle user would never be cleaned up
-    by _is_split_pending() if no one queries that key again.
+    Returns None if this is not a burst (first message ever seen
+    for this user, or previous message was too long ago, or first
+    message was too short to be a split half).
     """
     key = (chat_id, user_id)
-    ts = time.monotonic()
-    _split_pending[key] = ts
-    expired = [k for k, t in _split_pending.items() if k != key and t + _SPLIT_TTL_SECONDS < ts]
-    for k in expired:
-        _split_pending.pop(k, None)
-    return ts
-
-
-def _is_split_pending(chat_id: int, user_id: int) -> bool:
-    """True if (chat, user) recently sent a 4060-4096 byte message
-    and the TTL has not yet expired. Caller should refuse to
-    dispatch any further messages from this (chat, user) until
-    the pending state expires.
-
-    Lazily evicts ALL expired entries from _split_pending (O(n)
-    scan, n is small because the LRU insert in _mark_split_pending
-    is bounded by chat/user cardinality).
-    """
-    key = (chat_id, user_id)
-    ts = _split_pending.get(key)
-    if ts is None:
-        # Even if our key is not present, evict expired entries
-        # so a flood of short messages does not grow the dict.
-        now = time.monotonic()
-        expired = [k for k, t in _split_pending.items() if t + _SPLIT_TTL_SECONDS < now]
-        for k in expired:
-            _split_pending.pop(k, None)
-        return False
+    prev = _user_recent_msg.get(key)
+    if prev is None:
+        return None
+    prev_ts, prev_size, prev_event = prev
     now = time.monotonic()
-    if ts + _SPLIT_TTL_SECONDS < now:
-        _split_pending.pop(key, None)
-        return False
-    return True
+    if now - prev_ts > _BURST_WINDOW_SEC:
+        return None
+    if prev_size < _BURST_MIN_FIRST_BYTES:
+        return None
+    return prev_event
 
 
-def _clear_split_pending(chat_id: int, user_id: int) -> None:
-    """Drop the pending-split state for (chat, user). Called when
-    the user runs /reset or /start, or any time we want to
-    explicitly un-stick them.
+def _record_user_message(chat_id: int, user_id: int, size_bytes: int, abort_event: "asyncio.Event | None" = None) -> None:
+    """Remember that (chat, user) just sent a message of size_bytes.
+    The abort_event is the in-flight LLM call's abort signal so a
+    later burst can cancel it. Pass None if no call is in flight
+    (e.g. message was rejected before the LLM was invoked).
     """
-    _split_pending.pop((chat_id, user_id), None)
+    key = (chat_id, user_id)
+    _user_recent_msg[key] = (time.monotonic(), size_bytes, abort_event)
+    # Lazy eviction: keep the dict small by dropping entries
+    # older than BURST_WINDOW_SEC. Cheap O(n) scan, n is bounded
+    # by the operator's ALLOWED_USER_IDS cardinality.
+    now = time.monotonic()
+    expired = [k for k, (ts, _, _) in _user_recent_msg.items() if now - ts > _BURST_WINDOW_SEC * 4]
+    for k in expired:
+        _user_recent_msg.pop(k, None)
+

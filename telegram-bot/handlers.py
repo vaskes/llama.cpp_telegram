@@ -830,41 +830,32 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user
-    from state import _get_user_semaphore as _user_semaphore, _is_split_pending, _mark_split_pending
-    from state import _SPLIT_WINDOW_MIN, _SPLIT_WINDOW_MAX
+    from state import _get_user_semaphore as _user_semaphore
+    from state import _check_burst_split, _record_user_message, _user_recent_msg
     print(f"[handle_text] ENTRY user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}", flush=True)
-    # Telegram-4096-split workaround. If a previous message from
-    # this (chat, user) is still flagged as a probable auto-split
-    # (length 4060-4096 bytes, within 30s), drop this and any
-    # subsequent consecutive messages on the floor with an
-    # error reply. The flag is cleared by /reset / /start or by
-    # TTL expiry.
+    # Telegram-split detection (T34, 2026-10-13). Pattern-based:
+    # if the SAME (chat, user) sent a >3000-byte message within
+    # the last BURST_WINDOW_SEC (2s), the current message is
+    # likely a follow-up of a Telegram auto-split. Drop the
+    # current message and ABORT the in-flight LLM call for the
+    # previous one, then reply with a clear error.
     user_id_check = update.effective_user.id
     chat_id_check = update.effective_chat.id
-    if _is_split_pending(chat_id_check, user_id_check):
-        print(f"[handle_text] REFUSE: (chat={chat_id_check}, user={user_id_check}) is in split-pending state; dropping message of length {len(update.message.text or '')}", flush=True)
-        try:
-            await update.message.reply_text(
-                "🚫 Your previous message was 4060–4096 bytes (likely auto-split by Telegram). This message was NOT processed to avoid two independent half-answers. The split-pending state clears after 30 seconds, on /reset, or on /start. Resend a shorter prompt, or use the Telegram Bot API directly to bypass the 4096-char UI cap."
-            )
-        except Exception as e:
-            print(f"[handle_text] split-pending reply failed: {type(e).__name__}: {e!r}", flush=True)
-        return
-    # Heuristic: a message in [4060, 4096] bytes from the same
-    # (chat, user) is almost certainly the first half of a
-    # Telegram auto-split. Mark pending, refuse this one, and
-    # let the next consecutive message (if any) trigger the
-    # drop path above.
     text_bytes = len((update.message.text or '').encode('utf-8'))
-    if _SPLIT_WINDOW_MIN <= text_bytes <= _SPLIT_WINDOW_MAX:
-        print(f"[handle_text] MARK split-pending: (chat={chat_id_check}, user={user_id_check}) sent {text_bytes} bytes (window {_SPLIT_WINDOW_MIN}-{_SPLIT_WINDOW_MAX})", flush=True)
-        _mark_split_pending(chat_id_check, user_id_check)
+    prev_event = _check_burst_split(chat_id_check, user_id_check, text_bytes)
+    if prev_event is not None:
+        print(f"[handle_text] BURST-SPLIT: (chat={chat_id_check}, user={user_id_check}) current_size={text_bytes}; aborting previous in-flight LLM call and dropping current message", flush=True)
+        prev_event.set()
+        # Clear the registry entry so a third consecutive message
+        # within the window is not also treated as a split
+        # follow-up. The user has to /reset or wait 2s.
+        _user_recent_msg.pop((chat_id_check, user_id_check), None)
         try:
             await update.message.reply_text(
-                "🚫 Detected a possible Telegram auto-split (this message is 4060–4096 bytes, near the 4096-char per-message cap where Telegram splits at sentence boundaries). Message NOT processed. The split-pending state clears after 30 seconds, on /reset, or on /start. If this is a false alarm, run /reset and resend a shorter prompt."
+                "🚫 ⚠️ Detected a Telegram auto-split: you sent two messages within 2 seconds, and the first was >3000 bytes. The first message's LLM call has been aborted and this follow-up was dropped to avoid two half-answers. Run /reset and resend as a single message, or send via the Telegram Bot API directly to bypass the 4096-char UI cap."
             )
         except Exception as e:
-            print(f"[handle_text] split-mark reply failed: {type(e).__name__}: {e!r}", flush=True)
+            print(f"[handle_text] burst-split reply failed: {type(e).__name__}: {e!r}", flush=True)
         return
     result = await _route_to_thread(update, context)
     if result is None:
@@ -896,6 +887,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     abort_event = asyncio.Event()
     _register_abort_event(chat_id, thinking.message_id, abort_event)
     await _persist_message(chat_id, thread_id, 'user', user_message, sender_name=sender_name)
+    # T34: register this message in the per-(chat, user) burst
+    # registry so a follow-up within 2 s can abort this in-flight
+    # LLM call. Stamped AFTER the abort_event is registered so
+    # _check_burst_split() returns a valid event.
+    _record_user_message(chat_id, user_id, len(user_message.encode('utf-8')), abort_event)
     persisted = True
     history = await _load_history(chat_id, thread_id)
     print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)

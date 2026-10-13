@@ -201,55 +201,88 @@ def test_prompts_has_long_welcome_text():
     assert "multi" in WELCOME_TEXT.lower() or "consensus" in WELCOME_TEXT.lower(),         "missing multi-LLM explanation"
 
 
-# === _split_pending: Telegram 4096-char split workaround ===
-# Tests the heuristic that catches prompts auto-split by Telegram
-# into multiple consecutive messages. See state.py and the
-# handler in handlers.py handle_text() for usage.
+# === _user_recent_msg + _check_burst_split: rate-based split detection ===
+# T34 (2026-10-13) replaced the size-window heuristic with a
+# pattern-based burst detector. See state.py for the full
+# rationale. The previous split_pending test block is removed;
+# these tests cover the new behavior.
 
-def test_split_pending_marks_on_first_message():
-    """First message of length 4060-4096 bytes marks pending."""
-    from state import _is_split_pending, _mark_split_pending
-    chat_id, user_id = 100, 200
-    assert not _is_split_pending(chat_id, user_id)
-    _mark_split_pending(chat_id, user_id)
-    assert _is_split_pending(chat_id, user_id)
+def test_burst_no_previous_message_returns_none():
+    """No previous message from this (chat, user) => no burst."""
+    from state import _check_burst_split
+    assert _check_burst_split(100, 200, 100) is None
 
 
-def test_split_pending_returns_false_for_other_chats():
-    """Marking chat A does not affect chat B for the same user."""
-    from state import _is_split_pending, _mark_split_pending
-    _mark_split_pending(100, 200)
-    assert _is_split_pending(100, 200)
-    assert not _is_split_pending(101, 200)
-    assert not _is_split_pending(100, 201)
+def test_burst_short_first_message_returns_none():
+    """First message < 3000 bytes is not a split half."""
+    import asyncio
+    from state import _check_burst_split, _record_user_message
+    ev = asyncio.Event()
+    _record_user_message(100, 200, 500, ev)  # 500 bytes < threshold
+    assert _check_burst_split(100, 200, 100) is None
 
 
-def test_split_pending_ttl_expires():
-    """Pending state expires after _SPLIT_TTL_SECONDS."""
+def test_burst_long_first_then_quick_followup_returns_event():
+    """First > 3000 bytes + follow-up within 2s => burst."""
+    import asyncio
+    from state import _check_burst_split, _record_user_message
+    ev = asyncio.Event()
+    _record_user_message(100, 200, 3500, ev)
+    burst = _check_burst_split(100, 200, 100)
+    assert burst is ev
+
+
+def test_burst_long_first_then_slow_followup_returns_none():
+    """First > 3000 bytes + follow-up after 2s => not a burst."""
+    import asyncio
     import time
-    from state import _is_split_pending, _mark_split_pending, _SPLIT_TTL_SECONDS
-    chat_id, user_id = 200, 300
-    _mark_split_pending(chat_id, user_id)
-    assert _is_split_pending(chat_id, user_id)
-    from state import _split_pending
-    _split_pending[(chat_id, user_id)] = time.monotonic() - _SPLIT_TTL_SECONDS - 1
-    assert not _is_split_pending(chat_id, user_id)
+    from state import _check_burst_split, _record_user_message, _BURST_WINDOW_SEC, _user_recent_msg
+    ev = asyncio.Event()
+    _record_user_message(100, 200, 3500, ev)
+    # Backdate the entry to simulate > 2s ago
+    ts, size, stored_ev = _user_recent_msg[(100, 200)]
+    _user_recent_msg[(100, 200)] = (ts - _BURST_WINDOW_SEC - 1, size, stored_ev)
+    assert _check_burst_split(100, 200, 100) is None
 
 
-def test_split_pending_evicts_expired_on_new_mark():
-    """Marking a new (chat, user) evicts any already-expired entries."""
-    import time
-    from state import _is_split_pending, _mark_split_pending, _SPLIT_TTL_SECONDS, _split_pending
-    _split_pending[(1, 1)] = time.monotonic() - _SPLIT_TTL_SECONDS - 100
-    _mark_split_pending(2, 2)
-    assert (1, 1) not in _split_pending
-    assert (2, 2) in _split_pending
+def test_burst_other_chat_not_affected():
+    """Marking (chat1, user) does not affect (chat2, user)."""
+    import asyncio
+    from state import _check_burst_split, _record_user_message
+    ev = asyncio.Event()
+    _record_user_message(100, 200, 3500, ev)
+    assert _check_burst_split(101, 200, 100) is None
+    assert _check_burst_split(100, 201, 100) is None
 
 
-def test_split_pending_window_constants():
-    """The window [4060, 4096] covers Telegram's auto-split zone."""
-    from state import _SPLIT_WINDOW_MIN, _SPLIT_WINDOW_MAX
-    assert 3500 <= _SPLIT_WINDOW_MIN < _SPLIT_WINDOW_MAX <= 4096
-    # The window is the last 36 bytes of the 4096 limit, matching
-    # what Telegram clients do when splitting at sentence boundaries.
+def test_burst_no_abort_event_returns_none():
+    """If the first message has no abort_event (e.g. rejected
+    before LLM call), there is nothing to abort and we should
+    not flag a burst (the previous message was effectively
+    never processed)."""
+    from state import _check_burst_split, _record_user_message
+    _record_user_message(100, 200, 3500, None)
+    assert _check_burst_split(100, 200, 100) is None
+
+
+def test_burst_constants():
+    """BURST_WINDOW_SEC is short, BURST_MIN_FIRST_BYTES is
+    a conservative 3000 bytes."""
+    from state import _BURST_WINDOW_SEC, _BURST_MIN_FIRST_BYTES
+    assert 1.0 <= _BURST_WINDOW_SEC <= 3.0
+    assert 2000 <= _BURST_MIN_FIRST_BYTES <= 3500
+
+
+def test_burst_record_overwrites_previous():
+    """Recording a new message for the same (chat, user) replaces
+    the previous entry, not stacks with it. This is important
+    because the second message is the new 'first' for any
+    subsequent burst check."""
+    from state import _check_burst_split, _record_user_message, _user_recent_msg
+    _record_user_message(100, 200, 100, None)
+    _record_user_message(100, 200, 100, None)
+    _record_user_message(100, 200, 100, None)
+    assert (100, 200) in _user_recent_msg
+    assert len([k for k in _user_recent_msg if k == (100, 200)]) == 1
+
 
