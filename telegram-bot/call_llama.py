@@ -91,7 +91,7 @@ import limits
 
 from config import (
     API_KEY, DISABLED_TOOLS, DONSETCH_SESSION_ID, DONSETCH_URL,
-    LLAMA_URL, MODEL, SHUTDOWN_EVENT, WHISPER_URL, _TOOLS_CACHE,
+    LLAMA_URL, MODEL, SHUTDOWN_EVENT, WHISPER_LANGUAGE, WHISPER_URL, _TOOLS_CACHE,
 )
 from prompts import GROUP_CONTEXT, RATING_RULES
 from rating import _execute_react_to_message
