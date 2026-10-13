@@ -45,11 +45,11 @@ def test_limits_module_imports():
 def test_public_profile_defaults():
     try:
         limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'public'})
-        assert limits.MAX_TOKENS_DEFAULT == 32768
+        assert limits.MAX_TOKENS_DEFAULT == 65536
         assert limits.MAX_TOKENS_CAPTION == 16384
-        assert limits.LOOP_BUDGET_SEC == 600
-        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 660.0
-        assert limits.REASONING_RATIO_HARD_LIMIT == 0.5
+        assert limits.LOOP_BUDGET_SEC == 900
+        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 990.0
+        assert limits.REASONING_RATIO_HARD_LIMIT == 0.95
     finally:
         _restore_env()
 
@@ -57,10 +57,10 @@ def test_public_profile_defaults():
 def test_personal_profile_defaults():
     try:
         limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'personal'})
-        assert limits.MAX_TOKENS_DEFAULT == 262144
+        assert limits.MAX_TOKENS_DEFAULT == 131072
         assert limits.MAX_TOKENS_CAPTION == 65536
-        assert limits.LOOP_BUDGET_SEC == 1800
-        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 1980.0
+        assert limits.LOOP_BUDGET_SEC == 1200
+        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 1320.0
         assert limits.REASONING_RATIO_HARD_LIMIT == 1.0
     finally:
         _restore_env()
@@ -69,7 +69,7 @@ def test_personal_profile_defaults():
 def test_default_profile_is_public():
     try:
         limits = _reload_with({})
-        assert limits.MAX_TOKENS_DEFAULT == 32768
+        assert limits.MAX_TOKENS_DEFAULT == 65536
     finally:
         _restore_env()
 
@@ -93,7 +93,7 @@ def test_env_overrides_personal_profile():
             'LLAMABOT_MAX_TOKENS': '12345',
         })
         assert limits.MAX_TOKENS_DEFAULT == 12345
-        assert limits.LOOP_BUDGET_SEC == 1800
+        assert limits.LOOP_BUDGET_SEC == 1200
     finally:
         _restore_env()
 
@@ -201,7 +201,7 @@ def test_call_llama_default_tracks_active_profile():
                 del sys.modules[mod_name]
         from call_llama import call_llama
         sig = inspect.signature(call_llama)
-        assert sig.parameters["max_tokens"].default == 32768
+        assert sig.parameters["max_tokens"].default == 65536
     finally:
         for mod_name in list(sys.modules):
             if mod_name in ('call_llama', 'limits'):
@@ -211,7 +211,7 @@ def test_call_llama_default_tracks_active_profile():
         _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'personal'})
         from call_llama import call_llama
         sig = inspect.signature(call_llama)
-        assert sig.parameters["max_tokens"].default == 262144
+        assert sig.parameters["max_tokens"].default == 131072
     finally:
         for mod_name in list(sys.modules):
             if mod_name in ('call_llama', 'limits'):

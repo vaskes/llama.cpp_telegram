@@ -136,53 +136,63 @@ if _DEPLOYMENT_PROFILE not in ("public", "personal"):
 # the *meaning* of a default is obvious in context, not buried
 # in a chain of ternaries.
 _PUBLIC_DEFAULTS = {
-    # Operator policy 2026-10-13: "выставить максимально возможные
-    # лимиты чтобы бот отрабатывал без падений. их всегда можно
-    # подрезать" — start with the max llama-server can handle, then
-    # trim if abuse shows up in production logs.
-    "MAX_TOKENS_DEFAULT":    32768,   # matches llama-server's effective
-                                       #   ceiling for non-shell prompts
-    "MAX_TOKENS_CAPTION":    16384,   # photos / voice transcripts
-    "LOOP_BUDGET_SEC":         600,   # 10 min wall clock per call
-    "LLAMA_HTTP_TIMEOUT_SEC": 660.0,  # > LOOP_BUDGET_SEC (10% headroom)
-    "LLAMA_MODELS_TIMEOUT_SEC": 10.0,
-    "TRANSCRIBE_TIMEOUT_SEC":  120.0,
-    "REASONING_RATIO_HARD_LIMIT": 0.5, # observed 2026-10-13: Qwen 3.8 MTP
-                                       #   can hit 0.94 reasoning ratio on
-                                       #   a 4K prompt; 0.5 still aborts
-                                       #   "all thinking no answer" cases.
-                                       #   If 4K prompts routinely need
-                                       #   more reasoning headroom, raise
-                                       #   this via LLAMABOT_REASONING_RATIO_LIMIT.
+    # Battle-tested 2026-10-13 against RTX 5090 32GB /
+    # Qwen3.8-27B-Ultra-Heretic-MTP / llama-server --ctx-size 262144,
+    # with a 4K-char HTML Newton's-cradle prompt through the bot
+    # (tools=yes). Real consumption on that prompt:
+    #   reasoning  ~86K chars (first iter alone; iter=0 is mostly
+    #              thinking before any tool call or answer)
+    #   content    ~17K chars (final HTML across 4 Telegram messages)
+    #   wall clock ~5-10 min
+    #   finish     tool_calls (write_file; one REJECTED, then re-emit)
+    # Sizing rule: keep ~1.5-2x headroom over observed max, not 4x.
+    "MAX_TOKENS_DEFAULT":    65536,   # 2x over 4K-prompt peak (~100K total
+                                       #   output: reasoning + content).
+                                       #   Below 32K the 4K-prompt case
+                                       #   truncates with content_chars=0.
+    "MAX_TOKENS_CAPTION":    16384,   # unchanged: photos / voice transcripts
+    "LOOP_BUDGET_SEC":         900,   # 15 min - 1.5x over the 5-10 min the
+                                       #   4K-prompt case actually took
+    "LLAMA_HTTP_TIMEOUT_SEC": 990.0,  # LOOP_BUDGET_SEC * 1.1
+    "LLAMA_MODELS_TIMEOUT_SEC": 10.0, # unchanged
+    "TRANSCRIBE_TIMEOUT_SEC":  120.0, # unchanged
+    "REASONING_RATIO_HARD_LIMIT": 0.95, # 5% content floor. Qwen 3.8 MTP
+                                       #   routinely hits 0.94+ reasoning
+                                       #   on long tool-using prompts;
+                                       #   0.5 was too aggressive (would
+                                       #   abort valid runs that hadn't
+                                       #   reached the answer phase yet)
 }
 
 _PERSONAL_DEFAULTS = {
-    # Operator policy 2026-10-13: "по максимуму чтоб были, чтобы
-    # ризонинг мог сожрать хоть все 256к контекста. мне не жалко,
-    # лишь бы выдал результат". Personal is single-user, single-GPU
-    # — the model has the box to itself, so let it think as long as
-    # it wants. If the resulting generation time becomes a problem
-    # in practice, trim LLAMABOT_LOOP_BUDGET_SEC; do not lower
-    # MAX_TOKENS_DEFAULT until 4K-char prompts have been observed
-    # to use that budget and produce a final answer.
-    "MAX_TOKENS_DEFAULT":    262144,  # == llama-server --ctx-size 262144
-                                       #   we asked the model to handle
-                                       #   up to 256k. Let it output that
-                                       #   much if reasoning needs it.
-    "MAX_TOKENS_CAPTION":    65536,   # captions can be long if a
-                                       #   voice transcript is huge
-    "LOOP_BUDGET_SEC":        1800,   # 30 min — operator said "мне не
-                                       #   жалко". Single-user; nothing
-                                       #   else is waiting on the queue.
-    "LLAMA_HTTP_TIMEOUT_SEC": 1980.0, # 33 min, > LOOP_BUDGET with
-                                       #   10% headroom
-    "LLAMA_MODELS_TIMEOUT_SEC": 30.0,
-    "TRANSCRIBE_TIMEOUT_SEC":  300.0,
-    "REASONING_RATIO_HARD_LIMIT": 1.0, # OFF: let the model eat the whole
-                                       #   budget on reasoning. We only
-                                       #   flag finish=length with empty
-                                       #   content downstream; the ratio
-                                       #   is no longer a guard.
+    # Battle-tested 2026-10-13, see _PUBLIC_DEFAULTS comment for the
+    # 4K-prompt measurement. Same data, but personal uses 2x more
+    # headroom because the box is single-user.
+    "MAX_TOKENS_DEFAULT":    131072,  # 2x over observed 4K-prompt peak
+                                       #   (~100K total output). 128K
+                                       #   still leaves room to grow for
+                                       #   prompts that need more
+                                       #   reasoning than the 4K
+                                       #   Newton's-cradle test did.
+    "MAX_TOKENS_CAPTION":    65536,   # unchanged from v3
+    "LOOP_BUDGET_SEC":        1200,   # 20 min - 2x over the 5-10 min
+                                       #   observed. Trimming v3's 30
+                                       #   min because nobody waited that
+                                       #   long; if a future test takes
+                                       #   >20 min, raise this, not
+                                       #   MAX_TOKENS_DEFAULT.
+    "LLAMA_HTTP_TIMEOUT_SEC": 1320.0, # LOOP_BUDGET_SEC * 1.1
+    "LLAMA_MODELS_TIMEOUT_SEC": 30.0, # unchanged
+    "TRANSCRIBE_TIMEOUT_SEC":  300.0, # unchanged
+    "REASONING_RATIO_HARD_LIMIT": 1.0, # still OFF. The 4K-prompt test
+                                       #   had 100% reasoning on iter=0
+                                       #   before the model emitted the
+                                       #   first tool call; a cap of
+                                       #   0.95 would have aborted the
+                                       #   run before it could produce
+                                       #   the answer. Cap stays off
+                                       #   for personal; public gets
+                                       #   0.95 (5% content floor).
 }
 
 _PROFILE_DEFAULTS = (
