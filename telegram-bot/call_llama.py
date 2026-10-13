@@ -16,6 +16,8 @@ import urllib.parse
 from typing import Any
 
 import httpx
+
+from tool_isolation import validate_tool_calls, UnknownToolNameError
 import limits
 
 from config import (
@@ -789,6 +791,25 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                     content = msg0.get("content") or ""
                     reasoning = msg0.get("reasoning_content") or ""
                     non_stream_tool_calls = msg0.get("tool_calls") or []
+                    # T38.5: tool isolation. If llama-server returned a tool_call
+                    # whose function name is not in the bot's whitelist, we refuse
+                    # to dispatch it. This is the bot-side guarantee that the
+                    # model can NEVER reach llama-server's native --agent or
+                    # MCP-loaded tools.
+                    try:
+                        validate_tool_calls(non_stream_tool_calls)
+                    except UnknownToolNameError as _e:
+                        print(f"[TOOL-ISOLATION] iter={iteration} {str(_e).splitlines()[0]}", flush=True)
+                        return (
+                            f"[bot refused: llama-server returned a tool_call for a "
+                            f"name not in the bot's whitelist. This means llama-server "
+                            f"is configured with --agent or MCP-servers-config, and the "
+                            f"model is reaching for a native tool the bot does not "
+                            f"manage. The bot's own tools run in a hardened side-car "
+                            f"sandbox; native llama tools would bypass that. Restart "
+                            f"llama-server without --agent / --mcp-servers-config, or "
+                            f"use a separate llama instance for the bot.]"
+                        )
                     print(f"[LLAMA] iter={iteration} non-stream finish={data['choices'][0].get('finish_reason')} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}", flush=True)
                     if reasoning and thinking_msg is not None:
                         await push_thinking(accumulated_reasoning + reasoning, force=True)
@@ -968,6 +989,18 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                                     "filter. Try a shorter prompt or try again in a minute.]")
                         msg = _choices2[0].get("message") or {}
                         tool_calls = msg.get("tool_calls") or []
+                        # T38.5: tool isolation (see validate_tool_calls docstring).
+                        try:
+                            validate_tool_calls(tool_calls)
+                        except UnknownToolNameError as _e:
+                            print(f"[TOOL-ISOLATION] iter={iteration} {str(_e).splitlines()[0]}", flush=True)
+                            return (
+                                f"[bot refused: llama-server returned a tool_call for a "
+                                f"name not in the bot's whitelist. This means llama-server "
+                                f"is configured with --agent or MCP-servers-config. "
+                                f"Restart without those flags or use a separate instance "
+                                f"for the bot.]"
+                            )
                         if not tool_calls:
                             if msg.get("content"):
                                 return msg["content"]
@@ -1003,6 +1036,22 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
         tool_calls = []
         for idx, tc in tool_calls_buf.items():
             if tc["name"]:
+                # T38.5: streaming tool_calls_buf[name] comes from llama-server's
+                # stream chunks. Reject any unknown name BEFORE building the
+                # tool_calls list that we will execute or send back to the model.
+                if tc["name"] not in __import__("tool_isolation").KNOWN_TOOL_NAMES:
+                    print(
+                        f"[TOOL-ISOLATION] iter={iteration} refusing unknown streamed "
+                        f"tool name {tc['name']!r}; this indicates llama-server is "
+                        f"running --agent or MCP-servers-config",
+                        flush=True,
+                    )
+                    return (
+                        f"[bot refused: llama-server streamed a tool_call for "
+                        f"{tc['name']!r}, which is not in the bot's whitelist. "
+                        f"Restart llama-server without --agent / --mcp-servers-config, "
+                        f"or use a separate llama instance for the bot.]"
+                    )
                 args_str = tc["arguments"]
                 try:
                     args_obj = json.loads(args_str) if args_str else {}
