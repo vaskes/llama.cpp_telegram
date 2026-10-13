@@ -15,9 +15,7 @@ macvlan; the rest are on the parent host. setMyCommands
 registered 9 commands.
 
 **In-tree selftest:** 22/22 test groups PASS in Docker
-(no new regressions; 2 pre-existing rating-parser
-subtest failures "plain answer" and "[[TYPE:unknown]]"
-predate v0.7.9 and are tracked separately).
+(no regressions as of 2026-10-13).
 
 **Pytest:** 5/5 tests PASS in 0.07s.
 
@@ -27,7 +25,7 @@ testing v0.9.0 in production: (1) image abort left
 orphan in history, fixed by Storage.delete_last_user_message
 + handle_photo rollback in both abort and exception paths;
 (2) voice unreachable because whisper-api was on parent
-host - moved to macvlan 192.168.10.3.
+host - moved to macvlan <lan-ip>.
 
 Of the 12 total, 7 caught by operator testing, 4 caught by
 selftest regressions in Docker, 1 (v0.9.1) split across both.
@@ -78,7 +76,7 @@ Total: ~40 min of operator time.
 ### Pending (next session)
 
 - **T25:** ~~Webhook migration~~ **DONE (v0.9.0).** Deployed
-  in production with 192.168.10.3 secondary IP + MikroTik
+  in production with <lan-ip> secondary IP + router DNAT
   DNAT + PBR. Pending update count dropping, end-to-end
   smoke test green from foreign egress. See
   `docs/WEBHOOK.md` for the full operator documentation
@@ -90,12 +88,19 @@ Total: ~40 min of operator time.
 - **T27:** ~~Add `docs/REVIEW-MINIMAX-v6.md`~~ **DONE.**
   See `docs/REVIEW-MINIMAX-v6.md` (10444 bytes). Archives
   the v0.6.0 + v0.6.1 + v0.6.2 + v0.6.3 review cycle.
-- **T28:** Fix 2 pre-existing rating parser subtest
-  failures ("plain answer", "[[TYPE:unknown]]"). These
-  predate v0.7.9 and are unrelated to any other commit
-  in this cycle. The parser expects a TYPE marker; these
-  inputs don't have one. Either skip these cases in the
-  parser, or update the test expectations. ~30 min.
+- **T28:** ~~Fix 2 pre-existing rating parser subtest
+  failures~~ **DONE 2026-10-13.** Verified with
+  `CONVERSATIONS_DB=/tmp/pytest_*.db pytest tests/`:
+  60 passed in 0.49s, including
+  `test_rating_parser_returns_body` and
+  `test_rating_parser_handles_unknown_type_as_question`
+  (the 4-case test that covers both "plain answer" and
+  "[[TYPE:unknown]]"). The parser was fixed in v0.9.5 to
+  map unknown -> question + use the whole text as body;
+  the test was added at the same time. The TODO entry
+  stayed open because nobody re-ran the suite to confirm
+  it still passed. Closing it now. ~10 min actual
+  (vs 30 min estimate).
 - **T29:** Remove `get_weather` (wttr.in) tool. The tool
   was added early as a "trivial demo" for tool-calling,
   but it crept in and stayed. It is narrow (single
