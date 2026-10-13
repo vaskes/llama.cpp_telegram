@@ -3,14 +3,18 @@ services:
     image: fedirz/faster-whisper-server:latest-cpu
     container_name: whisper-api
     restart: unless-stopped
+    # 2026-10-13: switch from lan_macvlan (static 192.168.10.3) to
+    # host network. Same reasoning as the telegram-bot migration:
+    # PBR/DNAT routing is no longer in use, and macvlan L2 isolation
+    # breaks the bot -> whisper call now that the bot is on
+    # host network.
+    #
+    # The whisper-api process inside the container binds on
+    # 0.0.0.0:8000 on the host's interfaces. The bot (also on
+    # host network) reaches it at http://192.168.10.7:8000 (or
+    # http://localhost:8000, same thing).
+    network_mode: host
     environment:
       - WHISPER_MODEL=Systran/faster-distil-whisper-large-v3
     volumes:
       - ./cache:/root/.cache
-    networks:
-      lan_macvlan:
-        ipv4_address: 192.168.10.3
-
-networks:
-  lan_macvlan:
-    external: true

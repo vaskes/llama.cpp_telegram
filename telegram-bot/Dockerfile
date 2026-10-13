@@ -19,16 +19,26 @@ RUN pip install --no-cache-dir -r requirements.txt
 # with default mode 0644 owned by `bot` via umask; the bind-mount
 # gives the operator a stable path on the host.
 RUN useradd --create-home --uid 1000 --shell /bin/false bot \
-    && mkdir -p /app/files /app/data \
+    && mkdir -p /app/files /app/data /app/personal_tools \
     && chown -R bot:bot /app
 
-# Then copy ALL bot modules (F3 module split, v0.6.0+).
+# Copy ALL top-level bot modules (F3 module split, v0.6.0+).
 # Without this wildcard, `docker compose build` produces
 # a container missing config.py / state.py / dispatch.py /
 # handlers.py / call_llama.py / etc., and bot.py fails to
 # import at startup. The COPY *.py glob is evaluated by the
 # Docker builder at build time, so the image is reproducible.
 COPY *.py ./
+
+# Copy the personal_tools subpackage (T38: bash_command tool for
+# LLAMABOT_DEPLOYMENT_PROFILE=personal). This is a SEPARATE COPY
+# because the `COPY *.py ./` glob above only matches top-level
+# files; without this line, `import personal_tools.bash_command`
+# raises ModuleNotFoundError at startup. The bind-mount in
+# docker-compose.yml is a redundant safety net (so editing the
+# module on the host does not require an image rebuild) but the
+# image must still self-contain the files for cold builds.
+COPY personal_tools/ ./personal_tools/
 
 # Drop privileges. Anything that needs to write here must be writable
 # by uid 1000, which is fine because we only write to /app/files
