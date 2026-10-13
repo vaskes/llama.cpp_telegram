@@ -1366,16 +1366,24 @@ async def call_llama(messages, max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT, 
                 'content': r_str[:12000],
             })
 
-        # If the model asked for a tool we don't have, stop right away — it
-        # will keep asking forever otherwise (each iteration costs ~2 min of
-        # reasoning and the bot will burn 30+ min before max_iter triggers).
+        # T49: removed the early-return on saw_unavailable_tool.
+        # The synthetic tool result is already in msgs (the
+        # `else:` branch above appended it). We let the loop
+        # continue so the model can see the feedback on the
+        # next iteration and either retry with a whitelisted
+        # tool or fall back to plain text. The T32c stuck-call
+        # detector (same_calls == prev_calls) handles the case
+        # where the model keeps asking for the same forbidden
+        # tool - it returns after 2 iters with a clear message.
+        # The max_iter / LOOP_BUDGET_SEC cap bounds the total
+        # time. See the original T43 commit message for the
+        # design intent.
         if saw_unavailable_tool:
-            print(f"[loop] iter={iteration} unhandled tool called; aborting", flush=True)
-            return (
-                f'[bot: the model requested a tool ({tool_calls[0]["function"].get("name","?")}) '
-                f'that this bot mode does not support. The tool is not installed in this '
-                f'llama-server configuration. Try a different question, /reset, or restart '
-                f'the bot if this is unexpected.]'
+            print(
+                f"[loop] iter={iteration} unhandled tool(s) called; "
+                f"continuing so model can see the synthetic tool result "
+                f"on the next iter and retry with a whitelisted tool",
+                flush=True,
             )
 
         # If the model is asking for the same tool+args as in the previous
