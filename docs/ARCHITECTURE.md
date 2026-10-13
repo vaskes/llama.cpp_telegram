@@ -36,13 +36,18 @@ document) and a **non-streaming** path (vision). They share only the
 function signature and the return contract. See
 [CALL_LLAMA.md](CALL_LLAMA.md) §1 for the full design.
 
-## Tool-calling loop (streaming path only)
+## Tool-calling loop (streaming + non-streaming paths)
 
 The bot **runs its own** tool-calling loop (up to 15 iterations, with
 a wall-clock cap of 600 s, an identical-call detector, and a
 hallucination abort). This is because llama-server with
 `--mcp-servers-config` only loads the **list of tools**, but does
 **not** execute them — that is the client's job (us).
+
+The loop runs in both the streaming path (text, voice, document)
+and the non-streaming path (vision). T31 added the non-streaming
+tool-calling path so vision tasks can call tools like
+`react_to_message` without dropping the tool call.
 
 The cycle:
 
