@@ -505,10 +505,31 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     finally:
         if thinking is not None:
+            # T45: apply T41 pattern (edit_text with
+            # delete fallback) - was silent delete-only
+            # before, which left the reasoning block
+            # dangling in the chat when edit_text or
+            # delete failed (Telegram rate limit, message
+            # too old, race with Stop button).
             try:
-                await thinking.delete()
-            except Exception:
-                pass
+                if 'bot_response' in dir() and bot_response:
+                    await thinking.edit_text(bot_response)
+                else:
+                    await thinking.delete()
+            except Exception as e:
+                print(
+                    f'[T45] thinking.edit_text failed, '
+                    f'falling back to delete: {type(e).__name__}: {e!r}',
+                    flush=True,
+                )
+                try:
+                    await thinking.delete()
+                except Exception as e2:
+                    print(
+                        f'[T45] thinking.delete also failed '
+                        f'(giving up): {type(e2).__name__}: {e2!r}',
+                        flush=True,
+                    )
         _abort_events.pop((chat_id, thinking.message_id), None)
         sem.release()
 
@@ -907,10 +928,31 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
         if thinking is not None:
+            # T45: apply T41 pattern (edit_text with
+            # delete fallback). Was silent delete-only
+            # before, which left the reasoning block
+            # dangling in the chat when edit_text or
+            # delete failed (Telegram rate limit, message
+            # too old, race with Stop button).
             try:
-                await thinking.delete()
-            except Exception:
-                pass
+                if 'bot_response' in dir() and bot_response:
+                    await thinking.edit_text(bot_response)
+                else:
+                    await thinking.delete()
+            except Exception as e:
+                print(
+                    f'[T45 handle_document] thinking.edit_text failed, '
+                    f'falling back to delete: {type(e).__name__}: {e!r}',
+                    flush=True,
+                )
+                try:
+                    await thinking.delete()
+                except Exception as e2:
+                    print(
+                        f'[T45 handle_document] thinking.delete also failed '
+                        f'(giving up): {type(e2).__name__}: {e2!r}',
+                        flush=True,
+                    )
         _abort_events.pop((chat_id, thinking.message_id), None)
         sem.release()
 
@@ -1134,10 +1176,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"[handle_text] rollback on exception failed: {type(rb).__name__}: {rb!r}", flush=True)
         await _reply(update, f'❌ Error: {e}')
     finally:
-        try:
-            await thinking.delete()
-        except Exception:
-            pass
+        if thinking is not None:
+            # T45: apply T41 pattern (was only in handle_voice).
+            # Edit the thinking message into the final answer
+            # so the user sees ONE message instead of two
+            # (a leftover "💭 думаю…/reasoning" block + a
+            # separate [llm] response). On edit failure
+            # (rate limit, message too old, race with the
+            # Stop button) fall back to delete; if that also
+            # fails, give up and log it. Replaces the old
+            # silent-pass that left the reasoning dangling
+            # in the chat.
+            try:
+                if 'bot_response' in dir() and bot_response:
+                    await thinking.edit_text(bot_response)
+                else:
+                    await thinking.delete()
+            except Exception as e:
+                print(
+                    f'[T45 handle_text] thinking.edit_text failed, '
+                    f'falling back to delete: {type(e).__name__}: {e!r}',
+                    flush=True,
+                )
+                try:
+                    await thinking.delete()
+                except Exception as e2:
+                    print(
+                        f'[T45 handle_text] thinking.delete also failed '
+                        f'(giving up): {type(e2).__name__}: {e2!r}',
+                        flush=True,
+                    )
         # Deregister the per-task abort event so a subsequent
         # handler call for the same user doesn't accidentally
         # see a leftover event. We pop the specific key rather
