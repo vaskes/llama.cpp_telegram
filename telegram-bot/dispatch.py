@@ -45,6 +45,13 @@ from prompts import (
     _LLM_TOKEN_RE, _SUBTALK_NAME_RE, _TOPIC_NAME_RE,
 )
 from persistence import persist as _persist_message, load_history as _load_history
+from handlers import (
+    handle_document, handle_photo, handle_text, handle_voice,
+    send_reply, _download_with_limit, _general_thread_id, _reply,
+    _reply_active, _resolve_active, _route_to_thread, _sender_display_name,
+    _reject_in_group,
+)
+
 from rating import (
     _apply_rating_and_persist, _apply_reaction, _execute_react_to_message,
     _is_rating_active, _parse_rating_response,
