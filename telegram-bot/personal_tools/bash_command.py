@@ -191,9 +191,57 @@ _T51_RATE_LIMIT_TTL_SEC = 3600  # 1 hour idle -> evict
 #
 _DEV_MODE_PROFILE = os.environ.get("LLAMABOT_DEPLOYMENT_PROFILE", "public").lower() == "dev"
 _DEV_ALLOWED_CHAT_IDS_RAW = os.environ.get("LLAMABOT_DEV_ALLOWED_CHAT_IDS", "").strip()
-_DEV_ALLOWED_CHAT_IDS: frozenset[int] = frozenset(
-    int(x.strip()) for x in _DEV_ALLOWED_CHAT_IDS_RAW.split(",") if x.strip()
-)
+
+
+def _parse_chat_ids(raw: str, cap: int = 1000) -> frozenset[int]:
+    """Parse the LLAMABOT_DEV_ALLOWED_CHAT_IDS env var.
+
+    Returns a frozenset of chat_ids. Bad entries (non-int,
+    whitespace) are logged to stderr and skipped. If more
+    than `cap` entries are provided, only the first `cap` are
+    taken (S35: cap at 1000 to bound the cold-start cost
+    and prevent DoS by misconfig).
+
+    Returns an empty frozenset on bad input — this means
+    dev mode will be off (since the dev checks in this
+    module refuse to activate when the allowlist is empty)
+    but the bot still starts.
+    """
+    if not raw:
+        return frozenset()
+    out: list[int] = []
+    skipped = 0
+    for x in raw.split(","):
+        s = x.strip()
+        if not s:
+            continue
+        try:
+            out.append(int(s))
+        except ValueError:
+            skipped += 1
+            print(
+                f"[bash_command] LLAMABOT_DEV_ALLOWED_CHAT_IDS: "
+                f"skipping non-integer entry {s!r}",
+                flush=True,
+            )
+    if skipped:
+        print(
+            f"[bash_command] LLAMABOT_DEV_ALLOWED_CHAT_IDS: "
+            f"skipped {skipped} bad entries",
+            flush=True,
+        )
+    if len(out) > cap:
+        print(
+            f"[bash_command] LLAMABOT_DEV_ALLOWED_CHAT_IDS: "
+            f"capping at {cap} entries (got {len(out)}); "
+            f"this is a misconfig, see BASH-SANDBOX.md",
+            flush=True,
+        )
+        out = out[:cap]
+    return frozenset(out)
+
+
+_DEV_ALLOWED_CHAT_IDS: frozenset[int] = _parse_chat_ids(_DEV_ALLOWED_CHAT_IDS_RAW)
 
 
 def is_dev_mode_chat(chat_id: int | None) -> bool:
@@ -213,7 +261,7 @@ def is_dev_mode_chat(chat_id: int | None) -> bool:
         return False
     if not _DEV_ALLOWED_CHAT_IDS:
         return False
-    return int(chat_id) in _DEV_ALLOWED_CHAT_IDS
+    return chat_id in _DEV_ALLOWED_CHAT_IDS
 
 
 # T52 #S2 / #S3: bash tool argument validation.
