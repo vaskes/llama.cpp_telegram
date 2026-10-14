@@ -435,7 +435,8 @@ async def call_llama(
     bot=None,
     chat_id=None,
     current_message_id=None,
-    chat_type: str | None = None,
+    *,
+    chat_type: str,
 ):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
