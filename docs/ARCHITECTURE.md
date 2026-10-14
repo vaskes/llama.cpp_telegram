@@ -224,7 +224,7 @@ bearer token.
 
 ## Deployment profiles (T35)
 
-Two profiles, picked at container start via
+Three profiles, picked at container start via
 `LLAMABOT_DEPLOYMENT_PROFILE`:
 
   * `public` (default). Conservative token caps, short

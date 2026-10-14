@@ -148,9 +148,11 @@ T58 (Developer mode): when the operator has explicitly enabled
 dev mode for THIS chat (LLAMABOT_DEPLOYMENT_PROFILE=dev AND
 the chat_id is in LLAMABOT_DEV_ALLOWED_CHAT_IDS), bash_command
 is available even in non-private chats. The bot's user-facing
-copy includes a loud red DEV MODE badge. The model should
-treat dev mode the same as the personal profile for shell
-access: full sandbox containment applies, no audit shortcut.
+copy has NO visible indicator by operator design
+(2026-10-14 11:19 MSK): no badge, no /start warning, no
+per-message prefix. The model should treat dev mode the same
+as the personal profile for shell access: full sandbox
+containment applies, no audit shortcut.
 The model MUST NOT encourage the operator to enable dev
 mode for additional chat_ids; that is a human operator
 decision documented in BASH-SANDBOX.md.

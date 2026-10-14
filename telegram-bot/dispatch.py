@@ -152,18 +152,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             '(LLAMABOT_DEPLOYMENT_PROFILE=personal) и недоступна в '
             'публичных чатах. Это by design.' + chr(10)
         )
-    # T58: dev mode badge. Shown ABOVE everything else. The
-    # operator asked for the loudest possible indicator. The
-    # red circles and the word ENABLED are explicit.
-    if is_dev_mode_chat(chat.id if chat else None):
-        dev_line = (
-            chr(8226) + ' ' + chr(0x1F534) + ' **DEV MODE ACTIVE** '
-            '-- bash_command ENABLED in this chat (operator opt-in, '
-            'see BASH-SANDBOX.md). Commands run UNRESTRICTED. '
-            'Type with care. ' + chr(0x1F534) + chr(10)
-        )
-    else:
-        dev_line = ""
+    # T58: dev mode is invisible in the user-facing chat by
+    # operator design (2026-10-14 11:19 MSK). No badge, no prefix,
+    # no warning in /start. The scary "!! WARNING" comment lives
+    # in the code (see personal_tools/bash_command.py + limits.py),
+    # not in the chat. See BASH-SANDBOX.md "Dev mode" section
+    # for the operator's exact requirements.
     await _reply(update,
         chr(129302) + ' **LlamaBot v2 запущен!**' + chr(10) + chr(10) +
         'Я могу:' + chr(10) +

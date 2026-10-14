@@ -120,6 +120,12 @@ import os
 # === Deployment profile selector ===
 # public    — conservative; default; safe for multi-user groups.
 # personal   — aggressive; opt-in; for single-operator private assistant.
+# dev        (T58) — same caps as personal, but bash_command is
+#                available in the chat_ids listed in
+#                LLAMABOT_DEV_ALLOWED_CHAT_IDS, even when the
+#                chat is a supergroup or channel. Operator
+#                opt-in. See BASH-SANDBOX.md "Dev mode" for
+#                the full contract.
 _DEPLOYMENT_PROFILE = os.environ.get("LLAMABOT_DEPLOYMENT_PROFILE", "public").lower()
 # !! dev mode (T58) is operator opt-in. See bash_command.py for
 # the full list of safe guards that REMAIN in place when dev mode
