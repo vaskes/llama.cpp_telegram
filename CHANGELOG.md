@@ -595,6 +595,94 @@ the gate. This rule is in
 `tests/test_drift_handler_imports.py` and
 `docs/ARCHITECTURE.md` "Adding a new feature"
 section.
+
+
+## [v0.12.0-pre] - unreleased - 4 more AST tripwires + chat_id refactor
+
+**Status:** Code complete. Bot live, all tripwires green.
+Pending Mavis review.
+
+### T61 - 4 new AST tripwires + 1 refactor (commit `7e90670`)
+
+Mavis release-review pass 3 (RELEASE-MINIMAX-r3.md) found
+5 new wave-trap classes not yet covered by T60. Operator
+(2026-10-14 12:18 MSK) approved the backlog: build all 5
+in one commit, then tag v0.12.0-pre.
+
+  * **#R8 tripwire** (`test_drift_r8_known_tools.py`):
+    every name in `KNOWN_TOOL_NAMES` must have a dispatch
+    site in `call_llama.py` (`elif fn_name == '...'` or in
+    a `DONSETCH_TOOLS` / `CUSTOM_TOOLS` dict). Catches the
+    pattern: a future commit adds a tool name to the
+    whitelist but forgets the dispatch branch; the LLM
+    emits a tool_call with the new name; validate_tool_calls
+    accepts it; the dispatch block has no branch; the bot
+    silently returns None.
+  * **#R9 tripwire** (`test_drift_r9_profiles.py`): the set
+    of valid profile names in `limits.py` must match what
+    `bash_command.py` and `prompts.py` know about. Catches:
+    a future commit adds a 4th profile in `limits.py` but
+    forgets `bash_command.py` or `prompts.py`. v3 fixes:
+    skip public/personal in bash_command.py (mentioned
+    everywhere in docstrings), only require non-default
+    profiles to be in the source as a quoted string literal.
+  * **#R10 tripwire** (`test_drift_r10_env_vars.py`):
+    every `os.environ.get` / `os.environ[X]` reference in
+    `telegram-bot/` must be documented in `.env.example`.
+    v2 fixes: accept both active (`VAR=default`) and
+    commented (`# VAR=example`) forms. **Caught 3 real
+    gaps at T61 commit time**: `BOT_USERNAME`,
+    `RATING_MODE`, `TELEGRAM_API` - all used in code
+    but not documented. All 3 now in `.env.example`.
+  * **#R11 tripwire** (`test_drift_r11_command_handlers.py`):
+    every `async def cmd_X` / `start` / `reset` / etc. in
+    `handlers.py` and `dispatch.py` must appear as the
+    callback of an `app.add_handler(<Handler>(..., handler))`
+    call in `dispatch.py`. v2 fixes: checks both
+    `CommandHandler` AND `CallbackQueryHandler`,
+    `MessageHandler` wrappers, etc.
+  * **Backtest** (`test_backtest_r8_r11.py`): 4 backtests
+    prove each new tripwire catches its target pattern.
+
+  * **#S27 refactor**: explicit `chat_id` parameter added
+    to `call_bash_command` signature. Previously the
+    function parsed `chat_id` from `session_id`
+    (`session_id[len("chat-"):]`) - fragile if a future
+    commit changes the session_id construction. Now the
+    caller passes `chat_id` directly. `call_llama.py`
+    updated to pass `chat_id=chat_id`. `test_t58_dev_mode`
+    updated to pass `chat_id=-100123` explicitly. The
+    session_id parse code was removed from
+    `call_bash_command`.
+
+Test count: 275 -> 283 (+8 new tests: 4 tripwires + 4
+backtests). All 283 tests pass. Bot verified live:
+/start, /stats, ping - 3 webhooks returned 200, no
+errors in docker logs.
+
+### Wave-trap scoreboard (12 historical + 5 predicted = 17)
+
+| # | Wave | Class | Caught by |
+|---|---|---|---|
+| 1 | T52 | #M5 dedup | Mavis review wave-5 #D7 |
+| 2 | T53 | #R3 retry sites | Mavis review wave-2 #R1 |
+| 3 | T57 | #S16 semantic | Mavis review wave-5 #S16 |
+| 4 | acbd062 | S40 NameError | Mavis review wave-6 #S40 |
+| 5 | 327b7b0 | handle_photo | Mavis review wave-6 |
+| 6 | T60 | fetch_tools | Tripwire #1 |
+| 7 | T60 | chat_type default | Tripwire #3 |
+| 8 | T61 R8 | tool in whitelist, no dispatch | Tripwire #8 (this commit) |
+| 9 | T61 R9 | 4th profile, partial | Tripwire #9 (this commit) |
+| 10 | T61 R10 | env var, no .env.example | Tripwire #10 (this commit) |
+| 11 | T61 R11 | command handler, no registration | Tripwire #11 (this commit) |
+| 12 | T61 S27 | fragile session_id parse | Refactor (this commit) |
+
+### Process rule (extended)
+
+When adding a new dispatch handler, a new tool, a new
+LLM-emitted argument, a new deployment profile, OR a new
+env var, **also add a tripwire test for it**. Pre-commit
+hook is the gate. The bot protects itself now.
 ## [v0.6.0] — 2026-10-10 — F3 module split, F4 LRU eviction, cross-module cleanup
 
 Big refactor + 7 hotfix commits. The 5 518-line `bot.py` is
