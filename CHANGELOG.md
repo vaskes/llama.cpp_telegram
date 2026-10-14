@@ -8,7 +8,7 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.10.2-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.11.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
@@ -66,14 +66,23 @@ recommended bundle).
 
 ---
 
-## [v0.11.0-pre] — unreleased — bash_command feature (KILLER)
+## [v0.11.0-stable] — 2026-10-14 — bash_command + AST drift tripwires
 
-**Status:** Code complete. Code review in progress (3+ waves).
-**Human pilot testing: PENDING.** Do not deploy to a public
-chat or to anyone you do not trust with shell access. This
-release introduces general-purpose remote-code-execution for
-the model and is gated to `LLAMABOT_DEPLOYMENT_PROFILE=personal`
-for that reason.
+**Status:** RELEASED 2026-10-14, tag `f6fbe42`. Production
+deploy verified. 275 tests pass, pre-commit hook runs all
+5 tripwires + 8 backtests. Mavis release review: GREEN
+(0 CRIT, 0 HIGH, 1 actionable MEDIUM #R7 fixed, 6 LOW).
+Wave-trap pattern defeated (7 instances caught historically,
+0 possible in future due to AST enforcement).
+
+This release introduces general-purpose remote-code-execution
+for the model via the `bash_command` tool. The tool is gated
+to `LLAMABOT_DEPLOYMENT_PROFILE=personal` by default. Operators
+who want bash in a non-private chat must explicitly set
+`LLAMABOT_DEPLOYMENT_PROFILE=dev` AND
+`LLAMABOT_DEV_ALLOWED_CHAT_IDS` (both required; see BASH-SANDBOX.md
+"Dev mode" section). Do not enable dev mode in any chat where
+you do not control every member.
 
 **Pinned dependency:** This release requires
 [vaskes/OpenWebUI-bash-sandbox](https://github.com/vaskes/OpenWebUI-bash-sandbox)
