@@ -411,13 +411,20 @@ async def call_bash_command(
     session_id: str | None = None,
     timeout: float = 70.0,
     chat_type: str,  # T53 #R4: required, no default (fail-closed)
-    chat_id: int | None = None,  # T61 #S27: explicit, no default.
-                                 # Required for dev mode (T58) to
-                                 # check the per-chat allowlist. The
-                                 # caller must have chat_id in scope
-                                 # when invoking bash_command; we
-                                 # use it instead of parsing it from
-                                 # session_id (which is fragile).
+    chat_id: int | None = None,  # T61 #S27: explicit, optional.
+                                 # Default is None for backwards
+                                 # compat with any caller that
+                                 # doesn't have chat_id in scope.
+                                 # When None, dev mode is silently
+                                 # skipped (is_dev_mode_chat(None)
+                                 # returns False) and the chat_type
+                                 # gate applies normally. The
+                                 # caller SHOULD pass chat_id when
+                                 # in scope (call_llama.py:1401 does).
+                                 # This is preferable to parsing
+                                 # chat_id from session_id, which is
+                                 # fragile if a future commit changes
+                                 # the session_id construction.
 ) -> dict[str, Any]:
     """Forward a bash call to the sandbox side-car and return the
     parsed JSON response.
