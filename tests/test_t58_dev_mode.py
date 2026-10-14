@@ -228,25 +228,43 @@ def test_dev_mode_still_refuses_public_profile(public_no_dev):
     assert result["ok"] is False
 
 
-# === dev_mode_badge in dispatch ===
+# === No dev_mode_badge (T58 revert) ===
 
-def test_dev_mode_badge_in_dispatch():
-    """dev_mode_badge returns the loud text when dev mode is on,
-    empty string otherwise."""
-    from dispatch import dev_mode_badge
-    # We can't easily test the True case without setting env vars
-    # (which would require reloading modules). Test the False case
-    # which is the common path.
-    assert dev_mode_badge(None) == ""
+def test_dev_mode_badge_removed_per_operator_request():
+    """T58 revert (operator feedback 2026-10-14): the dev_mode_badge
+    function was removed from dispatch. The operator explicitly
+    requested that dev mode = ONLY remove the chat_type gate,
+    with NO visual or any other effects in bot messages. The
+    red "loud" badge was over-engineering. This test pins the
+    absence so a future contributor does not silently re-add it.
+    """
+    import dispatch
+    assert not hasattr(dispatch, "dev_mode_badge"), (
+        "T58 revert: dispatch.dev_mode_badge was removed per operator "
+        "request. Dev mode = only remove the chat_type gate. No visual "
+        "badges in bot messages. Re-add only with explicit operator "
+        "approval and a clear threat-model justification."
+    )
 
 
-def test_dev_mode_badge_with_chat_id(monkeypatch):
-    """When not in dev mode (default), dev_mode_badge returns ''."""
-    monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
-    monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token")
-    from dispatch import dev_mode_badge
-    assert dev_mode_badge(-100123) == ""
-    assert dev_mode_badge(0) == ""
+def test_no_dev_prefix_in_send_reply(personal_with_token):
+    """The send_reply function must NOT prepend any dev-mode
+    text to bot responses. Dev mode is invisible in the user-
+    facing chat; it only relaxes the chat_type gate inside
+    call_bash_command.
+    """
+    import inspect
+    from handlers import send_reply
+    src = inspect.getsource(send_reply)
+    # No references to dev_mode, dev badge, or "🔴" in send_reply.
+    assert "dev_mode_badge" not in src, (
+        "send_reply must not call dev_mode_badge; T58 revert removed "
+        "user-facing dev-mode visual effects."
+    )
+    assert "🔴" not in src and chr(0x1F534) not in src, (
+        "send_reply must not contain the red-circle emoji; T58 revert "
+        "removed user-facing dev-mode visual effects."
+    )
 
 
 # === limits.py: dev profile accepted ===

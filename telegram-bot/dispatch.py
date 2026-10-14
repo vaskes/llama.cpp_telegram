@@ -50,47 +50,6 @@ from rating import (
     _is_rating_active, _parse_rating_response,
 )
 
-# === T58: dev mode helper ===
-def is_dev_mode_chat(chat_id):
-    """True iff dev mode is on AND this chat is in the allowlist.
-    The actual env-var checks live in personal_tools.bash_command
-    (which owns LLAMABOT_DEPLOYMENT_PROFILE and the chat_id list);
-    we re-export here so the rest of the bot can use this check
-    without importing personal_tools at the top level.
-    """
-    if chat_id is None:
-        return False
-    try:
-        from personal_tools.bash_command import is_dev_mode_chat as _impl
-        return _impl(chat_id)
-    except Exception:
-        return False
-
-
-def dev_mode_badge(chat_id):
-    """Return the loud dev-mode badge prefix for bot responses,
-    or empty string if not in dev mode. The badge is intentionally
-    visually loud: the operator asked for paint it red - do not
-    touch or you will die. Every bot response in a dev-mode chat
-    starts with this badge so the operator (and any audit log)
-    immediately sees that commands are running in the unrestricted
-    mode.
-    """
-    if is_dev_mode_chat(chat_id):
-        return "\n\n" + chr(0x1F534) + " **DEV MODE** " + chr(0x2014) + " bash_command is ENABLED in this chat. Commands run unrestricted. Type with care. " + chr(0x1F534) + "\n\n"
-    return ""
-from handlers import (
-    handle_document, handle_photo, handle_text, handle_voice,
-    send_reply, _download_with_limit, _general_thread_id, _reply,
-    _reply_active, _resolve_active, _route_to_thread, _sender_display_name,
-    _reject_in_group,
-)
-
-# _abort_events and _bot_replies live in state.py (cross-module state
-# used by both handlers and the polling loop's cmd_callback).
-# See state.py for the LRU-bounded implementation.
-
-# === is_authorized ===
 def is_authorized(update: Update) -> bool:
     """Return True iff the user is on the allowlist.
 
@@ -199,7 +158,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         dev_line = ""
     await _reply(update,
-        dev_line +
         chr(129302) + ' **LlamaBot v2 запущен!**' + chr(10) + chr(10) +
         'Я могу:' + chr(10) +
         chr(8226) + ' Отвечать на вопросы (с tool-calling)' + chr(10) +

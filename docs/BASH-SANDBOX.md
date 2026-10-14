@@ -340,57 +340,113 @@ operator threat model — see [SECURITY.md §3.5](SECURITY.md#35-bash_command-pe
 
 ## Dev mode (T58, operator opt-in)
 
-The default `personal` profile refuses `bash_command` in
-non-private chats (T52 #H1). The operator may want to run
-bash in a specific supergroup or channel that they fully
-control. Dev mode is the escape hatch for that.
+Dev mode relaxes **one and only one** safe guard: the
+`chat_type='private'` gate from T52 #H1. It does NOT
+relax anything else. The model can STILL NOT:
 
-**Hard requirements (both must be true):**
+  * run `rm -rf /` or any other destructive command
+    (the sandbox refuses at the container level)
+  * write outside `/workspace` (sandbox read-only fs)
+  * send network exfiltration to attacker-controlled hosts
+    (sandbox network egress restricted; model is told
+    not to in the system prompt)
+  * read /etc/shadow, /proc, /sys (sandbox read-only)
+  * run for more than 60s (sandbox per-command timeout)
+  * use more than 2GB of memory (sandbox mem_limit)
+  * spawn more than 256 processes (sandbox pids_limit)
+  * exceed 10 commands per minute per session (T51 C4,
+    bot-side rate limit, LLAMABOT_BASH_RPM env-overridable)
+  * bypass the bot's command validation (T52 #S2:
+    non-string, empty, oversized, NUL commands rejected)
+  * bypass the bot's session_id format validation
+    (T52 #S3: must match `[A-Za-z0-9._-]{1,128}`)
+  * choose a session_id (T57 #S16: always `chat-{chat_id}`)
+  * use tool names not in the whitelist (T38.5:
+    KNOWN_TOOL_NAMES + T43 soft-reject)
+  * see un-sanitised sender names (T53: `_safe_sender_label`
+    + `_tag_sender` data-only header)
+  * get the LLM to act on prompt injection in the
+    sender name (S1 sanitisation strips the relevant
+    characters and redacts LLM-control keywords)
+  * send unescaped lone-surrogates to llama-server
+    (T54: `_scrub_surrogates` before `json.dumps`)
+
+In short: **dev mode lets you run bash in a supergroup.
+It does not let the model do anything that the personal
+profile already would not let it do. The only difference
+is which chat the LLM is in.**
+
+### Configuration
+
+Two env vars must be set together (one alone is a no-op):
+
   1. `LLAMABOT_DEPLOYMENT_PROFILE=dev` (a third profile,
      distinct from `public` and `personal`).
   2. `LLAMABOT_DEV_ALLOWED_CHAT_IDS=-100..,-100..`
-     (comma-separated list of chat_ids where bash is allowed
-     in non-private chats).
+     (comma-separated list of chat_ids where bash is
+     allowed in non-private chats).
 
-**Failure modes:**
-  * If only one of the two env vars is set, dev mode does
-    not activate. The chat-type gate from T52 #H1 still
-    applies normally.
-  * If the allowlist is empty (`LLAMABOT_DEV_ALLOWED_CHAT_IDS=`),
-    dev mode does not activate.
-  * If a chat is not in the allowlist, the chat-type gate
-    still applies even though profile=dev.
+The chat_id list is parsed once at import time; restart
+required to take effect.
 
-**Bot behaviour in a dev-mode chat:**
-  * `/start` shows a big red `🔴 DEV MODE ACTIVE` line at
-    the top, with the word "ENABLED" and a clear "Type with
-    care" warning.
-  * Every bot response is prefixed with `🔴 **DEV MODE**`
-    so the operator can never forget the chat is
-    unrestricted.
-  * The bash_command tool description and rate limit
-    (T51 C4, T52 #M1) are unchanged: 10 cmd/min, 60s
-    timeout, 2GB mem, 256 PIDs, etc.
+### Failure modes
 
-**When to use dev mode:**
+  * `LLAMABOT_DEPLOYMENT_PROFILE=public` (or unset): the
+    allowlist is silently ignored. Dev mode never activates.
+  * `LLAMABOT_DEPLOYMENT_PROFILE=personal`: the allowlist
+    is silently ignored.
+  * `LLAMABOT_DEPLOYMENT_PROFILE=dev` but empty
+    `LLAMABOT_DEV_ALLOWED_CHAT_IDS=`: dev mode does
+    not activate. The `is_enabled_for_active_profile()`
+    check returns False, so the tool is not even
+    advertised to the LLM.
+  * `LLAMABOT_DEPLOYMENT_PROFILE=dev` and
+    `LLAMABOT_DEV_ALLOWED_CHAT_IDS=-100123` but the
+    current chat_id is `-100999`: the per-chat gate
+    returns False, the chat_type='private' gate still
+    applies, and bash is refused as if dev mode were
+    off. This is the correct behaviour.
+
+### When to use dev mode
+
   * You (the operator) want to test bash in a specific
     supergroup you control.
-  * You have set up a dedicated "test/dev" supergroup
-    where only you are a member and you accept the risk
-    of unrestricted shell access.
+  * You have set up a dedicated test/dev supergroup
+    where only you are a member.
 
-**When NOT to use dev mode:**
+### When NOT to use dev mode
+
   * Public groups with non-whitelisted members. The
-    profile=public + allowlist combo does NOT work (the
-    allowlist is silently ignored in public profile).
-  * As a substitute for the personal profile in your
-    own private chat. The personal profile is the right
+    `public` profile + allowlist combo does NOT work.
+  * As a substitute for the personal profile in your own
+    private chat. The personal profile is the right
     choice there; dev mode is for non-private chats only.
 
-**Audit trail:**
-  * Every bash command in a dev-mode chat runs through
-    the same sandbox containment as in personal mode.
-    The bot does NOT add any extra logging in dev mode;
-    operators who need a command audit log should set up
-    the sandbox-side cmd_len log (see
-    SANDBOX-RECOMMENDATIONS.md C1).
+### User-facing effects (none)
+
+Per operator feedback (2026-10-14 11:19 MSK): dev mode is
+**invisible in the user-facing chat**. There is no red
+badge, no "ENABLED" / "Type with care" / "UNRESTRICTED"
+warning, no dev_line in `/start`, no badge prefix on
+bot responses. The operator wanted the feature to be
+marked as dangerous only in the code (see the `!! WARNING`
+comment block in `personal_tools/bash_command.py` and
+`limits.py`); in the chat it looks identical to a normal
+LLM call. AST tests in `tests/test_t58_dev_mode.py` pin
+the absence of any visual / dispatch effect.
+
+### Code warnings (where the red text lives)
+
+The scary "раскрасить красным - не влезай убьет" warning
+that the operator asked for lives in the code, not in
+the chat. Two places:
+
+  1. `personal_tools/bash_command.py` — the `# === T58:
+     Developer mode ... ===` block (with the `!! WARNING`
+     markers and the full list of safe guards that remain
+     in place). This is the block a future contributor
+     must read before changing dev mode.
+  2. `limits.py` — the comment above the
+     `_DEPLOYMENT_PROFILE` validation that accepts
+     `"dev"`. This is the block a future contributor must
+     read before adding a fourth profile.

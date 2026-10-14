@@ -133,23 +133,62 @@ _T51_RATE_LIMIT_TTL_SEC = 3600  # 1 hour idle -> evict
 
 
 # === T58: Developer mode (operator opt-in, hardcoded chat_id list) ===
-# T58 (2026-10-14): the operator's request was "developer mode
-# which unlocks this functionality for my prod [supergroup]".
-# Design:
-#   * LLAMABOT_DEPLOYMENT_PROFILE=dev (a third profile, distinct
-#     from public and personal).
-#   * LLAMABOT_DEV_ALLOWED_CHAT_IDS=-100..,-100.. (comma-separated
-#     list of chat_ids where bash_command is allowed even in
-#     non-private chats). Hardcoded at operator level; requires
-#     bot restart to take effect.
-#   * BOTH conditions must hold (fail-closed). A new caller
-#     cannot accidentally enable bash in arbitrary chats by
-#     setting only one of the two.
-#   * The chat_type='private' gate from T52 #H1 is BYPASSED for
-#     chat_ids in the list. All other gates (rate limit,
-#     validators, per-session auth) still apply.
-# This is the operator's own power-user feature; they are
-# choosing to trust themselves with a specific chat.
+#
+#  * !! WARNING - OPERATOR ONLY - DO NOT ENABLE IF YOU ARE NOT THE OPERATOR !!
+#  * This block relaxes ONE AND ONLY ONE safe guard: the
+#    chat_type='private' gate from T52 #H1. It does NOT
+#    relax any of the other safe guards (see the list below).
+#  * The model can STILL NOT run `rm -rf /`, write outside
+#    /workspace, send network exfiltration, or do anything
+#    else that the vaskes/OpenWebUI-bash-sandbox refuses
+#    at the container level. The sandbox is the actual
+#    enforcement; the bot's per-command validators and
+#    per-session rate limit are belt-and-braces on top.
+#  * If you are not the operator and you find this block
+#    in the source: do not change anything. The dev mode
+#    bypass exists for the operator's own test/dev supergroup.
+#    If you need bash_command in your own chat, use the
+#    personal profile (LLAMABOT_DEPLOYMENT_PROFILE=personal)
+#    in a private chat, NOT dev mode in a public chat.
+#  * The two env vars must BOTH be set; one alone is a no-op.
+#    The chat_id list is parsed once at import time; restart
+#    required to take effect.
+#
+# Safe guards that REMAIN in place when dev mode is on:
+#   * T52 #H1 chat-type gate BYPASSED for listed chats (this is
+#     the ONLY thing dev mode changes).
+#   * T38.5 tool isolation whitelist (KNOWN_TOOL_NAMES).
+#   * T42 explicit tool whitelist in system prompt.
+#   * T43 soft-reject for unknown tool names.
+#   * T47 reframe wording (model encouraged to use tools).
+#   * T49 continue-on-unhandled (loop continues on rejected).
+#   * T51 C4 per-session rate limit (10 cmd/min,
+#     LLAMABOT_BASH_RPM env-overridable).
+#   * T52 #M1 LRU/TTL on rate-limit dict.
+#   * T52 #S2 command validation (string type, length <=8192, no NUL).
+#   * T52 #S3 session_id validation ([A-Za-z0-9._-]{1,128}).
+#   * T53 sender-name sanitisation (Telegram first/last_name
+#     are sanitised before they reach the LLM).
+#   * T54 lone-surrogate sanitisation (lone surrogates in
+#     JSON are replaced with U+FFFD before posting to llama).
+#   * T57 #S16 session_id semantic (always chat-{chat_id};
+#     the LLM cannot choose a session_id).
+#   * T58 dev mode itself: requires BOTH env vars; refuses
+#     if allowlist is empty; refuses for unlisted chats.
+#   * Sandbox containment (vaskes/OpenWebUI-bash-sandbox):
+#     non-root, cap_drop ALL, no-new-privileges, pids_limit 256,
+#     mem_limit 2G, read-only fs, 60s per-command timeout,
+#     OPENAPI_PROXY_RATE_LIMIT_RPM=60.
+#
+# In short: dev mode lets you run bash in a supergroup.
+# It does NOT let the model do anything that the personal
+# profile already would not let it do. The only difference
+# is which chat the LLM is in.
+#
+# !! Do not add new "loosening" affordances to this block
+# without an explicit operator request and a clear
+# threat-model justification. !!
+#
 _DEV_MODE_PROFILE = os.environ.get("LLAMABOT_DEPLOYMENT_PROFILE", "public").lower() == "dev"
 _DEV_ALLOWED_CHAT_IDS_RAW = os.environ.get("LLAMABOT_DEV_ALLOWED_CHAT_IDS", "").strip()
 _DEV_ALLOWED_CHAT_IDS: frozenset[int] = frozenset(
@@ -162,8 +201,8 @@ def is_dev_mode_chat(chat_id: int | None) -> bool:
     AND the current chat is in the allowlist.
 
     The check is the SINGLE source of truth for the dev-mode
-    gate. Used by call_bash_command to skip the chat_type check
-    and by handlers to add the [DEV MODE] badge prefix.
+    gate. Used by call_bash_command to skip the chat_type
+    check (the ONLY safe guard dev mode relaxes).
 
     Return False if chat_id is None (defence against
     misconfigured callers).
