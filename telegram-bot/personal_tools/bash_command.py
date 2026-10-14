@@ -411,6 +411,13 @@ async def call_bash_command(
     session_id: str | None = None,
     timeout: float = 70.0,
     chat_type: str,  # T53 #R4: required, no default (fail-closed)
+    chat_id: int | None = None,  # T61 #S27: explicit, no default.
+                                 # Required for dev mode (T58) to
+                                 # check the per-chat allowlist. The
+                                 # caller must have chat_id in scope
+                                 # when invoking bash_command; we
+                                 # use it instead of parsing it from
+                                 # session_id (which is fragile).
 ) -> dict[str, Any]:
     """Forward a bash call to the sandbox side-car and return the
     parsed JSON response.
@@ -452,18 +459,12 @@ async def call_bash_command(
     # in a group with non-whitelisted members) as a silent
     # RCE for the whole group. We close that here.
     # T58: dev mode bypasses the chat_type gate for chat_ids
-    # the operator has explicitly listed. session_id is
-    # f"chat-{chat_id}" by T57 #S16, so we parse chat_id from it.
-    # If session_id is not in chat-N format (shouldn't happen
-    # after T57 #S16), dev mode is silently skipped and the
-    # chat_type gate applies normally.
-    chat_id_for_dev = None
-    if isinstance(session_id, str) and session_id.startswith("chat-"):
-        try:
-            chat_id_for_dev = int(session_id[len("chat-"):])
-        except ValueError:
-            chat_id_for_dev = None
-    if chat_type != "private" and not is_dev_mode_chat(chat_id_for_dev):
+    # the operator has explicitly listed. T61 #S27: chat_id is
+    # now an explicit parameter (not parsed from session_id).
+    # If the caller forgot to pass chat_id, dev mode is
+    # silently skipped and the chat_type gate applies normally
+    # (this matches the previous fail-closed behaviour).
+    if chat_type != "private" and not is_dev_mode_chat(chat_id):
         return {
             "ok": False,
             "error": (

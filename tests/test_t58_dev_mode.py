@@ -187,6 +187,7 @@ def test_dev_mode_allows_supergroup_for_listed_chat(dev_with_allowlist):
         result = asyncio.run(
             personal_tools.bash_command.call_bash_command(
                 "ls", chat_type="supergroup", session_id="chat--100123",
+                chat_id=-100123,  # T61 #S27: explicit param
             )
         )
     finally:
