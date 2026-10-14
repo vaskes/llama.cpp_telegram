@@ -20,6 +20,7 @@ from telegram.ext import (
     filters, ContextTypes,
 )
 
+from call_llama import fetch_tools_from_llama
 import call_llama
 from storage import get_store
 import state
