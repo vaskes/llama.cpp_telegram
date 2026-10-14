@@ -1399,7 +1399,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                             result = '[bash_command: empty command]'
                         else:
                             r = await _bc.call_bash_command(
-                                cmd, session_id=sid, chat_type=chat_type)
+                                cmd, session_id=sid, chat_type=chat_type,
+                                chat_id=chat_id)
                             result = _bc.tool_result_to_text(r)
                             _executed_tools_in_turn.append({
                                 "name": "bash_command",
