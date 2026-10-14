@@ -302,6 +302,290 @@ chat_type:
 These tests would have caught #R3 at the original T52 commit
 time. Cheap (milliseconds), no I/O, no monkey-patching.
 
+
+
+### T52 - Mavis wave-1 review (commit `76df436`)
+
+3 HIGH + 7 MEDIUM + 7 NIT from Mavis's first adversarial
+review of the bash_command feature. Highlights:
+
+  * **#H1 chat-type gate** (`call_bash_command`): per-chat
+    `chat_type` check on top of the env-based
+    `is_enabled_for_active_profile()` gate. Two layers
+    of refusal.
+  * **#H2 personal_tools bind-mount `:ro`** in
+    docker-compose.yml. Even an attacker with code
+    execution in the bot container cannot modify the
+    personal_tools/ source.
+  * **#H3 SECURITY.md §3.5** - new section documenting
+    the bash_command trust model: bot -> sandbox via
+    bearer token, sandbox is the actual enforcement,
+    bot only validates and forwards.
+  * **#M1 LRU/TTL on rate-limit dict** so the
+    `_t51_check_rate_limit` state cannot grow unbounded.
+  * **#M2 .env.example** - every env var documented.
+  * **#M5 BASH_COMMAND_TOOL_DEF single source of truth**:
+    import from `personal_tools.bash_command` only. (Later
+    re-discovered in wave-5 as #D7 - see T57.)
+  * **#S2 `_validate_command()`** rejects non-string,
+    empty, oversized (>8192 chars), and NUL-containing
+    commands. Defence against pathologically large
+    payloads and encoding attacks.
+  * **#S3 `_validate_session_id()`** enforces the
+    regex `[A-Za-z0-9._-]{1,128}`. (Later re-discovered
+    in wave-5 as insufficient - see T57 #S16.)
+
+Tests: +76 (S1 sender sanitisation 29, S2/S3 validation
+26, T52 review entry fixes 21).
+
+### T53 - Mavis wave-3 critical fix (commit `c11b9cb`)
+
+1 CRITICAL + 2 HIGH + 2 MEDIUM. The CRITICAL was #R3:
+`call_llama` signature was missing the `chat_type`
+kwarg, so every message crashed with `TypeError: missing
+1 required keyword argument: 'chat_type'`. Bot was
+broken on every message for ~30 min between T52 deploy
+and T53 hotfix.
+
+  * **#R3 chat_type param** - added to `call_llama` with
+    sentinel `None` default + explicit `TypeError` raise
+    if not passed.
+  * **#R4 chat_type required** - no default value (the
+    sentinel `None` is internal-only; the function still
+    raises if not passed).
+  * **#R5 test_tag_sender_list_content_vision** updated
+    for the S1 data-only header (no longer asserts the
+    LLM can act on the sender name).
+  * **#R6 `scripts/update.sh`** migration block: seeds
+    `bot_data` named volume from existing bind-mount on
+    first deploy (idempotent).
+  * **#R7 CI pytest job** in `.github/workflows/lint.yml`.
+
+7 AST tests in `tests/test_t53_chat_type_signature.py`
+pin the fail-closed contract.
+
+### T54 - Lone surrogate sanitisation (commit `f793c99`)
+
+llama-server JSON parser rejected messages containing
+emoji rendered as Python surrogate pairs with HTTP 500
+"parse error at line 1, column 61: missing closing
+quote". Caught by Qwen 3.8-Max during wave-3.
+
+  * `_scrub_surrogates()` encodes/decodes with
+    `surrogatepass` + `replace` before `json.dumps`,
+    converting lone surrogates to U+FFFD (replacement
+    character).
+
+5 unit tests in `tests/test_t54_surrogate_sanitisation.py`.
+
+### T55 - Mavis wave-4 drift fixes (commit `448f01a`)
+
+6 drift findings from Mavis's wave-4 review:
+
+  * **#D1 ARCHITECTURE.md** rewritten (396 -> 273 lines).
+    Now mentions bash_command, tool isolation, sender
+    sanitization, network topology, named-volume storage,
+    CI/test infra, deployment profiles.
+  * **#D2 `_safe_sender_label` in `_handle_chat_member_update`**
+    (welcome path) - sender sanitisation was missing
+    from the welcome-message branch. Closed.
+  * **#D3 CI pytest exclude removed** + `pythonpath =
+    telegram-bot tests` in `pytest.ini`. The 11
+    `test_call_llama.py` tests now run in CI.
+  * **#D4 `.env.example`** got 16 missing env vars
+    documented (49 lines added).
+  * **#D5 prompts.py disclaimer** "guidance, not
+    enforcement" added.
+  * **#D6 BASH-SANDBOX.md rate limit row** added.
+
+`.githooks/pre-commit` runs pytest (204 tests, ~1.2s)
+catches regressions before CI.
+
+### T56 - Wave-4 #S13 by-design (commit `911864f`)
+
+`is_authorized` username `.lower()` without NFKC Unicode
+normalization is by-design (fail-closed for non-spec
+usernames). Docstring now warns future contributors not
+to "improve" with `unicodedata.normalize()`. ARCHITECTURE.md
+tool-loop section updated to mention T31 non-streaming
+path.
+
+### T57 - Mavis wave-5 review (commit `9bf7d2d`)
+
+1 HIGH + 3 MEDIUM + 3 LOW + 2 skipped. The HIGH was the
+S16 carryover from T52 #S3 (regex was insufficient).
+
+  * **#S16 session_id cross-chat PII leak** (HIGH).
+    Previous code `sid = args.get('session_id') or
+    f'chat-{chat_id}'` let the LLM emit
+    `session_id="chat-{other_chat_id}"` and forward
+    to another chat's persistent tmux session. Direct
+    cross-chat PII / secret leak. Fix: `sid =
+    f'chat-{chat_id}'` always (never trust the LLM).
+    4 AST tests pin the contract.
+  * **#D7 BASH_COMMAND_TOOL_DEF dedup actually applied**
+    (was claimed in T52 #M5 but not actually done).
+    Lazy-import from `personal_tools.bash_command`.
+  * **#S17 donsetch output wrapped** in
+    `[DONSETCH OUTPUT - data]` header (same pattern
+    as bash).
+  * **#S19 chat_type check moved BEFORE rate_limit**
+    (was: profile -> rate_limit -> chat_type; now:
+    profile -> chat_type -> rate_limit). Non-private
+    callers no longer consume rate-limit tokens.
+  * **#S20 prompts.py "full text logged" claim aligned**
+    with SANDBOX-RECOMMENDATIONS.md C1.
+  * **#S21 .env.example: WEBHOOK_SECRET_TOKEN
+    restart-required note** (same as AGENT_STACK_TOKEN
+    M3 pattern).
+  * **#S23 BASH_COMMAND_TOOL_DEF: "60 rpm" -> "10
+    commands per minute per session_id"**.
+  * **#S24 Sandbox limits reference docs/BASH-SANDBOX.md
+    instead of hardcoding**.
+
+S22, S25 skipped per Mavis.
+
+### T58 - Developer mode (commits `03fc3ad` -> `acbd062`)
+
+Third deployment profile (`dev`) that allows
+`bash_command` in non-private chats for operator-selected
+chat_ids. Two env vars must be set together (one alone
+is a no-op):
+
+  * `LLAMABOT_DEPLOYMENT_PROFILE=dev`
+  * `LLAMABOT_DEV_ALLOWED_CHAT_IDS=-100..,-100..`
+
+Dev mode **invisible in the user-facing chat** by
+operator design (2026-10-14 11:19 MSK). The "scary red
+text" lives only in the code (see `!! WARNING` blocks
+in `personal_tools/bash_command.py` and `limits.py`).
+13 AST tests pin the contract.
+
+The original `03fc3ad` had a loud red DEV MODE badge
+function and `/start` warning. Operator feedback
+2026-10-14 11:19 MSK: remove all user-facing effects.
+`acbd062` (T58 cleanup) removed them; the dev mode
+gate itself stayed.
+
+### T59 - Mavis wave-6 P0/P1/P2 fixes (commit `47e4d90`)
+
+1 CRITICAL + 1 HIGH + 4 drift. The CRITICAL was #S40:
+`dispatch.start()` raised `NameError: name
+'is_dev_mode_chat' is not defined` on every `/start`
+because acbd062 (T58 revert) deleted the helper but
+left the call site. Wave-trap pattern #4 (T52 #M5 ->
+T53 #R3 -> T57 #S16 -> acbd062).
+
+  * **#S40 dead dev_line block** in `dispatch.py:156-166`
+    removed (15 lines).
+  * **#D8 prompts.py:151** "loud red DEV MODE badge"
+    drift fixed.
+  * **#D9 .env.example:131-132** dev mode visual
+    effects drift fixed.
+  * **#D10 ARCHITECTURE.md** "Two profiles" -> "Three
+    profiles (T35 v2 + T58)".
+  * **#D11 limits.py** dev profile added to selector
+    comment.
+  * **#S37** `tests/test_dispatch_start.py` - 5 tests
+    with AST tripwire + smoke test that catches future
+    /start regressions.
+
+5 AST tripwires added in T60 below.
+
+### T60 - 5 AST drift tripwires + 2 latent bugs (commit `9c17093`)
+
+Mavis's process suggestion after wave-5: AST-level
+tripwires in pre-commit hook that catch each historical
+wave-trap pattern at commit time. Operator marked
+HIGH priority: "wave-trap сработал 4 раза, 5-й будет".
+
+5 tripwires in `tests/test_drift_*.py`, run by
+`.githooks/pre-commit` (~2s overhead):
+
+  1. `test_drift_t58_revert.py` - walk every function
+     in `dispatch.py` via AST, assert every Name
+     reference is reachable (module-level / imported /
+     parameter / local / builtin). Catches acbd062 / S40
+     class. 4 tests.
+  2. `test_drift_m5_dedup.py` - `BASH_COMMAND_TOOL_DEF`
+     must NOT be defined in `call_llama.py`, must be
+     imported exactly once from
+     `personal_tools.bash_command`. Catches T52 #M5
+     class. 3 tests.
+  3. `test_drift_r3_chat_type.py` - every `call_llama()`
+     in `handlers.py` passes `chat_type=`. `call_llama`
+     signature has `chat_type` as keyword-only + required
+     (no default). Catches T53 #R3 / #R4 + T60 Bug B
+     class. 2 tests.
+  4. `test_drift_s16_session_id.py` - `call_llama.py`
+     does NOT reference `args.get('session_id')`. Has
+     exactly one `sid = f'chat-{chat_id}'` with the S16
+     comment marker. Catches T57 #S16 class. 2 tests.
+  5. `test_drift_handler_imports.py` - every
+     `app.add_handler` callback is imported at module
+     level. The `from handlers import (...)` block
+     exists. Catches 327b7b0 class. 2 tests.
+
+Helpers in `tests/test_drift_helpers.py` (AST walking
+shared utilities + `KNOWN_BUILTINS` set with exception
+classes and stdlib modules).
+
+**Backtest (`tests/test_backtest_tripwires.py`, P1):**
+8 tests that prove each tripwire catches its target
+pattern. Negative test ensures clean code passes all 5
+tripwires (no false positives).
+
+**2 latent bugs caught at T60 commit time:**
+
+  * **A**: `dispatch.py:287` `fetch_tools_from_llama()`
+    as bare name without import. Would have crashed
+    `/stats` in private chat. Operator: "eto to chto ya
+    hotel ot AST tripwires". Fix: `from call_llama
+    import fetch_tools_from_llama`.
+  * **B**: `call_llama.py:438` `chat_type: str | None
+    = None` default. Docstring said "required" but
+    signature had a default - wave-trap #7 (claim vs
+    implementation). Fix: `*` separator + remove
+    default, chat_type keyword-only + required.
+
+### Wave-trap pattern (7 instances caught)
+
+| # | Wave | Class | Caught by |
+|---|---|---|---|
+| 1 | T52 | #M5 dedup | Mavis review wave-5 #D7 |
+| 2 | T53 | #R3 retry sites | Mavis review wave-2 #R1 |
+| 3 | T57 | #S16 semantic | Mavis review wave-5 #S16 |
+| 4 | acbd062 | S40 NameError | Mavis review wave-6 #S40 |
+| 5 | 327b7b0 | handle_photo | Mavis review wave-6 |
+| 6 | T60 | fetch_tools | Tripwire #1 |
+| 7 | T60 | chat_type default | Tripwire #3 |
+
+"Formally zakryl teg = zakryl" fails when the
+implementation has a claim (comment / docstring /
+commit message) that is not enforced by code. T60's
+tripwires enforce the claim at the AST level. A
+future contributor cannot silently remove the safe
+guard without removing the test, which the pre-commit
+hook blocks.
+
+### Test count progression
+
+| Commit | Tests |
+|---|---|
+| T57 (9bf7d2d) | 252 |
+| T58 (03fc3ad) | 265 |
+| T59 (47e4d90) | 252 |
+| T60 (9c17093) | 265 + 8 backtest = 273 |
+
+### Process rule going forward
+
+When adding a new dispatch handler, a new tool, a new
+LLM-emitted argument, or a new deployment profile,
+ALSO add a tripwire test for it. Pre-commit hook is
+the gate. This rule is in
+`tests/test_drift_handler_imports.py` and
+`docs/ARCHITECTURE.md` "Adding a new feature"
+section.
 ## [v0.6.0] — 2026-10-10 — F3 module split, F4 LRU eviction, cross-module cleanup
 
 Big refactor + 7 hotfix commits. The 5 518-line `bot.py` is

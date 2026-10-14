@@ -450,3 +450,25 @@ the chat. Two places:
      `_DEPLOYMENT_PROFILE` validation that accepts
      `"dev"`. This is the block a future contributor must
      read before adding a fourth profile.
+
+
+### Topic scoping (forum-enabled supergroups)
+
+In a forum-enabled supergroup (chat_type='supergroup',
+is_forum=True), Telegram messages have a `message_thread_id`
+that identifies the topic. **Dev mode allows bash in ALL
+topics of a listed chat_id** — there is no per-topic
+allowlist in v0.11.0. If you need to restrict bash to a
+specific topic, use a private chat (chat_type='private')
+or a non-forum supergroup.
+
+This is by-design: the trust model assumes the operator
+controls the entire supergroup, so all topics are
+trusted. If a future commit adds per-topic scoping, the
+allowlist format will be `chat_id:thread_id` pairs and
+the bypass contract will be unchanged otherwise.
+
+If you find this is a problem in production, file an
+issue. Until then, do not enable dev mode for a
+supergroup where you do not trust every member of every
+topic.
