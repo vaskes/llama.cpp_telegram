@@ -597,7 +597,7 @@ the gate. This rule is in
 section.
 
 
-## [v0.12.0-pre] - unreleased - 4 more AST tripwires + chat_id refactor
+## [v0.12.0-stable] - 2026-10-14 - 4 more AST tripwires + chat_id refactor
 
 **Status:** Code complete. Bot live, all tripwires green.
 Pending Mavis review.
