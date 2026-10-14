@@ -79,12 +79,24 @@ def test_chat_type_signature_in_call_llama_is_required():
                             "explicitly, not via signature default."
                         )
                     return
-            # chat_type not in positional args; check kwonly
-            for arg in args.kwonlyargs:
-                if arg.arg == "chat_type":
-                    if "chat_type" not in {d.arg for d in args.kw_defaults if d is not None}:
-                        # kwonly without default = required
-                        return
+            # chat_type not in positional args; check kwonly.
+            # args.kw_defaults is parallel to args.kwonlyargs:
+            #   args.kw_defaults[i] is the default for args.kwonlyargs[i],
+            #   or None if that kwonly has no default.
+            # Do NOT use `d.arg` here - d is an ast.AST, not
+            # an ast.keyword (no .arg attribute).
+            for i, karg in enumerate(args.kwonlyargs):
+                if karg.arg == "chat_type":
+                    if i < len(args.kw_defaults) and args.kw_defaults[i] is not None:
+                        assert False, (
+                            "call_llama(chat_type=...) has a default "
+                            "value (kwonly). T53 #R4 design: chat_type "
+                            "is REQUIRED (no default). If a default is "
+                            "needed, the call sites must opt-in "
+                            "explicitly, not via signature default."
+                        )
+                    # kwonly without default = required, pass
+                    return
             assert False, (
                 "call_llama() signature does not include chat_type. "
                 "T53 #R3 + #R4: chat_type is a required kwarg. "

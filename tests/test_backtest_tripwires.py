@@ -98,21 +98,30 @@ def _check_call_llama_chat_type_kwarg(src: str) -> list[int]:
 def _check_call_llama_chat_type_required(sig_src: str) -> bool:
     """Returns True if call_llama() signature in sig_src has
     chat_type as required (no default). Same logic as
-    test_drift_r3_chat_type."""
+    test_drift_r3_chat_type.
+
+    Note: args.kw_defaults is parallel to args.kwonlyargs.
+    args.kw_defaults[i] is the default for args.kwonlyargs[i]
+    (or None if no default). Do NOT use `d.arg` on elements
+    of args.kw_defaults - those are ast.AST nodes, not
+    ast.keyword. (Mavis wave-r1 #R7 finding.)
+    """
     tree = ast.parse(sig_src)
     for node in tree.body:
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "call_llama":
             args = node.args
-            for arg in args.args:
+            # Positional: args.defaults aligns with the LAST N args
+            for i, arg in enumerate(args.args):
                 if arg.arg == "chat_type":
                     n_defaults = len(args.defaults)
                     n_positional = len(args.args)
-                    if args.args.index(arg) >= n_positional - n_defaults:
+                    if i >= n_positional - n_defaults:
                         return False  # has default
                     return True
-            for arg in args.kwonlyargs:
-                if arg.arg == "chat_type":
-                    if any(d is not None and d.arg == "chat_type" for d in args.kw_defaults):
+            # Kwonly: args.kw_defaults is parallel to args.kwonlyargs
+            for i, karg in enumerate(args.kwonlyargs):
+                if karg.arg == "chat_type":
+                    if i < len(args.kw_defaults) and args.kw_defaults[i] is not None:
                         return False  # has default
                     return True
     return False
@@ -242,6 +251,74 @@ async def call_llama(
         "BACKTEST FAIL: tripwire #3 (signature part) did not "
         "catch chat_type default = None. The T60 Bug B pattern "
         "would slip through."
+    )
+
+
+def test_backtest_r3_catches_chat_type_kwonly_default():
+    """Backtest: tripwire #3 (kwonly-default edge case) must
+    catch chat_type= with a kwonly default. Mavis wave-r1
+    #R7 finding: a future commit that adds `chat_type: str =
+    "private"` as a kwonly default must be caught. This is
+    a separate code path from the positional-default case
+    (different AST fields: args.kw_defaults vs args.defaults).
+    """
+    bad_sig_src = """
+async def call_llama(
+    messages,
+    max_tokens=100,
+    *,
+    chat_type: str = "private",
+):
+    return None
+"""
+    # Must NOT raise; must return False (= not required)
+    try:
+        required = _check_call_llama_chat_type_required(bad_sig_src)
+    except AttributeError as e:
+        raise AssertionError(
+            f"BACKTEST FAIL: tripwire #3 raised AttributeError "
+            f"on kwonly default: {e}. This is Mavis #R7 latent "
+            f"bug. The check `d.arg for d in args.kw_defaults` "
+            f"is wrong - args.kw_defaults is a list of ast.AST | None, "
+            f"not ast.keyword (no .arg). Use parallel-list indexing."
+        )
+    assert not required, (
+        "BACKTEST FAIL: tripwire #3 did not catch chat_type "
+        "kwonly default. Mavis #R7: signature check missed "
+        "this edge case."
+    )
+
+
+def test_backtest_r3_no_attributeerror_on_other_kwonly_default():
+    """Backtest: tripwire #3 must NOT raise AttributeError on
+    a signature where SOME OTHER kwonly has a default. The
+    bug was that any kwonly default triggered `d.arg` which
+    is not an attribute of ast.AST. Mavis wave-r1 #R7.
+    """
+    sig_src = """
+async def call_llama(
+    messages,
+    max_tokens=100,
+    *,
+    some_other_kwarg: str = "default",
+    chat_type: str,
+):
+    return None
+"""
+    # chat_type is required (no default), some_other_kwarg has a default.
+    # The tripwire should return True (required) without raising.
+    try:
+        required = _check_call_llama_chat_type_required(sig_src)
+    except AttributeError as e:
+        raise AssertionError(
+            f"BACKTEST FAIL: tripwire #3 raised AttributeError "
+            f"on a different kwonly having a default: {e}. Mavis #R7. "
+            f"The fix: use parallel-list indexing, not `d.arg`."
+        )
+    assert required, (
+        "BACKTEST FAIL: tripwire #3 returned False (= not required) "
+        "for a signature where chat_type is correctly required. "
+        "After the #R7 fix, this should return True."
     )
 
 
