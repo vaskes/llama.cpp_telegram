@@ -121,6 +121,11 @@ import os
 # public    — conservative; default; safe for multi-user groups.
 # personal   — aggressive; opt-in; for single-operator private assistant.
 _DEPLOYMENT_PROFILE = os.environ.get("LLAMABOT_DEPLOYMENT_PROFILE", "public").lower()
+# !! dev mode (T58) is operator opt-in. See bash_command.py for
+# the full list of safe guards that REMAIN in place when dev mode
+# is on. The ONLY thing dev mode changes is the chat_type='private'
+# gate; everything else (sandbox containment, rate limit, validators,
+# tool isolation) is still active. !!
 if _DEPLOYMENT_PROFILE not in ("public", "personal", "dev"):
     # Fail loudly rather than silently defaulting to one or the other.
     raise ValueError(
