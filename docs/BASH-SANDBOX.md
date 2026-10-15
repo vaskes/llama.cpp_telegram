@@ -272,7 +272,8 @@ anything within the sandbox's policy:
 
 | Sandbox tag | Bot tag | Notes |
 |---|---|---|
-| `a3fa2f2` (v2.3.0) | `5659ed6` (v0.11.0-pre) | Tested together. Recommended pin. |
+| `a3fa2f2` (v2.3.0) | `5659ed6` (v0.11.0-pre) | Tested together. |
+| `04be1d8` (v2.4.5) | `6901827` (v0.12.0-stable) | Tested together. Current pin. |
 | older tags | any | Not tested. May have API changes. |
 
 The bot treats the sandbox as a black box: it sends JSON over
