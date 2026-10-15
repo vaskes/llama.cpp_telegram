@@ -683,6 +683,66 @@ When adding a new dispatch handler, a new tool, a new
 LLM-emitted argument, a new deployment profile, OR a new
 env var, **also add a tripwire test for it**. Pre-commit
 hook is the gate. The bot protects itself now.
+
+
+## [v0.12.1-pre] - unreleased - sandbox submodule bump to v2.4.5
+
+**Status:** Code complete. Bot live, all tripwires green.
+Pending Mavis review.
+
+### Sandbox dependency bump: a3fa2f2 (v2.3.0) -> 04be1d8 (v2.4.5)
+
+vaskes/OpenWebUI-bash-sandbox v2.4.0-v2.4.5 was released
+on 2026-10-14 by sandbox-mavis after a 3-wave self-audit
+(103 -> 131 tests). This bot-side commit bumps the
+submodule pointer to v2.4.5.
+
+**Compatibility verified:**
+  *  wire format: UNCHANGED
+  *  endpoint: UNCHANGED (auth still works the
+    same way; only the rate-limit keying is hashed)
+  * Response shape (, , ,
+    , , ):
+    UNCHANGED
+  * Body size limit (2 MB) is well above our bot's
+    8 KB command cap
+  * Security headers (,
+    ) are additive; we
+    ignore them
+  *  now returns minimal 
+    (no longer leaks workspace path or session
+    count) - we don't call this endpoint from
+    the bot
+
+**What is in v2.4.0 - v2.4.5:**
+  * v2.4.0 (3 of 5 sandbox-recommendations items
+    closed): #C1 command content logging, #C7 SSH
+    identity symlink rejection, #M3 WebSocket idle
+    timeout. 103 -> 108 tests.
+  * v2.4.1 (release prep): closed 3 CRITICAL + 7
+    HIGH doc drift items. 108 -> 115 tests.
+  * v2.4.2 (release prep wave 1): 4 more doc drift
+    items (README badge stale, etc.). 115 tests.
+  * v2.4.3 (release prep wave 2): /healthz no longer
+    leaks workspace path, security headers on every
+    response, request body size cap (2 MB), credit
+    Mavis in CREDITS. 125 tests.
+  * v2.4.4 (release prep wave 3): rate-limit keys
+    now SHA-256 hashed, copyright -> Kuduza Ai Lab,
+    CODE_OF_CONDUCT contact, pyproject target-version
+    py311 -> py312. 129 tests.
+  * v2.4.5 (CodeQL follow-up): explicit
+     at workflow level.
+    131 tests.
+
+**No bot-side code changes.** Tests: 283/283 pass.
+
+### Tripwire scoreboard (12 historical + 5 predicted = 17)
+
+Unchanged. Sandbox bump is a dependency change, not
+a code change. AST tripwires still cover the 17
+historical/predicted wave-trap classes on the bot
+side.
 ## [v0.6.0] — 2026-10-10 — F3 module split, F4 LRU eviction, cross-module cleanup
 
 Big refactor + 7 hotfix commits. The 5 518-line `bot.py` is
