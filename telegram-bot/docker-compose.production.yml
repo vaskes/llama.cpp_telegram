@@ -1,0 +1,67 @@
+name: telegrambot-bot
+
+# PRODUCTION compose for the telegram bot.
+#
+# Deployed on llmhost1 (192.168.10.6) since 2026-10-20. The whole stack
+# — bot, sandbox side-car, donsetch, whisper — lives under
+# /opt/telegrambot/ on that host; this file is the bot's half.
+#
+# What is different from docker-compose.yml (the generic/dev layout):
+#   * every endpoint is loopback — llama, whisper, donsetch and the
+#     sandbox proxy all run on this same host;
+#   * explicit `name:` pins the compose project so the SQLite volume is
+#     NOT renamed when the source directory moves. Changing the volume
+#     name silently orphans the conversation history.
+#   * container is `tb-bot` so it does not collide with the other stacks
+#     on the box, which are all `tb-*` prefixed.
+#   * logs land in the project directory, so `docker compose logs` and
+#     the on-disk file are the same thing.
+#
+# Deploy:
+#   git clone ... llama.cpp_telegram && cd llama.cpp_telegram/telegram-bot
+#   cp .env.example .env      # then fill in the secrets
+#   docker compose -f docker-compose.production.yml up -d
+#
+# Ingress: the bot serves plain HTTP on :8443 (host network). TLS is
+# terminated on the MikroTik edge, which proxies bot.kuduza.com:443 to
+# <host-lan-ip>:8443. See docs/WEBHOOK.md.
+
+services:
+  telegram-bot:
+    build: .
+    container_name: tb-bot
+    restart: unless-stopped
+    init: true
+    # Host network is required: the webhook listener must be reachable
+    # at the host's LAN IP, and every dependency (llama :8080, whisper
+    # :8000, donsetch :8765, sandbox :8090) is loopback on this host.
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Sandbox side-car, published on loopback only.
+      - AGENT_STACK_URL=${AGENT_STACK_URL:-http://127.0.0.1:8090}
+    command:
+      - sh
+      - -c
+      - exec python -u bot.py 2>&1 | stdbuf -oL tee -a /var/log/bot/bot.log
+    volumes:
+      # read-only: the bot never writes here
+      - ./files:/app/files:ro
+      # SQLite conversation store — named volume, Docker-owned, not a
+      # host-side writable surface (T52 #R2)
+      - tb_bot_data:/app/data
+      - ./logs:/var/log/bot
+      # personal_tools ships in the image; the :ro bind keeps an
+      # operator edit on the host from injecting code into a running
+      # container
+      - ./personal_tools:/app/personal_tools:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: '5'
+
+volumes:
+  tb_bot_data:

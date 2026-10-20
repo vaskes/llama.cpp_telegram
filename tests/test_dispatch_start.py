@@ -274,7 +274,22 @@ def test_start_invokable_without_nameerror(monkeypatch, tmp_path):
     monkeypatch.setenv("BOT_TOKEN", "TEST:TOKEN")
     monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
     monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token")
-    monkeypatch.setenv("LLAMABOT_ALLOWED_USER_IDS", "286293081")
+    import importlib
+    dispatch_mod = importlib.import_module("dispatch")
+
+    # T63 (regression note): this test used to set
+    # LLAMABOT_ALLOWED_USER_IDS, a variable that does not exist in the
+    # codebase. The whitelist stayed empty, the bot stopped at the
+    # security gate, and the /start body where the wave-6 #S40
+    # NameError lives was never executed. It still went green because
+    # tests/conftest.py used to load the live /opt/telegram-bot/.env
+    # into os.environ, leaking the real ids.
+    #
+    # Setting the env here is not enough: config.py snapshots
+    # ALLOWED_USER_IDS at import time, so by the time this test runs
+    # the value is already baked in. This test is about the /start body,
+    # not about who is allowed in, so authorise directly.
+    monkeypatch.setattr(dispatch_mod, "is_authorized", lambda u: True)
 
     class _FakeChat:
         id = 286293081
@@ -303,6 +318,16 @@ def test_start_invokable_without_nameerror(monkeypatch, tmp_path):
             self.effective_user = _FakeUser()
             self.effective_message = _FakeMessage()
             self.update_id = 1
+        # T63: reject_if_unauthorized() logs via `update.message` and
+        # `update.callback_query` when it is about to reject. python-
+        # telegram-bot's Update exposes both as real attributes (None
+        # when absent); the fake did not, so an *unauthorised* call
+        # raised AttributeError inside the rejection path instead of
+        # returning quietly.
+        @property
+        def message(self): return None
+        @property
+        def callback_query(self): return None
         async def get_bot(self): return None
 
     class _FakeContext:
@@ -311,8 +336,6 @@ def test_start_invokable_without_nameerror(monkeypatch, tmp_path):
         user_data = {}
         chat_data = {}
 
-    import importlib
-    dispatch_mod = importlib.import_module("dispatch")
     orig_reply = dispatch_mod._reply
     called_reply: list = []
     async def fake_reply(update, text):

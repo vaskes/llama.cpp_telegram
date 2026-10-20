@@ -11,12 +11,44 @@ explicitly rejected with design comments. C1 / C7 / M1
 """
 import pathlib
 import re
+import sys
 
 import pytest
 
 PROMPTS = pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompts.py"
 BASH = pathlib.Path(__file__).parent.parent / "telegram-bot" / "personal_tools" / "bash_command.py"
 CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
+
+
+@pytest.fixture(autouse=True)
+def _bash_command_enabled(monkeypatch):
+    """bash_command must be *enabled* for the behaviour tests below.
+
+    call_bash_command() short-circuits with a "disabled" error before it
+    ever reaches the rate limiter, so a test that exercises the limiter
+    has to guarantee the tool is on. These tests used to inherit that
+    from whatever happened to be in os.environ — in practice the live
+    /opt/telegram-bot/.env, which the suite loaded wholesale. That made
+    the suite a property of the host instead of of the code.
+
+    Set here explicitly, and reloaded, because bash_command parses the
+    deployment profile at import time.
+    """
+    monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
+    monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token")
+    # Tests in this package import the same file under two different
+    # module names — `personal_tools.bash_command` and, after a
+    # sys.path poke, plain `bash_command`. Purging only one of them
+    # leaves a stale copy behind that still holds the old env, which
+    # is why the limiter test passed alone and failed in a full run.
+    def _purge():
+        for mod in list(sys.modules):
+            if mod == "bash_command" or mod.endswith("personal_tools.bash_command"):
+                del sys.modules[mod]
+
+    _purge()
+    yield
+    _purge()
 
 
 def test_c2_safety_rules_in_prompts():

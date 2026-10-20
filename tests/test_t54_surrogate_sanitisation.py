@@ -1,4 +1,4 @@
-"""T54 tests: lone-surrogate 500 defence.
+r"""T54 tests: lone-surrogate 500 defence.
 
 Qwen 3.8-27B-Ultra-Heretic MTP sometimes returns tool_call
 arguments with Python-style lone surrogates (e.g. emoji U+1F44D

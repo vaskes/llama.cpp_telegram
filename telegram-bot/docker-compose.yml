@@ -16,9 +16,9 @@ services:
     # container is sharing the host network stack).
     #
     # Why host network instead of bridge: the bot must reach the
-    # vaskes/OpenWebUI-bash-sandbox openapi-proxy at 192.168.10.7:8090
+    # vaskes/OpenWebUI-bash-sandbox openapi-proxy on the same host
     # (the side-car binds only to that LAN IP, not 0.0.0.0, by
-    # design). Inside host network, 192.168.10.7 is just the host's
+    # design). Inside host network, that address is just the host's
     # own LAN address and is reachable from the bot's process.
     # Inside bridge, the bot would have to go through the bridge
     # gateway (172.17.0.1) which is not bound for 8090. We chose
@@ -29,12 +29,12 @@ services:
     - .env
     environment:
     - PYTHONUNBUFFERED=1
-    # 2026-10-13: AGENT_STACK_URL points at the openapi-proxy LAN
-    # bind. From inside host network this is a loopback-ish
-    # call to the same machine; the openapi-proxy is reachable on
-    # 192.168.10.7 (host LAN IP). If the side-car is later moved,
-    # change this to its new address.
-    - AGENT_STACK_URL=http://192.168.10.7:8090
+    # T63: was hardcoded to 192.168.10.7 - one specific host of one
+    # specific deployment, which then went away and left this file
+    # pointing at nothing. The side-car runs on whatever host runs it,
+    # so default to loopback and let the environment override:
+    #   AGENT_STACK_URL=http://lan-ip:8090 docker compose up -d
+    - AGENT_STACK_URL=${AGENT_STACK_URL:-http://127.0.0.1:8090}
     command:
     - sh
     - -c
