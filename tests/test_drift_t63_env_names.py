@@ -131,8 +131,21 @@ def test_env_var_extraction_sanity():
     )
 
 
+#: Env vars that are real and effective, but read by the standard library or the
+#: OS rather than by the application. Listing them keeps the tripwire honest
+#: instead of quietly nudging a future author into deleting a working test.
+#:
+#: TZ is the only one today: test_t68_reanchor.py sets it and calls
+#: time.tzset() to check the daily re-anchor timer across DST boundaries. It is
+#: consumed by time.localtime(), which seconds_until_next() genuinely calls --
+#: so the value does reach the code under test. It simply is not an app config
+#: var, and that is exactly the distinction this tripwire draws.
+NON_APP_VARS = {"TZ"}
+
+
 def test_tests_do_not_invent_env_var_names():
-    unknown = {n: files for n, files in TEST_VARS.items() if n not in APP_VARS}
+    unknown = {n: files for n, files in TEST_VARS.items()
+               if n not in APP_VARS and n not in NON_APP_VARS}
     if not unknown:
         pytest.skip("no test sets an env var outside the application surface")
     detail = "\n".join(
