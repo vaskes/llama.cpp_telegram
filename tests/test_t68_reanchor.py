@@ -300,3 +300,73 @@ def test_stats_reports_the_live_anchor_not_the_stale_global():
         assert cb.get_budget().describe()["anchor"] == cb.get_budget().anchor
     finally:
         cb.time.time = real_time
+
+
+# ---------------------------------------------------------------------------
+# DST — the docstring claimed the loop survives it; it did not
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("tzname", ["America/New_York", "Europe/Berlin"])
+def test_seconds_until_next_survives_dst(monkeypatch, tzname):
+    """Found by hand, after the anchor bug: `today_midnight + hour*3600 + 86400`
+    assumes every day is exactly 86400 seconds. It is not — a DST day is 23 or
+    25 hours.
+
+    Measured in America/New_York, the day before a spring-forward transition:
+    the old code computed a target of 06:00 instead of 05:00. Worse, the inner
+    loop re-evaluates every 10 minutes, so at 05:55 it would find its target
+    already past and push it out another 86400 — skipping a full day.
+
+    The docstring said "the loop must survive ... a DST shift". It did not.
+    This repo has 200+ forks; a third of them are in DST zones.
+    """
+    import datetime
+    import time as _t
+    monkeypatch.setenv("TZ", tzname)
+    _t.tzset()
+    try:
+        from reanchor import seconds_until_next
+        # 2026-03-08 spring forward (NY/Berlin), 2026-11-01 fall back.
+        for probe in ("2026-03-07 06:00", "2026-03-07 12:00",
+                      "2026-03-08 06:00", "2026-11-01 06:00",
+                      "2026-11-02 06:00", "2026-06-15 06:00"):
+            ts = _t.mktime(_t.strptime(probe, "%Y-%m-%d %H:%M"))
+            delta = seconds_until_next(5, 0, now=ts)
+            fires = datetime.datetime.fromtimestamp(ts + delta)
+            assert fires.strftime("%H:%M") == "05:00", (
+                f"{tzname} {probe}: fires at {fires:%H:%M}, not 05:00 — "
+                f"the flat-86400 arithmetic is wrong across a DST boundary"
+            )
+            assert 0 < delta <= 86400 * 1.5, f"implausible delta {delta}"
+    finally:
+        monkeypatch.setenv("TZ", "UTC")
+        _t.tzset()
+
+
+def test_seconds_until_next_never_returns_zero_or_negative():
+    """A zero delta would make the inner loop spin: re-evaluate, get zero,
+    wait zero, repeat — a busy loop burning a core.
+
+    Exact 05:00:00 must roll to tomorrow, which the test
+    `test_seconds_until_next_respects_exact_boundary` already pins; this is
+    the broader guard against any path returning <= 0.
+    """
+    import datetime
+    import time as _t
+    from reanchor import seconds_until_next
+    for hour in range(0, 24):
+        for minute in (0, 1, 30, 59):
+            ts = _t.mktime(_t.strptime(f"2026-06-15 {hour:02d}:{minute:02d}",
+                                       "%Y-%m-%d %H:%M"))
+            d = seconds_until_next(hour, minute, now=ts)
+            assert d > 0, f"target {hour:02d}:{minute:02d} returned {d}"
+            assert d <= 86400, f"target {hour:02d}:{minute:02d} returned {d} (>1 day)"
+
+
+def test_reanchor_at_exactly_midnight_still_advances():
+    """00:00 with BOT_REANCHOR_AT=00:00 is the degenerate case: every probe
+    sits exactly on the boundary."""
+    import time as _t
+    from reanchor import seconds_until_next
+    ts = _t.mktime(_t.strptime("2026-06-15 00:00:00", "%Y-%m-%d %H:%M:%S"))
+    assert seconds_until_next(0, 0, now=ts) > 0

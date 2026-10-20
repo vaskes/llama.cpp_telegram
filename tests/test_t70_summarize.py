@@ -12,7 +12,9 @@ survivable and "bot is down" is not.
 import ast
 import asyncio
 import inspect
+import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -275,3 +277,69 @@ def test_persistence_uses_the_cached_summary_without_calling_out():
     assert not ({"httpx", "post", "AsyncClient"} & names), (
         "load_history is on the request path and must not make model calls"
     )
+
+# ---------------------------------------------------------------------------
+# A stale summary on a failed refresh — deliberate, and now pinned
+# ---------------------------------------------------------------------------
+
+def test_failed_refresh_keeps_the_previous_summary(monkeypatch):
+    """Qwen review flagged this. Investigated, and keeping it is correct.
+
+    The anchor only ever moves FORWARD (now - N days is monotonically
+    increasing with now). A summary built against the previous anchor
+    therefore covers a SUBSET of what is still outside the new window -- so a
+    stale summary can be incomplete, but it can never duplicate a message that
+    is now inside the window. Dropping it would throw away real memory to
+    replace it with none, which is strictly worse.
+
+    This test pins the decision so the next reviewer does not re-open it.
+    The genuine edge case -- a backwards clock jump moving the anchor earlier
+    -- is real but out of scope, and is noted in the ADR.
+    """
+    import context_budget as cb
+    import summarize
+    now = 1_800_000_000.0
+    summarize._SUMMARIES[(1, "t")] = {
+        "text": "прежняя сводка", "n_messages": 12, "at": now,
+    }
+    out = asyncio.run(summarize.summarise_thread(
+        chat_id=1, thread_id="t",
+        budget=cb.ContextBudget(strategy="summarize", anchor=now - 7 * DAY),
+        store=None, llama_url="http://127.0.0.1:1/v1", model="m",
+    ))
+    assert out["ok"] is False
+    assert summarize.get_summary(1, "t") == "прежняя сводка", (
+        "a stale summary is incomplete but never wrong; dropping it loses "
+        "real memory for no gain"
+    )
+
+
+def test_a_shorter_history_clears_the_summary(tmp_path):
+    """The opposite case: if the old set is now below the threshold there is
+    nothing to compress, so a stale summary must go rather than linger.
+
+    Uses a real store -- an earlier version passed store=None, which raised
+    before the clearing branch and made the test pass for the wrong reason.
+    """
+    import context_budget as cb
+    import summarize
+    from storage import Storage
+    st = Storage(str(tmp_path / "t.db"))
+    now = time.time()
+    st._conn().execute(
+        "INSERT INTO chat_threads (chat_id, thread_id, created_at, last_used) "
+        "VALUES (?,?,?,?)", (2, "t", now, now))
+    st._conn().execute(
+        "INSERT INTO messages (chat_id, thread_id, role, content, "
+        "sender_name, created_at) VALUES (?,?,?,?,?,?)",
+        (2, "t", "user", json.dumps({"role": "user", "content": "x"}),
+         "v", now))
+    st._conn().commit()
+    summarize._SUMMARIES[(2, "t")] = {"text": "stale", "n_messages": 99, "at": now}
+    # anchor=0 disables the age filter, so there are ZERO old messages.
+    asyncio.run(summarize.summarise_thread(
+        chat_id=2, thread_id="t",
+        budget=cb.ContextBudget(strategy="summarize", anchor=0.0),
+        store=st, llama_url="http://127.0.0.1:1/v1", model="m",
+    ))
+    assert summarize.get_summary(2, "t") is None

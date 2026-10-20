@@ -75,12 +75,23 @@ def seconds_until_next(hour: int, minute: int, now: float | None = None) -> floa
     and a clock adjustment without ending up waiting 24 hours.
     """
     now = time.time() if now is None else now
-    lt = time.localtime(now)
-    today_midnight = now - (lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec)
-    target = today_midnight + hour * 3600 + minute * 60
-    if target <= now:
-        target += 86400.0
-    return target - now
+    # Calendar arithmetic on local dates, NOT epoch arithmetic with a flat
+    # 86400. A DST day is 23 or 25 hours long, so "midnight + 24h + 5h" does
+    # not land on 05:00 the next day. Measured in America/New_York: on the
+    # morning after a spring-forward probe the old code fired at 06:00 and
+    # then skipped the entire following day, because each re-evaluation found
+    # its target in the past and pushed it another 86400 out.
+    #
+    # datetime.combine(...).timestamp() resolves the UTC offset for that
+    # specific date, which is the whole point.
+    import datetime as _dt
+    today = _dt.date.fromtimestamp(now)
+    target = _dt.datetime.combine(today, _dt.time(hour, minute))
+    if target.timestamp() <= now:
+        target = _dt.datetime.combine(
+            today + _dt.timedelta(days=1), _dt.time(hour, minute)
+        )
+    return target.timestamp() - now
 
 
 def run_engine_reset(cmd: str = ENGINE_RESET_CMD, timeout: int = 120) -> dict:
