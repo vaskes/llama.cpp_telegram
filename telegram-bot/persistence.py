@@ -11,8 +11,8 @@
 import asyncio
 import json
 
+from context_budget import FETCH_LIMIT, get_budget
 from storage import get_store
-from config import CONTEXT_MESSAGES
 
 
 async def persist(chat_id: int, thread_id: str, role: str, content,
@@ -24,7 +24,7 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     storage.
 
     `sender_name` (optional) is the Telegram display name of the
-    human who sent this message. Persisted alongside the row so
+    human who sent the message. Persisted alongside the row so
     the LLM can render "From: {name}: ..." in subsequent turns
     (and so /stats / analysis can attribute messages). Only
     meaningful for role='user'; pass None for assistant / system
@@ -37,9 +37,8 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     )
 
 
-async def load_history(chat_id: int, thread_id: str) -> list:
-    """Return up to CONTEXT_MESSAGES messages for the thread, in
-    chronological order, as dicts that call_llama expects.
+def _decode(rows: list[dict]) -> list[dict]:
+    """Turn raw DB rows into the dict shape call_llama expects.
 
     Each returned dict has:
       - "role": "user" | "assistant" | "system"
@@ -51,14 +50,11 @@ async def load_history(chat_id: int, thread_id: str) -> list:
         the v3 -> v4 migration). call_llama uses this to render
         "From: {name}: <content>" so the model can tell speakers
         apart in a busy group.
-
-    Text-only and multimodal (text + image_url) messages are returned
-    verbatim because both are stored as JSON in the DB and parse
-    to the same shape that call_llama forwards to llama-server.
+      - "_created_at": float | None. Unix timestamp of the row, used by
+        context_budget to decide what falls inside the memory window.
+        Carried through as an out-of-band field so it never reaches the
+        engine as a message field.
     """
-    rows = await asyncio.to_thread(
-        get_store().get_messages, chat_id, thread_id, CONTEXT_MESSAGES
-    )
     out = []
     for r in rows:
         try:
@@ -72,5 +68,27 @@ async def load_history(chat_id: int, thread_id: str) -> list:
         # assistant turns. _tag_sender strips it before sending.
         if r.get("sender_name"):
             msg["_sender_name"] = r["sender_name"]
+        msg["_created_at"] = r.get("created_at")
         out.append(msg)
     return out
+
+
+async def load_history(chat_id: int, thread_id: str) -> list:
+    """Return the messages to send for this turn, in chronological order.
+
+    T70: this is the single place where context policy lives. Storage hands
+    over everything inside the fetch ceiling; ContextBudget decides what
+    actually goes to the engine. Before T70 the LIMIT was applied in SQL and
+    the caller got a fixed count with no notion of age.
+
+    Text-only and multimodal (text + image_url) messages pass through
+    verbatim because both are stored as JSON in the DB and parse to the
+    same shape that call_llama forwards to the engine.
+
+    The returned dicts still carry the out-of-band `_sender_name` /
+    `_created_at` fields; call_llama strips them before the HTTP request.
+    """
+    rows = await asyncio.to_thread(
+        get_store().get_messages, chat_id, thread_id, FETCH_LIMIT
+    )
+    return get_budget().apply(_decode(rows))

@@ -45,6 +45,7 @@ from config import (
     API_KEY, DISABLED_TOOLS, DONSETCH_SESSION_ID, DONSETCH_URL,
     LLAMA_URL, MODEL, SHUTDOWN_EVENT, WHISPER_LANGUAGE, WHISPER_URL, _TOOLS_CACHE,
 )
+from context_budget import OVERFLOW_MESSAGE, is_context_overflow
 from prompts import GROUP_CONTEXT, RATING_RULES
 from rating import _execute_react_to_message
 
@@ -927,6 +928,15 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                     # user-readable message instead.
                     _choices = data.get("choices") or []
                     if not _choices:
+                        # T70.4: distinguish "context exhausted" from the other
+                        # two causes. Before this, an overflow produced a normal
+                        # answer-shaped message and the bot hallucinated about
+                        # the truncated conversation.
+                        _raw = (data.get("error") or {})
+                        _detail = json.dumps(_raw) if _raw else json.dumps(data)[:500]
+                        if is_context_overflow(_detail):
+                            print("[call_llama] CONTEXT OVERFLOW detected", flush=True)
+                            return OVERFLOW_MESSAGE
                         return ("[model returned no choices — the prompt may have "
                                 "exceeded the context window, hit a rate limit, or "
                                 "been blocked by a content filter. Try a shorter "
@@ -1141,6 +1151,11 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         # too, even though we already guarded the
                         # primary path.
                         _choices2 = data.get("choices") or []
+                        if not _choices2 and is_context_overflow(
+                            json.dumps(data.get("error") or data)[:500]
+                        ):
+                            print("[call_llama] CONTEXT OVERFLOW on fallback", flush=True)
+                            return OVERFLOW_MESSAGE
                         if not _choices2:
                             return ("[model returned no choices on fallback — "
                                     "the prompt may have exceeded the context window, "

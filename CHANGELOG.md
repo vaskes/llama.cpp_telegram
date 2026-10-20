@@ -13,6 +13,77 @@ this file is the human-readable summary.
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
+## [Unreleased] — T70/T67 — Context memory
+
+The bot now assembles its context itself instead of taking a fixed number of
+messages. Engine-agnostic by construction: the context policy is ours, the
+engine stays a pipe.
+
+**New: `telegram-bot/context_budget.py`**
+- `ContextBudget.apply()` decides which persisted messages reach the engine.
+  Pure — no I/O, no clock, no LLM — so it tests without network or DB.
+- Default strategy `window`: keep messages newer than an anchor fixed at bot
+  start, `BOT_REMEMBER_DAYS` long (default 7), per-sub. The anchor does NOT
+  slide; the nightly 05:00 restart is what re-anchors it.
+- Config: `CONTEXT_STRATEGY` (window|summarize), `CONTEXT_MAX_MESSAGES`
+  (safety net, default 20), `BOT_REMEMBER_DAYS` (default 7, 0/-1 = no age
+  filter). All documented in `.env.example` with the anchored-vs-sliding
+  distinction spelled out.
+- `summarize` strategy is a stub for now (returns the same window). It will
+  summarise out-of-window history when a caller supplies a summariser —
+  deliberately not the default until there is data showing it is needed.
+
+**Two guarantees in `apply()`**
+- The newest message is never dropped: it reaches the engine only through this
+  list (`call_llama` builds `msgs = [sys] + messages`; its `user_text`
+  parameter is dead code), so losing it means answering with nothing to answer.
+- Messages with a missing or unparseable timestamp are kept, not discarded.
+
+**T67 — history is never pruned**
+- Removed the lazy trim (`TRIM_HIGH=500` → `TRIM_LOW=200`) from
+  `storage.get_messages`. It DELETED rows at read time, silently. The operator
+  is keeping this history for LoRA training data, and a silent delete cannot
+  be undone. `/reset` (`delete_thread`) remains the explicit delete path.
+- `get_messages` now returns `created_at`, which the age window needs.
+- The in-container selftest that asserted the trim *kept* 200 rows now asserts
+  the inverse: 700 rows survive a read.
+- The two v0.9.1 rollbacks in `handle_photo` (Stop button, crash) are gone
+  with the write they were undoing — they would otherwise delete an unrelated
+  earlier message.
+
+**T67.2 — images are not stored**
+- `handle_photo` no longer persists the image. It participates in the current
+  exchange (the model sees it and answers) and is not remembered after a
+  restart. `handle_photo` appends the current turn to the history it sends
+  explicitly, since the image is no longer in SQLite.
+- This also removes the base64 growth that was the original justification for
+  the trim.
+
+**T70.4 — context overflow is visible**
+- `is_context_overflow()` classifies an engine error as a context-window
+  overflow by its text (engines disagree on the status code, and a bot with
+  200+ forks cannot carry a per-engine table). Wired into all three
+  empty-choices sites in `call_llama`. The user is now told the context is
+  exhausted and what to do (`/reset`, or the 05:00 restart), instead of
+  receiving a confident answer to a truncated conversation.
+
+**Tests:** 42 new in `tests/test_t70_context_budget.py` (335 total, was 293).
+Includes AST tripwires for the claims that break silently:
+- `CONTEXT_ANCHOR` must be a module-level constant assigned once — a
+  `time.time()` read inside `apply()` would slide the window and every
+  behavioural test would still pass;
+- `apply()` must not perform I/O;
+- `get_messages` must not contain a `DELETE` (checked on the AST, so
+  `delete_thread` and `delete_last_user_message` stay legal);
+- `handle_photo` must neither persist the image nor silently lose it.
+
+One regression was caught by these tests during implementation: the first
+draft of the "last message is never dropped" rule fired whenever the newest
+message was older than the window, discarding the entire in-window history in
+favour of one stale message. That is exactly what happens right after a
+restart, so it would have shipped. Fixed and covered by
+`test_out_of_order_arrival_does_not_wipe_the_window`.
+
 ## [v0.10.2-stable] — 2026-10-11 — Initial human-tested release
 
 **Status:** `v0.10.2-stable` is the first release that has been

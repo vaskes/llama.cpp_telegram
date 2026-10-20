@@ -99,6 +99,11 @@ from state import (
 
 # === Conversation store ===
 DB_PATH = os.environ.get("CONVERSATIONS_DB", "/app/data/conversations.db")
+# Deprecated (T70): superseded by CONTEXT_MAX_MESSAGES in context_budget.py,
+# which is where the context policy now lives. Kept because it is a
+# documented env var that forks may already set — CONTEXT_MAX_MESSAGES
+# wins when it is set, and this is only the last-resort default.
+# Do NOT wire new call sites to this; use context_budget.get_budget().
 CONTEXT_MESSAGES = int(os.environ.get("CONTEXT_MESSAGES", "20"))
 
 # === Selftest toggle ===

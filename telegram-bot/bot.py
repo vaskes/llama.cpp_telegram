@@ -758,11 +758,12 @@ async def _selftest():
         print(f"  [FAIL] known_topics round-trip crashed: {type(e).__name__}: {e}", flush=True)
         all_ok = False
 
-    # === Storage: lazy trim in get_messages ===
-    # Verifies that the row count per (chat_id, thread_id) is
-    # bounded — adding > TRIM_HIGH messages and then reading
-    # should leave the table at TRIM_LOW, not unbounded.
-    print('[selftest] running lazy-trim test...', flush=True)
+    # === Storage: history is never pruned (T67) ===
+    # The inverse of the old lazy-trim test. That one asserted that
+    # crossing TRIM_HIGH rows left the table at TRIM_LOW — i.e. it
+    # asserted that get_messages DELETES history, which is exactly what
+    # broke LoRA training data. This one asserts nothing is deleted.
+    print('[selftest] running no-prune test...', flush=True)
     # storage.py sits next to bot.py in the container (/app/storage.py
     # per the Dockerfile `COPY bot.py storage.py ./`); module name
     # "storage" would clash with stdlib's `storage` if we ever need
@@ -774,32 +775,32 @@ async def _selftest():
     )
     _storage_mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_storage_mod)
-    TRIM_HIGH = _storage_mod.TRIM_HIGH
-    TRIM_LOW = _storage_mod.TRIM_LOW
-    LAZY_CHAT = -1002
-    LAZY_THREAD = "lazy-test"
+    NOPRUNE_ROWS = 700  # above the old TRIM_HIGH of 500
+    NOPRUNE_CHAT = -1002
+    NOPRUNE_THREAD = "noprun-test"
     try:  # noqa
         # Wipe any leftover rows
-        await asyncio.to_thread(_b.store.delete_thread, LAZY_CHAT, LAZY_THREAD)
-        # Insert TRIM_HIGH + 50 rows
-        for i in range(TRIM_HIGH + 50):
+        await asyncio.to_thread(_b.store.delete_thread, NOPRUNE_CHAT, NOPRUNE_THREAD)
+        for i in range(NOPRUNE_ROWS):
             await asyncio.to_thread(
-                _b.store.add_message, LAZY_CHAT, LAZY_THREAD,
+                _b.store.add_message, NOPRUNE_CHAT, NOPRUNE_THREAD,
                 "user", f'{{"role":"user","content":"msg {i}"}}'
             )
-        # Count before read
-        n_before = (
-            await asyncio.to_thread(_b.store.get_messages, LAZY_CHAT, LAZY_THREAD, 100000)
+        # Read back with a ceiling above what we wrote
+        rows = (
+            await asyncio.to_thread(
+                _b.store.get_messages, NOPRUNE_CHAT, NOPRUNE_THREAD, 100000
+            )
         )
-        if len(n_before) != TRIM_LOW:
-            print(f"  [FAIL] after add: row count is {len(n_before)}, expected TRIM_LOW={TRIM_LOW}", flush=True)
+        if len(rows) != NOPRUNE_ROWS:
+            print(f"  [FAIL] history pruned: got {len(rows)} rows, expected {NOPRUNE_ROWS}", flush=True)
             all_ok = False
         else:
-            print(f"  [OK] lazy trim kept {len(n_before)} rows (== TRIM_LOW)", flush=True)
+            print(f"  [OK] all {NOPRUNE_ROWS} rows survived get_messages (no pruning)", flush=True)
         # Cleanup
-        await asyncio.to_thread(_b.store.delete_thread, LAZY_CHAT, LAZY_THREAD)
+        await asyncio.to_thread(_b.store.delete_thread, NOPRUNE_CHAT, NOPRUNE_THREAD)
     except Exception as e:
-        print(f"  [FAIL] lazy-trim test crashed: {type(e).__name__}: {e}", flush=True)
+        print(f"  [FAIL] no-prune test crashed: {type(e).__name__}: {e}", flush=True)
         all_ok = False
 
     # === Storage: rating column (v3 schema) ===

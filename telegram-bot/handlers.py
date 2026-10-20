@@ -411,7 +411,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.chat.send_action(action='typing')
     thinking = None
-    persisted = False  # v0.9.1: track whether image was added to history
+    # T67.2: the v0.9.1 `persisted` flag and its two rollbacks are gone with
+    # the image write. They existed solely to undo _persist_message when the
+    # user hit Stop or the call crashed — there is nothing to undo now, and
+    # a rollback that fires without a write is worse than no rollback.
     try:
         photo = update.message.photo[-1]
         # Telegram sends multiple PhotoSize entries; we want the
@@ -463,16 +466,33 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _register_abort_event(chat_id, thinking.message_id, abort_event)
         thread_id = thread_id  # already resolved by _route_to_thread
         sender_name = _sender_display_name(update.message.from_user)
-        # Persist AFTER abort is registered. If download/persist raises,
-        # the except block edits thinking to an error and clears the
-        # abort slot so a stale Stop click does not affect future calls.
-        await _persist_message(chat_id, thread_id, 'user', photo_content, sender_name=sender_name)
-        persisted = True
+        # T67.2: images are NOT persisted.
+        #
+        # The operator's call (2026-10-20): the image participates in the
+        # current exchange — the model sees it and answers — but it is not
+        # worth storing, and it is not remembered after a restart.
+        #
+        # Implementation note, because this line looks redundant: the photo
+        # previously reached the engine *only* by being written to SQLite and
+        # read straight back out into `history` (call_llama builds
+        # `msgs = [sys] + messages` and its `user_text` arg is dead code).
+        # So "don't persist" and "the model sees the image" were the same
+        # edit. `history` now ends at the previous turn, and the current
+        # photo turn is appended below.
+        #
+        # History therefore keeps the caption as a text-only record, which is
+        # what a later "what did that photo show?" degrades to — the model
+        # falls back to its own description, as the comment below notes.
         history = await _load_history(chat_id, thread_id)
-        # When recalling image turns in later text-only messages, the
-        # images themselves cannot be re-sent from history (no id
-        # retained), so the model falls back to its own description.
-        print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        current_turn = {"role": "user", "content": photo_content,
+                        "_sender_name": sender_name}
+        # Appended AFTER load_history so it is not subject to the context
+        # window or the message cap — this message is the reason for the call.
+        # Without this the image would never reach the model, since the
+        # image is not in SQLite (T67.2) and call_llama's `user_text`
+        # parameter is dead code.
+        history = history + [current_turn]
+        print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)} (image not persisted)", flush=True)
         # Compute rating_active here (before call_llama) so we
         # can pass it to the model AND use it in the dispatcher.
         rating_active = _is_rating_active(update)
@@ -509,18 +529,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
-            # v0.9.1: if we already persisted the image to history,
-            # roll it back. The user explicitly asked the bot to
-            # NOT process this image (Stop = cancel). Leaving the
-            # image in history would mean the next text message
-            # gets answered about the (cancelled) image.
-            if persisted:
-                try:
-                    store = get_store()
-                    await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
-                    print(f"[handle_photo] rolled back persisted image for {chat_id}/{thread_id} (Stop button)", flush=True)
-                except Exception as rb:
-                    print(f"[handle_photo] rollback on Stop failed: {type(rb).__name__}: {rb!r}", flush=True)
+            # T67.2: no rollback needed — the image was never written.
             try:
                 await thinking.edit_text('⏹ Остановлено')
             except Exception:
@@ -616,16 +625,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[ERR photo] {type(e).__name__}: {e}", flush=True)
         import traceback
         traceback.print_exc()
-        # v0.9.1: if we already persisted the image to history, roll
-        # it back so the next user message does not get answered
-        # about an image the bot never actually analyzed.
-        if persisted:
-            try:
-                store = get_store()
-                await asyncio.to_thread(store.delete_last_user_message, chat_id, thread_id)
-                print(f"[ERR photo] rolled back persisted image for {chat_id}/{thread_id}", flush=True)
-            except Exception as rb:
-                print(f"[ERR photo] rollback failed: {type(rb).__name__}: {rb!r}", flush=True)
+        # T67.2: no rollback needed — the image was never written.
         try:
             await _reply(update, f'❌ Error: {e}')
         except Exception:

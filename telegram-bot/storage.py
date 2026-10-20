@@ -121,23 +121,26 @@ CREATE INDEX IF NOT EXISTS idx_known_topics_name
     ON known_topics(chat_id, name);
 """
 
-# Default cap for the model's context window. Older messages stay in
-# the DB but are not sent to llama-server. Env-overridable; see bot.py.
+# Default fetch ceiling when the caller does not pass one. This is NOT the
+# context policy — see context_budget.py. Env-overridable via
+# CONTEXT_MAX_MESSAGES, which persistence passes through as FETCH_LIMIT.
 DEFAULT_CONTEXT_MESSAGES = 20
 
-# Lazy-trim thresholds. The messages table grows without bound if
-# nothing prunes it; with 20 topics in a busy group that's tens of
-# thousands of rows per day. Rather than call a separate
-# trim_messages() after every add_message (extra round-trip), we
-# check the row count lazily in get_messages and trim if it
-# exceeds TRIM_HIGH. The post-trim count is TRIM_LOW.
+# T67: TRIM_HIGH / TRIM_LOW are gone.
 #
-# Both values are conservative: keep ~200 messages per thread,
-# trim when above 500. The model's context window is 20 messages,
-# so the over-trim doesn't affect what the bot sends to the LLM;
-# it only keeps the DB small.
-TRIM_HIGH = 500
-TRIM_LOW = 200
+# They used to cap the messages table at ~200 rows per thread by DELETING
+# everything older, lazily, inside get_messages. That was fine while the
+# messages table was scratch space for a 20-message context window. It is
+# not fine now: the operator is keeping this history for LoRA training data
+# (T67.2), and a silent DELETE cannot be undone.
+#
+# SQLite is not the constraint here. At 200 messages/day a year is 73k rows,
+# which SQLite reads in milliseconds via idx_msg_lookup. The growth that
+# mattered was base64 images in `content`, and T67.2 stops writing those.
+#
+# tests/test_t70_context_budget.py fails if these names come back — the old
+# docstring here described trim as a self-throttling feature, which is
+# exactly how it would be reinstated by someone reading it in six months.
 
 
 def _migrate_v1_to_v2(c: sqlite3.Connection) -> None:
@@ -504,43 +507,30 @@ class Storage:
                      limit: int = DEFAULT_CONTEXT_MESSAGES) -> list[dict]:
         """Returns the last `limit` messages in chronological order.
 
-        Each row is `{'role': str, 'content': str}` where `content`
-        is the raw JSON string the caller stored. The OpenAI Chat
-        Completions format (`{"role", "content"}`) round-trips
-        because both text-only and multimodal messages are stored
-        as JSON.
+        Each row is `{'role': str, 'content': str, 'sender_name': str|None,
+        'rating': int|None, 'created_at': float}`. `content` is the raw JSON
+        string the caller stored. The OpenAI Chat Completions format
+        (`{"role", "content"}`) round-trips because both text-only and
+        multimodal messages are stored as JSON.
 
-        Lazy trim: if the row count for (chat_id, thread_id)
-        exceeds TRIM_HIGH, prune down to TRIM_LOW before reading.
-        Self-throttling — bursts of activity do one trim and
-        then no extra work until the count climbs again. Bounded
-        DB growth without a per-insert round-trip.
+        T70: `created_at` is now in the result so that context_budget can
+        apply an AGE-based window. Until then only the SQL LIMIT stood
+        between the bot and unbounded history.
+
+        This method never deletes anything. History is the source of truth
+        (and is destined for LoRA training data); trimming lived here until
+        T67 removed it — at TRIM_HIGH rows it silently DELETED everything
+        above TRIM_LOW, which no tripwire could undo.
+
+        The `limit` here is a fetch ceiling, not a context policy: it bounds
+        how much comes out of the DB at all. What actually gets sent is
+        decided by context_budget.ContextBudget.apply().
         """
         c = self._conn()
-        # Lazy trim: cap the per-(chat_id, thread_id) row count.
-        n = c.execute(
-            "SELECT COUNT(*) FROM messages WHERE chat_id = ? AND thread_id = ?",
-            (chat_id, thread_id),
-        ).fetchone()[0]
-        if n > TRIM_HIGH:
-            c.execute(
-                """
-                DELETE FROM messages
-                WHERE chat_id = ? AND thread_id = ?
-                  AND id NOT IN (
-                      SELECT id FROM messages
-                      WHERE chat_id = ? AND thread_id = ?
-                      ORDER BY id DESC
-                      LIMIT ?
-                  )
-                """,
-                (chat_id, thread_id, chat_id, thread_id, TRIM_LOW),
-            )
-            c.commit()
         rows = c.execute(
             """
-            SELECT role, content, sender_name, rating FROM (
-                SELECT role, content, sender_name, rating, id FROM messages
+            SELECT role, content, sender_name, rating, created_at FROM (
+                SELECT role, content, sender_name, rating, created_at, id FROM messages
                 WHERE chat_id = ? AND thread_id = ?
                 ORDER BY id DESC
                 LIMIT ?
