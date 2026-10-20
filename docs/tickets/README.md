@@ -63,7 +63,7 @@ be built first.
 |---|---|---|---|
 | **T70** | `ContextBudget` — universal context assembly | ✅ T70.1/2/4 shipped · T70.3 designed, unwritten | — |
 | **T67** | Remove `TRIM_HIGH`, stop storing images | ✅ shipped | — |
-| T65 | Reply-to-human: record, don't answer | 🟢 ready (T65.1 only) | — |
+| **T65.1** | Reply-to-human: absorb, react, don't answer | ✅ **shipped** | — |
 | T66 | Time-based window (7 days) — semantics | ✅ done inside T70.2 | T67 |
 | T68 | Daily re-anchor | ✅ code shipped; **timer install is the operator's** | T70.2 |
 | T69 | Bot personality in system prompt | ⏸ waiting on operator | operator input |

@@ -263,6 +263,14 @@ LLAMA_MODELS_TIMEOUT_SEC   = _env_or("LLAMABOT_LLAMA_MODELS_TIMEOUT", _PROFILE_D
 TRANSCRIBE_TIMEOUT_SEC     = _env_or("LLAMABOT_TRANSCRIBE_TIMEOUT", _PROFILE_DEFAULTS["TRANSCRIBE_TIMEOUT_SEC"])
 REASONING_RATIO_HARD_LIMIT = _env_or("LLAMABOT_REASONING_RATIO_LIMIT", _PROFILE_DEFAULTS["REASONING_RATIO_HARD_LIMIT"])
 
+# T65.1 — silent reaction turn. A reply addressed to another human produces a
+# reaction and nothing else: no answer, no visible reasoning. A reaction is one
+# emoji plus a short reasoning trace, so this is far below the normal budget.
+# Deliberately its own constant rather than a fraction of MAX_TOKENS_DEFAULT:
+# a runaway turn here is pure waste, and the number should be obviously small
+# to whoever reads the log next.
+MAX_TOKENS_REACT_ONLY      = _env_or("LLAMABOT_MAX_TOKENS_REACT_ONLY", 2048)
+
 
 # === call_llama signature default ===
 # The default in call_llama()'s signature is what a future

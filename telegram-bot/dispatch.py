@@ -34,6 +34,7 @@ _dispatcher = None
 import persistence
 import prompts
 import rating
+import limits
 from config import (
     ALLOWED_USER_IDS, ALLOWED_USERNAMES, API_KEY, BOT_TOKEN,
     BOT_USERNAME, DB_PATH, DISABLED_TOOLS, DONSETCH_URL,
@@ -811,6 +812,92 @@ def _is_reply_to_other_user(update, bot_id: int) -> bool:
     if rtm.from_user is not None and getattr(rtm.from_user, 'id', None) == bot_id:
         return False
     return True
+
+async def _handle_reply_to_other_user(upd, bot) -> None:
+    """T65.1 — a human replied to another human in a group.
+
+    The operator's design, verbatim from the ticket: the message must still be
+    *seen*. The model reads it, thinks about it, and leaves a reaction via the
+    react_to_message tool. What it must NOT do is answer, and the reasoning
+    must not appear in the chat — the group is talking to itself, and a visible
+    "💭 думаю…" from the bot on someone else's message is noise.
+
+    So: real LLM call, `silent=True`. Not a skip.
+
+    What was here before: an unconditional `return` before process_update,
+    which meant the message was never written to the DB at all. That is the
+    silent data loss this ticket exists to fix — the operator keeps this
+    history for a LoRA dataset, and an entire class of group conversation was
+    silently dropped.
+    """
+    msg = upd.message
+    rtm = msg.reply_to_message
+    rtm_from = rtm.from_user if rtm and rtm.from_user else None
+    tag = (
+        f"@{rtm_from.username}" if rtm_from and rtm_from.username
+        else f"id={rtm_from.id}" if rtm_from else "?"
+    )
+    chat_id = upd.effective_chat.id
+    thread_id = str(getattr(msg, "message_thread_id", None) or "main")
+    who = msg.from_user
+    sender = (
+        f"@{who.username}" if getattr(who, "username", None)
+        else (getattr(who, "first_name", None) or "unknown")
+    )
+    print(
+        f"[dispatch] reply-to-other-user: absorbing silently "
+        f"(reply_to={tag}, chat={chat_id}, thread={thread_id}) "
+        f"update_id={upd.update_id}",
+        flush=True,
+    )
+
+    # 1. Persist. ALWAYS, and before anything that can fail — this is the part
+    #    the ticket is really about.
+    body = msg.text or msg.caption or ""
+    content = f"[reply to {tag}] {body}" if tag else body
+    try:
+        await _persist_message(
+            chat_id, thread_id, "user", content, sender_name=sender,
+        )
+    except Exception as exc:
+        print(f"[dispatch] persist failed for reply-to-other-user: {exc!r}",
+              flush=True)
+
+    # 2. Build context exactly as a normal turn would, then ask the model to
+    #    react without answering. `silent` suppresses the reasoning stream.
+    try:
+        history = await _load_history(chat_id, thread_id)
+        silent_prompt = (
+            "This message was sent by one human in the group to ANOTHER human, "
+            "not to you. Do not reply and do not say anything. Look at it, then "
+            "express your reaction ONLY by calling react_to_message with a "
+            "single emoji. Your reasoning is private and will not be shown."
+        )
+        await call_llama.call_llama(
+            history,
+            max_tokens=limits.MAX_TOKENS_REACT_ONLY,
+            user_text=silent_prompt,
+            thinking_msg=None,          # nothing to update: no chat message
+            use_stream=False,
+            bot=bot,
+            chat_id=chat_id,
+            current_message_id=msg.message_id,
+            chat_type=upd.effective_chat.type,
+            silent=True,                # reasoning stays out of the GUI
+        )
+        print(
+            f"[dispatch] absorbed reply-to-other-user "
+            f"update_id={upd.update_id}",
+            flush=True,
+        )
+    except Exception as exc:
+        # A failed reaction must never lose the persisted message, and must
+        # never surface as an error to the group.
+        print(
+            f"[dispatch] silent-absorb failed (message already persisted) "
+            f"update_id={upd.update_id}: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
 # === _rate_limit_send ===
 # v0.7.9: Telegram rate-limits the bot to ~20 messages/minute per chat.
@@ -1720,23 +1807,10 @@ async def _dispatch_update(upd_dict):
         )
         print(f"[dispatch] muting group-mode message from {tag}", flush=True)
         return
-    # Reply-chain filter: skip messages that are replies to other
-    # humans in a group. The bot should not insert itself into
-    # human-to-human conversation threads. Replies to the bot's
-    # own messages and commands are exempt.
+    # T65.1: reply-to-other-user is ABSORBED, not skipped.
+    # Persist + react silently; do not answer, do not show reasoning.
     if upd.message is not None and _is_reply_to_other_user(upd, _dispatcher.bot.id):
-        rtm = upd.message.reply_to_message
-        rtm_from = rtm.from_user if rtm and rtm.from_user else None
-        tag = (
-            f"@{rtm_from.username}" if rtm_from and rtm_from.username
-            else f"id={rtm_from.id}" if rtm_from
-            else "?"
-        )
-        print(
-            f"[dispatch] skipping reply-to-other-user (rtm_from={tag}) "
-            f"update_id={upd.update_id}",
-            flush=True,
-        )
+        await _handle_reply_to_other_user(upd, _dispatcher.bot)
         return
     await _dispatcher.process_update(upd)
     print(f"[dispatch] processed update_id={upd.update_id}", flush=True)

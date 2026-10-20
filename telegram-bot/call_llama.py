@@ -438,6 +438,7 @@ async def call_llama(
     current_message_id=None,
     *,
     chat_type: str,
+    silent: bool = False,
 ):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
@@ -450,6 +451,12 @@ async def call_llama(
              a new caller cannot accidentally enable bash_command
              in a context that should be locked down. See T52 #H1
              and T53 #R4 for the threat model.
+    silent:      T65.1. The message was addressed to another human in a group.
+                  The LLM still runs and still reasons -- that is how it decides
+                  what reaction to leave -- but reasoning is NOT streamed to the
+                  chat and the text answer is NOT sent. The only outward signal
+                  is whatever the model does via tools (react_to_message).
+                  Nothing about the engine changes; this is presentation only.
 shutdown_event: optional asyncio.Event; checked at the top of every iteration
                   so SIGTERM (docker stop) can abort a long call before the 10s
                   SIGKILL grace runs out. Falls back to the module-level
@@ -729,6 +736,21 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
     EMPTY_FALLBACK_PREFIX = '[model returned an empty response.'
 
     async def push_thinking(reasoning_text: str, force: bool = False):
+        # T65.1: `silent` turns exist for messages addressed to another human
+        # in a group. The LLM still runs and its reasoning still happens -- we
+        # want it, that is the whole point of having the model classify the
+        # message before reacting. But showing "💭 думаю…" for a message
+        # nobody asked the bot about is noise: the group is talking to each
+        # other, and the bot would be visibly thinking along. The reaction is
+        # the only outward signal in that case.
+        if silent:
+            if reasoning_text:
+                print(
+                    f"[LLAMA] silent reasoning ({len(reasoning_text)} chars, "
+                    f"not shown to GUI)",
+                    flush=True,
+                )
+            return
         if thinking_msg is None or not reasoning_text:
             return
         now = time.monotonic()
