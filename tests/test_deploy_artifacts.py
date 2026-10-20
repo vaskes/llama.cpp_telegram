@@ -399,6 +399,38 @@ def test_dry_run_does_not_touch_volumes(update_src):
     )
 
 
+def test_dry_run_skips_the_post_sync_completeness_check(update_src):
+    """Found in the field: rehearsing T70 with DRY_RUN=1 died on
+    "missing after sync: context_budget.py".
+
+    Nothing was wrong — under DRY_RUN the rsync does not run, so a module
+    added in this very change is legitimately absent from $BOT_DIR. The
+    check fired anyway, and the rehearser was told a deploy is broken.
+
+    A check that fires on correct input is worse than no check: it teaches
+    the operator to skip the rehearsal, and the rehearsal is exactly what
+    catches bad deploys. So the completeness check must be gated on DRY_RUN,
+    and DRY_RUN should instead report how many modules are new.
+    """
+    assert re.search(r'if\s+\[\[\s*"?\$DRY_RUN"?\s*==\s*"1"\s*\]\]\s*;?\s*then',
+                     update_src), "update.sh must branch on DRY_RUN"
+    block = update_src[update_src.find("MISSING=0"):][:1800]
+    dry_branch = block.find('DRY_RUN')
+    assert dry_branch != -1, (
+        "the post-sync completeness check has no DRY_RUN branch — rehearsing "
+        "any change that ADDS a module will report a false failure"
+    )
+    # The new-module count must be reported instead of failing.
+    assert "will land on the real run" in block, (
+        "under DRY_RUN the script should say which modules are new, not die"
+    )
+    # And the hard failure must exist only on the real path.
+    real = block[block.rfind("else"):]
+    assert "refusing to deploy a partial build" in real, (
+        "the real (non-DRY_RUN) path must still refuse to deploy a partial build"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 8. The systemd units point at a bare `docker compose` too.
 # ---------------------------------------------------------------------------

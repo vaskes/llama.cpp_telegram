@@ -157,19 +157,37 @@ fi
 # Sanity check: every module the image needs must now exist in $BOT_DIR.
 # This is the check that would have caught the 4-of-17 copy bug on the
 # very first run, and it is cheap.
+#
+# Under DRY_RUN nothing was synced, so $BOT_DIR legitimately still lacks any
+# newly added module. Checking it anyway would make every rehearsal of a
+# change that ADDS a file fail, which trains the operator to ignore the very
+# check that matters. Verify instead against a real copy when rehearsing.
 MISSING=0
-for mod in telegram-bot/*.py; do
-    base="$(basename "$mod")"
-    if [[ ! -f "$BOT_DIR/$base" ]]; then
-        warn "missing after sync: $base"
+if [[ "$DRY_RUN" == "1" ]]; then
+    NEW_FILES=0
+    for mod in telegram-bot/*.py; do
+        base="$(basename "$mod")"
+        [[ -f "$BOT_DIR/$base" ]] || NEW_FILES=$((NEW_FILES + 1))
+    done
+    if [[ "$NEW_FILES" -gt 0 ]]; then
+        info "$NEW_FILES module(s) new since the last deploy — they will land on the real run"
+    else
+        info "no new modules since the last deploy"
+    fi
+else
+    for mod in telegram-bot/*.py; do
+        base="$(basename "$mod")"
+        if [[ ! -f "$BOT_DIR/$base" ]]; then
+            warn "missing after sync: $base"
+            MISSING=$((MISSING + 1))
+        fi
+    done
+    if [[ ! -d "$BOT_DIR/personal_tools" ]]; then
+        warn "missing after sync: personal_tools/"
         MISSING=$((MISSING + 1))
     fi
-done
-if [[ ! -d "$BOT_DIR/personal_tools" ]]; then
-    warn "missing after sync: personal_tools/"
-    MISSING=$((MISSING + 1))
+    [[ "$MISSING" -eq 0 ]] || die "$MISSING file(s) missing after sync — refusing to deploy a partial build"
 fi
-[[ "$MISSING" -eq 0 ]] || die "$MISSING file(s) missing after sync — refusing to deploy a partial build"
 info "all $(ls telegram-bot/*.py | wc -l | tr -d ' ') modules + personal_tools/ present"
 
 # .env must survive. If it vanished, we are about to start a container
