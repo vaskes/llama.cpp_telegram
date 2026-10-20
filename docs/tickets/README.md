@@ -61,7 +61,7 @@ be built first.
 
 | Ticket | Subject | State | Depends on |
 |---|---|---|---|
-| **T70** | `ContextBudget` — universal context assembly | ✅ T70.1/2/4 shipped · T70.3 designed, unwritten | — |
+| **T70** | `ContextBudget` — universal context assembly | ✅ **all shipped** (T70.1/2/3/4) | — |
 | **T67** | Remove `TRIM_HIGH`, stop storing images | ✅ shipped | — |
 | **T65.1** | Reply-to-human: absorb, react, don't answer | ✅ **shipped** | — |
 | T66 | Time-based window (7 days) — semantics | ✅ done inside T70.2 | T67 |
@@ -77,7 +77,7 @@ T67.1–67.3, T68 (`soft`/`process`/`process+engine` + ADR-0003). 377 tests.
 |---|---|---|
 | **T70.1** | `ContextBudget` skeleton, config, wiring | ✅ |
 | **T70.2** | `window` strategy (the operator's 7-day rule) | ✅ |
-| T70.3 | `summarize` strategy (not default) | 📋 designed in the ticket, deliberately unwritten |
+| **T70.3** | `summarize` strategy (opt-in, not default) | ✅ |
 | **T70.4a** | Overflow handling | ✅ |
 | **T70.4b** | `/stats` observability | ✅ |
 

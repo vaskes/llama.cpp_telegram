@@ -557,17 +557,21 @@ Full detail in `docs/tickets/`. Start with T70 (the main ticket) or T67
       operator's.
 - [ ] **T69** Bot personality injection into system prompt. ⏸ Waiting on
       operator answers.
-- [ ] **T70.3** Summarise out-of-window history **at bot start**, same model
-      as the bot, then `{system} + {summary} + {window}`. ⏸ Blocked on the
-      boundary question below — code written before it is answered would have
-      to be rewritten, so writing it now is wasted work.
+- [x] **T70.3** Summarise out-of-window history at each re-anchor, same model
+      as the bot, then `{system} + {summary} + {window}`. ✅ 2026-10-21.
+
+- [ ] **T70.5 — что делать, если сводка не влезает в 256k.** Отложено
+      оператором 2026-10-21. Сводка строится из всей старой истории; если она
+      сама не помещается в окно движка, нужно решение: дробить старую часть на
+      несколько сводок · выбрасывать самые старые факты · ограничивать по
+      свежести внутри старого · принять переполнение и говорить честно.
+      T70.3 работает без этого — вопрос возникает только на масштабе, которого
+      пока не достигли.
 
 ### Open questions for the operator
 
-- **T70.3 — what if even the summary does not fit in 256k?** Split old
-  history into several summaries? Drop the oldest facts? Cap by recency
-  inside the old set? Deliberately deferred by the operator 2026-10-21;
-  T70.3 stays unwritten until this is answered.
+- **T70.5 — what if even the summary does not fit in 256k?** → moved to
+  the task list above as its own item; deferred by the operator 2026-10-21.
 - T70.3 — ~~which model summarises?~~ **Resolved 2026-10-21: the same model
   as the bot.** No second endpoint, no extra complexity.
 - T70.3 — ~~trigger threshold: count, tokens, or both?~~ **Resolved
