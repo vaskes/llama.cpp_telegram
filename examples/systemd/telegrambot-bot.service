@@ -1,0 +1,38 @@
+# Example unit for running the bot under systemd on the host.
+#
+# This file is an EXAMPLE, not something this repo installs: the bot may be
+# running under Docker on someone else's VPS, and the deployment topology is
+# the operator's, not the project's. Copy and adapt.
+#
+# Why it is here at all — see docs/adr/ADR-0003-context-reanchoring.md.
+# T68 re-anchors the memory window daily. In BOT_REANCHOR_MODE=process or
+# process+engine that means this unit is restarted once a day, and the anchor
+# is recomputed on import.
+#
+# The engine is deliberately NOT made a hard dependency of this unit. Restart
+# the bot and restart the engine are separate operations: the window is a
+# timestamp computed inside the bot, so a bot restart alone is always correct.
+# Whether the engine also restarts is VRAM hygiene — run it from
+# BOT_ENGINE_RESET_CMD (see telegram-bot/.env.example), which works for
+# same-host systemd, a remote host over ssh, an admin HTTP endpoint, or
+# nothing at all. Do NOT add Requires=llama-server here: that would break
+# every deployment where the engine lives elsewhere, which is a common one.
+
+[Unit]
+Description=Telegram bot (llama.cpp_telegram)
+Documentation=https://github.com/vaskes/llama.cpp_telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telegrambot
+WorkingDirectory=/opt/telegrambot/bot/app
+EnvironmentFile=/opt/telegrambot/bot/app/.env
+ExecStart=/usr/bin/docker compose -f /opt/telegrambot/bot/app/docker-compose.production.yml up telegram-bot
+ExecStop=/usr/bin/docker compose -f /opt/telegrambot/bot/app/docker-compose.production.yml down
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

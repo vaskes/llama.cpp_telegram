@@ -549,10 +549,12 @@ Full detail in `docs/tickets/`. Start with T70 (the main ticket) or T67
       recorded at all. Independent of T70.
 - [ ] **T66** — semantics only, implemented inside T70.2. Do not write a
       separate filter; that is what T70.1 replaces.
-- [ ] **T68** Daily restart at 05:00. Bot only — engines are stateless
-      between our requests (verified: no `session_id` in the request body).
-      Note: T70.3 will reuse this same restart as its summarisation trigger —
-      implement T68 first, otherwise there is no moment at which to summarise.
+- [x] **T68** Daily re-anchor — ✅ implemented 2026-10-21, `soft` / `process` /
+      `process+engine` via `BOT_REANCHOR_MODE`. Reasoning:
+      `docs/adr/ADR-0003-context-reanchoring.md`. Operator installs the
+      systemd timer (example in `examples/systemd/`) — deliberately not
+      auto-installed by this repo, because the deployment topology is the
+      operator's.
 - [ ] **T69** Bot personality injection into system prompt. ⏸ Waiting on
       operator answers.
 - [ ] **T70.3** Summarise out-of-window history **at bot start**, same model

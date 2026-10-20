@@ -24,6 +24,7 @@ from call_llama import fetch_tools_from_llama
 import call_llama
 from storage import get_store
 from context_budget import get_budget
+from reanchor import start_reanchor_scheduler as _start_reanchor_scheduler
 import state
 from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores, _get_user_semaphore
 import handlers
@@ -1362,6 +1363,10 @@ async def _register_bot_menu():
         # We do not run app.start() — the hand-rolled polling loop drives
         # everything — but initialize() sets up the application context.
         await _dispatcher.initialize()
+        # T68: in `soft` mode the re-anchor scheduler lives in this process.
+        # In the other modes this is a no-op log line. Started after
+        # initialize() because it needs the running loop and a live app.
+        _start_reanchor_scheduler()
     await _dispatcher.bot.set_my_commands(
         [BotCommand(c, d) for c, d in BOT_COMMANDS],
         scope=None,  # default scope covers all private chats
@@ -1681,6 +1686,7 @@ async def _dispatch_update(upd_dict):
         # We do not call app.start() — the hand-rolled polling loop drives
         # dispatch. initialize() sets up the application context.
         await _dispatcher.initialize()
+        _start_reanchor_scheduler()
 
     upd = Update.de_json(upd_dict, _dispatcher.bot)
     if upd is None:

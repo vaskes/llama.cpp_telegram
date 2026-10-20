@@ -50,9 +50,11 @@
 #
 #  2. Upper bound: there is none by age. The bot remembers "everything that
 #     was within a week when it started, plus everything since". The daily
-#     05:00 restart (T68) is what re-anchors and bounds it. Without that
-#     restart, context grows until the engine refuses it — which is why T70.4
-#     makes overflow loud instead of silent.
+#     re-anchor (T68) is what moves it forward — via the process restarting,
+#     or via reanchor() in `soft` mode. See
+#     docs/adr/ADR-0003-context-reanchoring.md for why the engine is not part
+#     of this at all. Without a re-anchor, context grows until the engine
+#     refuses it — which is why T70.4 makes overflow loud instead of silent.
 #
 # History is never destroyed
 # --------------------------
@@ -98,6 +100,63 @@ STRATEGY = (
 
 VALID_STRATEGIES = ("window", "summarize")
 
+# === T68: how the window gets re-anchored ===
+#
+# Three modes, because the 200+ forks of this repo have wildly different
+# privileges. See docs/adr/ADR-0003-context-reanchoring.md for the reasoning.
+#
+#   soft            re-anchor inside this process on a timer. No systemd,
+#                   no root, no access to the engine required. Works for
+#                   everyone, including an engine on someone else's machine.
+#   process         this process is restarted (systemd timer / cron / any
+#                   supervisor). The module is re-imported, so the anchor is
+#                   recomputed for free.
+#   process+engine  as above, AND run BOT_ENGINE_RESET_CMD afterwards to
+#                   drop the engine's KV cache. Pure VRAM hygiene — see the
+#                   ADR for why it is not required for context correctness.
+#
+# Default is process+engine because that is what the operator runs and asked
+# for. Fork operators with no privileges should set `soft`, which needs none.
+REANCHOR_MODES = ("soft", "process", "process+engine")
+DEFAULT_REANCHOR_MODE = "process+engine"
+
+#: Local time of day for the daily re-anchor, "HH:MM". 24h format.
+REANCHOR_AT = (
+    __import__("os").environ.get("BOT_REANCHOR_AT", "05:00").strip()
+)
+
+#: Arbitrary shell command run after a `process+engine` re-anchor, to drop the
+#: engine's KV cache. Empty = do not touch the engine. This is where an
+#: operator puts `systemctl restart llama-server`, or
+#: `ssh -o BatchMode=yes llama-host 'systemctl restart llama-server'`, or an
+#: HTTP call to an engine admin endpoint — or nothing at all.
+#:
+#: It is deliberately a free-form command rather than a typed topology. The
+#: set of ways to restart something is open-ended, and a typed enum would
+#: need a new case for every host manager, ssh wrapper and API in the wild.
+ENGINE_RESET_CMD = (
+    __import__("os").environ.get("BOT_ENGINE_RESET_CMD", "").strip()
+)
+
+REANCHOR_MODE = (
+    __import__("os").environ.get("BOT_REANCHOR_MODE", DEFAULT_REANCHOR_MODE)
+    .strip().lower()
+)
+if REANCHOR_MODE not in REANCHOR_MODES:
+    # Same rule as CONTEXT_STRATEGY: a typo in .env must not stop the bot
+    # from starting. Fall back, and shout about it.
+    print(
+        f"[context_budget] BOT_REANCHOR_MODE={REANCHOR_MODE!r} is not one of "
+        f"{REANCHOR_MODES}; falling back to {DEFAULT_REANCHOR_MODE!r}",
+        flush=True,
+    )
+    REANCHOR_MODE = DEFAULT_REANCHOR_MODE
+
+#: Only `soft` runs the in-process scheduler. In `process`/`process+engine`
+#: the scheduler must NOT also fire, or the anchor would move twice and a
+#: self-restarting deployment would restart in a loop.
+SOFT_REANCHOR_ENABLED = (REANCHOR_MODE == "soft")
+
 
 def _anchor_for_days(days: int, now: float | None = None) -> float:
     """Return the start-of-window timestamp for `days`.
@@ -113,6 +172,47 @@ def _anchor_for_days(days: int, now: float | None = None) -> float:
 # module docstring. Do not move this into a function, and do not recompute
 # it per request.
 CONTEXT_ANCHOR = _anchor_for_days(REMEMBER_DAYS)
+
+#: Bumped by every reanchor() call. /stats reports it so the operator can
+#: tell "the window moved 3 hours ago" from "the window moved at 05:00".
+ANCHOR_GENERATION = 0
+
+
+def reanchor() -> dict:
+    """Move the window forward by re-deriving CONTEXT_ANCHOR. T68 / ADR-0003.
+
+    This is the ONLY sanctioned way to move the anchor. It exists so `soft`
+    mode can re-anchor without restarting the process — see ADR-0003 for why
+    the process restart and the engine restart are separate concerns and
+    neither is required for context correctness.
+
+    Deliberately NOT called per request. One call per day is the contract;
+    per-request would be the sliding-window bug.
+
+    Returns a small dict for the log line. Never raises: a failed re-anchor
+    must degrade to the previous (older) anchor rather than take the bot
+    down, and an older anchor is the safe direction — the window only grows.
+    """
+    global CONTEXT_ANCHOR, ANCHOR_GENERATION
+    try:
+        new_anchor = _anchor_for_days(REMEMBER_DAYS)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[context_budget] reanchor failed, keeping old anchor: {exc}",
+              flush=True)
+        return {"ok": False, "error": str(exc)}
+    CONTEXT_ANCHOR = new_anchor
+    ANCHOR_GENERATION += 1
+    print(
+        f"[context_budget] reanchored: gen={ANCHOR_GENERATION} "
+        f"anchor={int(new_anchor)} remember_days={REMEMBER_DAYS}",
+        flush=True,
+    )
+    return {
+        "ok": True,
+        "anchor": new_anchor,
+        "generation": ANCHOR_GENERATION,
+        "remember_days": REMEMBER_DAYS,
+    }
 
 
 class ContextBudget:
@@ -300,11 +400,16 @@ def is_context_overflow(error_text: str | None) -> bool:
     return any(marker in lowered for marker in _OVERFLOW_MARKERS)
 
 
-#: What the user is told. Names the cause and the fix, because the operator's
-#: design makes the fix known: the daily 05:00 restart re-anchors the window.
+#: What the user is told. Names the cause and the fix.
+#:
+#: Do not promise a specific restart time here. Whether a re-anchor happens at
+#: all, and when, depends on BOT_REANCHOR_MODE — and in `soft` mode the window
+#: moves without any restart, so telling the user to wait for a restart would
+#: be wrong for exactly the deployments where re-anchoring works best. See
+#: docs/adr/ADR-0003-context-reanchoring.md.
 OVERFLOW_MESSAGE = (
     "⚠️ Контекст исчерпан — движок отказался принимать запрос целиком.\n\n"
     "Это значит, что накопленная история не помещается в окно модели. "
-    "Обычно помогает /reset в этом чате. Бот также перезапускается ночью в 05:00, "
-    "после чего окно памяти пересчитывается."
+    "Обычно помогает /reset в этом чате — он очищает историю этого "
+    "sub-talk, не затрагивая остальные."
 )

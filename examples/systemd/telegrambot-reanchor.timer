@@ -1,0 +1,23 @@
+# Daily re-anchor of the memory window (T68).
+#
+# Fires at 05:00 local time. OnBootSec / OnUnitActiveSec carry the schedule
+# so the bot does not need to survive a missed firing.
+#
+# Only relevant for BOT_REANCHOR_MODE=process or process+engine. In `soft`
+# mode the bot re-anchors itself and this timer should NOT be installed —
+# running both moves the anchor twice per cycle.
+#
+# RandomizedDelaySec spreads the load a little: a fleet restarting on the same
+# minute is a fleet hitting the same model server on the same minute.
+
+[Unit]
+Description=Daily memory-window re-anchor for the Telegram bot
+Documentation=https://github.com/vaskes/llama.cpp_telegram/blob/main/docs/adr/ADR-0003-context-reanchoring.md
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

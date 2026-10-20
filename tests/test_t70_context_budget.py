@@ -215,18 +215,41 @@ def test_anchor_is_a_module_level_constant():
         f"CONTEXT_ANCHOR must be assigned exactly once at module level, "
         f"found {len(assignments)} module-level assignments"
     )
-    # And it must not be reassigned anywhere else in the module.
-    reassigned = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign))
-        and any(getattr(t, "id", None) == "CONTEXT_ANCHOR"
-                for t in ast.walk(n) if isinstance(t, ast.Name))
-    ]
-    assert len(reassigned) == 1, (
-        "CONTEXT_ANCHOR is reassigned somewhere — the memory window would "
-        "slide instead of staying anchored at bot start"
+    # Reassignment is now allowed — but ONLY inside reanchor(). T68 needs it:
+    # `soft` mode re-anchors without restarting the process. What must stay
+    # impossible is any other writer, because that is how the window starts
+    # sliding. So: assert the writer set is exactly {module level, reanchor}.
+    writers = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            targets = n.targets if isinstance(n, ast.Assign) else [n]
+            if any(getattr(t, "id", None) == "CONTEXT_ANCHOR"
+                   for t in targets if isinstance(t, ast.Name)):
+                if isinstance(n, ast.Assign) and n in assignments:
+                    writers.add("<module>")
+                    continue
+                # Find the enclosing function.
+                fn = _enclosing_function(tree, n)
+                writers.add(fn.name if fn else "<module>")
+    assert writers == {"<module>", "reanchor"}, (
+        f"CONTEXT_ANCHOR may only be assigned at module level and inside "
+        f"reanchor(), found writers: {sorted(writers)}. Any other writer risks "
+        f"turning the anchored window into a sliding one."
     )
+
+
+def _enclosing_function(tree, target):
+    """Innermost FunctionDef whose body contains `target`, or None."""
+    best = None
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if any(node is target for node in ast.walk(fn)):
+            # Innermost wins: a nested def inside another still resolves to
+            # itself, which is what we want for reanchor().
+            if best is None or fn.lineno > best.lineno:
+                best = fn
+    return best
 
 
 def test_apply_does_not_call_time_time():
@@ -459,11 +482,20 @@ def test_overflow_detection_is_case_insensitive():
 
 
 def test_overflow_message_names_the_fix():
-    """/reset and the nightly restart are the two things a user can do.
-    Saying "context exhausted" with no action is the failure mode T70.4
-    exists to remove."""
+    """/reset is the one thing a user can do without waiting.
+
+    This test used to also require "05:00" in the message. That was correct
+    when re-anchoring happened by process restart, and became wrong the
+    moment `soft` mode shipped: there, the window moves with no restart at
+    all, so telling the user to wait for a 05:00 restart is advice that
+    never pays off — on precisely the deployments where re-anchoring works
+    best. See ADR-0003.
+    """
     assert "/reset" in cb.OVERFLOW_MESSAGE
-    assert "05:00" in cb.OVERFLOW_MESSAGE
+    assert "05:00" not in cb.OVERFLOW_MESSAGE, (
+        "do not promise a restart time: in BOT_REANCHOR_MODE=soft there is no "
+        "restart, and the anchor moves on its own schedule"
+    )
 
 
 def test_call_llama_imports_the_overflow_helper():
