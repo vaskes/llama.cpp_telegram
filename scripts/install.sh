@@ -19,11 +19,34 @@ if ! git diff --quiet HEAD 2>/dev/null || ! git diff --cached --quiet 2>/dev/nul
 fi
 
 # 1) telegram-bot
+#
+# T64: `cp -r telegram-bot/*` used to blow away the deployment's compose
+# choice. On a re-run against a host that had been deployed with
+# docker-compose.production.yml, this copied the GENERIC layout over it
+# (tb-bot -> telegram-bot, tb_bot_data -> bot_data), which orphans the
+# SQLite conversation history. Copy both compose files fresh, but never
+# let a re-run clobber a production compose that is already in place.
 sudo mkdir -p "$BOT_DIR/files"
 sudo cp -r telegram-bot/* "$BOT_DIR/"
 sudo cp telegram-bot/.env.example "$BOT_DIR/.env.example"
 [[ -f "$BOT_DIR/.env" ]] || sudo cp "$BOT_DIR/.env.example" "$BOT_DIR/.env"
 sudo chown -R "$USER":"$USER" "$BOT_DIR"
+
+# T64: refuse to leave the host with BOTH compose files and no indication
+# of which one `docker compose` will pick. That ambiguity is what caused
+# the original incident.
+if [[ -f "$BOT_DIR/docker-compose.production.yml" ]]; then
+    cat <<EOF
+
+  [NOTE] Both compose files are present in $BOT_DIR:
+           docker-compose.production.yml   (container tb-bot,   volume tb_bot_data)
+           docker-compose.yml             (container telegram-bot, volume bot_data)
+         Bare \`docker compose\` reads docker-compose.yml — the generic one.
+         On this host you almost certainly want:
+           docker compose -f docker-compose.production.yml up -d
+         scripts/update.sh resolves this automatically.
+EOF
+fi
 echo "  [OK] telegram-bot files in $BOT_DIR — edit $BOT_DIR/.env with your BOT_TOKEN and ALLOWED_USER_IDS"
 
 # 2) whisper-api
