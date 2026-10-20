@@ -158,6 +158,16 @@ if REANCHOR_MODE not in REANCHOR_MODES:
 SOFT_REANCHOR_ENABLED = (REANCHOR_MODE == "soft")
 
 
+def _default_instance():
+    """The shared ContextBudget, or None if the module is still initialising.
+
+    reanchor() runs from the scheduler, long after import, but _DEFAULT is
+    assigned further down this file -- so resolving it lazily keeps this
+    function safe if anything ever calls reanchor() during import.
+    """
+    return globals().get("_DEFAULT")
+
+
 def _anchor_for_days(days: int, now: float | None = None) -> float:
     """Return the start-of-window timestamp for `days`.
 
@@ -202,6 +212,16 @@ def reanchor() -> dict:
         return {"ok": False, "error": str(exc)}
     CONTEXT_ANCHOR = new_anchor
     ANCHOR_GENERATION += 1
+    # CRITICAL: the bot does not read CONTEXT_ANCHOR. get_budget() returns the
+    # shared _DEFAULT instance, and apply() filters on ITS OWN .anchor, set
+    # once in __init__. Updating only the module global leaves the window
+    # exactly where it was -- so in `soft` mode the daily re-anchor did
+    # nothing at all, while the log cheerfully reported success. Found by
+    # Qwen review; the original test asserted only on CONTEXT_ANCHOR, which is
+    # why it passed against broken behaviour.
+    _live = _default_instance()
+    if _live is not None:
+        _live.anchor = new_anchor
     print(
         f"[context_budget] reanchored: gen={ANCHOR_GENERATION} "
         f"anchor={int(new_anchor)} remember_days={REMEMBER_DAYS}",

@@ -248,3 +248,55 @@ def test_reanchor_loop_does_not_call_reanchor_per_tick():
     calls = [n for n in ast.walk(loop) if isinstance(n, ast.Call)]
     assert any(isinstance(c.func, ast.Attribute) and c.func.attr == "wait"
                for c in calls), "the loop must await between re-anchors"
+
+# ---------------------------------------------------------------------------
+# The bug Qwen review found
+# ---------------------------------------------------------------------------
+
+def test_reanchor_moves_the_anchor_actually_in_use(monkeypatch):
+    """Found by adversarial review, and it is the exact failure this whole
+    module exists to prevent — shipped in the other direction.
+
+    `reanchor()` originally updated only the module global CONTEXT_ANCHOR. But
+    get_budget() returns the shared _DEFAULT instance, and apply() filters on
+    THAT instance's own `.anchor`, assigned once in __init__. So the module
+    global moved, the log said "reanchored", the generation counter ticked —
+    and the context window did not move by a single second. In `soft` mode
+    the daily re-anchor was a no-op from the model's point of view.
+
+    The earlier test asserted on CONTEXT_ANCHOR alone, which is why it passed
+    against behaviour that was broken. Assert on what apply() reads.
+
+    Fake the clock so the assertion does not depend on real time passing.
+    """
+    mod = _reload(monkeypatch, BOT_REANCHOR_MODE="soft")
+    import context_budget as cb
+    live = cb.get_budget()
+    before = live.anchor
+    real_time = cb.time.time
+    monkeypatch.setattr(cb.time, "time", lambda: real_time() + 86400)
+    cb.reanchor()
+    assert live.anchor > before + 3600, (
+        "get_budget().anchor did not move after reanchor(). apply() reads this "
+        "value, not CONTEXT_ANCHOR — updating only the module global makes the "
+        "whole re-anchor a silent no-op."
+    )
+    assert abs(live.anchor - cb.CONTEXT_ANCHOR) < 5, (
+        "the live budget and the module constant must agree, or /stats and "
+        "apply() will disagree about what the window is"
+    )
+
+
+def test_stats_reports_the_live_anchor_not_the_stale_global():
+    """/stats reads budget.anchor. If that were the stale copy, the operator
+    would be told a re-anchor happened when the window had not moved."""
+    mod = _reload(monkeypatch := __import__("pytest").MonkeyPatch(),
+                  BOT_REANCHOR_MODE="soft")
+    import context_budget as cb
+    real_time = cb.time.time
+    cb.time.time = lambda: real_time() + 86400
+    try:
+        cb.reanchor()
+        assert cb.get_budget().describe()["anchor"] == cb.get_budget().anchor
+    finally:
+        cb.time.time = real_time
