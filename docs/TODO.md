@@ -570,6 +570,15 @@ Full detail in `docs/tickets/`. Start with T70 (the main ticket) or T67
       T70.3 работает без этого — вопрос возникает только на масштабе, которого
       пока не достигли.
 
+### Deferred but decided — see TECH-DEBT.md
+
+The architectural review flagged seven items that are real and deliberately not
+fixed now. Full reasoning, cost and triggers live in `TECH-DEBT.md` at the repo
+root. Summary: `bot.py` god-module + late imports + 1600-line `call_llama` +
+duplicated handler boilerplate are ONE problem (dependency cycles) and get ONE
+focused refactor, sequenced **after** the context-memory blocker closes and
+**before** the next feature.
+
 ### Open questions for the operator
 
 - **T70.5 — what if even the summary does not fit in 256k?** → moved to

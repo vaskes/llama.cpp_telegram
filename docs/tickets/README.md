@@ -57,6 +57,25 @@ it rather than being blocked by it.
 T65 (reply-to-human) and T67 (no trim) are independent of T70 entirely and can
 be built first.
 
+## Known tech debt — acknowledged, scheduled, not ignored
+
+`TECH-DEBT.md` at the repo root. Seven entries, each with the reason it was not
+fixed now, what it costs while it stands, and the trigger that would change
+that answer.
+
+The largest ones — `bot.py` as a re-export god-module, late imports inside
+functions, and the 1600-line `call_llama` — are all the *same* problem: the
+dependency graph was never untangled when the monolith was split. Fixing one
+without the others is wasted work.
+
+**Operator's sequencing decision, 2026-10-21:** the monolith refactor happens
+*after* this blocker and its pending tickets are closed, and *before* taking on
+a new feature. Not before. The bot is in production and working; a large
+refactor stacked on top of an open review round is how working code gets
+broken.
+
+---
+
 ## Ticket map
 
 | Ticket | Subject | State | Depends on |
