@@ -136,3 +136,30 @@ Any failure in `summarize.py` must leave the bot running on the plain window.
 - `bash_command` sandbox, MCP wiring, donsetch tools — unchanged here
 - Model quality, prompt wording, personality content
 - Engine-side performance tuning
+
+---
+
+## Verdict
+
+**APPROVED — 2026-10-21.** Two review rounds: an architectural pass (Qwen,
+`f41dcf9` era) and a verification pass over the fixes.
+
+What the rounds produced:
+
+| Found | Disposition |
+|---|---|
+| `reanchor()` moved a variable nobody reads | fixed `0b6684d` |
+| Daily timer fired an hour late across DST | fixed `4cc6291` |
+| `_send_window` leaked a key per chat forever | fixed `9a23083` |
+| Dispatch tasks created and dropped | fixed `9a23083` |
+| bash rate-limit "default" bucket | did not reproduce — `session_id` is always `chat-{chat_id}` (T57 #S16) |
+| WAL not enabled | did not reproduce — already on, with a check that it stuck |
+
+The architectural review was right about the monolith and wrong about two
+specific claims. Both are recorded in `TECH-DEBT.md` so the next reviewer does
+not re-walk them.
+
+**Sequencing, per the operator:** the monolith refactor happens after this
+blocker and its pending tickets close, and before the next feature. That is a
+decision on record, not an intention — `TECH-DEBT.md` items 1–4 are the backlog
+for it.
