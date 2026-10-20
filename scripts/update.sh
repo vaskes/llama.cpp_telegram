@@ -132,6 +132,7 @@ log "sync telegram-bot/ -> $BOT_DIR"
 if command -v rsync >/dev/null 2>&1; then
     RSYNC_ARGS=(-a --delete
         --exclude '.env'
+        --exclude 'persona.local.json'
         --exclude 'data/'
         --exclude 'logs/'
         --exclude 'files/'

@@ -33,3 +33,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# T69 — the operator's own bot persona. Identity, not code: it must never be
+# committed or rsynced out to other deployments. See docs/TICKETS T69.
+telegram-bot/persona.local.json

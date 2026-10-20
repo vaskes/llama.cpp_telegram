@@ -57,6 +57,13 @@ services:
       # operator edit on the host from injecting code into a running
       # container
       - ./personal_tools:/app/personal_tools:ro
+      # T69 — the operator's persona. Mounted, not baked in: `COPY *.py ./`
+      # in the Dockerfile does not pick up a .json, and an identity should
+      # not require a rebuild to change. :ro so a running container cannot
+      # rewrite it. Compose creates a DIRECTORY if the host file is missing,
+      # which personality.py treats as "no persona" -- see the note in
+      # scripts/install.sh.
+      - ./persona.local.json:/app/persona.local.json:ro
     logging:
       driver: json-file
       options:

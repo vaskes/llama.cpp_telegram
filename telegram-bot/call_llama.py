@@ -41,6 +41,7 @@ def _bash_command_tool_enabled() -> bool:
 
 import limits
 
+from personality import system_message as personality_system_message
 from config import (
     API_KEY, DISABLED_TOOLS, DONSETCH_SESSION_ID, DONSETCH_URL,
     LLAMA_URL, MODEL, SHUTDOWN_EVENT, WHISPER_LANGUAGE, WHISPER_URL, _TOOLS_CACHE,
@@ -618,6 +619,12 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
     # `_group_ctx_msg` references further down for the injection
     # points.
     _group_ctx_msg = {"role": "system", "content": GROUP_CONTEXT}
+    # T69: the persona goes FIRST, before GROUP_CONTEXT. The group rules are
+    # shared by every fork; the persona is one operator's. Putting the persona
+    # in the authoritative first slot means "be Гадя" outranks the generic
+    # assistant framing, and if a fork edits GROUP_CONTEXT they cannot demote
+    # someone else's persona by accident.
+    _persona_msg = personality_system_message()
 
     # Inject the group-context system message so the LLM has the
     # LlmChatPlace rules in every turn (not just rating mode). The
@@ -667,7 +674,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         sys_prompt = {
             'role': 'system',
             'content': (
-                GROUP_CONTEXT
+                ((_persona_msg or {}).get("content", "") + "\n\n")
+                + GROUP_CONTEXT
                 + '\n\n## Tool use (tools mode)\n'
                 + 'You have access to: '
                 + 'donsetch_web_search / donsetch_web_fetch / '
@@ -703,7 +711,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         sys_prompt = {
             'role': 'system',
             'content': (
-                'You are a message classifier. Classify the user message '
+                ((_persona_msg or {}).get("content", "") + "\n\n")
+                + 'You are a message classifier. Classify the user message '
                 'and emit the structured prefix. No tools. No chatter. '
                 'See the rules above.'
             )
