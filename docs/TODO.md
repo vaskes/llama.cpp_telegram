@@ -555,8 +555,10 @@ Full detail in `docs/tickets/`. Start with T70 (the main ticket) or T67
       systemd timer (example in `examples/systemd/`) — deliberately not
       auto-installed by this repo, because the deployment topology is the
       operator's.
-- [ ] **T69** Bot personality injection into system prompt. ⏸ Waiting on
-      operator answers.
+- [x] **T69** Bot personality injection — ✅ 2026-10-21. Configurable file,
+      `persona.local.json` (gitignored, mounted read-only). Repo ships
+      `personality.json.example` with `enabled=false` so forks never inherit
+      somebody else's character.
 - [x] **T70.3** Summarise out-of-window history at each re-anchor, same model
       as the bot, then `{system} + {summary} + {window}`. ✅ 2026-10-21.
 

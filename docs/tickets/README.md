@@ -17,7 +17,7 @@ have NOT been made yet. Read this index before picking up any ticket.
 4. T65 — reply-to-human (T65.1 independent)
 5. T66 — semantics only, implemented inside T70.2
 6. T68 — host work, not code
-7. T69 — waiting on operator input
+7. T69 — ✅ shipped 2026-10-21
 
 ## The constraint that decided the architecture
 
@@ -66,7 +66,7 @@ be built first.
 | **T65.1** | Reply-to-human: absorb, react, don't answer | ✅ **shipped** | — |
 | T66 | Time-based window (7 days) — semantics | ✅ done inside T70.2 | T67 |
 | T68 | Daily re-anchor | ✅ code shipped; **timer install is the operator's** | T70.2 |
-| T69 | Bot personality in system prompt | ⏸ waiting on operator | operator input |
+| **T69** | Bot personality in system prompt | ✅ **shipped** (file-based, configurable) | — |
 
 Shipped in `main`: T70.1, T70.2, T70.4a (overflow), T70.4b (`/stats`),
 T67.1–67.3, T68 (`soft`/`process`/`process+engine` + ADR-0003). 377 tests.
@@ -96,7 +96,7 @@ strategy afterwards.
 | 1 | T70.3 — which model summarises? | operator | ✅ **same model as the bot** (2026-10-21) |
 | 2 | T70.3 — trigger threshold? | operator | ✅ **once at re-anchor** (2026-10-21) |
 | 3 | T66.1 — guaranteed minimum of N messages if the window is empty? | operator | open, low impact |
-| 4 | T69 — five personality questions (see ticket) | operator | ⏸ open |
+| 4 | ~~T69 — personality questions~~ | operator | ✅ **answered, shipped 2026-10-21** |
 | 5 | T68 — systemd timer vs cron on host? | operator | 🔵 **moot** — ADR-0003 made it a mode, not a choice |
 | 6 | **T70.3 — what if the summary itself does not fit in 256k?** | operator | 🔴 **open, blocks T70.3** |
 
