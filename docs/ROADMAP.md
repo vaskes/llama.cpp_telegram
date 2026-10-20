@@ -183,3 +183,30 @@ The tactical backlog (T28-T32 + Track 3 subtasks) lives in
 when a track completes or a direction changes.
 - T34: Replaced T33 size-window split heuristic with rate-based burst detection. After observing Telegram split a 6K prompt at 3910 bytes (paragraph boundary, not the 4096 cap), the operator and I agreed that any size window is either too narrow (false negative) or too wide (false positive on legitimate long messages). The new logic detects the burst PATTERN: two messages from the same (chat, user) within 2 s, with the first > 3000 bytes. The follow-up is dropped and the in-flight LLM call for the first message is aborted via the existing abort_event. State per-(chat, user), not per chat. State file: state._user_recent_msg, _check_burst_split, _record_user_message. Handler: handle_text().
 - T35: Extracted all hardcoded LLM-gateway limits (max_tokens, timeouts, loop budget) into a dedicated `telegram-bot/limits.py` module. Every value is env-overridable (LLAMABOT_MAX_TOKENS, LLAMABOT_LOOP_BUDGET_SEC, etc.). Defaults match the current llama-server (Qwen3.8-27B-Ultra-Heretic-MTP at 256k context). Documented in `docs/CALL_LLAMA.md`. 12 unit tests in `tests/test_limits.py`. Total 84 pytest pass.
+
+## Context memory (2026-10-20) — design stage, blocked on T70
+
+The operator commissioned a redesign of how the bot remembers conversation
+history. Four use-cases produced seven tickets, all currently in
+`docs/tickets/`:
+
+| | |
+|---|---|
+| 🔴 **T70** | Context protocol redesign — **blocker for everything else** |
+| 🟡 **T67** | Remove `TRIM_HIGH`, stop storing images — ready to build |
+| T65 | Reply-to-human: record without generating |
+| T66 | Time-based context window (7 days from bot start, per-sub) |
+| T68 | Daily 05:00 restart |
+| ⏸ T69 | Bot personality in system prompt — waiting on operator |
+
+**Why nothing ships yet:** T70 changes the delivery protocol itself (send one
+message + session id, state held by the engine, instead of the full history on
+every request). If it lands, T65 and T66 are substantially rewritten. Building
+them against the current protocol means building them twice.
+
+The production engine will be **Strata**, not llama. Measurements taken on the
+current llama show prefix matching works (~0.17 s plateau on growing history),
+but the design must not depend on it — see `docs/tickets/README.md` for the
+numbers and the reasoning.
+
+**Safe to build now (orthogonal to T70):** T67.1, T65.1, T69.

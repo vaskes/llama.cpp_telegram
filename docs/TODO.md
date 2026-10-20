@@ -513,3 +513,37 @@ chose to defer until after manual testing cycle completes)
 - [ ] **T-FREEZE-DOC-1** Update `docs/TROUBLESHOOTING.md` with
       post-v0.10.2 known issues and workarounds (e.g., new
       LLM behaviour in group, longer prompts now active).
+
+## Context memory tickets (2026-10-20)
+
+Full detail in `docs/tickets/`. 🔴 **T70 is the blocker** — resolve it before
+starting T65/T66.
+
+- [ ] **T70** Context protocol redesign — 🔴 BLOCKER. Send one message +
+      session id (per-sub) instead of full history. Waiting on Strata repo
+      link. See `docs/tickets/TICKET-T70-context-protocol-redesign.md`.
+- [ ] **T67.1** Remove `TRIM_HIGH=500` → `TRIM_LOW=200` lazy trim from
+      `storage.get_messages`. It silently destroys history, which is needed
+      for LoRA training data. Safe to build now — SQLite is the source of
+      truth under every T70 model. Ship T67.1 + T67.3 together.
+- [ ] **T67.2** Stop persisting images to SQLite. Confirmed by operator
+      2026-10-20: image participates in the current exchange, is not stored,
+      not remembered after restart.
+- [ ] **T67.3** Tripwire: fail if `DELETE FROM messages` or `TRIM_*` reappear
+      in `storage.py`. The current docstring *describes* trim as a feature —
+      that is how it would come back.
+- [ ] **T65.1** Reply-to-human: persist to DB but do not generate. Currently
+      `dispatch.py:1678` returns before `persist()`, so these messages are not
+      recorded at all. Independent of T70.
+- [ ] **T66.1** `WHERE created_at >= ANCHOR` instead of `LIMIT 20`. Anchor is a
+      module-level constant computed once at bot start, per operator decision
+      (7 days, per-sub). `created_at` already exists in the schema.
+- [ ] **T66.6** Handle context overflow. Today it is swallowed
+      (`call_llama.py:1138`, `:1536`) and the bot hallucinates silently.
+      Needs to tell the user "context exhausted, restart needed".
+- [ ] **T68** Daily restart at 05:00. Bot only — llama is stateless between
+      requests (verified: no `session_id` in the request body).
+- [ ] **T69** Bot personality injection into system prompt. ⏸ Waiting on
+      operator answers.
+- [ ] **T70 open** Does Strata have a server-side session API? If yes → model
+      B, much simpler. If no → model C (bot holds memory, sends a summary).
