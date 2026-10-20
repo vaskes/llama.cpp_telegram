@@ -900,6 +900,45 @@ async def _handle_reply_to_other_user(upd, bot) -> None:
             flush=True,
         )
 
+# === Dispatch task tracking ===
+#
+# Review finding (Qwen, 2026-10-21): the polling loop called
+# `asyncio.create_task(_dispatch_update(...))` and dropped the reference. Two
+# problems, both invisible:
+#
+#   1. Nothing holds the task, so it is only kept alive by the loop's internal
+#      bookkeeping. On interpreter shutdown an in-flight turn can be cancelled
+#      mid-write, leaving a persisted user message with no assistant reply.
+#   2. An unhandled exception inside the task dies quietly. The bot simply stops
+#      answering that chat and the traceback goes to stderr, unconnected to any
+#      update id -- you cannot correlate it back to what the user did.
+#
+# So: keep a set, drop entries in a done callback, and log the failure WITH the
+# update id. The set is what stops the GC from collecting a running task.
+_dispatch_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_dispatch(upd_dict: dict) -> asyncio.Task:
+    """Create the dispatch task and keep a strong reference until it finishes."""
+    task = asyncio.get_running_loop().create_task(_dispatch_update(upd_dict))
+
+    def _done(t: asyncio.Task) -> None:
+        _dispatch_tasks.discard(t)
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            print(
+                f"[dispatch] update_id={upd_dict.get('update_id')} FAILED "
+                f"unhandled: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    task.add_done_callback(_done)
+    _dispatch_tasks.add(task)
+    return task
+
+
 # === _rate_limit_send ===
 # v0.7.9: Telegram rate-limits the bot to ~20 messages/minute per chat.
 # A burst of queued messages (the v0.7.8 fix) can produce replies
@@ -911,6 +950,10 @@ import time as _time
 _send_window: dict = {}  # chat_id -> deque[float]
 _RATE_WINDOW_SEC = 60.0
 _RATE_MAX_PER_WINDOW = 15  # conservative: 15 sends per 60s, leaves 5 for user-originated overhead
+#: How many chat_ids we are willing to track at once. Above this we start
+#: dropping idle entries; an active chat re-creates its own deque on the next
+#: send, so the cap costs a re-allocation and never correctness.
+_SEND_WINDOW_MAX_KEYS = 1024
 
 async def _rate_limit_send(chat_id: int) -> None:
     """Sleep if chat_id is over its per-60s rate. Returns when
@@ -931,6 +974,21 @@ async def _rate_limit_send(chat_id: int) -> None:
             )
             await asyncio.sleep(sleep_for)
     window.append(_time.monotonic())
+
+    # Review finding (Qwen, 2026-10-21): chat_id keys were created with
+    # setdefault and never removed. Timestamps aged out of the deque, but the
+    # deque itself -- and its dict key -- stayed for the process lifetime. A
+    # bot added to N chats accumulates N permanent empty deques, and since this
+    # is a Telegram bot the count of chats is attacker-influenceable over
+    # time: every group it is invited to leaks a slot, and nothing ever frees
+    # it even after it is removed.
+    #
+    # Evict on an empty deque rather than running a sweeper task: the only
+    # churn happens here, so the leak closes at the exact moment it would
+    # otherwise grow.
+    if len(_send_window) > _SEND_WINDOW_MAX_KEYS:
+        for stale_chat in [c for c, d in _send_window.items() if not d]:
+            _send_window.pop(stale_chat, None)
 
 
 # === _check_user_slot ===
@@ -1383,7 +1441,7 @@ def main():
                                 # the original handler's between-chunk
                                 # check picks it up.
                                 try:
-                                    asyncio.create_task(_dispatch_update(upd_dict))
+                                    _spawn_dispatch(upd_dict)
                                 except Exception as e:
                                     print(f"[poll] task-create error: {type(e).__name__}: {e!r}", flush=True)
                         elif n_polls <= 5 or n_polls % 20 == 0:
