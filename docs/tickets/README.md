@@ -1,9 +1,9 @@
 # Context-memory tickets (T65–T70)
 
-**Created:** 2026-10-20, from operator use-case sessions. **Status: design
-stage — no code written yet.**
-**Updated:** 2026-10-20 23:05 — T70 rewritten after the operator established
-that the bot is a public repo and the engine must stay swappable.
+**Created:** 2026-10-20, from operator use-case sessions.
+**Updated:** 2026-10-21 — T67, T70.1, T70.2, T70.4, T68 implemented, shipped
+and verified in production. This index was stale below; the table is now the
+source of truth.
 
 These tickets came out of a design conversation, not from a bug report. They
 are written to be implemented, but several of them depend on decisions that
@@ -61,33 +61,44 @@ be built first.
 
 | Ticket | Subject | State | Depends on |
 |---|---|---|---|
-| **T70** | `ContextBudget` — universal context assembly | 🔴 main ticket | — |
-| **T67** | Remove `TRIM_HIGH`, stop storing images | 🟡 **ready to build** | — |
-| T65 | Reply-to-human: record, don't answer | 🟢 ready | — (T65.1 only) |
-| T66 | Time-based window (7 days) — semantics | 🟡 in T70.2 | T67 |
-| T68 | Daily restart 05:00 | 🟡 ready | T70.2 |
-| T69 | Bot personality in system prompt | ⏸ waiting | operator input |
+| **T70** | `ContextBudget` — universal context assembly | ✅ T70.1/2/4 shipped · T70.3 designed, unwritten | — |
+| **T67** | Remove `TRIM_HIGH`, stop storing images | ✅ shipped | — |
+| T65 | Reply-to-human: record, don't answer | 🟢 ready (T65.1 only) | — |
+| T66 | Time-based window (7 days) — semantics | ✅ done inside T70.2 | T67 |
+| T68 | Daily re-anchor | ✅ code shipped; **timer install is the operator's** | T70.2 |
+| T69 | Bot personality in system prompt | ⏸ waiting on operator | operator input |
+
+Shipped in `main`: T70.1, T70.2, T70.4a (overflow), T70.4b (`/stats`),
+T67.1–67.3, T68 (`soft`/`process`/`process+engine` + ADR-0003). 377 tests.
 
 ## Sub-tasks of T70
 
-| | Task | Size |
+| | Task | State |
 |---|---|---|
-| **T70.1** | `ContextBudget` skeleton, config, wiring | ~150 lines |
-| **T70.2** | `window` strategy (the operator's 7-day rule) | ~40 lines |
-| T70.3 | `summarize` strategy (not default) | ~120 lines |
-| T70.4 | Overflow handling + observability | ~60 lines |
+| **T70.1** | `ContextBudget` skeleton, config, wiring | ✅ |
+| **T70.2** | `window` strategy (the operator's 7-day rule) | ✅ |
+| T70.3 | `summarize` strategy (not default) | 📋 designed in the ticket, deliberately unwritten |
+| **T70.4a** | Overflow handling | ✅ |
+| **T70.4b** | `/stats` observability | ✅ |
 
-Order: T70.1 → T70.2 → T70.4. T70.3 can be deferred; the default works without it.
+Order followed: T70.1 → T70.2 → T70.4 → T68 → T70.3 when unblocked.
+
+**T70.3 is not written on purpose.** The operator chose the design (summarise
+at re-anchor, same model as the bot, then `{system} + {summary} + {window}`)
+and deliberately deferred one case: what to do when even the summary does not
+fit in 256k. Writing the code before that answer means rewriting the splitting
+strategy afterwards.
 
 ## Open questions
 
-| # | Question | Owner |
-|---|---|---|
-| 1 | T70.3 — which model summarises? same endpoint, cheap one? | operator |
-| 2 | T70.3 — trigger threshold: messages, tokens, both? | operator |
-| 3 | T66.1 — guaranteed minimum of N messages if the window is empty? | operator |
-| 4 | T69 — five personality questions (see ticket) | operator |
-| 5 | T68 — systemd timer vs cron on host | operator |
+| # | Question | Owner | State |
+|---|---|---|---|
+| 1 | T70.3 — which model summarises? | operator | ✅ **same model as the bot** (2026-10-21) |
+| 2 | T70.3 — trigger threshold? | operator | ✅ **once at re-anchor** (2026-10-21) |
+| 3 | T66.1 — guaranteed minimum of N messages if the window is empty? | operator | open, low impact |
+| 4 | T69 — five personality questions (see ticket) | operator | ⏸ open |
+| 5 | T68 — systemd timer vs cron on host? | operator | 🔵 **moot** — ADR-0003 made it a mode, not a choice |
+| 6 | **T70.3 — what if the summary itself does not fit in 256k?** | operator | 🔴 **open, blocks T70.3** |
 
 ## Measurements (2026-10-20, llmhost1, Qwen3.8-27B 256k)
 

@@ -2,7 +2,10 @@
 
 **Заведено:** 2026-10-20 21:15 MSK
 **Решение оператора:** «ежедневный крон ночью в 5 утра»
-**Статус:** требует реализации на хосте. Код проекта не трогает напрямую.
+**Статус:** ✅ **код реализован и задеплоен 2026-10-21** (`soft` / `process` /
+`process+engine` через `BOT_REANCHOR_MODE`). Установку таймера на хосте
+делает оператор — пример в `examples/systemd/`.
+**Обоснование:** `docs/adr/ADR-0003-context-reanchoring.md`
 **Зависит от:** T66.1 (якорное окно) — без него рестарт не даёт эффекта
 
 ---
@@ -17,6 +20,13 @@
 недели на момент рестарта. Это штатная гигиена памяти, а не аварийная мера.
 
 ## Recheck: рестарт чего именно нужно
+
+> **Superseded by ADR-0003.** The short version: the window is a timestamp the
+> bot computes locally, so no engine restart is ever required for context
+> correctness. Restarting the engine is VRAM hygiene. And "the engine is
+> stateless" is wrong as stated — llama.cpp holds a KV slot and with `--keep -1`
+> retains the prompt — but LCP prefix matching is precisely what prevents the
+> corruption that was feared here. Read the ADR rather than this section.
 
 Оператор предположил, что нужен рестарт **и** llama («рестарт бота не
 очистит контекст llm а только еще больше забьет его»).
