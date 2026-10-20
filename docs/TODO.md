@@ -516,16 +516,28 @@ chose to defer until after manual testing cycle completes)
 
 ## Context memory tickets (2026-10-20)
 
-Full detail in `docs/tickets/`. 🔴 **T70 is the blocker** — resolve it before
-starting T65/T66.
+Full detail in `docs/tickets/`. Start with T70 (the main ticket) or T67
+(independent, ready now).
 
-- [ ] **T70** Context protocol redesign — 🔴 BLOCKER. Send one message +
-      session id (per-sub) instead of full history. Waiting on Strata repo
-      link. See `docs/tickets/TICKET-T70-context-protocol-redesign.md`.
+- [ ] **T70.1** `ContextBudget` skeleton — new `telegram-bot/context_budget.py`,
+      config, wiring into `persistence.load_history`. `apply()` must be pure
+      (no I/O, no LLM). ~150 lines.
+- [ ] **T70.2** `window` strategy — the operator's rule: messages newer than an
+      anchor fixed at bot start, 7 days, per-sub. Anchor is a module-level
+      constant computed ONCE; a sliding window silently contradicts the
+      decision. Requires `created_at` in the `get_messages` SELECT. Tripwire
+      required.
+- [ ] **T70.3** `summarize` strategy — NOT the default. Synthetic
+      `user→assistant` summary pair at the head of the context; incremental
+      (reuse the existing summary); fall back to `window` if the LLM call
+      fails. SQLite stays the source of truth.
+- [ ] **T70.4** Overflow handling + observability. Overflow is swallowed today
+      (`call_llama.py:1138`, `:1536`) and the bot hallucinates. Must tell the
+      user "context exhausted". `/stats` gains: in-window, in-DB, compressed.
 - [ ] **T67.1** Remove `TRIM_HIGH=500` → `TRIM_LOW=200` lazy trim from
       `storage.get_messages`. It silently destroys history, which is needed
       for LoRA training data. Safe to build now — SQLite is the source of
-      truth under every T70 model. Ship T67.1 + T67.3 together.
+      truth under every strategy. Ship T67.1 + T67.3 together.
 - [ ] **T67.2** Stop persisting images to SQLite. Confirmed by operator
       2026-10-20: image participates in the current exchange, is not stored,
       not remembered after restart.
@@ -535,15 +547,17 @@ starting T65/T66.
 - [ ] **T65.1** Reply-to-human: persist to DB but do not generate. Currently
       `dispatch.py:1678` returns before `persist()`, so these messages are not
       recorded at all. Independent of T70.
-- [ ] **T66.1** `WHERE created_at >= ANCHOR` instead of `LIMIT 20`. Anchor is a
-      module-level constant computed once at bot start, per operator decision
-      (7 days, per-sub). `created_at` already exists in the schema.
-- [ ] **T66.6** Handle context overflow. Today it is swallowed
-      (`call_llama.py:1138`, `:1536`) and the bot hallucinates silently.
-      Needs to tell the user "context exhausted, restart needed".
-- [ ] **T68** Daily restart at 05:00. Bot only — llama is stateless between
-      requests (verified: no `session_id` in the request body).
+- [ ] **T66** — semantics only, implemented inside T70.2. Do not write a
+      separate filter; that is what T70.1 replaces.
+- [ ] **T68** Daily restart at 05:00. Bot only — engines are stateless
+      between our requests (verified: no `session_id` in the request body).
 - [ ] **T69** Bot personality injection into system prompt. ⏸ Waiting on
       operator answers.
-- [ ] **T70 open** Does Strata have a server-side session API? If yes → model
-      B, much simpler. If no → model C (bot holds memory, sends a summary).
+
+### Open questions for the operator
+
+- T70.3 — which model summarises? Same endpoint, or a cheap second one?
+- T70.3 — trigger threshold: message count, tokens, or both?
+- T66.1 — guaranteed minimum of last N messages when the window is empty?
+  Currently: not added (strict operator rule stands).
+- T68 — systemd timer or cron on the host?

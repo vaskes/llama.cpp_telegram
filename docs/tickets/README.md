@@ -2,6 +2,8 @@
 
 **Created:** 2026-10-20, from operator use-case sessions. **Status: design
 stage — no code written yet.**
+**Updated:** 2026-10-20 23:05 — T70 rewritten after the operator established
+that the bot is a public repo and the engine must stay swappable.
 
 These tickets came out of a design conversation, not from a bug report. They
 are written to be implemented, but several of them depend on decisions that
@@ -10,52 +12,82 @@ have NOT been made yet. Read this index before picking up any ticket.
 ## Reading order
 
 1. **This file** — what depends on what
-2. **T70** — 🔴 the blocker. Everything else may be rewritten when it lands
-3. **T67** — 🟡 the first thing actually to build
-4. T65, T66 — blocked on T70's outcome
-5. T68 — host work, not code
-6. T69 — waiting on operator input
+2. **T70** — the main ticket: `ContextBudget`. Everything else slots into it
+3. **T67** — the first thing actually to build (independent of T70)
+4. T65 — reply-to-human (T65.1 independent)
+5. T66 — semantics only, implemented inside T70.2
+6. T68 — host work, not code
+7. T69 — waiting on operator input
+
+## The constraint that decided the architecture
+
+The operator, 2026-10-20:
+
+> «мы бота пишем в public репо, не только под себя… главная задача llm engine
+> быть stateless. А если я послезавтра захочу его со strata переключить на vllm?
+> у меня на соседней машине как раз есть и две видеокарты и vllm. И это только я,
+> а у нас есть ещё 200+ клонеров. В общем нам нужен универсальный путь»
+
+So: the bot must survive an engine swap by changing nothing but a URL. That
+rules out anything engine-side — including the engine holding sessions.
+
+## The design that came out of it
+
+T70 originally proposed engine-side sessions (`previous_response_id`). That was
+**rejected** — it ties the bot to one engine's API surface.
+
+The replacement is the pattern the industry converged on in 2026:
+
+> **protect recent N · summarize older · extract durable facts · budget-assemble**
+
+implemented as a client-side `ContextBudget` over plain
+`/v1/chat/completions`. It knows nothing about engines, so it works with llama,
+vLLM, Strata, or anything else that speaks OpenAI-compatible chat completions.
+
+`vllm-project/agentic-api` was evaluated as the "use the existing solution"
+option and rejected — it is a Rust gateway with the Responses API, multi-agent
+steering, OIDC and checkpoint limits. Correct principle, wrong weight class for
+200+ forks of a small bot. See the T70 ticket for the comparison.
 
 ## The dependency problem
 
-**T70 changes the delivery protocol.** Today the bot sends the entire history
-in every request (`call_llama.py:790`). T70 proposes sending a single message
-plus a session id, with state held by the engine.
+**T70 provides the place where the decision is made.** Everything else feeds
+it rather than being blocked by it.
 
-If T70 lands, T65 and T66 are substantially rewritten — the question "how many
-messages go into the request" becomes "how long does the engine-side session
-live". Writing T65/T66 against the current protocol means writing them twice.
-
-**This is why nothing is being implemented yet.** Not caution — arithmetic.
+T65 (reply-to-human) and T67 (no trim) are independent of T70 entirely and can
+be built first.
 
 ## Ticket map
 
 | Ticket | Subject | State | Depends on |
 |---|---|---|---|
-| **T70** | Context protocol redesign | 🔴 **blocker** | Strata repo (not yet reviewed) |
+| **T70** | `ContextBudget` — universal context assembly | 🔴 main ticket | — |
 | **T67** | Remove `TRIM_HIGH`, stop storing images | 🟡 **ready to build** | — |
 | T65 | Reply-to-human: record, don't answer | 🟢 ready | — (T65.1 only) |
-| T66 | Time-based context window (7 days) | 🟡 ready | T70, T67.1 |
-| T68 | Daily restart 05:00 | 🟡 ready | T66.1 |
+| T66 | Time-based window (7 days) — semantics | 🟡 in T70.2 | T67 |
+| T68 | Daily restart 05:00 | 🟡 ready | T70.2 |
 | T69 | Bot personality in system prompt | ⏸ waiting | operator input |
 
-## What is safe to build RIGHT NOW
+## Sub-tasks of T70
 
-Three items are orthogonal to the T70 decision and will not be thrown away:
+| | Task | Size |
+|---|---|---|
+| **T70.1** | `ContextBudget` skeleton, config, wiring | ~150 lines |
+| **T70.2** | `window` strategy (the operator's 7-day rule) | ~40 lines |
+| T70.3 | `summarize` strategy (not default) | ~120 lines |
+| T70.4 | Overflow handling + observability | ~60 lines |
 
-- **T67.1** — remove `TRIM_HIGH`. SQLite stays the source of truth in every
-  model; a silent data-destroying trim is wrong under all of them.
-- **T65.1** — reply-to-human. The semantics don't change, only the delivery path.
-- **T69** — personality injection into the system prompt. Orthogonal.
+Order: T70.1 → T70.2 → T70.4. T70.3 can be deferred; the default works without it.
 
 ## Open questions
 
 | # | Question | Owner |
 |---|---|---|
-| 1 | Does Strata have a server-side session API? | operator — repo link pending |
-| 2 | `T66.1` — guaranteed minimum of N messages if the window is empty? | operator |
-| 3 | `T69` — five personality questions (see ticket) | operator |
-| 4 | `T68` — systemd timer vs cron on host | operator |
+| 1 | T70.3 — which model summarises? same endpoint, cheap one? | operator |
+| 2 | T70.3 — trigger threshold: messages, tokens, both? | operator |
+| 3 | T66.1 — guaranteed minimum of N messages if the window is empty? | operator |
+| 4 | T69 — five personality questions (see ticket) | operator |
+| 5 | T68 — systemd timer vs cron on host | operator |
 
 ## Measurements (2026-10-20, llmhost1, Qwen3.8-27B 256k)
 
@@ -85,9 +117,10 @@ engine.
 ### But do not build on it
 
 The operator has measured first-hand that llama's KV slot reuse is poor —
-change one byte and it prefills from scratch. And the production engine will
-be **Strata**, not llama. An architecture that only works while a particular
-engine deduplicates prefixes degrades **silently** on engine swap.
+change one byte and it prefills from scratch. And the engine will not be llama:
+it may be Strata, it may be vLLM, and in 200+ forks it is whatever each fork's
+operator runs. An architecture whose speed depends on a particular engine
+deduplicating prefixes degrades **silently** on engine swap.
 
 This is why T70 exists. Not because prefill is slow today.
 
@@ -102,7 +135,7 @@ history does not fit, cache or no cache. The limit is capacity, not speed.
 | 500 KB | ~125k | ~1.2 s |
 | **1 MB** | **~280k** | **exceeds n_ctx** |
 
-### Sessions do not survive an engine restart
+### Engine-side state is not portable — another reason to reject it
 
 ```
 llama-server flags: --ctx-size --cache-type-k --cache-type-v --cache-ram --parallel
@@ -110,12 +143,15 @@ NO --cache-reuse
 no --slot-save-path
 ```
 
-No persistent slots on the current llama. Slots live in process memory. This
-does not contradict the assumption that Strata has persistent chats — it means
-the design **cannot rely** on it:
+No persistent slots on the current llama; slots live in process memory. Even
+where an engine does offer them, that is one engine's API — vLLM exposes a
+different one (Responses API), and there is no common denominator across 200+
+forks.
 
-> SQLite is the source of truth. The engine-side session is a derived value
-> that can be recreated at any moment.
+Which leaves the principle that survives every engine swap:
+
+> SQLite is the source of truth. Any derived context — window, summary,
+> whatever — is recomputable at any moment.
 
 Which is exactly why T67 (no trim) is mandatory: if the session is lost, it
 gets rebuilt from SQLite, so SQLite must be complete.
