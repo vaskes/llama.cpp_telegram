@@ -201,6 +201,54 @@ consequences:
 
 ---
 
+## Two bugs this design shipped with
+
+Recorded here because this ADR exists to stop the reasoning being undone, and
+because both bugs are the *same shape* as the failures this document warns
+about. A future change that re-introduces either is re-introducing the class.
+
+### 1. `soft` re-anchored a variable nobody read (`0b6684d`)
+
+`reanchor()` updated the module global `CONTEXT_ANCHOR`. But `get_budget()`
+returns the shared `_DEFAULT` instance, and `apply()` filters on *that*
+instance's own `.anchor`, assigned once in `__init__`.
+
+The anchor advanced. The generation counter ticked. The log printed
+"reanchored". The context window did not move by one second — which means the
+mode that exists specifically to re-anchor without a restart did not re-anchor.
+
+The tripwire missed it because it asserted on `CONTEXT_ANCHOR`, the variable the
+code was *supposed* to care about rather than the one `apply()` reads. Rule 2
+below says `apply()` must not read the clock; it says nothing about which
+`anchor` it reads, and nobody asked until it was too late.
+
+### 2. The daily timer fired an hour late, once a year (`4cc6291`)
+
+`seconds_until_next` built its target as `midnight + hour*3600` and added a
+flat `86400` when that target was already past. A DST day is 23 or 25 hours.
+
+Measured in `America/New_York`, the day before a spring-forward transition: it
+computed `06:00`. Then it got worse — the inner loop re-evaluates every ten
+minutes, so at 05:55 it found its own target in the past and pushed it out
+another `86400`, skipping a full day.
+
+The docstring already promised "the loop must survive a DST shift". It did not
+survive it. Moscow has had no DST since 2014, so the operator never saw it;
+roughly a third of this repo's 200+ forks live in zones that do.
+
+### What the two have in common
+
+Both **looked healthy while doing nothing**. A green tripwire, a fresh counter,
+a reassuring log line, a docstring asserting the property. Nothing in the
+source said anything was wrong.
+
+So the standing check for any change in this area is not "does it compute the
+right value" — it is *"is the thing that moves the same thing that the thing
+being moved controls?"* That question found both. It is also the question a
+reviewer should ask first of any new claim here.
+
+---
+
 ## Alternatives rejected
 
 **Always restart the process (no `soft`).** Rejected: breaks every fork
