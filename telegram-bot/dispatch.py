@@ -23,6 +23,7 @@ from telegram.ext import (
 from call_llama import fetch_tools_from_llama
 import call_llama
 from storage import get_store
+from context_budget import get_budget
 import state
 from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores, _get_user_semaphore
 import handlers
@@ -257,6 +258,42 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === stats ===
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # T70 observability: the context policy is the one thing a user cannot
+    # see from the outside. "Remembers 847 of 4231" is the question that
+    # matters — and until /stats answered it, the only way to check was to
+    # open SQLite by hand.
+    _b = get_budget()
+    policy = _b.describe()
+    window_days = policy["remember_days"]
+
+    async def _memory_lines(chat_id: int, thread_id: str, stored: int) -> str:
+        """One block: what the model sees vs what the DB holds."""
+        store = get_store()
+        anchor = _b.anchor
+        # sqlite counts are blocking; run them off the event loop.
+        loop = asyncio.get_running_loop()
+        in_window = loop.run_in_executor(
+            None, store.count_since, chat_id, thread_id, anchor
+        )
+        oldest = loop.run_in_executor(
+            None, store.oldest_message_age, chat_id, thread_id
+        )
+        n_in = await in_window
+        age = await oldest
+        if window_days <= 0:
+            window_text = "без ограничения по времени"
+        else:
+            window_text = f"{window_days} дн. от старта бота (якорь не скользит)"
+        age_text = "—" if age is None else f"{int(age // 86400)} дн."
+        return (
+            f' • В контексте сейчас: {n_in} сообщ.\n'
+            f' • Всего в базе: {stored} сообщ.\n'
+            f' • Старше окна (не отправляется): {max(0, stored - n_in)} сообщ.\n'
+            f' • Окно памяти: {window_text}\n'
+            f' • Старейшее сообщение в базе: {age_text}\n'
+            f' • Стратегия: {policy["strategy"]}, потолок {policy["max_messages"]}'
+        )
+
     # === Group mode: show topic count + total stored messages ===
     if _is_group_chat(update):
         chat_id = update.effective_chat.id
@@ -271,12 +308,14 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (s["msg_count"] for s in all_subs if s["thread_id"] == thread_id),
             0
         )
+        memory = await _memory_lines(chat_id, thread_id, cur_count)
         await _reply(update,
             f'📊 Group stats\n'
             f' • Topics (bot-known): {len(topics)}\n'
             f' • Current topic: #{update.message.message_thread_id} '
             f'({cur_count} stored message(s))\n'
-            f' • Total stored messages across topics: {msg_total}'
+            f' • Total stored messages across topics: {msg_total}\n'
+            f'\n🧠 Память (этот топик):\n{memory}'
         )
         return
     if await reject_if_unauthorized(update, context):
@@ -291,13 +330,17 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else f'    "{s["thread_id"]}" ({s["msg_count"]} msgs)'
         for s in subs
     ) or "    (no sub-talks yet)"
-    await _reply(update, 
+    memory = await _memory_lines(user_id, thread_id, current_count)
+    await _reply(update,
         f'📊 **Статистика:**\n'
         f'Активный sub-talk: "{thread_id}" — {current_count} сообщений\n'
         f'Всего sub-talks: {len(subs)}\n'
         f'{sub_lines}\n'
         f'Модель: {MODEL}\n'
-        f'Tools: {len(tools)} from llama-server + 1 weather (custom)'
+        f'Tools: {len(tools)} from llama-server + 1 weather (custom)\n'
+        f'\n🧠 **Память:**\n{memory}\n'
+        f'\n💡 История хранится целиком (в т.ч. для будущего обучения). '
+        f'В контекст уходит только то, что попадает в окно выше.'
     )
 
 # === _parse_subtalk_arg ===

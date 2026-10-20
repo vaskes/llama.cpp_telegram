@@ -551,13 +551,26 @@ Full detail in `docs/tickets/`. Start with T70 (the main ticket) or T67
       separate filter; that is what T70.1 replaces.
 - [ ] **T68** Daily restart at 05:00. Bot only — engines are stateless
       between our requests (verified: no `session_id` in the request body).
+      Note: T70.3 will reuse this same restart as its summarisation trigger —
+      implement T68 first, otherwise there is no moment at which to summarise.
 - [ ] **T69** Bot personality injection into system prompt. ⏸ Waiting on
       operator answers.
+- [ ] **T70.3** Summarise out-of-window history **at bot start**, same model
+      as the bot, then `{system} + {summary} + {window}`. ⏸ Blocked on the
+      boundary question below — code written before it is answered would have
+      to be rewritten, so writing it now is wasted work.
 
 ### Open questions for the operator
 
-- T70.3 — which model summarises? Same endpoint, or a cheap second one?
-- T70.3 — trigger threshold: message count, tokens, or both?
+- **T70.3 — what if even the summary does not fit in 256k?** Split old
+  history into several summaries? Drop the oldest facts? Cap by recency
+  inside the old set? Deliberately deferred by the operator 2026-10-21;
+  T70.3 stays unwritten until this is answered.
+- T70.3 — ~~which model summarises?~~ **Resolved 2026-10-21: the same model
+  as the bot.** No second endpoint, no extra complexity.
+- T70.3 — ~~trigger threshold: count, tokens, or both?~~ **Resolved
+  2026-10-21: once at bot start.** Not per-request — that would add latency
+  to every message and force token counting without a tokenizer.
 - T66.1 — guaranteed minimum of last N messages when the window is empty?
   Currently: not added (strict operator rule stands).
 - T68 — systemd timer or cron on the host?

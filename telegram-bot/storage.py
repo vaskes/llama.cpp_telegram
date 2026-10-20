@@ -304,6 +304,49 @@ class Storage:
             c.rollback()
             raise
 
+    def count_since(self, chat_id: int, thread_id: str,
+                    since: float) -> int:
+        """How many messages in this thread are newer than `since`.
+
+        T70 observability. `/stats` needs to answer the question the
+        operator actually has — "is it remembering, and what is it throwing
+        away" — and `list_threads` only gives the stored total, which is the
+        number in the DB, not the number the model sees.
+
+        `since` is a Unix timestamp. Pass 0 to mean "no age filter", which
+        then equals the thread's total count.
+        """
+        c = self._conn()
+        if since <= 0:
+            row = c.execute(
+                "SELECT COUNT(*) FROM messages WHERE chat_id = ? AND thread_id = ?",
+                (chat_id, thread_id),
+            ).fetchone()
+        else:
+            row = c.execute(
+                "SELECT COUNT(*) FROM messages "
+                "WHERE chat_id = ? AND thread_id = ? AND created_at >= ?",
+                (chat_id, thread_id, since),
+            ).fetchone()
+        return int(row[0])
+
+    def oldest_message_age(self, chat_id: int, thread_id: str) -> float | None:
+        """Seconds since the oldest message, or None if the thread is empty.
+
+        The other half of the T70 observability story: a thread that has
+        been running for a week should show an age close to the window
+        length. A much smaller age means the anchor moved recently (a
+        restart) and the bot's memory was just re-anchored.
+        """
+        c = self._conn()
+        row = c.execute(
+            "SELECT MIN(created_at) FROM messages WHERE chat_id = ? AND thread_id = ?",
+            (chat_id, thread_id),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return max(0.0, time.time() - float(row[0]))
+
     def list_threads(self, chat_id: int) -> list[dict]:
         """Returns [{'thread_id', 'created_at', 'last_used', 'msg_count'}, ...]
         sorted by last_used DESC."""
