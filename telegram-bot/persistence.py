@@ -91,4 +91,13 @@ async def load_history(chat_id: int, thread_id: str) -> list:
     rows = await asyncio.to_thread(
         get_store().get_messages, chat_id, thread_id, FETCH_LIMIT
     )
-    return get_budget().apply(_decode(rows))
+    budget = get_budget()
+    messages = _decode(rows)
+    if budget.strategy == "summarize":
+        # T70.3: the summary itself was built ahead of time by summarize.py at
+        # the last re-anchor. Here we only splice in whatever text it holds.
+        # No model call on the request path — that is the whole point of the
+        # "once per re-anchor" design.
+        from summarize import get_summary
+        return budget.apply_summarize(messages, get_summary(chat_id, thread_id))
+    return budget.apply(messages)

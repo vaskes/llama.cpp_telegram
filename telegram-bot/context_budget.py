@@ -315,19 +315,37 @@ class ContextBudget:
         """Default. Age filter + message cap. See apply()."""
         return self.apply(messages)
 
-    def apply_summarize(self, messages: Iterable[dict]) -> list[dict]:
-        """Keep the in-window tail; optionally prepend an older-context summary.
+    def apply_summarize(self, messages: Iterable[dict],
+                        summary: str | None = None) -> list[dict]:
+        """Keep the in-window tail, prepend a prepared summary.
 
-        The summary is NOT generated here — this stays pure. The caller runs
-        the summarization (an LLM round-trip) and passes the result via
-        `messages` being already assembled, or by using `split_for_summary`
-        and prepending the result itself.
+        PURE. The LLM round-trip happens in summarize.py, ahead of time, and
+        its output arrives here as the `summary` string. That split is not
+        stylistic: apply() is the thing 12 tests hold pure, and a network call
+        in here would make every context test need an engine.
 
-        Kept as the explicit strategy name so that a fork can select it in
-        .env; the actual LLM call belongs in the caller (handlers.py),
-        because that is where the abort_event and the stop button live.
+        The summary becomes a synthetic user->assistant pair rather than a bare
+        system note, so the model reads it as a finished exchange rather than
+        as an instruction it might try to obey.
+
+        `summary=None` — including when the caller forgot, or the summariser
+        failed — degrades to plain window(). Losing old context is survivable;
+        the bot going down is not.
         """
-        return self.apply(messages)
+        items = list(messages)
+        if not summary or not summary.strip():
+            return self.apply(items)
+        inside, older = self.split_for_summary(items)
+        if not older:
+            # Nothing fell out of the window, so there is nothing to compress.
+            return self.apply(items)
+        body = summary.strip()
+        return [
+            {"role": "user", "content": "Сводка предыдущего разговора "
+                                        "(вне текущего окна памяти):"},
+            {"role": "assistant", "content": body},
+            *inside,
+        ]
 
     # -- helper for the summarize strategy's caller ------------------------
     def split_for_summary(self, messages: Iterable[dict]) -> tuple[list[dict], list[dict]]:

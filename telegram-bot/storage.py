@@ -347,6 +347,20 @@ class Storage:
             return None
         return max(0.0, time.time() - float(row[0]))
 
+    def list_chats(self) -> list[tuple[int, str]]:
+        """Every (chat_id, thread_id) that has messages.
+
+        T70.3: the daily re-anchor has to walk every thread, not just the
+        active one of the person happening to be talking. Sorted for stable
+        ordering so a summarisation run is reproducible.
+        """
+        c = self._conn()
+        rows = c.execute(
+            "SELECT DISTINCT chat_id, thread_id FROM messages "
+            "ORDER BY chat_id, thread_id"
+        ).fetchall()
+        return [(int(r["chat_id"]), r["thread_id"]) for r in rows]
+
     def list_threads(self, chat_id: int) -> list[dict]:
         """Returns [{'thread_id', 'created_at', 'last_used', 'msg_count'}, ...]
         sorted by last_used DESC."""

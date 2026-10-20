@@ -25,8 +25,37 @@ from context_budget import (
     REANCHOR_AT,
     REANCHOR_MODE,
     SOFT_REANCHOR_ENABLED,
+    get_budget,
     reanchor,
 )
+
+
+async def summarise_after_reanchor() -> dict:
+    """T70.3 — rebuild the out-of-window summaries for every thread.
+
+    Runs on EVERY re-anchor mode, not just `soft`. That is deliberate: if it
+    were tied to process start, `soft` and `process` would differ in memory
+    quality while looking identical in config (ADR-0003).
+
+    A failure here is non-fatal by construction — summarise_all() catches per
+    thread and falls back to the plain window.
+    """
+    if get_budget().strategy != "summarize":
+        return {"ok": True, "skipped": True, "reason": "strategy != summarize"}
+    try:
+        import config
+        from storage import get_store
+        import summarize
+        return await summarize.summarise_all(
+            budget=get_budget(),
+            store=get_store(),
+            llama_url=config.LLAMA_URL,
+            model=config.MODEL,
+        )
+    except Exception as exc:
+        print(f"[reanchor] summarisation failed (window strategy still "
+              f"works): {type(exc).__name__}: {exc}", flush=True)
+        return {"ok": False, "error": str(exc)}
 
 
 def parse_hhmm(value: str) -> tuple[int, int]:
@@ -120,6 +149,8 @@ async def reanchor_loop(stop: asyncio.Event) -> None:
         if stop.is_set():
             return
         info = await asyncio.to_thread(reanchor)
+        # T70.3: summarisation is keyed to the re-anchor, in every mode.
+        await summarise_after_reanchor()
         if info.get("ok") and REANCHOR_MODE == "process+engine":
             await asyncio.to_thread(run_engine_reset)
         # Re-anchor every day even though in soft mode the window already
@@ -158,3 +189,24 @@ def start_reanchor_scheduler() -> None:
 #: Keeps stop/task alive so they are not garbage collected mid-sleep. The
 #: loop is process-lifetime anyway; cancellation is best-effort cleanup.
 _HANDLES: list[tuple[asyncio.Event, asyncio.Task]] = []
+
+def start_summarise_on_boot() -> None:
+    """T70.3 — in `process`/`process+engine` there is no in-process scheduler,
+    so nothing would ever build the summaries. Fire once at boot.
+
+    Background task, never awaited on the startup path: summarisation can take
+    minutes across many threads, and the bot must accept Telegram updates
+    immediately regardless. A failure here is logged and the bot continues with
+    the plain window.
+    """
+    try:
+        import asyncio as _a
+        if get_budget().strategy != "summarize":
+            return
+        task = _a.get_running_loop().create_task(
+            summarise_after_reanchor(), name="summarise_on_boot"
+        )
+        _HANDLES.append((None, task))
+        print("[summarize] boot summarisation scheduled", flush=True)
+    except Exception as exc:
+        print(f"[summarize] boot hook failed: {exc!r}", flush=True)
