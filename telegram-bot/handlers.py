@@ -56,6 +56,18 @@ from telegram.ext import ContextTypes
 from call_llama import call_llama, transcribe_voice, _tag_sender
 import state
 import limits  # cross-module state (see state.py)
+
+# TECH-DEBT #2: all ten of these were imported *inside functions* to dodge an
+# import cycle. The cycle was real but avoidable: none of them touch the
+# dispatcher, so they live in leaf modules (chat_utils / access) and the
+# import is unconditional again.
+from chat_utils import (
+    _is_group_chat, _parse_subtalk_arg, _parse_topic_arg, _rate_limit_send,
+)
+from access import (
+    _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
+    _stop_button_markup, is_authorized, reject_if_unauthorized,
+)
 from storage import get_store
 from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event, _register_bot_reply
 from rating import _is_rating_active, _apply_rating_and_persist
@@ -89,7 +101,6 @@ async def send_reply(update: Update, text: str):
     storm) can exceed Telegram's 20 msg/min/chat limit and trigger
     RetryAfter. _rate_limit_send sleeps if the chat is over budget.
     """
-    from dispatch import _is_group_chat, _rate_limit_send, reject_if_unauthorized
     chat_id = update.effective_chat.id if update.effective_chat else None
     if chat_id is not None:
         await _rate_limit_send(chat_id)
@@ -145,7 +156,6 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
       - chat_id = effective_chat.id (the group id, negative).
       - thread_id = str(message_thread_id) -- the Telegram topic id.
     """
-    from dispatch import _is_group_chat, reject_if_unauthorized
     msg = update.message
     if _is_group_chat(update):
         # Group mode. Telegram is the source of truth for thread
@@ -197,7 +207,6 @@ async def _reply(update, text, **kwargs):
     (assuming Telegram will deliver the message anyway).
     """
     from telegram.error import RetryAfter, TimedOut
-    from dispatch import _is_group_chat
     if _is_group_chat(update):
         kwargs.setdefault('message_thread_id', update.message.message_thread_id)
     last_err = None
@@ -250,7 +259,6 @@ async def _reject_in_group(update) -> bool:
     Returns True if the message is in a group and we sent a notice,
     False otherwise (i.e. the caller should continue processing).
     """
-    from dispatch import _check_user_slot, _stop_button_markup
     if _is_group_chat(update):
         await _reply(
             update,
@@ -398,7 +406,6 @@ def _sender_display_name(user) -> str | None:
 
 # === handle_photo ===
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _check_user_slot, _stop_button_markup
     print(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}", flush=True)
     result = await _route_to_thread(update, context)
     if result is None:
@@ -681,7 +688,6 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
 
 # === handle_voice ===
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _check_user_slot, _stop_button_markup
     result = await _route_to_thread(update, context)
     if result is None:
         return
@@ -829,7 +835,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === handle_document ===
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _check_user_slot, _stop_button_markup
     result = await _route_to_thread(update, context)
     if result is None:
         return
@@ -1021,7 +1026,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from dispatch import _is_group_chat, _check_user_slot, _stop_button_markup, reject_if_unauthorized, is_authorized, _parse_subtalk_arg, _parse_topic_arg, _should_mute_in_group, _is_reply_to_other_user
     from state import _get_user_semaphore as _user_semaphore
     from state import _check_burst_split, _record_user_message, _user_recent_msg
     print(f"[handle_text] ENTRY t={time.monotonic():.3f} user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}", flush=True)

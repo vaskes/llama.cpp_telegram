@@ -397,3 +397,26 @@ _LLM_TOKEN_RE = _llm_re.compile(
 )
 _SUBTALK_NAME_RE = _llm_re.compile(r'^[^\s]{1,32}$')
 _TOPIC_NAME_RE = _llm_re.compile(r'^[^\s]{1,128}$')
+
+# --- moved from bot.py (TECH-DEBT #2) ---
+# Command list is presentation text, and bot.py imports dispatch at module
+# level, so dispatch could only reach a constant defined there through a late
+# import. Prompts is a leaf: everything depends on it, it depends on nothing.
+# Telegram bot menu — registered via setMyCommands on startup. This
+# is the native way to make commands discoverable in the Telegram
+# client: they show up in the "Menu" button next to the chat input,
+# and typing "/" suggests them with descriptions.
+#
+# Telegram Bot API limit: 100 commands per bot. We have 9. The list
+# below is also exported as the user-facing help text via /help.
+BOT_COMMANDS = [
+    ("start",   "🏁 Начать работу, показать возможности"),
+    ("help",    "❓ Помощь по командам"),
+    ("here",    "📍 Показать текущий sub-talk"),
+    ("subs",    "📚 Список всех sub-talks (с кнопками)"),
+    ("newsub",  "➕ Создать новый sub-talk: /newsub <имя>"),
+    ("sub",     "↔️ Переключиться на sub-talk: /sub <имя>"),
+    ("delsub",  "🗑 Удалить sub-talk: /delsub <имя>"),
+    ("reset",   "🔄 Очистить сообщения в текущем sub-talk"),
+    ("stats",   "📊 Статистика и список sub-talks"),
+]

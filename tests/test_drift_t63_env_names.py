@@ -181,11 +181,18 @@ def test_whitelist_env_var_is_referenced_exactly_as_config_reads_it():
     # than arrange it through the environment: config.py snapshots
     # ALLOWED_USER_IDS at import time, so a monkeypatch there is a no-op
     # once anything has imported the module.
+    # TECH-DEBT #2 moved is_authorized from dispatch.py to access.py, so the
+    # stub has to target the module that actually holds the function. Patching
+    # `dispatch_mod.is_authorized` now rebinds only a re-exported name and the
+    # whitelist check keeps running for real — the test would silently stop
+    # bypassing authorization while still appearing to pass.
     assert re.search(
-        r"""setattr\(\s*dispatch_mod\s*,\s*["']is_authorized["']""", src
+        r"""setattr\(\s*access_mod\s*,\s*["']is_authorized["']""", src
     ), (
-        "test_dispatch_start.py must stub is_authorized — an env "
-        "monkeypatch cannot reach a value config.py already snapshotted"
+        "test_dispatch_start.py must stub is_authorized on the module that "
+        "defines it (access) — an env monkeypatch cannot reach a value "
+        "config.py already snapshotted, and patching the re-export in "
+        "dispatch rebinds nothing"
     )
 
 

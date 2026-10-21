@@ -34,23 +34,23 @@ async def test_idle_chats_do_not_stay_in_the_rate_window(monkeypatch):
     after it left. Timestamps aged out; the keys did not. Nothing printed an
     error, because nothing was wrong from the code's point of view.
     """
-    import dispatch
-    dispatch._send_window.clear()
+    import chat_utils
+    chat_utils._send_window.clear()
 
     # Far past the cap, so the eviction branch is guaranteed to run.
-    monkeypatch.setattr(dispatch, "_SEND_WINDOW_MAX_KEYS", 16)
+    monkeypatch.setattr(chat_utils, "_SEND_WINDOW_MAX_KEYS", 16)
     for i in range(64):
-        dispatch._send_window[i] = __import__("collections").deque()
+        chat_utils._send_window[i] = __import__("collections").deque()
 
     async def _one_send():
-        await dispatch._rate_limit_send(0)
+        await chat_utils._rate_limit_send(0)
 
     await _one_send()
-    assert len(dispatch._send_window) <= 17, (
+    assert len(chat_utils._send_window) <= 17, (
         f"idle chat_ids must be evicted, still holding "
-        f"{len(dispatch._send_window)} keys"
+        f"{len(chat_utils._send_window)} keys"
     )
-    dispatch._send_window.clear()
+    chat_utils._send_window.clear()
 
 
 @pytest.mark.asyncio
@@ -60,48 +60,48 @@ async def test_eviction_never_drops_a_live_chat(monkeypatch):
     An ACTIVE chat has non-empty timestamps. Evicting it would silently reset
     its rate-limit budget, which is a security hole, not a memory win.
     """
-    import dispatch
+    import chat_utils
     from collections import deque
-    dispatch._send_window.clear()
-    monkeypatch.setattr(dispatch, "_SEND_WINDOW_MAX_KEYS", 4)
+    chat_utils._send_window.clear()
+    monkeypatch.setattr(chat_utils, "_SEND_WINDOW_MAX_KEYS", 4)
     for i in range(32):
-        dispatch._send_window[i] = deque()
-    dispatch._send_window[999] = deque([dispatch._time.monotonic()])
+        chat_utils._send_window[i] = deque()
+    chat_utils._send_window[999] = deque([chat_utils._time.monotonic()])
 
-    await dispatch._rate_limit_send(0)
-    assert 999 in dispatch._send_window, (
+    await chat_utils._rate_limit_send(0)
+    assert 999 in chat_utils._send_window, (
         "eviction removed a chat that still has live timestamps -- that would "
         "reset its rate-limit budget"
     )
-    dispatch._send_window.clear()
+    chat_utils._send_window.clear()
 
 
 @pytest.mark.asyncio
 async def test_rate_limiting_still_actually_limits(monkeypatch):
     """Guard against 'fixing' the leak by neutering the limiter."""
-    import dispatch
+    import chat_utils
     from collections import deque
-    dispatch._send_window.clear()
-    monkeypatch.setattr(dispatch, "_RATE_WINDOW_SEC", 60.0)
-    monkeypatch.setattr(dispatch, "_RATE_MAX_PER_WINDOW", 3)
-    monkeypatch.setattr(dispatch, "_SEND_WINDOW_MAX_KEYS", 1024)
+    chat_utils._send_window.clear()
+    monkeypatch.setattr(chat_utils, "_RATE_WINDOW_SEC", 60.0)
+    monkeypatch.setattr(chat_utils, "_RATE_MAX_PER_WINDOW", 3)
+    monkeypatch.setattr(chat_utils, "_SEND_WINDOW_MAX_KEYS", 1024)
 
     slept = []
 
     async def _fake_sleep(s):
         slept.append(s)
 
-    monkeypatch.setattr(dispatch.asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(chat_utils.asyncio, "sleep", _fake_sleep)
     for _ in range(6):
-        await dispatch._rate_limit_send(7)
+        await chat_utils._rate_limit_send(7)
     assert slept, "a 6th send inside a 3-per-60s window must sleep"
-    dispatch._send_window.clear()
+    chat_utils._send_window.clear()
 
 
 def test_rate_window_source_has_eviction():
     """Pinned in the source as well as the behaviour, so deleting the runtime
     guard without deleting this test is visible in review."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = (BOT_DIR / "chat_utils.py").read_text()
     assert "_SEND_WINDOW_MAX_KEYS" in src
     assert "stale_chat" in src
 

@@ -26,6 +26,22 @@ from storage import get_store
 from context_budget import get_budget
 from reanchor import start_reanchor_scheduler as _start_reanchor_scheduler
 from reanchor import start_summarise_on_boot as _start_summarise_on_boot
+from selftest import _selftest
+from prompts import BOT_COMMANDS
+# TECH-DEBT #2: these ten used to be defined in dispatch.py and imported by
+# handlers.py *inside functions* to dodge a cycle. None of them touch the
+# dispatcher, so they live in leaf modules now and both sides import them at
+# module level. Re-exported under their old names because bot.py and existing
+# tests reach them through `dispatch`.
+from access import (
+    _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
+    _stop_button_markup, is_authorized, reject_if_unauthorized,
+)
+from chat_utils import (
+    _RATE_MAX_PER_WINDOW, _RATE_WINDOW_SEC, _SEND_WINDOW_MAX_KEYS,
+    _is_group_chat, _parse_subtalk_arg, _parse_topic_arg,
+    _rate_limit_send, _send_window, _SUBTALK_NAME_RE, _TOPIC_NAME_RE,
+)
 import state
 from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores, _get_user_semaphore
 import handlers
@@ -51,6 +67,7 @@ from prompts import (
 )
 from persistence import persist as _persist_message, load_history as _load_history
 from handlers import (
+    _safe_sender_label,
     handle_document, handle_photo, handle_text, handle_voice,
     send_reply, _download_with_limit, _general_thread_id, _reply,
     _reply_active, _resolve_active, _route_to_thread, _sender_display_name,
@@ -99,22 +116,6 @@ def is_authorized(update: Update) -> bool:
         return True
     return False
 
-# === reject_if_unauthorized ===
-async def reject_if_unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Return True if access denied (caller must stop). Silent reject: no reply to strangers."""
-    if is_authorized(update):
-        return False
-    user = update.effective_user
-    uid = user.id if user else '?'
-    uname = ('@' + user.username) if user and user.username else '(no username)'
-    snippet = ''
-    if update.message:
-        if update.message.text:
-            snippet = update.message.text[:80]
-        elif update.message.caption:
-            snippet = f'[cap] {update.message.caption[:60]}'
-    print(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}', flush=True)
-    return True
 
 # === start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -346,38 +347,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f'В контекст уходит только то, что попадает в окно выше.'
     )
 
-# === _parse_subtalk_arg ===
-def _parse_subtalk_arg(text: str) -> str | None:
-    """Extract a single sub-talk name from a /command arg string.
 
-    Returns the first whitespace-separated token, or None if absent
-    or invalid. For sub-talks we use the strict 32-char limit; for
-    forum-topic names (group mode) see _parse_topic_arg() which
-    accepts up to 128 chars.
-    """
-    parts = text.strip().split(None, 1)
-    if len(parts) < 2:
-        return None
-    name = parts[1].strip()
-    if not _SUBTALK_NAME_RE.match(name):
-        return None
-    return name
-
-# === _parse_topic_arg ===
-def _parse_topic_arg(text: str) -> str | None:
-    """Like _parse_subtalk_arg but for Telegram forum topic names.
-
-    Telegram's createForumTopic accepts topic names up to 128 chars,
-    any non-empty non-whitespace string. Used in group mode by
-    /newsub, /delsub.
-    """
-    parts = text.strip().split(None, 1)
-    if len(parts) < 2:
-        return None
-    name = parts[1].strip()
-    if not _TOPIC_NAME_RE.match(name):
-        return None
-    return name
 
 # === cmd_newsub ===
 async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -697,122 +667,9 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f'🗑 Deleted sub-talk "{thread_id}" and {n} message(s).'
     )
 
-# === _is_group_chat ===
-def _is_group_chat(update) -> bool:
-    """True if the message is in a forum-enabled supergroup (or any non-private chat).
 
-    Telegram Bot API quirk: in a forum-enabled supergroup, messages in
-    the General topic have message_thread_id == None (not set), while
-    messages in regular topics have it set to the topic id. So
-    "message_thread_id is not None" is NOT a reliable way to detect
-    group mode. The reliable signal is `chat.is_forum` (PTB attribute
-    on Chat) or, failing that, `chat.type != 'private'`.
-    """
-    chat = update.effective_chat
-    if chat is None:
-        return False
-    if getattr(chat, "is_forum", False):
-        return True
-    return chat.type != "private"
 
-# === _should_mute_in_group ===
-def _should_mute_in_group(update) -> bool:
-    """True if the bot should stay silent for this message in group mode.
 
-    Returns True when the message is from:
-      - another Telegram bot (is_bot=True; Telegram doesn't deliver
-        these by default via getUpdates, but defend in depth in case
-        a future API change or webhook setup changes that)
-      - a human/user that self-marked with the "[llm]" convention
-        (an LLM proxy or a non-Telegram LLM that joined via a
-        user account)
-
-    Filter only applies in group mode. In private mode, the bot
-    is talking to one human and the [llm] marker does not have
-    the "yield the floor" meaning — a private user typing [llm]
-    is being playful, not opting out, and should still be answered.
-    The is_bot check is still applied (defensive — a real user
-    cannot have is_bot=True, so this is a no-op in practice).
-
-    The [llm] marker is case-insensitive and word-boundary matched
-    (see _LLM_TOKEN_RE). Substring matches like "[llm]s" or
-    "[llm] model" do not trigger.
-    """
-    msg = update.message
-    if msg is None or msg.from_user is None:
-        return False
-    if getattr(msg.from_user, "is_bot", False):
-        return True
-    # [llm] marker only meaningful in group mode (yield the floor
-    # to other LLM participants).
-    if not _is_group_chat(update):
-        return False
-    text = msg.text or msg.caption or ""
-    if _LLM_TOKEN_RE.search(text):
-        return True
-    return False
-
-# === _stop_button_markup ===
-def _stop_button_markup():
-    """Inline keyboard markup for the "💭 думаю…" thinking message.
-
-    One button: "⏹ Stop". When the user clicks it, the callback
-    handler looks up the per-(chat, user) abort event and sets
-    it; call_llama() then bails out at the next iteration of
-    the tool loop. The handler edits the thinking message to
-    "⏹ Остановлено" and moves to the next update.
-
-    We import InlineKeyboardButton lazily so this module is
-    still importable in environments where the full PTB extras
-    are not installed (selftest imports, for example).
-    """
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏹ Stop", callback_data="stop:thinking")],
-    ])
-
-# === _is_reply_to_other_user ===
-def _is_reply_to_other_user(update, bot_id: int) -> bool:
-    """True if the message is a reply to another human's message in
-    a group, and should therefore be skipped.
-
-    Why: in a multi-user group, when user A replies to user B's
-    message, the bot inserting itself into that human-to-human
-    thread creates noise. The bot should respond to top-level
-    messages, and to direct replies to its OWN messages, but
-    not to replies directed at other humans.
-
-    Rules:
-      - No `reply_to_message` → not a reply → False.
-      - Private chat → False. In a 1:1, the only "other" is
-        the bot, so all replies are to the bot. The Telegram
-        client also doesn't really let you reply to yourself
-        in private.
-      - Command (`/something`) → False, even in reply. Commands
-        are explicit user actions; the user means it.
-      - Reply to bot's own message (rtm.from_user.id == bot_id)
-        → False. The user is talking to the bot directly.
-      - Otherwise (reply to another human in a group) → True.
-
-    Returns False in non-group chats so that the 1:1 conversation
-    is never broken by this filter.
-    """
-    msg = update.message
-    if msg is None:
-        return False
-    rtm = msg.reply_to_message
-    if rtm is None:
-        return False
-    if not _is_group_chat(update):
-        return False
-    # Commands bypass the filter — explicit intent wins.
-    text = (msg.text or msg.caption or "").lstrip()
-    if text.startswith("/"):
-        return False
-    # Reply to the bot's own message: user is talking to the bot.
-    if rtm.from_user is not None and getattr(rtm.from_user, 'id', None) == bot_id:
-        return False
-    return True
 
 async def _handle_reply_to_other_user(upd, bot) -> None:
     """T65.1 — a human replied to another human in a group.
@@ -947,110 +804,12 @@ def _spawn_dispatch(upd_dict: dict) -> asyncio.Task:
 # until the oldest entry ages out before sending.
 from collections import deque
 import time as _time
-_send_window: dict = {}  # chat_id -> deque[float]
-_RATE_WINDOW_SEC = 60.0
-_RATE_MAX_PER_WINDOW = 15  # conservative: 15 sends per 60s, leaves 5 for user-originated overhead
 #: How many chat_ids we are willing to track at once. Above this we start
 #: dropping idle entries; an active chat re-creates its own deque on the next
 #: send, so the cap costs a re-allocation and never correctness.
-_SEND_WINDOW_MAX_KEYS = 1024
-
-async def _rate_limit_send(chat_id: int) -> None:
-    """Sleep if chat_id is over its per-60s rate. Returns when
-    the next send would be within budget."""
-    now = _time.monotonic()
-    window = _send_window.setdefault(chat_id, deque())
-    # Drop timestamps older than 60s
-    while window and now - window[0] > _RATE_WINDOW_SEC:
-        window.popleft()
-    if len(window) >= _RATE_MAX_PER_WINDOW:
-        # Sleep until oldest entry ages out + 0.5s headroom
-        sleep_for = _RATE_WINDOW_SEC - (now - window[0]) + 0.5
-        if sleep_for > 0:
-            print(
-                f"[rate_limit] chat={chat_id} window full ({len(window)} sends in {_RATE_WINDOW_SEC}s); "
-                f"sleeping {sleep_for:.1f}s before next send",
-                flush=True,
-            )
-            await asyncio.sleep(sleep_for)
-    window.append(_time.monotonic())
-
-    # Review finding (Qwen, 2026-10-21): chat_id keys were created with
-    # setdefault and never removed. Timestamps aged out of the deque, but the
-    # deque itself -- and its dict key -- stayed for the process lifetime. A
-    # bot added to N chats accumulates N permanent empty deques, and since this
-    # is a Telegram bot the count of chats is attacker-influenceable over
-    # time: every group it is invited to leaks a slot, and nothing ever frees
-    # it even after it is removed.
-    #
-    # Evict on an empty deque rather than running a sweeper task: the only
-    # churn happens here, so the leak closes at the exact moment it would
-    # otherwise grow.
-    if len(_send_window) > _SEND_WINDOW_MAX_KEYS:
-        for stale_chat in [c for c, d in _send_window.items() if not d]:
-            _send_window.pop(stale_chat, None)
 
 
-# === _check_user_slot ===
-async def _check_user_slot(chat_id: int, user_id: int, update):
-    """Claim one of the user's concurrency slots, queuing if all
-    slots are taken.
 
-    Returns the semaphore which the caller MUST release in a
-    `finally` block, OR None if the wait timed out.
-
-    v0.7.8: the previous version rejected the message with a
-    "Бот уже обрабатывает..." reply when the semaphore was
-    locked. That was a fairness bug: the 3rd+ message from a
-    user was dropped even though the bot was going to be free
-    in a few seconds. The user had to manually re-send.
-
-    Now: if the semaphore is locked, await sem.acquire() with
-    a timeout. The handler is already running as an asyncio
-    task (dispatch creates it via asyncio.create_task), so
-    waiting in the task doesn't block the polling loop or
-    other users' messages. After MAX_QUEUE_WAIT_SEC the wait
-    gives up and we drop with a log line, so a flood of
-    messages can't OOM the bot.
-
-    Private mode: chat_id == user_id (1:1 chat), so the slot is
-    effectively per-user. Group mode: keyed on (chat_id, user_id)
-    so a user active in two groups has separate budgets per group.
-    """
-    import asyncio
-    MAX_QUEUE_WAIT_SEC = 300  # 5 minutes — LLM calls are usually <60s
-    sem = _get_user_semaphore(chat_id, user_id)
-    if not sem.locked():
-        # Fast path: free slot available
-        await sem.acquire()
-        return sem
-    # Slow path: all slots taken, queue this message
-    try:
-        user_label = (update.effective_user.username or update.effective_user.id) if update.effective_user else "?"
-    except Exception:
-        user_label = "?"
-    print(
-        f"[check_user_slot] queueing message for user={user_label} chat={chat_id} "
-        f"(slots all in use); will process when a slot frees (timeout {MAX_QUEUE_WAIT_SEC}s)",
-        flush=True,
-    )
-    try:
-        await asyncio.wait_for(sem.acquire(), timeout=MAX_QUEUE_WAIT_SEC)
-        return sem
-    except asyncio.TimeoutError:
-        print(
-            f"[check_user_slot] queue timeout for user={user_label} chat={chat_id} "
-            f"after {MAX_QUEUE_WAIT_SEC}s; dropping message",
-            flush=True,
-        )
-        # v0.10.2 (Qwen wave-3): tell the user the bot is overloaded
-        # instead of silently dropping. The user would otherwise see
-        # "💭 думаю…" and then nothing for 5 minutes.
-        try:
-            await _reply(update, "⚠️ Бот перегружен, попробуйте позже.")
-        except Exception:
-            pass
-        return None
 
 # === main ===
 def _webhook_auto_register_sync(url: str, secret_token: str) -> None:
@@ -1209,9 +968,6 @@ def main():
         shutdown_event.set()
 
     async def _run():
-        # Late import: _selftest lives in bot.py; bot.py imports this
-        # module, so we resolve at call time to break the cycle.
-        from bot import _selftest
         # Install signal handlers now that we have a running loop.
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -1473,7 +1229,6 @@ def main():
 async def _register_bot_menu():
     # Late import: BOT_COMMANDS lives in bot.py; bot.py imports this
     # module, so we resolve at call time to break the cycle.
-    from bot import BOT_COMMANDS
     """Register the bot's command menu with Telegram via setMyCommands.
 
     Called once at startup. Failures are non-fatal — if the network
@@ -1748,9 +1503,6 @@ async def _handle_chat_member_update(upd, bot):
     # which would be visible to every existing group member in
     # the welcome message. _safe_sender_label() (T53 S1) strips
     # Cc/Cf/Cs/Co categories and redacts LLM-control keywords.
-    # It lives in handlers.py; we import it lazily to avoid
-    # an import cycle.
-    from handlers import _safe_sender_label
     if username:
         mention = f"@{_safe_sender_label(username)}"
     elif first:

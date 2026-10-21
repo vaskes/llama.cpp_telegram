@@ -289,7 +289,14 @@ def test_start_invokable_without_nameerror(monkeypatch, tmp_path):
     # ALLOWED_USER_IDS at import time, so by the time this test runs
     # the value is already baked in. This test is about the /start body,
     # not about who is allowed in, so authorise directly.
-    monkeypatch.setattr(dispatch_mod, "is_authorized", lambda u: True)
+    # TECH-DEBT #2: is_authorized moved from dispatch.py to access.py. Patching
+    # `dispatch.is_authorized` now only rebinds a re-exported name — the
+    # function that actually consults it is access.is_authorized, resolved in
+    # its own module globals at call time. The old patch point silently
+    # stopped working, which is exactly the kind of breakage a refactor has to
+    # hand to the tests rather than hope nobody noticed.
+    import access as access_mod
+    monkeypatch.setattr(access_mod, "is_authorized", lambda u: True)
 
     class _FakeChat:
         id = 286293081
