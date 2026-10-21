@@ -57,6 +57,7 @@ from rating import _execute_react_to_message
 from http_clients import _abortable_post, transcribe_voice  # noqa: F401
 from llm_messages import _tag_sender  # noqa: F401
 from llm_nonstream import non_stream_iteration
+from llm_sse import StreamAccumulator
 from llm_tools import _bash_command_tool_enabled, fetch_tools_from_llama  # noqa: F401
 
 
@@ -720,6 +721,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                             log.info(f"[call_llama] abort_event set pre-stream "
                                 f"iter={iteration}")
                             return None
+                        acc = StreamAccumulator()
                         async for line in r.aiter_lines():
                             # Between-chunk abort check. Fires as soon
                             # as a chunk arrives if the user clicked
@@ -729,6 +731,12 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                                 log.info(f"[call_llama] abort_event set between "
                                     f"chunks iter={iteration}")
                                 return None
+                            # SSE framing stays here, NOT in feed():
+                            # the accumulator parses JSON objects, and the
+                            # line protocol is the transport's business.
+                            # The first draft of this cut dropped all three
+                            # guards below, which sent the "[DONE]" sentinel
+                            # into json.loads on every single stream.
                             if not line or not line.startswith("data: "):
                                 continue
                             payload = line[6:]
@@ -738,28 +746,15 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                                 chunk = json.loads(payload)
                             except json.JSONDecodeError:
                                 continue
-                            for choice in chunk.get("choices", []):
-                                delta = choice.get("delta", {})
-                                rc = delta.get("reasoning_content")
-                                if rc:
-                                    reasoning_buf += rc
-                                    await push_thinking(accumulated_reasoning + reasoning_buf)
-                                cc = delta.get("content")
-                                if cc:
-                                    content_buf += cc
-                                for tc_delta in delta.get("tool_calls") or []:
-                                    idx = tc_delta.get("index", 0)
-                                    if idx not in tool_calls_buf:
-                                        tool_calls_buf[idx] = {"id": "", "name": "", "arguments": ""}
-                                    if tc_delta.get("id"):
-                                        tool_calls_buf[idx]["id"] = tc_delta["id"]
-                                    fn = tc_delta.get("function") or {}
-                                    if fn.get("name"):
-                                        tool_calls_buf[idx]["name"] += fn["name"]
-                                    if fn.get("arguments"):
-                                        tool_calls_buf[idx]["arguments"] += fn["arguments"]
-                                if choice.get("finish_reason"):
-                                    finish_reason = choice["finish_reason"]
+                            d = acc.feed(chunk)
+                            if d.grew_reasoning:
+                                await push_thinking(
+                                    accumulated_reasoning + acc.reasoning)
+                            reasoning_buf = acc.reasoning
+                            content_buf = acc.content
+                            tool_calls_buf = acc.tool_calls
+                            if d.finish_reason:
+                                finish_reason = d.finish_reason
                         # Final flush: ensure the latest reasoning text is on Telegram
                         if reasoning_buf:
                             await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
