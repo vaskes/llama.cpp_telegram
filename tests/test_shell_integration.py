@@ -37,7 +37,7 @@ def _run(coro):
 def test_sandbox_health():
     """A trivial command to confirm the sandbox is reachable."""
     r = _run(call_bash_command('echo sandbox-ok', session_id='pytest-health', chat_type='private'))
-    assert r['ok'], f'sandbox not reachable: {r.get('error')}'
+    assert r['ok'], f"sandbox not reachable: {r.get('error')}"
     assert 'sandbox-ok' in r['stdout']
     assert r['exit_code'] == 0
     assert r['duration_ms'] > 0
@@ -46,12 +46,12 @@ def test_pwd():
     r = _run(call_bash_command('pwd', session_id='pytest-pwd', chat_type='private'))
     assert r['ok']
     assert r['exit_code'] == 0
-    assert '/workspace' in r['stdout'], f'unexpected pwd: {r['stdout']!r}'
+    assert '/workspace' in r['stdout'], f"unexpected pwd: {r['stdout']!r}"
 
 def test_whoami():
     r = _run(call_bash_command('whoami', session_id='pytest-whoami', chat_type='private'))
     assert r['ok']
-    assert 'root' in r['stdout'], f'expected root, got {r['stdout']!r}'
+    assert 'root' in r['stdout'], f"expected root, got {r['stdout']!r}"
 
 def test_hostname():
     r = _run(call_bash_command('hostname', session_id='pytest-host', chat_type='private'))
@@ -63,7 +63,7 @@ def test_date():
     r = _run(call_bash_command('date -u +%Y', session_id='pytest-date', chat_type='private'))
     assert r['ok']
     m = re.search('^(\\d{4})$', r['stdout'], re.MULTILINE)
-    assert m, f'no 4-digit year in stdout: {r['stdout']!r}'
+    assert m, f"no 4-digit year in stdout: {r['stdout']!r}"
     year = m.group(1)
     assert year >= '2025', f'year is in the past: {year!r}'
 
@@ -80,7 +80,7 @@ def test_uname():
 def test_id():
     r = _run(call_bash_command('id', session_id='pytest-id', chat_type='private'))
     assert r['ok']
-    assert 'uid=0' in r['stdout'], f'expected root uid, got {r['stdout']!r}'
+    assert 'uid=0' in r['stdout'], f"expected root uid, got {r['stdout']!r}"
 
 def test_which_python3():
     r = _run(call_bash_command('which python3', session_id='pytest-which', chat_type='private'))
@@ -97,7 +97,7 @@ def test_cat_etc_os_release():
     r = _run(call_bash_command('cat /etc/os-release | head -3', session_id='pytest-os', chat_type='private'))
     assert r['ok']
     body = r['stdout'].lower()
-    assert 'ubuntu' in body or 'debian' in body, f'expected Ubuntu/Debian, got {r['stdout']!r}'
+    assert 'ubuntu' in body or 'debian' in body, f"expected Ubuntu/Debian, got {r['stdout']!r}"
 
 def test_ls_tmp():
     """ls /tmp is non-destructive (sandbox does not have user
@@ -117,7 +117,7 @@ def test_session_persistence():
     assert '/opt' in r1['stdout']
     r2 = _run(call_bash_command('pwd', session_id=sid, chat_type='private'))
     assert r2['ok']
-    assert '/opt' in r2['stdout'], f'cwd lost: {r2['stdout']!r}'
+    assert '/opt' in r2['stdout'], f"cwd lost: {r2['stdout']!r}"
 
 def test_session_isolation():
     """Two different session_ids must NOT share state.
@@ -130,7 +130,7 @@ def test_session_isolation():
     assert '/opt' in r1['stdout']
     import re
     sid_b_prompts = re.findall(':(/[^:]+)#', r2['stdout'])
-    assert all(('/opt' not in p for p in sid_b_prompts)), f'sid_b leaked from sid_a: prompts={sid_b_prompts} stdout={r2['stdout']!r}'
+    assert all(('/opt' not in p for p in sid_b_prompts)), f"sid_b leaked from sid_a: prompts={sid_b_prompts} stdout={r2['stdout']!r}"
 
 def test_command_failure_non_zero_exit():
     """A command that exits non-zero should still return ok=True
@@ -138,7 +138,7 @@ def test_command_failure_non_zero_exit():
     decide to retry or report the failure to the user."""
     r = _run(call_bash_command('false', session_id='pytest-fail', chat_type='private'))
     assert r['ok'], 'false should be ok=True (HTTP succeeded)'
-    assert r['exit_code'] == 1, f'expected exit 1, got {r['exit_code']}'
+    assert r['exit_code'] == 1, f"expected exit 1, got {r['exit_code']}"
 
 def test_stderr_capture():
     """The sandbox-agent captures the full tmux pane and merges

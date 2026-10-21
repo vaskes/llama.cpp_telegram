@@ -953,7 +953,18 @@ def main():
         asyncio.run(_webhook_run())
         return
 
-    TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+    # W6-H2 follow-up. This used to be:
+    #     TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+    # which silently discarded the env-driven value config.py:23
+    # builds for smoke testing -- the whole point of the v0.10.2
+    # override. The module-level import at line 59 already binds
+    # TELEGRAM_API correctly; the local assignment only shadowed it.
+    # Webhook mode returns above and never reached the old line, which
+    # is why the drift went unnoticed.
+    assert TELEGRAM_API, (
+        "TELEGRAM_API resolved to empty; check the env override in "
+        "config.py and BOT_TOKEN"
+    )
     print('[main] polling mode: long-poll getUpdates', flush=True)
 
     # Graceful shutdown: SIGINT (Ctrl+C) and SIGTERM (docker stop / systemd

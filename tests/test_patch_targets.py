@@ -49,13 +49,27 @@ def _is_patch_call(node):
     return False
 
 
+# W6-H3: filled by patch_targets() when a file will not parse. Deliberately
+# module-level and deliberately never cleared -- a scan that silently drops
+# unreadable files is the failure mode this replaces.
+UNPARSEABLE: list = []
+
+
 def patch_targets(path):
     """Yield (module, attribute, lineno) for every string patch target.
 
     Covers both `patch("mod.attr")` / `monkeypatch.setattr("mod.attr", ...)`
     and `patch.object(mod, "attr")` where the module is given by name.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        # W6-H3. One unparseable file used to take the entire audit down
+        # before it checked anything. Degrade to a reported skip -- the
+        # caller surfaces which file was unreadable and the rest of the
+        # scan still runs.
+        UNPARSEABLE.append((path.name, exc.lineno, exc.msg))
+        return
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not _is_patch_call(node):
             continue
