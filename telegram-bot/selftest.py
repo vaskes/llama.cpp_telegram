@@ -1735,17 +1735,19 @@ async def _selftest():
             # here without re-importing (a local `import asyncio` would
             # shadow the module reference for the whole function and
             # break every earlier `asyncio.X(...)` call in _selftest).
-            import call_llama as _cl
-            donsetch_call = _cl.donsetch_call
-            _sid = _cl._donsetch_session_id
+            import donsetch as _ds
+            donsetch_call = _ds.donsetch_call
+            _sid = _ds._donsetch_session_id
             # force re-init in case the session was set by a prior test.
-            # The write has to land on call_llama: it rebinds that global
-            # inside its own accessors, so a patch anywhere else -- bot
-            # included -- would be read by nobody. The previous line bound
-            # `_b_module` inside a try/except, so the NameError from the
-            # assignment was swallowed and this whole test did nothing.
-            _orig_sid = _cl._donsetch_session_id
-            _cl._donsetch_session_id = None
+            #
+            # The write has to land on `donsetch`, the module that OWNS the
+            # global. TECH-DEBT #3 Block B1 moved it here from call_llama;
+            # before that this patched `bot`, and before that it bound
+            # `_b_module` inside a try/except so the NameError was
+            # swallowed and this entire test did nothing. Two no-ops in a
+            # row in the same three lines, both invisible.
+            _orig_sid = _ds._donsetch_session_id
+            _ds._donsetch_session_id = None
 
             async def _rt():
                 # web_search: human-readable result, no [meta] envelope

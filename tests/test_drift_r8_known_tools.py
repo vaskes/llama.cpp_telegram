@@ -67,6 +67,30 @@ def _extract_dispatch_names(src: str) -> set:
     return names
 
 
+
+# Every telegram-bot module that could own a tool registry. Kept as a
+# glob rather than a list so a new module is picked up without editing
+# this test -- the failure mode being guarded against is "the name got
+# registered somewhere and nobody wired the dispatch".
+TOOL_MODULES = sorted((CALL_LLAMA_PY.parent).glob("*.py"))
+
+
+def _modules_with_tool_registries():
+    """Modules that define an UPPER_CASE registry dict.
+
+    call_llama is always included even if it no longer matches, so that
+    a rename cannot quietly shrink the search to nothing and make the
+    check pass for the wrong reason.
+    """
+    found = [CALL_LLAMA_PY]
+    pattern = re.compile(r"^[A-Z_]{3,}\s*(?::\s*dict[^=]*)?=\s*\{", re.MULTILINE)
+    for path in TOOL_MODULES:
+        if path in found or path.name == "tool_isolation.py":
+            continue
+        if pattern.search(path.read_text()):
+            found.append(path)
+    return found
+
 def test_every_known_tool_name_has_dispatch_site():
     """T61 #R8: every name in KNOWN_TOOL_NAMES must have at
     least one dispatch site in call_llama.py.
@@ -78,13 +102,22 @@ def test_every_known_tool_name_has_dispatch_site():
         "Either the file was refactored or this tripwire is broken."
     )
 
-    call_llama_src = CALL_LLAMA_PY.read_text()
-    dispatched_names = _extract_dispatch_names(call_llama_src)
+    # The dispatch sites live wherever the tool registry lives. Block B1
+    # of TECH-DEBT #3 moved DONSETCH_TOOLS into donsetch.py; call_llama
+    # imports it and dispatches through the imported dict, so reading
+    # only call_llama.py found four tools "missing" that were in fact
+    # dispatched.
+    #
+    # Followed via import rather than whitelisted: a whitelist of the four
+    # names would leave the next tool added to the new module uncovered.
+    dispatched_names = set()
+    for module in _modules_with_tool_registries():
+        dispatched_names |= _extract_dispatch_names(module.read_text())
 
     missing = known_names - dispatched_names
     assert not missing, (
-        f"KNOWN_TOOL_NAMES has tool names with no dispatch site "
-        f"in call_llama.py: {sorted(missing)}. Wave-trap pattern "
+        f"KNOWN_TOOL_NAMES has tool names with no dispatch site: "
+        f"{sorted(missing)}. Wave-trap pattern "
         f"predicted: a future commit adds a tool to KNOWN_TOOL_NAMES "
         f"but forgets the dispatch branch. The LLM will emit a "
         f"tool_call with this name; validate_tool_calls accepts it; "
