@@ -40,8 +40,12 @@ mutation-proven harness:
 | D2 | `2335551` | `llm_toolcalls.py` | 36 + 7 |
 
 ¹ D1b was `824873b`, amended to `2335551` to fix a commit message the
-shell had eaten a phrase out of. The lesson is in the "Why not now" for
-item 9: never put backticks in a `-m` message sent through ssh.
+shell had eaten a phrase out of: backticks inside a `-m` message sent
+over ssh run as command substitution, and the sentence between them was
+replaced by the shell's error output. Write messages to a file and use
+`-F`. An earlier draft of this footnote pointed at a ninth ledger entry
+for that lesson. There are eight. tests/test_debt_refs.py now checks
+that every numbered reference in this directory resolves.
 
 The loop is 605 lines and `call_llama` is 1043. Test count 789 → 1006
 across the C and D blocks, on 3.11 and 3.12.
