@@ -114,6 +114,7 @@
 #     operator has not yet shared the model card with this code,
 #     so "track 2 stress tests" are still pending.
 
+import sys
 import os
 
 
@@ -239,7 +240,7 @@ def _env_or(env_name, profile_value):
             print(
                 f"[limits] WARNING: {env_name}={raw!r} is not a valid int; "
                 f"using profile default {profile_value!r}",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
             return profile_value
     if isinstance(profile_value, float):
@@ -249,7 +250,7 @@ def _env_or(env_name, profile_value):
             print(
                 f"[limits] WARNING: {env_name}={raw!r} is not a valid float; "
                 f"using profile default {profile_value!r}",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
             return profile_value
     return raw

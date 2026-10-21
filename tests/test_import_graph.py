@@ -7,6 +7,7 @@ catches the shape somebody already wrote is theatre.
 Each test below is paired with a mutation check, so "it passes" means the
 detector fires, not that the file happens to be clean.
 """
+import ast
 import sys
 import textwrap
 from pathlib import Path
@@ -179,4 +180,145 @@ def test_dynamic_imports_are_surfaced_not_ignored(tmp_path):
     assert dynamic.get("handlers"), (
         "dynamic imports were silently dropped; the tool now claims to see "
         "edges it cannot see"
+    )
+
+
+def test_no_dunder_import_anywhere():
+    """__import__ is not lazy loading, it is a blind spot.
+
+    There were ten of them. `__import__("os")` where os is stdlib was not
+    avoiding anything -- it was left over from a cycle fixed elsewhere and
+    never cleaned up here. The cost was concrete rather than theoretical:
+    the import graph above cannot see a string edge, so `test_dynamic_imports_
+    are_surfaced_not_ignored` existed to paper over a hole we were choosing
+    to keep.
+
+    If a genuine dynamic import is ever needed, it should go through
+    importlib.import_module with the name declared somewhere the graph
+    checker can see.
+    """
+    offenders = []
+    for path in BOT_DIR.rglob("*.py"):
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            if line.lstrip().startswith("#"):
+                continue
+            if "__import__(" in line:
+                offenders.append(f"{path.relative_to(BOT_DIR)}:{lineno}")
+    assert not offenders, (
+        f"__import__ reintroduced at {offenders}. A string import is "
+        f"invisible to the dependency graph, so the edge cannot be checked "
+        f"for cycles. Use importlib.import_module and declare the target."
+    )
+
+
+def _late_edges() -> set:
+    """(importer, imported) pairs resolved from inside a function body."""
+    out: set = set()
+    known = ig.module_names()
+    for path in ig.BOT_DIR.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for sub in ast.walk(node):
+                targets = []
+                if isinstance(sub, ast.Import):
+                    targets = [a.name for a in sub.names]
+                elif isinstance(sub, ast.ImportFrom) and sub.level == 0 \
+                        and sub.module:
+                    targets = [sub.module]
+                for t in targets:
+                    top = t.split(".")[0]
+                    if top in known:
+                        out.add((path.stem, top))
+    return out
+
+
+def test_every_local_module_is_referenced_somewhere():
+    """No orphaned module.
+
+    The first version required a MODULE-LEVEL edge and reported summarize.py
+    as unreachable. It is imported lazily from persistence.py. That import
+    exists so a bot running CONTEXT_STRATEGY=window does not pull in the LLM
+    summarisation path at startup, which is the right reason.
+
+    The second version had the opposite bug: it added the late edges'
+    IMPORTERS to the reachable set but not their TARGETS, so summarize stayed
+    unreachable while persistence -- which references it -- was counted.
+
+    A module referenced by neither kind of edge is genuinely orphaned.
+    """
+    edges, _ = ig.build_graph()
+    late = _late_edges()
+
+    referenced = set(edges)
+    for dsts in edges.values():
+        referenced.update(dsts)
+    for src, dst in late:
+        referenced.add(src)
+        referenced.add(dst)
+
+    orphans = sorted(ig.module_names() - referenced)
+    assert not orphans, (
+        f"modules no import references at all: {orphans}. Dead code, or a "
+        f"file nobody remembered shipping."
+    )
+
+
+# Measured, not imagined. Two strongly connected components exist once the
+# nineteen late imports are counted alongside the module-level edges. They are
+# real runtime cycles that the module-level check cannot see, because each
+# edge is legal precisely because it was deferred.
+#
+#   config <-> state
+#   access -> bot -> call_llama -> dispatch -> handlers -> rating -> bot
+#          (with selftest and webhook hanging off the same component)
+#
+# Not fixed here. Breaking them means re-deriving what state.py and config.py
+# actually own, which is TECH-DEBT and not a late-night edit. What this test
+# buys is that the list cannot grow: a new lazy import that closes a new
+# cycle fails CI, and an existing one cannot be quietly forgotten.
+#
+# The first version of this asserted the list was empty, which is the same
+# mistake as asserting a cycle finder had no cycles -- the test that cannot
+# fail is not a test.
+KNOWN_RUNTIME_CYCLES = [
+    ["access", "bot", "call_llama", "dispatch", "handlers", "rating",
+     "selftest", "webhook"],
+    ["config", "state"],
+]
+
+
+def test_late_imports_do_not_add_new_runtime_cycles():
+    """A lazy import is fine. A lazy import that closes a cycle is not.
+
+    Module-level cycles are already forbidden above. This catches the subtler
+    shape: an edge that is legal precisely because it was deferred, so it
+    escapes the module-level check while two modules still need each other at
+    runtime. "An import deferred to avoid a cycle has not avoided it."
+
+    The baseline is the measured set, so this fails on a NEW cycle and on any
+    change to an existing one -- it does not pretend the two current cycles
+    are fine, it says they are known and priced.
+    """
+    edges, _ = ig.build_graph()
+    late = _late_edges()
+
+    combined = {k: set(v) for k, v in edges.items()}
+    for src, dst in late:
+        combined.setdefault(src, set()).add(dst)
+
+    from import_graph import tarjan_scc
+    found = sorted(sorted(c) for c in tarjan_scc(ig.module_names(), combined)
+                   if len(c) > 1)
+
+    assert found == KNOWN_RUNTIME_CYCLES, (
+        "the set of runtime import cycles changed.\n"
+        f"  now:  {found}\n"
+        f"  base: {KNOWN_RUNTIME_CYCLES}\n"
+        "A new component is a new cycle. A missing one means an edge was "
+        "removed -- if that was deliberate, update this list in the same "
+        "commit with a line saying why."
     )

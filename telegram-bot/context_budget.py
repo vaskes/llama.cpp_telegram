@@ -65,6 +65,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Callable, Iterable, Sequence
 
@@ -89,13 +90,13 @@ DEFAULT_REMEMBER_DAYS = 7
 #: NOTE: this is the LENGTH of the window, not "how many days ago to look".
 #: The anchor is derived from it once at start. See the module docstring.
 REMEMBER_DAYS = int(
-    __import__("os").environ.get("BOT_REMEMBER_DAYS", str(DEFAULT_REMEMBER_DAYS))
+    os.environ.get("BOT_REMEMBER_DAYS", str(DEFAULT_REMEMBER_DAYS))
 )
 MAX_MESSAGES = int(
-    __import__("os").environ.get("CONTEXT_MAX_MESSAGES", str(DEFAULT_MAX_MESSAGES))
+    os.environ.get("CONTEXT_MAX_MESSAGES", str(DEFAULT_MAX_MESSAGES))
 )
 STRATEGY = (
-    __import__("os").environ.get("CONTEXT_STRATEGY", "window").strip().lower()
+    os.environ.get("CONTEXT_STRATEGY", "window").strip().lower()
 )
 
 VALID_STRATEGIES = ("window", "summarize")
@@ -122,7 +123,7 @@ DEFAULT_REANCHOR_MODE = "process+engine"
 
 #: Local time of day for the daily re-anchor, "HH:MM". 24h format.
 REANCHOR_AT = (
-    __import__("os").environ.get("BOT_REANCHOR_AT", "05:00").strip()
+    os.environ.get("BOT_REANCHOR_AT", "05:00").strip()
 )
 
 #: Arbitrary shell command run after a `process+engine` re-anchor, to drop the
@@ -135,11 +136,11 @@ REANCHOR_AT = (
 #: set of ways to restart something is open-ended, and a typed enum would
 #: need a new case for every host manager, ssh wrapper and API in the wild.
 ENGINE_RESET_CMD = (
-    __import__("os").environ.get("BOT_ENGINE_RESET_CMD", "").strip()
+    os.environ.get("BOT_ENGINE_RESET_CMD", "").strip()
 )
 
 REANCHOR_MODE = (
-    __import__("os").environ.get("BOT_REANCHOR_MODE", DEFAULT_REANCHOR_MODE)
+    os.environ.get("BOT_REANCHOR_MODE", DEFAULT_REANCHOR_MODE)
     .strip().lower()
 )
 if REANCHOR_MODE not in REANCHOR_MODES:

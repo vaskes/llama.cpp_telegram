@@ -7,6 +7,7 @@
 # llama-server or donsetch-http lives here. handlers.py calls
 # call_llama() and persists results through persistence.persist().
 
+import os
 import asyncio
 import base64
 import copy
@@ -17,10 +18,11 @@ from typing import Any
 
 import httpx
 
-# KNOWN_TOOL_NAMES is used bare on the unknown-tool paths below, while
-# line ~1252 reaches the same value through __import__(). Only one of
-# the two was imported, so the branches that were supposed to name the
-# known tools raised NameError instead of the message.
+# KNOWN_TOOL_NAMES is used bare on the unknown-tool paths below. It was
+# reached through a string import on one path and a bare name on two
+# others, and only the import of its two siblings existed -- so the
+# branches meant to name the known tools raised NameError instead of
+# producing the message. One import, one name, three call sites.
 from tool_isolation import (KNOWN_TOOL_NAMES, UnknownToolNameError,
                                validate_tool_calls)
 # === T39: bash_command availability helper ===
@@ -1254,7 +1256,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 # T38.5: streaming tool_calls_buf[name] comes from llama-server's
                 # stream chunks. Reject any unknown name BEFORE building the
                 # tool_calls list that we will execute or send back to the model.
-                if tc["name"] not in __import__("tool_isolation").KNOWN_TOOL_NAMES:
+                if tc["name"] not in KNOWN_TOOL_NAMES:
                     # T43: soft-reject (same as site 1, applied to the
                     # streaming chunk that just arrived). We skip this
                     # tool call but keep the iteration alive by
