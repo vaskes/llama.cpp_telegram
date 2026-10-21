@@ -68,7 +68,11 @@ def parse_tool_args(fn_name: str, raw_args) -> Parsed:
     Never raises for malformed input: an unparseable string is a
     rejection, not an exception. The caller appends `message` as the
     tool result and asks the model to retry, which costs one iteration
-    and prevents the runaway loop.
+    prevents the runaway loop.
+
+    `ArgsOk.args` is always a dict on return. JSON that parses to a list
+    or a scalar is normalised to `{}` rather than rejected -- see step 4.
+    Handlers may rely on that.
     """
     if not isinstance(raw_args, str) or not raw_args:
         # Absent or non-string arguments are an empty call, not a
@@ -108,5 +112,23 @@ def parse_tool_args(fn_name: str, raw_args) -> Parsed:
             f"parsed to empty for raw={raw_args[:120]!r}",
             f'[bot: your tool call for {fn_name} parsed to an empty object. '
             f'Please re-emit with actual parameters.]')
+
+    # 4. Parsed, but not to an object -- a list, a string, a number.
+    #    Every tool declares an object schema, so nothing can use one,
+    #    and bash_command used to raise AttributeError on it: the turn
+    #    died on a model mistake.
+    #
+    #    Normalised rather than rejected. Rejecting was the first
+    #    attempt, and tests/test_d1_toolargs.py says why that is wrong
+    #    for the empty shapes: the model re-emits the same thing and the
+    #    loop never terminates. An empty object is what a zero-argument
+    #    tool means anyway, so that is what it gets.
+    #
+    #    Placed after every other check on purpose. Normalising earlier
+    #    turns a truthy non-dict falsy, and the parsed-empty check then
+    #    rejects it -- which moves the accept/reject boundary, and that
+    #    boundary is D1's decision, not this one's.
+    if not isinstance(args, dict):
+        args = {}
 
     return ArgsOk(args)

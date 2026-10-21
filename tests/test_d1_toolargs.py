@@ -37,8 +37,6 @@ pytestmark = pytest.mark.tech_debt(
 @pytest.mark.parametrize("raw,expected", [
     ('{"city": "Moscow"}', {"city": "Moscow"}),
     ("{}", {}),
-    ("null", None),
-    ("[]", []),
     ('  {"a": 1}  ', {"a": 1}),           # whitespace around a real call
     ('{"n": null}', {"n": None}),          # a null VALUE is not empty
     ('{"n": 0}', {"n": 0}),                # 0 is falsy but present
@@ -49,6 +47,22 @@ def test_well_formed_calls_are_accepted(raw, expected):
     assert isinstance(got, ArgsOk)
     assert got.args == expected
 
+
+# Moved out of test_well_formed_calls_are_accepted in Block D4. Still
+# ACCEPTED -- that is the decision being protected -- but normalised
+# to an empty object now. See llm_toolargs.py step 2b.
+@pytest.mark.parametrize("raw", ["null", "[]", '"text"', "42", "3.5", "true"])
+def test_non_object_arguments_are_accepted_and_normalised(raw):
+    """Rejecting these was the first attempt and it was wrong.
+
+    The model would re-emit the same empty shape and the loop would
+    never terminate, which is why they are accepted at all. An empty
+    object is what a zero-argument tool means, so that is what it
+    gets -- and no handler ever sees a list.
+    """
+    got = parse_tool_args("f", raw)
+    assert isinstance(got, ArgsOk), f"{raw!r} was rejected, it must not be"
+    assert got.args == {}
 
 @pytest.mark.parametrize("raw", ["", None, 42, {}, [], b"{}"])
 def test_absent_or_non_string_arguments_are_an_empty_call(raw):
