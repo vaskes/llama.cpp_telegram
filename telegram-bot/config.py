@@ -16,13 +16,29 @@ if not BOT_TOKEN:
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "")
 # v0.10.2: TELEGRAM_API is env-driven to support smoke testing with a
 # local mock Telegram server. Default is the real Telegram API.
-# Format: full URL including the /bot<TOKEN> suffix, e.g.
-#   https://api.telegram.org/bot<TOKEN>
-# or for tests:
-#   http://127.0.0.1:18090/bot<TOKEN>
+#
+# Format: API root WITH the trailing "/bot" suffix. PTB 21's
+# Application.builder().base_url() treats the value as a prefix and
+# appends "/<TOKEN>/<method>", e.g. /bot123:ABC/getMe. The colon in
+# the token is parsed as a port separator unless the path already
+# starts with /bot<TOKEN> -- the trailing "/bot" on the prefix is
+# what keeps the token in the path. This is also PTB's native
+# default (see BaseRequest).
+#
+# Examples:
+#   real Telegram:        https://api.telegram.org/bot
+#   local mock (smoke):   http://127.0.0.1:18090/bot
+#
+# History: an earlier version of this default used
+# f"https://api.telegram.org/bot{BOT_TOKEN}" (the full URL with the
+# token baked in). Once dispatch.py added `.base_url(TELEGRAM_API)`
+# in 88a119b, that baked token got doubled into the URL path
+# (`/bot<TOKEN>/bot<TOKEN>/<method>`) and Telegram replied with
+# InvalidToken. The .env override that ships in this commit was
+# the empirical workaround; this commit is the source fix.
 TELEGRAM_API = os.environ.get(
     "TELEGRAM_API",
-    f"https://api.telegram.org/bot{BOT_TOKEN}" if BOT_TOKEN else "",
+    "https://api.telegram.org/bot" if BOT_TOKEN else "",
 )
 
 # === LLM endpoints ===
