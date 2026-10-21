@@ -43,7 +43,10 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     rows.
     """
     msg = {"role": role, "content": content}
-    await asyncio.to_thread(
+    # Returns the new row's id (added 2026-10-22). Turn needs it: a
+    # rollback that deletes "the last user message in this thread"
+    # deletes the wrong one whenever two people share a topic.
+    return await asyncio.to_thread(
         storage.get_store().add_message, chat_id, thread_id, role,
         json.dumps(msg, ensure_ascii=False), None, sender_name,
     )

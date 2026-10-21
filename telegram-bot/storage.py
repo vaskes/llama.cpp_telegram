@@ -668,6 +668,33 @@ class Storage:
         c.commit()
         return cur.rowcount > 0
 
+    def delete_message_ids(self, chat_id: int, thread_id: str,
+                          ids: list[int]) -> int:
+        """Delete exactly these rows, and only if they belong to the thread.
+
+        Added 2026-10-22. `delete_last_user_message` removes "the most
+        recent user row in this thread", which is the wrong row whenever
+        two turns share a topic: in a group the semaphores are per
+        (chat, user), so person A and person B can persist in the same
+        thread, and A's rollback then deletes B's message.
+
+        The chat_id/thread_id predicate is kept even though the ids are
+        already specific. It costs one comparison and means a bug that
+        hands us an id from another thread deletes nothing rather than
+        reaching across.
+        """
+        if not ids:
+            return 0
+        c = self._conn()
+        marks = ",".join("?" * len(ids))
+        cur = c.execute(
+            f"DELETE FROM messages WHERE chat_id = ? AND thread_id = ? "
+            f"AND id IN ({marks})",
+            (chat_id, thread_id, *ids),
+        )
+        c.commit()
+        return cur.rowcount
+
 
 # === Module-level singleton instance ===
 # v0.5.2 bot.py did `store = storage.Storage(DB_PATH)` at module

@@ -498,6 +498,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # no abort_event, and the next text message answered about the
         # (now-orphaned) image that was already persisted to history.
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+        # 2026-10-22: _reply returns None after three TimedOuts (T48).
+        # The attribute was read on the next line in all four handlers and
+        # raised AttributeError. Guard at the read, not in the finally --
+        # a fix in cleanup is not a guard.
+        if thinking is None:
+            log.warning(f"[handle_photo] could not send the thinking message after "
+                        f"three timeouts; giving up on this update")
+            return
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
         thread_id = thread_id  # already resolved by _route_to_thread
@@ -601,7 +609,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
                 return
-            if not retry_response.startswith('[model returned an empty response.'):
+            # Same unwrap the primary path does (handlers.py:538).
+            # Added 2026-10-22: the retry did not have it, so every
+            # reachable retry -- i.e. every empty-response retry, which is
+            # the only reason this code exists -- died on
+            # AttributeError: 'dict' object has no attribute 'startswith'.
+            # The executed-tools preamble is reproduced too; dropping it
+            # would answer without the tool trace, which fails quietly.
+            if isinstance(retry_response, dict):
+                _retry_text = retry_response.get("text") or ""
+                _retry_exec = retry_response.get("executed_tools") or []
+                if _retry_exec:
+                    _retry_hist = _format_executed_tools(_retry_exec)
+                    if _retry_hist:
+                        _retry_text = _retry_hist + "\n\n" + _retry_text
+                retry_response = _retry_text
+            if not (isinstance(retry_response, str)
+                    and retry_response.startswith(
+                        '[model returned an empty response.')):
                 bot_response = retry_response
                 log.info(f"[handle_photo] retry succeeded")
             else:
@@ -799,6 +824,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # click during the LLM call can roll the transcript back. See
         # handle_photo for the same pattern.
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+        # 2026-10-22: _reply returns None after three TimedOuts (T48).
+        # The attribute was read on the next line in all four handlers and
+        # raised AttributeError. Guard at the read, not in the finally --
+        # a fix in cleanup is not a guard.
+        if thinking is None:
+            log.warning(f"[handle_voice] could not send the thinking message after "
+                        f"three timeouts; giving up on this update")
+            return
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
         await turn.persist(transcript, role='user', sender_name=sender_name)
@@ -922,11 +955,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         turn = Turn(chat_id, thread_id, "handle_document")
         persisted = False  # mirrors turn.persisted
     except BaseException:
+        raise
+    finally:
+        # 2026-10-22: one release for every way out of this window,
+        # including the early returns that used to skip it (a leaked slot
+        # locks a user out after _PER_USER_SEMAPHORE_LIMIT failures).
+        # The main try below therefore must not release again.
         try:
             sem.release()
         except Exception:
             pass
-        raise
 
     try:
         ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
@@ -941,6 +979,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # v0.9.2: persist AFTER thinking+abort_event are wired so a
         # Stop click during the LLM call can roll the document back.
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+        # 2026-10-22: _reply returns None after three TimedOuts (T48).
+        # The attribute was read on the next line in all four handlers and
+        # raised AttributeError. Guard at the read, not in the finally --
+        # a fix in cleanup is not a guard.
+        if thinking is None:
+            log.warning(f"[handle_document] could not send the thinking message after "
+                        f"three timeouts; giving up on this update")
+            return
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
         await turn.persist(user_content, role='user', sender_name=sender_name)
@@ -1008,7 +1054,24 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
                 return
-            if not retry_response.startswith('[model returned an empty response.'):
+            # Same unwrap the primary path does (handlers.py:538).
+            # Added 2026-10-22: the retry did not have it, so every
+            # reachable retry -- i.e. every empty-response retry, which is
+            # the only reason this code exists -- died on
+            # AttributeError: 'dict' object has no attribute 'startswith'.
+            # The executed-tools preamble is reproduced too; dropping it
+            # would answer without the tool trace, which fails quietly.
+            if isinstance(retry_response, dict):
+                _retry_text = retry_response.get("text") or ""
+                _retry_exec = retry_response.get("executed_tools") or []
+                if _retry_exec:
+                    _retry_hist = _format_executed_tools(_retry_exec)
+                    if _retry_hist:
+                        _retry_text = _retry_hist + "\n\n" + _retry_text
+                retry_response = _retry_text
+            if not (isinstance(retry_response, str)
+                    and retry_response.startswith(
+                        '[model returned an empty response.')):
                 bot_response = retry_response
                 log.info(f"[handle_document] retry succeeded")
             else:
@@ -1071,10 +1134,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _abort_events.pop((chat_id, thinking.message_id), None)
             except Exception:
                 pass
-        try:
-            sem.release()
-        except Exception:
-            pass
 
 # === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1169,6 +1228,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # observable here. If we created a fresh event now, the
         # burst-set event would be orphaned and the LLM call
         # would proceed to a half-answer.
+        # 2026-10-22: same None guard as the other three handlers.
+        if thinking is None:
+            log.warning("[handle_text] could not send the thinking message "
+                        "after three timeouts; giving up on this update")
+            return
         abort_event = early_event
         _register_abort_event(chat_id, thinking.message_id, abort_event)
         await turn.persist(user_message, role='user', sender_name=sender_name)
@@ -1195,11 +1259,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _abort_events.pop((chat_id, thinking.message_id), None)
             except Exception:
                 pass
+        raise
+    finally:
+        # 2026-10-22: one release for every way out of this window,
+        # including the early returns that used to skip it (a leaked slot
+        # locks a user out after _PER_USER_SEMAPHORE_LIMIT failures).
+        # The main try below therefore must not release again.
         try:
             sem.release()
         except Exception:
             pass
-        raise
 
     try:
         rating_active = _is_rating_active(update)
@@ -1264,7 +1333,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
                 return
-            if not retry_response.startswith('[model returned an empty response.'):
+            # Same unwrap the primary path does (handlers.py:538).
+            # Added 2026-10-22: the retry did not have it, so every
+            # reachable retry -- i.e. every empty-response retry, which is
+            # the only reason this code exists -- died on
+            # AttributeError: 'dict' object has no attribute 'startswith'.
+            # The executed-tools preamble is reproduced too; dropping it
+            # would answer without the tool trace, which fails quietly.
+            if isinstance(retry_response, dict):
+                _retry_text = retry_response.get("text") or ""
+                _retry_exec = retry_response.get("executed_tools") or []
+                if _retry_exec:
+                    _retry_hist = _format_executed_tools(_retry_exec)
+                    if _retry_hist:
+                        _retry_text = _retry_hist + "\n\n" + _retry_text
+                retry_response = _retry_text
+            if not (isinstance(retry_response, str)
+                    and retry_response.startswith(
+                        '[model returned an empty response.')):
                 bot_response = retry_response
                 log.info(f"[handle_text] retry succeeded")
             else:
@@ -1337,10 +1423,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _abort_events.pop((chat_id, thinking.message_id), None)
             except Exception:
                 pass
-        try:
-            sem.release()
-        except Exception:
-            pass
 
 
 

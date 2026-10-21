@@ -124,18 +124,38 @@ async def test_double_rollback_does_not_delete_twice(clean_store):
 
 
 @pytest.mark.asyncio
-async def test_rollback_failure_is_loud_not_silent(clean_store, capsys):
+@pytest.mark.parametrize("method,no_row_id",
+                         [("delete_message_ids", False),
+                          ("delete_last_user_message", True)])
+async def test_rollback_failure_is_loud_not_silent(clean_store, capsys,
+                                                   method, no_row_id):
     """If the DB refuses the delete there is no second undo. The only thing
-    left is to be visible about it."""
+    left is to be visible about it.
+
+    Both delete paths, since 2026-10-22: with a row id rollback calls
+    delete_message_ids, without one it falls back to
+    delete_last_user_message. Each case forces its own path -- a stub
+    aimed at a call that does not happen is how this test went green on
+    a rollback that silently did the wrong thing.
+    """
     from turn import Turn
     _seed(clean_store, n=3)
 
     def _explode(*a, **kw):
         raise RuntimeError("database is locked")
 
-    clean_store.delete_last_user_message = _explode
+    setattr(clean_store, method, _explode)
+    _real_add = clean_store.add_message
+    if no_row_id:
+        # Simulate a persist that never handed back an id -- the only way
+        # the fallback is reachable, and the case where an orphan row is
+        # most likely.
+        clean_store.add_message = lambda *a, **kw: None
     t = Turn(1, "main", "handle_text")
     await t.persist("doomed", sender_name="v")
+    if no_row_id:
+        clean_store.add_message = _real_add
+        assert t._row_ids == [], "the fallback case must have captured no ids"
     ok = await t.rollback("db locked")
     assert ok is False
     out = capsys.readouterr().out

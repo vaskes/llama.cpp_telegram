@@ -59,6 +59,9 @@ class Turn:
         #: used to write more than one, and rolling back "the" message without
         #: saying which one is how orphan rows happen.
         self.rows = 0
+        #: Row ids this turn actually wrote, so a rollback deletes its own
+        #: rows rather than "whatever is newest in the thread". 2026-10-22.
+        self._row_ids: list[int] = []
 
     async def persist(self, content, *, role: str = "user",
                       sender_name: str | None = None) -> None:
@@ -71,9 +74,11 @@ class Turn:
         """
         from persistence import persist as _persist
         self.persisted = True
-        await _persist(self.chat_id, self.thread_id, role, content,
-                       sender_name=sender_name)
+        row_id = await _persist(self.chat_id, self.thread_id, role, content,
+                                sender_name=sender_name)
         self.rows += 1
+        if row_id is not None:
+            self._row_ids.append(int(row_id))
 
     async def rollback(self, reason: str) -> bool:
         """Undo the persisted rows. Never raises.
@@ -83,11 +88,21 @@ class Turn:
         """
         if not self.persisted or self.rows == 0:
             return False
+        store = self._store or storage.get_store()
         try:
-            await asyncio.to_thread(
-                (self._store or storage.get_store()).delete_last_user_message,
-                self.chat_id, self.thread_id,
-            )
+            if self._row_ids:
+                # 2026-10-22: delete exactly what this turn wrote. See
+                # Turn.persist. The fallback below is only for a persist
+                # that never returned an id.
+                deleted = await asyncio.to_thread(
+                    store.delete_message_ids, self.chat_id,
+                    self.thread_id, self._row_ids,
+                )
+            else:
+                deleted = await asyncio.to_thread(
+                    store.delete_last_user_message, self.chat_id,
+                    self.thread_id,
+                )
         except Exception as rb:
             # The DB refused. There is no second undo, so the only thing left
             # is to make the failure loud — a silent half-rollback is how you
