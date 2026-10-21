@@ -457,6 +457,17 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
     for iteration in range(max_iter):
         # T44: per-turn accumulator for executed tools.
         _executed_tools_in_turn: list[dict] = []
+        # Per-iteration flags. These live at the top of the loop and
+        # not next to the code that happens to read them: the set-sites
+        # are spread across the request, the response normalisation and
+        # the dispatch, and a reset after the first one silently
+        # discards it. saw_unavailable_tool was reset forty lines below
+        # its first set-site, which made the T49 log line unreachable
+        # and, once D2 added a read, raised UnboundLocalError on every
+        # turn. See docs/tech-debt/08 for the measurement.
+        iter_had_real_result = False
+        saw_unavailable_tool = False
+        current_calls = []
         # Honour graceful shutdown between iterations. Without this, a SIGTERM
         # mid-call_llama is ignored until the current llama-server request
         # finishes (could be 5-7 min for a hard problem). docker stop
@@ -798,9 +809,6 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # Executing one call is not a loop concern and lives in
         # llm_dispatch.py; screening one is not either and lives in
         # llm_toolargs.py.
-        iter_had_real_result = False
-        saw_unavailable_tool = False
-        current_calls = []
         deps = DispatchDeps(bot=bot, chat_id=chat_id,
                             current_message_id=current_message_id,
                             chat_type=chat_type, iteration=iteration,
