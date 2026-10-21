@@ -143,7 +143,28 @@ def render_persona(persona: dict) -> str:
         # stopping gives the model room to invent the rest, which is exactly
         # what rule 2 forbids. Say nothing instead.
         return ""
+
+    # Rule 2 was a docstring until 2026-10-22. A docstring is documentation
+    # for whoever edits the file; the model never sees it. So the code
+    # stopped inventing and the prompt did not tell the model not to --
+    # which is half a guarantee, and the half that fails quietly.
+    #
+    # The directive names the class of thing rather than listing age and
+    # sex: an enumeration is a list someone forgets to extend, and this is
+    # exactly the failure that would be missed.
+    lines.append(_NO_INVENTION)
     return "\n".join(lines)
+
+
+#: Appended to every rendered persona. One sentence, imperative, and
+#: phrased so that being asked directly produces a refusal rather than a
+#: creative answer -- a model told "don't invent" and then asked "how old
+#: are you" will usually comply, but only if the instruction also says
+#: what to do when asked.
+_NO_INVENTION = (
+    "Не додумывай своя биография: всё, что не сказано выше, тебе "
+    "неизвестно. Если спросят — говори, что не знаешь."
+)
 
 
 def _sex_ru(value) -> str:

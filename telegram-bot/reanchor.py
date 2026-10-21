@@ -70,6 +70,59 @@ def parse_hhmm(value: str) -> tuple[int, int]:
     return h, m
 
 
+# --- timezone (2026-10-22) -----------------------------------------------
+#
+# BOT_REANCHOR_AT has always been read as "local time wherever the process
+# runs". That is the container's timezone, which is not the operator's:
+# TZ is unset here, so the container is UTC and 05:00 fires at 08:00 for
+# the person who set it. The arithmetic was self-consistent, so nothing
+# failed -- the anchor just arrived three hours late and the owner had no
+# way to see why.
+#
+# Asked, not guessed. Reading the host's zone would be wrong too: it
+# moves with whoever last logged in, and the bot's owner is not
+# necessarily the machine's owner.
+_REANCHOR_TZ = None      # cached zone
+_REANCHOR_TZ_NAME = None  # the setting that produced it
+
+
+def _anchor_timezone():
+    """The zone BOT_REANCHOR_AT is interpreted in.
+
+    Cached against the *setting*, not for the lifetime of the process.
+    Keying it to the process was a real bug the first time round: the
+    first zone resolved stayed in force for every later call, so the DST
+    test ran its Europe/Berlin case in America/New_York and the anchor
+    fired an hour late. If BOT_REANCHOR_TZ changes, this follows.
+    """
+    global _REANCHOR_TZ, _REANCHOR_TZ_NAME
+    import datetime as _dt
+    import os
+    import zoneinfo
+
+    name = os.environ.get("BOT_REANCHOR_TZ") or os.environ.get("TZ") or "UTC"
+    if _REANCHOR_TZ is not None and _REANCHOR_TZ_NAME == name:
+        return _REANCHOR_TZ
+
+    resolved = name
+    try:
+        tz = (_dt.timezone.utc if name == "UTC"
+              else zoneinfo.ZoneInfo(name))
+    except Exception as e:
+        log.warning(f"[reanchor] BOT_REANCHOR_TZ={name!r} unusable ({e}); "
+                    f"falling back to UTC. The anchor will fire at "
+                    f"{REANCHOR_AT!r} UTC, not your local time.")
+        tz = _dt.timezone.utc
+        resolved = "UTC"
+
+    _REANCHOR_TZ, _REANCHOR_TZ_NAME = tz, resolved
+    # Report what was resolved, not what was asked for. Naming
+    # 'Mars/Olympus' on the line after saying it was unusable costs an
+    # hour of debugging every time it happens.
+    log.info(f"[reanchor] BOT_REANCHOR_AT={REANCHOR_AT!r} is read as "
+             f"{resolved!r} local time (set BOT_REANCHOR_TZ to change it)")
+    return tz
+
 def seconds_until_next(hour: int, minute: int, now: float | None = None) -> float:
     """Seconds from `now` until the next occurrence of hour:minute local time.
 
@@ -88,11 +141,12 @@ def seconds_until_next(hour: int, minute: int, now: float | None = None) -> floa
     # datetime.combine(...).timestamp() resolves the UTC offset for that
     # specific date, which is the whole point.
     import datetime as _dt
-    today = _dt.date.fromtimestamp(now)
-    target = _dt.datetime.combine(today, _dt.time(hour, minute))
+    tz = _anchor_timezone()
+    today = _dt.datetime.fromtimestamp(now, tz).date()
+    target = _dt.datetime.combine(today, _dt.time(hour, minute), tzinfo=tz)
     if target.timestamp() <= now:
         target = _dt.datetime.combine(
-            today + _dt.timedelta(days=1), _dt.time(hour, minute)
+            today + _dt.timedelta(days=1), _dt.time(hour, minute), tzinfo=tz
         )
     return target.timestamp() - now
 
