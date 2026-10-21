@@ -1,6 +1,7 @@
 ---
 tech_debt: 5
 marker: tests/test_logging_stdout_parity.py
+marker_kind: tripwire   # this test pins a closed fix; see the item header
 state: closed
 issue: 3          # filled in when the Issue is created
 ---

@@ -1,6 +1,7 @@
 ---
 tech_debt: 6
 marker: tests/test_t6_db_clock.py
+marker_kind: tripwire   # this test pins a closed fix; see the item header
 state: closed
 issue: 4          # filled in when the Issue is created
 ---

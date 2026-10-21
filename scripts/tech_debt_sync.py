@@ -7,6 +7,24 @@ Review round 3 asked for twenty lines that do this. The rules:
   - a closed Issue with a live marker    -> fail (the ledger is stale)
   - an item file with no Issue           -> fail, unless --allow-missing
 
+The middle rule needed a second form once items started closing WITH a
+marker. A marker used to mean one thing -- a test asserting the debt is
+still live -- so a marker on a closed item was always stale. Now a marker
+can equally be the tripwire that keeps a closed item closed, and those are
+opposite intents that only the item file can tell apart. So the file has
+to declare which:
+
+  marker_kind: guard     (default) -- asserts the debt is live. A closed
+                                     Issue carrying one is a stale ledger.
+  marker_kind: tripwire            -- pins a closed item. Expected, and
+                                     wanted: a fix with no tripwire is a
+                                     fix that comes back.
+
+Inferring it from the state would have been wrong in both directions --
+it would pass a stale guard on a closed item and fail a legitimate
+tripwire. Declared in the ledger, so the check stays strict and the intent
+stays visible to whoever reads the file next.
+
 Needs GITHUB_TOKEN and REPO (owner/name). Exits non-zero on every
 disagreement, including on missing auth: a checker that cannot see anything
 must not report success, which is the failure mode this replaces.
@@ -47,15 +65,31 @@ def parse_items() -> dict[str, dict]:
             "state": fields.get("state", ""),
             "issue": fields.get("issue", ""),
             "marker": fields.get("marker", ""),
+            "marker_kind": fields.get("marker_kind", "guard") or "guard",
             "path": path,
         }
     return items
 
 
+def markers_in(text: str) -> list[str]:
+    """tech_debt(item=N) markers in `text`, comments removed first.
+
+    Comments are stripped per line so a marker stays findable when someone
+    explains the namespace directly above `item=`. Without this the two
+    readers of the ledger disagreed: the test file stripped, this did not,
+    and the reconciler quietly stopped seeing three of six markers.
+
+    Kept byte-for-byte equivalent to _markers_in in
+    tests/test_tech_debt_ledger.py, which asserts they agree on this tree.
+    """
+    stripped = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+    return MARKER_RE.findall(stripped)
+
+
 def marked_items() -> set[str]:
     found = set()
     for path in (ROOT / "tests").glob("*.py"):
-        found.update(MARKER_RE.findall(path.read_text(encoding="utf-8")))
+        found.update(markers_in(path.read_text(encoding="utf-8")))
     return found
 
 
@@ -129,10 +163,13 @@ def main() -> int:
         state = issues.get(issue_no)
         if state is None:
             problems.append(f"item {item} points at #{issue_no}, which is not a tech-debt issue")
-        elif state == "closed" and item in markers:
+        elif (state == "closed" and item in markers
+              and meta["marker_kind"] != "tripwire"):
             problems.append(
                 f"item {item} is closed (#{issue_no}) but a test still "
-                f"carries a tech_debt marker for it"
+                f"carries a tech_debt guard marker for it. If that test now "
+                f"pins the fix rather than the debt, set marker_kind: "
+                f"tripwire in {meta['path'].name}"
             )
         else:
             print(f"  ok    item {item:>2}  #{issue_no}  {state}")

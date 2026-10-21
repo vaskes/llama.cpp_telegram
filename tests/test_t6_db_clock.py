@@ -34,7 +34,10 @@ import storage as st  # noqa: E402
 # its own fixture.
 _REAL_TIME = _real_time.time
 
-pytestmark = pytest.mark.tech_debt(item=6, reason="Pins TECH-DEBT #6: writes take the DB clock, not the process clock")
+pytestmark = pytest.mark.tech_debt(
+    # Ledger item 6. GitHub Issue #4. Correct already, but stated so
+    # the namespace is visible rather than incidental.
+    item=6, reason="Pins TECH-DEBT #6 (ledger, Issue #4): writes take the DB clock, not the process clock")
 
 
 @pytest.fixture

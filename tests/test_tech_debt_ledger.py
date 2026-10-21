@@ -23,18 +23,58 @@ TESTS = REPO_ROOT / "tests"
 FRONT_MATTER_RE = re.compile(r"^---\n(.*?)\n---", re.S)
 
 
+# The marker is resolved against docs/tech-debt/NN-*.md, i.e. the LEDGER
+# item number. The GitHub Issue number is a different namespace and is not
+# what item=N means -- two tests carried each other's numbers until a test
+# forced the two sides to agree.
+_MARKER_RE = re.compile(r"tech_debt\s*\(\s*item\s*=\s*(\d+)")
+
+
+def _markers_in(text: str) -> list[str]:
+    """tech_debt(item=N) markers in `text`, comments removed first.
+
+    Comments are stripped per line rather than by regex across the file so
+    that a marker stays findable when someone explains the namespace
+    directly above `item=`. The first version of this did not, and a
+    three-line comment inside pytestmark made every marker in that file
+    vanish without a single assertion noticing -- "no marker here" is not a
+    failure to any test written against it.
+    """
+    stripped = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+    return _MARKER_RE.findall(stripped)
+
+
+def _marker_owners() -> dict:
+    """item number -> the test files that carry its marker."""
+    owners: dict = {}
+    for path in sorted(TESTS.glob("*.py")):
+        for item in _markers_in(path.read_text(encoding="utf-8")):
+            owners.setdefault(item, set()).add(path)
+    return owners
+
+
 def _items() -> dict:
     out = {}
     for path in sorted(DEBT_DIR.glob("*.md")):
         m = FRONT_MATTER_RE.match(path.read_text(encoding="utf-8"))
         assert m, f"{path.name}: no front matter"
-        fields = dict(
-            line.split(":", 1) for line in m.group(1).splitlines() if ":" in line
-        )
+        fields = {}
+        for line in m.group(1).splitlines():
+            key, sep, value = line.partition(":")
+            if sep:
+                # Strip the trailing "# ..." comment. sync.py has always
+                # done this; this parser did not, which is why `issue` read
+                # as "1          # filled in when the Issue is created" and
+                # nobody noticed -- nothing here reads issue. marker_kind
+                # is not so forgiving.
+                fields[key.strip()] = value.split("#", 1)[0].strip()
         item = fields["tech_debt"].strip()
         state = fields.get("state", "").strip()
         out[item] = {"path": path, "state": state,
-                     "issue": fields.get("issue", "").strip()}
+                     "issue": fields.get("issue", "").strip(),
+                     "marker_kind": fields.get("marker_kind", "guard").strip()
+                                    or "guard",
+                     "marker_field": fields.get("marker", "").strip()}
     assert out, f"no debt items under {DEBT_DIR}"
     return out
 
@@ -57,10 +97,7 @@ def test_no_marker_references_an_unknown_item():
     always wrong.
     """
     items = _items()
-    marker_re = re.compile(r"tech_debt\s*\(\s*item\s*=\s*(\d+)")
-    marked = set()
-    for path in TESTS.glob("*.py"):
-        marked.update(marker_re.findall(path.read_text(encoding="utf-8")))
+    marked = set(_marker_owners())
 
     unknown = sorted(marked - set(items))
     assert not unknown, (
@@ -69,25 +106,30 @@ def test_no_marker_references_an_unknown_item():
     )
 
 
-def test_closed_items_have_no_live_marker():
+def test_closed_items_have_no_live_guard_marker():
     """The direction that actually protects the ledger.
 
-    An item marked closed must not have a test that still says "this debt
-    exists". Otherwise closing an item in the tracker changes nothing about
-    the suite, which is the whole problem with a markdown file.
+    An item marked closed must not carry a test that still asserts "this
+    debt exists". Otherwise closing an item in the tracker changes nothing
+    about the suite, which is the whole problem with a markdown file.
+
+    A marker the item declares as `marker_kind: tripwire` is the opposite:
+    it pins the fix so the item cannot come back. Those are expected on
+    closed items, and only the declaration distinguishes them -- inferring
+    it from the state would pass a stale guard and fail a legitimate
+    tripwire.
     """
-    marker_re = re.compile(r"tech_debt\s*\(\s*item\s*=\s*(\d+)")
     marked = {}
-    for path in TESTS.glob("*.py"):
-        for m in marker_re.finditer(path.read_text(encoding="utf-8")):
-            marked.setdefault(m, []).append(path.name)
+    for item, paths in _marker_owners().items():
+        marked[item] = sorted(p.name for p in paths)
 
     items = _items()
     for item, meta in items.items():
-        if meta["state"] == "closed":
+        if meta["state"] == "closed" and meta["marker_kind"] != "tripwire":
             assert item not in marked, (
                 f"item {item} is closed but {marked[item]} still carries a "
-                f"tech_debt marker. Remove the marker or reopen the item."
+                f"tech_debt guard marker. Remove the marker, or declare "
+                f"`marker_kind: tripwire` if that test now pins the fix."
             )
 
 
@@ -196,4 +238,67 @@ def test_create_missing_writes_back_issue_number_in_place():
     apply_branch = src.split("--apply", 1)[-1] if "--apply" in src else ""
     assert "create_issue" in apply_branch and "write_issue_no" in apply_branch, (
         "--apply branch must call create_issue + write_issue_no in sequence"
+    )
+
+
+def test_marker_and_ledger_field_name_each_other():
+    """The two sides must agree, in both directions.
+
+    `marker:` in the ledger names the test that pins the item, and
+    `tech_debt(item=N)` in the test names the item. Either alone can drift
+    and nothing notices: today two tests carried each other's item number,
+    and because both wrong numbers landed on a real, closed, tripwire-
+    marked item, the reconciler reported every one as correctly pinned.
+
+    This is the check that was missing. It is the reason the namespace is
+    now stated in both places rather than inferred from whichever number
+    was typed.
+    """
+    owners = _marker_owners()
+
+    for item, meta in _items().items():
+        declared = meta.get("marker_field", "")
+        # "none", "none -- <reason>": the parser strips "#" comments but the
+        # ledger writes the none-form reason with "--", so the value arrives
+        # as "none -- a 1177-line function cannot be pinned...".
+        if not declared or declared.startswith("none"):
+            continue
+        named = {n.strip() for n in declared.split(",") if n.strip()}
+        for entry in named:
+            filename = entry.rsplit("/", 1)[-1]
+            assert (TESTS / filename).is_file(), (
+                f"item {item} names {filename} as its marker and that file "
+                f"does not exist"
+            )
+            assert item in owners and (TESTS / filename) in owners[item], (
+                f"item {item} names {filename} as its marker, but that file "
+                f"carries tech_debt(item={sorted(owners.get(item, {'?'}))}). "
+                f"The ledger and the test must name the same item -- the "
+                f"GitHub Issue number is a different namespace and is not "
+                f"what the marker resolves against."
+            )
+
+
+def test_reconciler_and_this_file_see_the_same_markers():
+    """Two implementations of one rule is the defect; the tripwire is that
+    they agree, not either answer.
+
+    They did not. The reconciler matched the raw source and the test file
+    matched with comments stripped, so three of six markers were invisible
+    to the reconciler and the count changed with no error anywhere. Both
+    numbers were internally consistent, which is what made it survivable.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    try:
+        import tech_debt_sync
+    finally:
+        sys.path.pop(0)
+
+    theirs = tech_debt_sync.marked_items()
+    ours = set(_marker_owners())
+    assert theirs == ours, (
+        f"the reconciler sees {sorted(theirs, key=int)} but this file sees "
+        f"{sorted(ours, key=int)}. One of the two marker readers is stale; "
+        f"a marker counted by one and not the other makes every reconcile "
+        f"result meaningless."
     )

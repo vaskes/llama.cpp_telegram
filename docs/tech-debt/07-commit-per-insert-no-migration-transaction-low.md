@@ -1,6 +1,7 @@
 ---
 tech_debt: 7
-marker: tests/test_t5_migration_atomic.py
+marker: tests/test_t7_migration_atomic.py
+marker_kind: tripwire   # this test pins a closed fix; see the item header
 state: partial
 issue: 5          # filled in when the Issue is created
 ---

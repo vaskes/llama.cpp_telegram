@@ -1,6 +1,7 @@
 ---
 tech_debt: 1
 marker: tests/test_facade_ownership.py
+marker_kind: tripwire   # this test pins a closed fix; see the item header
 state: closed
 issue: 1          # filled in when the Issue is created
 ---

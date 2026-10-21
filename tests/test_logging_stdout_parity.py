@@ -34,7 +34,10 @@ sys.path.insert(0, str(BOT_DIR))
 import logconf  # noqa: E402
 
 pytestmark = pytest.mark.tech_debt(
-    item=3, reason="Pins TECH-DEBT #3: print() -> logging is byte-compatible")
+    # Ledger item 5. The GitHub Issue for this work is #3 -- the two
+    # namespaces are different and this marker resolves against the
+    # ledger. Getting them backwards is exactly what happened once.
+    item=5, reason="Pins TECH-DEBT #5 (ledger, Issue #3): print() -> logging is byte-compatible")
 
 # Every module that gained a logger in the sweep, and the levels they use.
 CONVERTED = [

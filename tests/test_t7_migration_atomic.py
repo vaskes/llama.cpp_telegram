@@ -20,7 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "telegram-bot"))
 
 import storage  # noqa: E402
 
-pytestmark = pytest.mark.tech_debt(item=5, reason="Pins TECH-DEBT #5: migrations are all-or-nothing")
+pytestmark = pytest.mark.tech_debt(
+    # Ledger item 7. GitHub Issue #5. Was marked item=5, which is the
+    # print/logging item -- two items pointing at each other's tests.
+    item=7, reason="Pins TECH-DEBT #7 (ledger, Issue #5): migrations are all-or-nothing")
 
 
 def _v1_schema(c):

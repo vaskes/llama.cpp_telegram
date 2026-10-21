@@ -1,6 +1,7 @@
 ---
 tech_debt: 4
 marker: tests/test_turn_ledger.py, tests/test_turn_scope.py
+marker_kind: tripwire   # one ledger owns persist/rollback
 state: closed
 issue: null          # filled in when the Issue is created
 ---

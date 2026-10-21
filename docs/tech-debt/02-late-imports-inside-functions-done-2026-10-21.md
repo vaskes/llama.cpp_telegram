@@ -1,6 +1,7 @@
 ---
 tech_debt: 2
 marker: tests/test_refactor_graph.py
+marker_kind: tripwire   # the module-level import graph stays acyclic
 state: closed
 issue: null          # filled in when the Issue is created
 ---
