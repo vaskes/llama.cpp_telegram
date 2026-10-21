@@ -1,35 +1,46 @@
-"""selftest.py must not assume a container path.
+"""selftest.py must not assume a container path, and its gate must be real.
 
-W3-H2. The `/app/*.py` hardcodes were removed in 88a119b and the fix was
-confirmed by running `_selftest()` against a mock harness. Then the
-mutation "put `/app/storage.py` back" survived the entire suite, on both
-interpreters:
+W3-H2 removed three `/app/*.py` hardcodes. Confirmed by running
+`_selftest()` against a mock harness, and then the mutation "put
+`/app/storage.py` back" survived the suite on both interpreters:
 
     W2-M1: /app path restored   SURVIVED  SURVIVED
 
-Two structural reasons the suite could not see it:
+`tests/test_selftest.py` is in CI's --ignore list, and `_selftest()`
+returns immediately unless LLAMABOT_SELFTEST=1, so nothing in CI ever
+executed the 94 assertion sites behind that gate.
 
-  1. `tests/test_selftest.py` is in CI's --ignore list.
-  2. `_selftest()` returns immediately unless LLAMABOT_SELFTEST=1, so even
-     in a full run nothing ever executed the function:
+W4-H1. The first version of the gate tripwire was
 
-         LLAMABOT_SELFTEST default: None
-         output of _selftest() with no env var: ''
+    assert "LLAMABOT_SELFTEST" in source
 
-With 94 assertion sites behind that gate, "the smoke test is green" was
-not a statement about anything. This is the cheap half of the fix: a
-static tripwire that catches the regression instantly, without needing a
-mock Telegram.
+which cannot tell the gate from a mention of it. The string appears five
+times in the file:
 
-The expensive half -- un-ignoring test_selftest.py and running the smoke
-test in CI with LLAMABOT_SELFTEST=1 -- is now possible, because
-TELEGRAM_API finally reaches the PTB client (W2-H2). Until someone wires
-that up, this file is the guard.
+    8    comment
+    28   comment
+    75   docstring
+    76   if os.environ.get('LLAMABOT_SELFTEST') != '1':   <- the gate
+    1663 an unrelated donsetch condition
+
+Remove the gate and the other four survive, so the assert passes.
+
+That is not a decorative tripwire failing to fail. `dispatch.py:1020` calls
+`await _selftest()` unconditionally before the first poll, and `main()`
+catches only KeyboardInterrupt, so with the gate gone an InvalidToken
+escapes `_run`, escapes `asyncio.run`, and kills the process at startup:
+
+    SHIPPED   exit=0  [selftest] lines emitted=0     (silent)
+    NO GATE   exit=1  [selftest] InvalidToken: The token `1:T` was rejected
+
+Zero polls. The bot does not come up.
+
+So the check has to look at the guard itself -- an `if` on the env var,
+returning early, inside the function -- not at the string's presence.
 """
+import ast
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BOT_DIR = REPO_ROOT / "telegram-bot"
@@ -37,6 +48,7 @@ if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
 SELFTEST = BOT_DIR / "selftest.py"
+DISPATCH = BOT_DIR / "dispatch.py"
 
 
 def test_selftest_contains_no_container_paths():
@@ -57,6 +69,77 @@ def test_selftest_contains_no_container_paths():
     )
 
 
+def _selftest_node():
+    tree = ast.parse(SELFTEST.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_selftest":
+            return node
+    raise AssertionError("_selftest not found")
+
+
+def test_the_env_gate_is_a_guard_not_a_mention():
+    """An `if` on LLAMABOT_SELFTEST whose body returns, at the top of the
+    function.
+
+    Checking that the string appears in the source cannot do this: it
+    occurs in two comments, the docstring, an unrelated donsetch condition,
+    and the gate.
+    """
+    fn = _selftest_node()
+
+    guarded = any(
+        isinstance(node, ast.If)
+        and "LLAMABOT_SELFTEST" in ast.dump(node.test)
+        and any(isinstance(s, ast.Return) for s in node.body)
+        for node in fn.body[:3]
+    )
+    assert guarded, (
+        "_selftest() has no early return on LLAMABOT_SELFTEST near the top. "
+        f"dispatch.py calls it unconditionally before the first poll, and "
+        f"main() catches only KeyboardInterrupt -- so without this gate an "
+        f"InvalidToken escapes asyncio.run and the process dies at startup. "
+        f"The bot never comes up. Body starts with "
+        f"{[type(n).__name__ for n in fn.body[:4]]}"
+    )
+
+
+def test_dispatch_calls_selftest_unconditionally():
+    """Pin the other half of the contract.
+
+    If dispatch ever puts _selftest() behind its own env check, the gate
+    above becomes belt-and-braces and the cost of losing it changes shape.
+    Today it is the ONLY thing standing between a bad token and a process
+    that will not start.
+    """
+    source = DISPATCH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    callers = []
+    # An `if` that lexically contains the call makes it conditional.
+    # Range containment is the honest test; the first version tried to
+    # walk parent nodes and marked every call conditional.
+    if_ranges = [(n.lineno, n.end_lineno or n.lineno)
+                 for n in ast.walk(tree) if isinstance(n, ast.If)]
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Await):
+            continue
+        call = node.value
+        if not (isinstance(call, ast.Call)
+                and getattr(call.func, "id", "") == "_selftest"):
+            continue
+        conditional = any(lo <= node.lineno <= hi for lo, hi in if_ranges)
+        callers.append((node.lineno, conditional))
+
+    assert callers, "dispatch.py no longer calls _selftest() at all"
+    conditional = [(ln, c) for ln, c in callers if c]
+    assert not conditional, (
+        f"dispatch.py calls _selftest() conditionally at {conditional}; "
+        f"the gate inside _selftest is the only guard then, and the tripwire "
+        f"above exists to protect exactly that"
+    )
+
+
 def test_module_source_helper_exists():
     """If someone deletes the helper without inlining its logic, the next
     test would stop being able to find sibling modules at all."""
@@ -64,23 +147,4 @@ def test_module_source_helper_exists():
     assert "def _module_source(" in source, (
         "selftest.py lost _module_source(); sibling modules are read through "
         "it instead of a hardcoded path"
-    )
-    assert "import storage as _storage_mod" in source or (
-        "storage" in source), (
-        "selftest.py should use the already-imported storage module"
-    )
-
-
-def test_selftest_really_is_gated():
-    """Pin the gate itself.
-
-    If someone removes the LLAMABOT_SELFTEST check, the smoke test starts
-    running inside the unit suite -- where no Telegram exists -- and every
-    run goes red. Better that than silent, but the tripwire above would
-    then be half the story, so the shape is recorded here.
-    """
-    source = SELFTEST.read_text(encoding="utf-8")
-    assert "LLAMABOT_SELFTEST" in source, (
-        "the LLAMABOT_SELFTEST gate is gone; 94 assertion sites would start "
-        "running inside the unit suite with no Telegram to talk to"
     )

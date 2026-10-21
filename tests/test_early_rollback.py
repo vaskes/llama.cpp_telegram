@@ -168,38 +168,33 @@ def test_persisted_message_is_rolled_back_when_the_window_fails(
 
 def test_the_probe_can_see_a_row_when_one_is_left_behind(
         store_and_handlers, monkeypatch):
-    """Positive control.
+    """The control has to be capable of failing.
 
-    Without this, "rows == 0" cannot be distinguished from "the handler
-    never wrote anything and the count is always zero" -- which is
-    precisely how an earlier draft of this file passed on a tree where the
-    rollback had been deleted.
+    The first version asserted `rows_after_null == 0` against a
+    _NullStore whose get_messages returns [] by declaration, plus
+    `rows >= 0`. Both hold whatever the probe does. Mutation-tested by
+    neutering the probe so it always reports zero: still 2 passed.
+
+    This drives the real handler on the real store with the rollback
+    neutralised and requires the orphan to be visible. If this fails,
+    rows == 0 in the test above proves nothing.
     """
+    import turn as turn_mod
+
     handlers, storage_mod, store, _slot, _ = store_and_handlers
     _slot()
+
+    # Turn.rollback becomes a no-op -- exactly the mutation
+    # test_early_rollback exists to catch, applied from the inside
+    # without editing a line of production code.
+    monkeypatch.setattr(turn_mod.Turn, "rollback", _returns(None),
+                        raising=False)
+
     rows, _exc = asyncio.run(_drive(handlers, storage_mod, store, monkeypatch))
 
-    # Same drive, but persist is neutralised so nothing can be rolled back.
-    monkeypatch.setattr(storage_mod, "get_store", lambda: _NullStore(),
-                        raising=False)
-    rows_after_null, _ = asyncio.run(
-        _drive(handlers, storage_mod, _NullStore(), monkeypatch))
-
-    assert rows_after_null == 0, (
-        "control is not a control: with a store that records nothing the "
-        "count should still be 0"
+    assert rows >= 1, (
+        f"the probe cannot see an orphan row (got {rows}), so rows == 0 in "
+        f"test_persisted_message_is_rolled_back_when_the_window_fails is "
+        f"indistinguishable from 'nothing was ever written'"
     )
-    assert rows >= 0
 
-
-class _NullStore:
-    """Accepts writes, records nothing. Proves the count is not stuck at 0
-    for reasons unrelated to the rollback."""
-
-    def get_messages(self, *a, **kw):
-        return []
-
-    def __getattr__(self, name):
-        async def _noop(*a, **kw):
-            return None
-        return _noop
