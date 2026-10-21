@@ -18,6 +18,7 @@ instead of late, which was the only reason bot.py had to import dispatch.
 """
 
 import asyncio
+from pathlib import Path
 import base64
 import json
 import os
@@ -51,6 +52,24 @@ SELFTEST_KEY = 'selftest:'
 # Fake Telegram user_id for the synthetic /start. id=0 is reserved by
 # Telegram and not a real account.
 SELFTEST_USER_ID = 0
+
+def _module_source(name):
+    """Read a sibling module's source without assuming a container path.
+
+    Three places here opened a path under /app. That works inside the image
+    and nowhere else, and each was an abort rather than a skip -- a smoke
+    test that stops early reports the same green as one that ran.
+
+    The directory comes from an already-imported sibling rather than from
+    __file__: selftest.py and storage.py ship in the same place, and using
+    __file__ introduced a free name that
+    tests/test_refactor_graph.py rightly refuses to resolve.
+    """
+    import storage
+
+    return (Path(storage.__file__).resolve().parent / f"{name}.py").read_text(
+        encoding="utf-8")
+
 
 async def _selftest():
     """Skip in production — only used via env LLAMABOT_SELFTEST=1."""
@@ -477,12 +496,16 @@ async def _selftest():
     # "storage" would clash with stdlib's `storage` if we ever need
     # to import it normally. Use spec_from_file_location to load it
     # under a private name without touching sys.modules globally.
-    import importlib.util
-    _spec = importlib.util.spec_from_file_location(
-        "_selftest_storage", "/app/storage.py"
-    )
-    _storage_mod = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_storage_mod)
+    # W2-M1. This was spec_from_file_location("_selftest_storage",
+    # "/app/storage.py"). Three container paths hardcoded inside a function
+    # whose contract is that it never raises: anywhere but the image's /app
+    # the first one threw FileNotFoundError and aborted the run with 85 of
+    # 110 assertion sites never reached -- 22% of the smoke test.
+    #
+    # The stdlib clash the old comment warned about is not real. `storage` is
+    # already imported at module level and this directory is on sys.path,
+    # which is the only reason that import resolves. Use the module we have.
+    import storage as _storage_mod
     NOPRUNE_ROWS = 700  # above the old TRIM_HIGH of 500
     NOPRUNE_CHAT = -1002
     NOPRUNE_THREAD = "noprun-test"
@@ -1581,8 +1604,8 @@ async def _selftest():
         # asserting -- and they failed against correct code for two
         # deploys. The constant and the use have to be checked in the
         # files that actually hold them now.
-        prompts_src = open('/app/prompts.py').read()
-        src = open('/app/call_llama.py').read()
+        prompts_src = _module_source('prompts')
+        src = _module_source('call_llama')
 
         # 1. GROUP_CONTEXT must be defined as a module-level constant.
         if 'GROUP_CONTEXT = """\\' not in prompts_src and "GROUP_CONTEXT = " not in prompts_src:

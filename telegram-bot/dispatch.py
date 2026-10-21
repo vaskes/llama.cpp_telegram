@@ -1254,7 +1254,17 @@ async def _register_bot_menu():
         # Build the dispatcher eagerly so we can call setMyCommands.
         # Same construction as _dispatch_update; both call sites
         # end up at the same Application instance.
-        app = Application.builder().token(BOT_TOKEN).build()
+        # W2-H2. Without base_url the PTB Bot talks to api.telegram.org
+        # no matter what TELEGRAM_API says, so sendMessage, editMessageText,
+        # getMe, setMyCommands, set_message_reaction and every file
+        # download all bypass the override. The v0.10.2 env override only
+        # ever covered the raw-httpx getUpdates loop. Without this line a
+        # smoke test against a mock server sends half its traffic to the
+        # real Telegram.
+        app = (Application.builder()
+               .token(BOT_TOKEN)
+               .base_url(TELEGRAM_API)
+               .build())
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("help", cmd_help))
         app.add_handler(CommandHandler("reset", reset))
@@ -1568,7 +1578,17 @@ async def _handle_chat_member_update(upd, bot):
 async def _dispatch_update(upd_dict):
     global _dispatcher
     if _dispatcher is None:
-        app = Application.builder().token(BOT_TOKEN).build()
+        # W2-H2. Without base_url the PTB Bot talks to api.telegram.org
+        # no matter what TELEGRAM_API says, so sendMessage, editMessageText,
+        # getMe, setMyCommands, set_message_reaction and every file
+        # download all bypass the override. The v0.10.2 env override only
+        # ever covered the raw-httpx getUpdates loop. Without this line a
+        # smoke test against a mock server sends half its traffic to the
+        # real Telegram.
+        app = (Application.builder()
+               .token(BOT_TOKEN)
+               .base_url(TELEGRAM_API)
+               .build())
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("reset", reset))
         app.add_handler(CommandHandler("stats", stats))
