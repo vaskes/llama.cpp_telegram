@@ -143,11 +143,25 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
         # inside the try -- it did not, and the NameError it raised was
         # swallowed by the except below, which is exactly the silent drop
         # v0.10.2 set out to fix.
+        # The bare `except Exception: pass` here was not a neutral safety net.
+        # It swallowed the NameError, and it swallows every Telegram API error
+        # too, so the user gets the same silence either way and the overload
+        # path is indistinguishable from a clean drop in the logs.
+        #
+        # Swallowing is still correct -- this is a best-effort courtesy message
+        # on an already-failing path, and raising here would replace one
+        # failure with a user-facing "Error" for something that is not the
+        # user's fault. But failing to deliver it has to be visible.
         try:
             from handlers import _reply
             await _reply(update, "⚠️ Бот перегружен, попробуйте позже.")
-        except Exception:
-            pass
+        except Exception as e:
+            print(
+                f"[access] overload notice NOT delivered to user_id={user_id} "
+                f"chat={chat_id}: {type(e).__name__}: {e!r} -- slot timed out, "
+                f"message dropped and the user saw only '...'",
+                flush=True,
+            )
         return None
 
 

@@ -17,16 +17,37 @@ faster than it is being paid and that is its own finding — escalate it.
 
 ---
 
-## 1. ~~`bot.py` is a god-module of re-exports~~ ✅ DONE 2026-10-21
+## 1. `bot.py` is still mostly a facade of re-exports — PARTIALLY DONE 2026-10-21
 
-**Was.** 2245 lines, of which **1894 were `_selftest()`** — the in-container
-smoke test. The monolith was not the architecture; it was a test harness living
-in the same file as the runtime, plus a facade over an import cycle.
+**I marked this DONE and it was not.** I had moved the 1894-line `_selftest()`
+out and called the item closed on that basis. The 1894 lines were the easy
+part; the facade was the actual item and it was still there.
 
-**Now.** `bot.py` is 331 lines. The smoke test moved to `selftest.py`
-unchanged; it stays in the image because it has to exercise the real import
-graph and the real `/app` paths inside the running container. `tests/
-test_refactor_graph.py` pins the size so it cannot grow back.
+**What actually landed:**
+
+- `bot.py` 2245 → 261 lines.
+- `_selftest()` moved to `selftest.py`, unchanged.
+- Six dead duplicates deleted, after confirming nothing outside `bot.py` read
+  them: `_SUBTALK_NAME_RE` and `_TOPIC_NAME_RE` (owner: `chat_utils.py`),
+  `_LLM_TOKEN_RE` (owner: `prompts.py`), `_user_semaphores` and
+  `_global_llm_sem` (owner: `state.py`), and `_detect_tool_intent`, whose own
+  docstring said "removed next refactor" and which returned `True`
+  unconditionally. Seven unused imports went with them.
+- `_user_semaphores` / `_global_llm_sem` were not merely duplicated: they were
+  *unwritable*. `state.py` rebinds its own module globals inside its accessors,
+  so any holder of the imported name was holding a stale reference. The copy
+  in `bot.py` could never have been the live one.
+
+**What is still open.** `bot.py` remains ~15 `from X import (...)` blocks
+re-exporting other modules. That is deliberate for now: `dispatch.py` imports
+`bot` at module level and `selftest.py` imports `bot as _b`, so the facade is
+load-bearing and deleting the re-exports is a separate change with its own
+verification. The distinction that matters now: bot.py no longer *owns*
+anything. Every name it exposes comes from the module that defines it.
+
+**Trigger to finish.** When the import graph is next touched. Then bot.py
+becomes `__all__` plus the imports the public API genuinely needs, and the
+facade stops being load-bearing.
 
 ---
 

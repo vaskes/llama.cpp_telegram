@@ -1497,7 +1497,13 @@ async def _selftest():
                 })
 
         # Capture what call_llama returns
-        with patch('bot.httpx.AsyncClient', _FakeAsyncClient):
+        # call_llama is the module that calls httpx. bot.py only ever
+        # imported httpx so this test had something to patch, and keeping a
+        # dead import alive to serve a test anchor is the same disease as the
+        # duplicated globals it sat next to. Patching bot.httpx mutated the
+        # httpx module object either way, so this is the same patch with an
+        # honest anchor.
+        with patch('call_llama.httpx.AsyncClient', _FakeAsyncClient):
             result = await call_llama(
                 messages=[{'role': 'user', 'content': 'react to this picture'}],
                 use_stream=False,

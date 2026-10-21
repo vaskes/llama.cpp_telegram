@@ -1,14 +1,7 @@
-import os
-import json
-import time
-import base64
-import copy
 import signal
-import tempfile
 import urllib.parse
 import socket
 import asyncio
-import httpx
 from typing import Optional
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -173,40 +166,12 @@ SHUTDOWN_EVENT: Optional[asyncio.Event] = None
 # that cost in exchange for correct behaviour on arbitrary
 # user queries.
 #
-# _detect_tool_intent is kept as a no-op for callers that may
-# still reference it (it's harmless and removed next refactor).
-def _detect_tool_intent(text: str) -> bool:  # pragma: no cover
-    """Legacy: keyword-based tool gate. Always True now; tools
-    are passed unconditionally in non-rating mode. See comment
-    above for rationale.
-    """
-    return True
-
 # === Sub-talk commands ===
 # A sub-talk is a named conversation thread. Each user has their own
 # set of sub-talks (no sharing across users). The "active" sub-talk
 # is per-user; new text/photo/voice/document messages go into the
 # active one. See docs/CALL_LLAMA.md and docs/ARCHITECTURE.md for the
 # design rationale.
-
-import re as _re
-
-# Sub-talk names: 1-32 chars, must start with a letter or digit,
-# may contain letters, digits, dash, underscore, dot. Spaces, slashes,
-# and other shell-meta characters are not allowed so the name is safe
-# to log and never collides with command arguments.
-# Sub-talk names: 1-32 chars, no whitespace. We previously used
-# the ASCII-only regex ^[A-Za-z0-9][A-Za-z0-9_.\-]{0,31}$ but
-# Russian users want to call their sub-talks "Болталка", so we
-# accept any non-whitespace string instead. The limit is 32 chars
-# to keep storage keys short and inline-keyboard callback_data
-# under 64 bytes.
-_SUBTALK_NAME_RE = _re.compile(r'^[^\s]{1,32}$')
-
-# Forum topic names: 1-128 chars (Telegram's limit), no whitespace.
-# Forum topic names are also used as the display name in the topic
-# header, so we don't enforce a stricter charset here.
-_TOPIC_NAME_RE = _re.compile(r'^[^\s]{1,128}$')
 
 # === Sub-talk-aware helpers for the message handlers ===
 # Each handler resolves the user's active sub-talk, persists the new
@@ -262,41 +227,6 @@ _TOPIC_NAME_RE = _re.compile(r'^[^\s]{1,128}$')
 # (optionally preceded by whitespace) gives us: opt-out goes at
 # the start like a header, and meta-references in the middle of
 # a longer message do not suppress it.
-import re as _llm_re
-_LLM_TOKEN_RE = _llm_re.compile(
-    r"^\s*\[llm\](?=$|[\s.,!?;:])",
-    _llm_re.IGNORECASE,
-)
-
-# Per-(chat_id, user_id) concurrency cap. Without this, one
-# user in a group can flood the bot with messages and
-# monopolise the call_llama queue (up to 10 min per request
-# via LOOP_BUDGET_SEC). The semaphore caps each user's
-# concurrent in-flight LLM calls at 2, with a friendly
-# "busy with your earlier request" reply if the cap is hit.
-#
-# Private mode: keyed on user_id (chat_id is the same int).
-# Group mode: keyed on (chat_id, user_id) so users in
-# different groups don't affect each other.
-
-_user_semaphores: dict = {}
-
-# T1 (P0-1): global cap on concurrent call_llama() in-flight requests.
-# The per-user semaphore (_PER_USER_SEMAPHORE_LIMIT) is necessary but
-# not sufficient: with asyncio.create_task in the polling loop, 50
-# different users sending one message each = 50 concurrent 27B
-# forward passes. Each holds real VRAM and KV-cache; on Qwen3.8-27B
-# with MTP speculative decoding we'd OOM before the wall-clock
-# budget fires. Cap llama-server's view of the world to a small
-# number of in-flight requests; tune to the model's max-parallel
-# capacity (Qwen3.8-27B with 256k ctx ~ 4 with full attention, 6-8
-# with MTP). Combined with getUpdates limit=10 (T1 defense-in-
-# depth) the worst-case is 10 in-flight at any moment, and only 4
-# are actually inside the LLM call.
-
-_global_llm_sem = None
-
-
 # Lazy global app used only for the dispatcher. Built once on first
 # dispatch. We never call .start() on it; the dispatcher works fine
 # without start() for one-shot process_update.
