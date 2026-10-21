@@ -40,6 +40,10 @@ ARCH = DOCS / "ARCHITECTURE.md"
 # whole lines and report modules as absent from their own table.
 TABLE = re.compile(r"^[ \t]*(llm_\w+\.py)[ \t]+(\d+)[ \t]", re.MULTILINE)
 
+# module -> the public names the map claims it exports. A size is
+# satisfiable by comments; a name is not.
+SURFACE = re.compile(r"^[ \t]*(llm_\w+\.py)[ \t]+\d+[ \t]+(.+)$", re.MULTILINE)
+
 
 def _call_llama():
     tree = ast.parse((BOT / "call_llama.py").read_text(encoding="utf-8"))
@@ -133,6 +137,65 @@ def test_tool_isolation_doc_names_the_real_sites():
         assert module in text, (
             f"TOOL-ISOLATION.md does not mention {module}, which is where "
             f"the refusal actually happens now")
+
+
+def test_the_public_surface_matches_too():
+    """A size can be satisfied by comments; a name cannot.
+
+    The review's objection, and it is right: a table row saying
+    "133 lines, dispatch" stays satisfied if someone deletes the code
+    and leaves 133 lines of prose. Checking that every name the map
+    claims a module exports still exists closes that, and it is the
+    part of the row a reader actually acts on.
+    """
+    quoted = {}
+    for name, surface in SURFACE.findall(ARCH.read_text(encoding="utf-8")):
+        quoted[name] = {n.strip() for n in surface.split(",") if n.strip()}
+
+    assert quoted, "no surface column parsed -- the table shape moved"
+
+    missing = []
+    for name, names in sorted(quoted.items()):
+        path = BOT / name
+        if not path.is_file():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        actual = {n.name for n in tree.body
+                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                    ast.ClassDef))}
+        for claimed in sorted(names):
+            if claimed.startswith("_"):
+                continue          # private helpers are not the contract
+            if claimed not in actual:
+                missing.append(f"{name}: map claims {claimed}, module has no such name")
+
+    assert not missing, (
+        "docs/ARCHITECTURE.md names things the modules no longer export:\n  "
+        + "\n  ".join(missing)
+        + "\n\nA reader following the map to a function that is not there "
+          "has been actively misled.")
+
+
+def test_a_key_entry_point_still_exists():
+    """The names the rest of the system calls. Cheap, and it is the set a
+    reviewer would try first."""
+    expected = {
+        "llm_dispatch.py": "execute_tool",
+        "llm_toolargs.py": "parse_tool_args",
+        "llm_finish.py": "finish_without_tool_calls",
+        "llm_loop_guard.py": "LoopGuard",
+        "llm_sse.py": "StreamAccumulator",
+        "llm_nonstream.py": "non_stream_iteration",
+    }
+    gone = []
+    for module, name in sorted(expected.items()):
+        tree = ast.parse((BOT / module).read_text(encoding="utf-8"))
+        actual = {n.name for n in tree.body
+                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                    ast.ClassDef))}
+        if name not in actual:
+            gone.append(f"{module}:{name}")
+    assert not gone, f"entry points referenced from the map are gone: {gone}"
 
 
 def test_the_check_can_see_a_stale_number():
