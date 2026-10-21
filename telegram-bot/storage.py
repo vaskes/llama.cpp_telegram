@@ -146,31 +146,45 @@ DEFAULT_CONTEXT_MESSAGES = 20
 def _migrate_v1_to_v2(c: sqlite3.Connection) -> None:
     """Rename legacy (user_id, sub_talk) columns to (chat_id, thread_id).
 
-    Safe to call multiple times — if columns are already renamed, the
+    Safe to call multiple times -- if columns are already renamed, the
     rename is a no-op error which we swallow. SQLite 3.25+ required
     for ALTER TABLE RENAME COLUMN; raises sqlite3.OperationalError
     on older versions (caller should handle).
+
+    TECH-DEBT #5: all six renames run inside one explicit transaction.
+    Python's sqlite3 stopped opening an implicit transaction for DDL in
+    3.6, so before this the loop could stop on the third ALTER and leave
+    chat_threads renamed while messages was not -- a schema that is
+    neither v1 nor v2, with a warning line as the only record. The
+    explicit BEGIN also survives a future flip of isolation_level, which
+    is the same argument delete_thread() already carried.
     """
-    for table, legacy, modern in [
-        ("chat_threads", "user_id", "chat_id"),
-        ("chat_threads", "name",    "thread_id"),
-        ("messages",     "user_id", "chat_id"),
-        ("messages",     "sub_talk", "thread_id"),
-        ("active_thread", "user_id", "chat_id"),
-        ("active_thread", "name",    "thread_id"),
-    ]:
-        cur = c.execute(f"PRAGMA table_info({table})")
-        cols = {row[1] for row in cur.fetchall()}
-        if legacy in cols and modern not in cols:
-            c.execute(f"ALTER TABLE {table} RENAME COLUMN {legacy} TO {modern}")
-    # Also rename the index if it kept the v1 name.
-    cur = c.execute("PRAGMA index_info(idx_msg_lookup)")
-    if cur.fetchone() is None:
-        # v1 may have used a different index name. Drop the old one
-        # and create the canonical one — DROP IF EXISTS to be safe.
-        c.execute("DROP INDEX IF EXISTS idx_msg_lookup_v1")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_msg_lookup "
-                  "ON messages(chat_id, thread_id, id)")
+    c.execute("BEGIN")
+    try:
+        for table, legacy, modern in [
+            ("chat_threads", "user_id", "chat_id"),
+            ("chat_threads", "name",    "thread_id"),
+            ("messages",     "user_id", "chat_id"),
+            ("messages",     "sub_talk", "thread_id"),
+            ("active_thread", "user_id", "chat_id"),
+            ("active_thread", "name",    "thread_id"),
+        ]:
+            cur = c.execute(f"PRAGMA table_info({table})")
+            cols = {row[1] for row in cur.fetchall()}
+            if legacy in cols and modern not in cols:
+                c.execute(f"ALTER TABLE {table} RENAME COLUMN {legacy} TO {modern}")
+        # Also rename the index if it kept the v1 name.
+        cur = c.execute("PRAGMA index_info(idx_msg_lookup)")
+        if cur.fetchone() is None:
+            # v1 may have used a different index name. Drop the old one
+            # and create the canonical one -- DROP IF EXISTS to be safe.
+            c.execute("DROP INDEX IF EXISTS idx_msg_lookup_v1")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_msg_lookup "
+                      "ON messages(chat_id, thread_id, id)")
+        c.execute("COMMIT")
+    except BaseException:
+        c.execute("ROLLBACK")
+        raise
 
 
 class Storage:
@@ -196,16 +210,26 @@ class Storage:
             _migrate_v1_to_v2(c)
         except sqlite3.OperationalError as e:
             print(f"[storage] WARN: migration step failed: {e}")
+        # executescript() implicitly commits before it runs, so it cannot
+        # live inside an explicit transaction. Every statement in SCHEMA_V2
+        # is CREATE ... IF NOT EXISTS, which makes a partial application
+        # indistinguishable from a complete one on the next run.
         c.executescript(SCHEMA_V2)
         # v2 -> v3: add `rating` column to messages (used by
         # RATING_MODE in group chats — 1-10 score assigned by
         # the LLM to info/statement messages). Idempotent:
         # if the column already exists, OperationalError is
         # swallowed.
+        # TECH-DEBT #5: both ALTER steps share one transaction, for the same
+        # reason the rename loop does. A bot that added `rating` and then
+        # died before `sender_name` came back looks like a v3 deployment
+        # running v4 code.
+        c.execute("BEGIN")
         try:
             c.execute("ALTER TABLE messages ADD COLUMN rating INTEGER")
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e):
+                c.execute("ROLLBACK")
                 raise
         # v3 -> v4: add `sender_name` column to messages. The bot
         # now records who sent each user message (display name
@@ -217,8 +241,12 @@ class Storage:
             c.execute("ALTER TABLE messages ADD COLUMN sender_name TEXT")
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e):
+                c.execute("ROLLBACK")
                 raise
-        c.commit()
+        except BaseException:
+            c.execute("ROLLBACK")
+            raise
+        c.execute("COMMIT")
 
     def _conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn"):
