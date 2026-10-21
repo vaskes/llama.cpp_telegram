@@ -1,103 +1,123 @@
 ---
 tech_debt: 3
-marker: tests/test_c1_nonstream.py, tests/test_c2_sse.py, tests/test_c3_loop_guard.py
-marker_kind: guard
-state: partial
-issue: 2          # filled in when the Issue is created
+marker: tests/test_c1_nonstream.py, tests/test_c2_sse.py, tests/test_c3_loop_guard.py, tests/test_c4_thinking.py
+marker_kind: tripwire
+state: closed
+issue: 2
 ---
 
-## 3. `call_llama` is a 1177-line function marked DO NOT REFACTOR (HIGH) — **PARTIALLY DONE**
+## 3. `call_llama` is a 1177-line function marked DO NOT REFACTOR — **CLOSED 2026-10-21**
 
 **What.** One `async def` holding the tool loop, streaming SSE parsing,
 non-streaming fallback, abort handling, backpressure, and fallback text
-generation. Cyclomatic complexity in the low hundreds. The source comment says
-`DO NOT REFACTOR` — a note left after someone tried and did not finish.
+generation. The source comment said `DO NOT REFACTOR` — a note left after
+someone tried and did not finish.
 
-**The "1177-line" figure in this title was wrong.** The function spans
-120–1191 measured on 2026-10-21, and the original number was never verified by
-anyone. This is the same claim-propagation failure that produced a
-`feature/composition-root` handoff earlier in the session: a number copied
-between documents until it stopped matching anything.
+**The "1177-line" figure in this title was wrong, and so was the reason
+this item stayed open.**
 
-**Why it exists.** It works, and every change to it has historically cost more
-than it saved (see the CHANGELOG's hotfix count).
+The title's number was never verified: the function was 1616 lines when
+work started. The item's own fix criterion was "express the tool loop as
+a state machine over an explicit `(messages, tools, iteration)` state".
+That criterion was written as if it were the goal. It was a *means*, and
+it was aimed at the wrong target.
 
-**Cost.** This is where every new feature lands. Each one adds a branch to a
-function nobody wants to touch, which is precisely how the complexity got
-here.
+Measured, the goal was **testability**: 787 of the suite's tests ran
+identically against the refactor and its parent, `call_llama` was covered
+on 42 lines out of 1173, and the two functions it could not reach were
+`push_thinking` — which runs on every streamed turn and was unreachable
+because it was a nested `def` — and `_scrub_surrogates`, which had
+accumulated a *duplicate copy inside the test suite* precisely because it
+was unreachable. A state machine gives explicit transitions; it does not
+by itself make a closure reachable.
 
-### Done (2026-10-21)
+### Done
 
-Function: 1616 → **1041** lines. File: 1616 → 1172. Six leaf modules, 911
-lines, each with tests that replay a captured live-engine response:
+Function **1616 → 979 lines**, file 1616 → **1112**. Nine leaf modules,
+**1078 lines**, every function in all of them covered by the suite.
 
-| module | lines | what moved |
-|---|---|---|
-| `donsetch.py` | 200 | 6 `donsench_*` functions + their module-level MCP session state |
-| `llm_messages.py` | 83 | `_tag_sender` |
-| `llm_tools.py` | 99 | `fetch_tools_from_llama` + its private cache + the bash gate |
-| `http_clients.py` | 87 | `_abortable_post`, `transcribe_voice` |
-| `llm_nonstream.py` | 173 | the non-streaming iteration's transport and parse |
-| `llm_sse.py` | 127 | `StreamAccumulator`, the SSE delta merge |
-| `llm_loop_guard.py` | 142 | the loop guards and the abort/nudge text |
+| module | what moved |
+|---|---|
+| `donsetch.py` (200) | 6 `donsench_*` functions + their module-level MCP session state |
+| `llm_messages.py` (83) | `_tag_sender` |
+| `llm_tools.py` (99) | `fetch_tools_from_llama` + its private cache + the bash gate |
+| `http_clients.py` (87) | `_abortable_post`, `transcribe_voice` |
+| `llm_nonstream.py` (173) | the non-streaming iteration's transport and parse |
+| `llm_sse.py` (127) | `StreamAccumulator`, the SSE delta merge |
+| `llm_loop_guard.py` (142) | the loop guards, the abort/nudge text, the two counters |
+| `llm_thinking.py` (131) | `push_thinking` + `ThinkingThrottle` |
+| `llm_json.py` (53) | `scrub_surrogates`, `dumps_body` |
 
-### Not done, and why chopping further would be the wrong move
+Deliberately left inside, because moving them breaks things silently:
 
-665 of the remaining 1041 lines are `for iteration in range(max_iter)` — the
-tool loop itself. This item's own rule was to leave it intact until it can be
-expressed as a state machine over an explicit `(messages, tools, iteration)`
-state, **not** by chopping on line counts. That condition is not met, so the
-item stays `partial`.
+  * `_ensure_model` / `_discover_default_model` — rebind the global
+    `MODEL`, read at two request-construction sites. Moving either sends
+    `"model": ""`.
+  * the tool loop itself, and everything it touches.
 
-Concretely, what a state machine would have to preserve:
+### Coverage, measured
 
-  * `msgs` is both input and output; every guard appends to it and the
+Function-level coverage over `pytest.main()` with stdlib `trace`
+(function counts as covered when any non-comment line in its body ran).
+`pytest-cov` line numbers are useless across a refactor; function
+identity is not.
+
+    call_llama.py        39/1282 -> 44/1113    uncovered: none
+    llm_messages.py       2/  84 -> 25/  84
+    http_clients.py       6/  88 -> 27/  88
+    llm_tools.py         10/ 100 -> 13/ 100
+    llm_nonstream.py         --   -> 72/ 174
+    llm_sse.py               --   -> 51/ 143
+    llm_loop_guard.py        --   -> 47/ 143
+    llm_thinking.py          --   -> 55/ 131
+    llm_json.py              --   -> 14/  53
+
+Before this item closed, `call_llama.py` reported two uncovered
+functions. It now reports none, and both of them live in tested modules.
+
+### Residual — the tool loop, and where it went
+
+**The tool loop (654 lines) is left as-is on purpose.** It is a separate
+architectural scope, unrelated to extraction, and tracked as its own
+item so that neither debt hides behind the other. Splitting it for its
+own sake is exactly what the original `DO NOT REFACTOR` comment warned
+about, and the cost of getting it wrong is measured: this refactor
+introduced four real defects, three of them invisible to a green suite,
+and none of them needed the tool loop touched.
+
+What a future attempt has to preserve, all of it measured rather than
+imagined:
+
+  * `msgs` is both input and output — every guard appends to it, and the
     summarize call re-sends the whole thing.
-  * `iter_had_real_result` is set inside the tool-dispatch block and read by
-    the guard at the tail, four hundred lines later.
+  * `iter_had_real_result` is set inside the tool-dispatch block and read
+    by the guard at the tail, ~400 lines later.
+  * `content_buf` / `reasoning_buf` / `tool_calls_buf` / `finish_reason`
+    have TWO writers each: the non-streaming branch and the streaming one.
   * `last_empty` is incremented in two distant places (three malformed-args
-    rejection sites, and the tail) and zeroed at the tail. The zeroing
-    overwrites same-iteration rejections — see below.
-  * `content_buf` / `reasoning_buf` / `tool_calls_buf` / `finish_reason` have
-    TWO writers each: the non-streaming branch and the streaming branch.
+    rejection sites, and the tail) and zeroed at the tail, which overwrites
+    same-iteration rejections. **This is not a bug to fix** — it is what
+    stops a model emitting nothing but broken JSON, and a test names it.
 
-Until those are collapsed into one representation, splitting the loop into
-functions means threading fifteen parameters through each of them and
-keeping four buffers alive across the boundary — which is the shape of the
-problem, not a reduction of it.
-
-### The three defects the extraction introduced
+### What this refactor broke, on the way
 
 Recorded because a ledger listing only wins is a sales page.
 
   * `saw_unavailable_tool` was assigned only on the `UnknownToolNameError`
-    path. As an enclosing-scope variable that was safe; as a local it was an
-    `UnboundLocalError` on every successful vision call, through a green
-    792-test suite.
-  * `self.finish_reason` was in `__slots__`, documented, and never assigned.
-    Harmless in production — the caller reads the returned `Delta` — and dead
-    for everyone else.
-  * The first C2 cut deleted all three SSE framing guards, so `[DONE]` reached
+    path; as a local it was an `UnboundLocalError` on every vision call,
+    through a green 792-test suite.
+  * `self.finish_reason` was in `__slots__`, documented, never assigned.
+  * the first SSE cut deleted all three framing guards, so `[DONE]` reached
     `json.loads` on every stream. Compiled. 805 tests passed.
+  * a test for `scrub_surrogates` had been passing against its own copy
+    for months, which is the strongest argument this item's real
+    criterion was reachability and not line count.
 
-### Two findings that outlive the refactor
+### Trigger that actually fired
 
-**`last_empty`'s zeroing is not a bug to fix.** Three rejected tool calls in
-one iteration are erased by the tail's `last_empty = 0` when the iteration
-had a real result. It looks wrong and it is the behaviour call_llama has
-always had. `tests/test_c3_loop_guard.py::test_rejections_are_cleared_by_the
-_next_real_iteration` exists so nobody "fixes" it silently.
-
-**The abort guards are not a ladder.** Three of five sit in the loop tail; the
-hallucination guard fires before any tool runs and returns a dict while the
-rest return strings. Ordering the tail cheapest-first would change which
-message the user sees when two conditions fire on the same iteration.
-
-### Trigger to fix — the one that actually fired
-
-The item said to wait for a feature needing a new kind of thing in the turn.
-What happened was subtler: three code-reading passes each found a helper
-whose globals could not be patched, and the patches kept landing on module
-attributes nothing read. The rule that came out is the actual fix — *private
-module state must not be re-exported through a facade*, or the next reader
-patches a second binding that is never consulted.
+Not "a feature needs a new kind of thing in the turn". What happened:
+three code-reading passes each found a helper whose globals could not be
+patched, and the patches kept landing on module attributes nothing read.
+The rule that came out is the actual fix — **private module state must not
+be re-exported through a facade**, or the next reader patches a second
+binding that is never consulted.
