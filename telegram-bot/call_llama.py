@@ -59,6 +59,7 @@ from llm_messages import _tag_sender  # noqa: F401
 from llm_nonstream import non_stream_iteration
 from llm_sse import StreamAccumulator
 from llm_loop_guard import Abort, LoopGuard
+from llm_toolargs import ArgsRejected, parse_tool_args
 from llm_json import dumps_body
 from llm_thinking import ThinkingThrottle, push_thinking
 from llm_tools import _bash_command_tool_enabled, fetch_tools_from_llama  # noqa: F401
@@ -882,48 +883,23 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             # - if it parses to {} while the raw string is non-empty
             #   (parsing dropped all keys), or
             # - if the same top-level key appears > 3 times
-            # then return a feedback message asking the model to
-            # retry. This costs one iteration but prevents the
-            # runaway loop that ends in a 500 from llama-server.
-            args = None
-            if isinstance(raw_args, str) and raw_args:
-                # Cheap check: too many duplicate top-level keys.
-                # E.g. "max_chars":8000,"max_chars":8000,... — we don't
-                # need exact JSON parsing to count this.
-                if raw_args.count('":') > 8 or len(raw_args) > 1500:
-                    log.info(f"[tool] iter={iteration} REJECTED {fn_name} args too repetitive or too long ({len(raw_args)} chars); asking model to retry")
-                    msgs.append({
-                        'role': 'tool',
-                        'tool_call_id': tc.get('id', ''),
-                        'content': f'[bot: your tool call for {fn_name} had malformed args (length={len(raw_args)}, possibly duplicate keys or clipped). Please re-emit the tool call with a single, well-formed JSON object.]',
-                    })
-                    guard.note_rejected_call()
-                    continue
-                try:
-                    args = json.loads(raw_args)
-                except Exception as e:
-                    log.info(f"[tool] iter={iteration} REJECTED {fn_name} args unparseable: {e!r} (head={raw_args[:120]!r})")
-                    msgs.append({
-                        'role': 'tool',
-                        'tool_call_id': tc.get('id', ''),
-                        'content': f'[bot: your tool call for {fn_name} had invalid JSON ({e!r}). Please re-emit with a single well-formed JSON object.]',
-                    })
-                    guard.note_rejected_call()
-                    continue
-                # If parsing yielded {} for a non-empty raw string,
-                # the model produced only structural noise (e.g.
-                # "{{" or "null" or duplicated empty key). Reject.
-                if not args and raw_args.strip() not in ('{}', 'null', '[]'):
-                    log.info(f"[tool] iter={iteration} REJECTED {fn_name} args parsed to empty for raw={raw_args[:120]!r}")
-                    msgs.append({
-                        'role': 'tool',
-                        'tool_call_id': tc.get('id', ''),
-                        'content': f'[bot: your tool call for {fn_name} parsed to an empty object. Please re-emit with actual parameters.]',
-                    })
-                    guard.note_rejected_call()
-                    continue
-            else:
-                args = {}
+            # then ask the model to retry. This costs one iteration but
+            # prevents the runaway loop that ends in a 500 from
+            # llama-server. The screening lives in llm_toolargs.py; what
+            # stays here is what only the loop knows -- the log line, the
+            # tool result, and the empty-call budget.
+            parsed_args = parse_tool_args(fn_name, raw_args)
+            if isinstance(parsed_args, ArgsRejected):
+                log.info(f"[tool] iter={iteration} REJECTED {fn_name} args "
+                    f"{parsed_args.detail}")
+                msgs.append({
+                    'role': 'tool',
+                    'tool_call_id': tc.get('id', ''),
+                    'content': parsed_args.message,
+                })
+                guard.note_rejected_call()
+                continue
+            args = parsed_args.args
             tc_id = tc.get('id', '')
             current_calls.append((fn_name, json.dumps(args, sort_keys=True) if isinstance(args, dict) else str(args)))
             log.info(f"[tool] iter={iteration} call {fn_name}({args})")

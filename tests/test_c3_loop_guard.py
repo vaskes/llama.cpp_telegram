@@ -311,15 +311,52 @@ def test_call_llama_no_longer_owns_the_loop_state():
 
 
 def test_every_rejection_site_goes_through_the_guard():
-    """Three `guard.note_rejected_call()` calls, no bare increments. A
-    bare `last_empty += 1` left behind would create a local nothing
-    reads -- the exact failure this block already had once."""
+    """A rejected tool call is charged to the budget. No bare increments.
+
+    Three inline rejection sites became one branch when the argument
+    screening moved to llm_toolargs.py, so counting sites stopped
+    describing the property. What has to stay true is the branch: the
+    rejection path must charge `guard`, and nothing anywhere may
+    increment the counter directly.
+
+    A bare `last_empty += 1` left behind would create a local that
+    nothing reads -- the exact failure this block already had once with
+    saw_unavailable_tool.
+    """
     src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    assert src.count("guard.note_rejected_call()") == 3, (
-        f"expected 3 rejection sites, found "
-        f"{src.count('guard.note_rejected_call()')}"
+
+    assert "last_empty += 1" not in src, (
+        "a bare increment bypasses the guard's budget entirely"
     )
-    assert "last_empty += 1" not in src
+    assert "guard.note_rejected_call()" in src, (
+        "no rejection path charges the empty-call budget any more -- a "
+        "model stuck emitting malformed tool calls would loop forever"
+    )
+
+    # ...and it has to be on the rejection path, not somewhere else.
+    tree = ast.parse(src)
+    fn = _call_llama_node()
+
+    def charges(node):
+        return any(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "note_rejected_call"
+            for n in ast.walk(node))
+
+    rejections = [
+        n for n in ast.walk(fn)
+        if isinstance(n, ast.If) and isinstance(n.test, ast.Call)
+        and getattr(n.test.func, "id", None) == "isinstance"
+        and any(isinstance(a, ast.Name) and a.id == "ArgsRejected"
+                for a in n.test.args)
+    ]
+    assert rejections, (
+        "the ArgsRejected branch is gone -- if the rejection path was "
+        "renamed or inlined, confirm it still charges the budget"
+    )
+    assert all(charges(r) for r in rejections), (
+        "the ArgsRejected branch no longer charges the empty-call budget"
+    )
 
 
 def test_the_nudge_still_reaches_the_summarize_call():
