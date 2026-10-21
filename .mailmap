@@ -27,5 +27,14 @@
 <vaskes@kuduza.com> <mavis@kuduza.com>
 <vaskes@kuduza.com> <admin@kuduza.com>
 
-# Deliberately NOT mapped: vaskes@mail.ru, 36 commits. A personal address in
-# a public repository. Whether it stays is the owner's call, not a default.
+# vaskes@mail.ru, 36 commits: a personal address sitting in a public
+# repository. Operator asked for it gone.
+<vaskes@kuduza.com> <vaskes@mail.ru>
+
+# What this file does and does not do:
+#
+# It changes ATTRIBUTION. The addresses above still exist inside the commit
+# objects and are still shown by `git log` without --use-mailmap and by the
+# GitHub commit view. Removing them from history requires a filter-repo
+# rewrite, which changes the SHA of every descendant commit in a repository
+# that is currently serving production. Operator's call, not a default.
