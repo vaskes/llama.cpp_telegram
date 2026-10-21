@@ -4,7 +4,9 @@
 # imported by every other module; no imports from other
 # project modules to avoid circular deps.
 import asyncio
+import ast
 import os
+from pathlib import Path
 from typing import Optional
 
 # === Telegram bot identity ===
@@ -138,3 +140,115 @@ WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/tg-webhook")
 # Shared secret Telegram sends in X-Telegram-Bot-Api-Secret-Token.
 # If empty, the handler refuses every request (safe-by-default).
 WEBHOOK_SECRET_TOKEN = os.environ.get("WEBHOOK_SECRET_TOKEN", "")
+
+
+# --- unrecognised env vars -------------------------------------------------
+#
+# A fork that sets a misspelled variable gets the default and no indication
+# of why. That is a silent failure: the only symptom is the bot behaving as
+# though the operator never configured anything.
+#
+# Warned, not fatal. This repository is a fork base with 200+ forks and a
+# public container image, and refusing to boot on an unrelated exported
+# variable would take every one of them down over a typo in one .env. The
+# contract that IS enforced -- documented vars are read, read vars are
+# documented -- lives in tests/test_env_contract.py and fails CI.
+
+_BOT_ENV_PREFIXES = ("BOT_", "MAX_", "LLAMA_", "RATING_", "TELEGRAM_",
+                     "CONTEXT_", "WHISPER_", "SANDBOX_", "PERSONA_",
+                     "ALLOWED_", "WEBHOOK_", "DONSETCH_", "REANCHOR_")
+
+_BOT_ENV_NAMES = frozenset({
+    # Documented in .env.example; kept here as a fast path so the common case
+    # does not scan every source file at startup.
+})
+
+
+_ENV_LITERAL_RE = None
+
+
+def _known_env_names() -> set:
+    """Every env var the code references, from the code itself.
+
+    The first version read .env.example for this, and .env.example does not
+    ship in the container image -- so in production the known-set was empty and
+    every BOT_-prefixed variable warned on every start. A warning that fires on
+    correct configuration trains the operator to ignore it, which is worse than
+    not warning at all.
+
+    So the source of truth is the source tree, which is always present. The
+    scan is deliberately broad (any env-var-shaped string literal): the cost
+    of over-matching here is missing a typo, and the cost of under-matching is
+    a wall of false alarms at every startup.
+    """
+    global _ENV_LITERAL_RE
+    if _ENV_LITERAL_RE is None:
+        import re as _re
+        _ENV_LITERAL_RE = _re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    names = set(_BOT_ENV_NAMES)
+
+    for path in _iter_python_sources(here):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if _ENV_LITERAL_RE.match(node.value):
+                    names.add(node.value)
+    return names
+
+
+def _iter_python_sources(root):
+    """Every .py under root, personal_tools/ included.
+
+    A top-level-only glob missed bash_command.py, which reads
+    LLAMABOT_BASH_RPM and LLAMABOT_DEV_ALLOWED_CHAT_IDS.
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for fn in filenames:
+            if fn.endswith(".py"):
+                yield Path(dirpath) / fn
+
+
+def warn_unrecognised_env(env=None) -> list:
+    """Return human-readable warnings for BOT_-prefixed vars nothing reads.
+
+    Prefix-scoped on purpose: warning about PATH, TZ and every framework
+    variable a container image exports would bury the real signal.
+    """
+    import re as _re
+    env = os.environ if env is None else env
+    known = _known_env_names()
+    pattern = _re.compile(r"^[A-Z_][A-Z0-9_]*$")
+
+    warnings = []
+    for key in sorted(env):
+        if key in known:
+            continue
+        if not key.startswith(_BOT_ENV_PREFIXES):
+            continue
+        if not pattern.match(key):
+            continue
+        warnings.append(
+            f"[config] env var {key} is set but no code reads it. If this "
+            f"was meant to configure something, check the spelling against "
+            f".env.example -- a typo here is silently ignored."
+        )
+    return warnings
+
+
+def emit_env_warnings() -> int:
+    """Print warnings and return the count, so callers can assert on it."""
+    warnings = warn_unrecognised_env()
+    for w in warnings:
+        print(w, flush=True)
+    return len(warnings)
+
+
+# Report anything BOT_-prefixed that nothing reads. Runs at import, after the
+# helpers above are defined, so it costs one scan of .env.example per start.
+_ = emit_env_warnings()
