@@ -1,16 +1,31 @@
-# The Claude Code commit trailer added itself to 22 commits as
-# `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`. That email
-# resolves to a real GitHub account, so the repository grew a second
-# contributor who never wrote a line, has no key and opened no PR.
+# Format:  <proper@email> <commit@email>
 #
-# Map the identity to the owner rather than rewriting history: 22 commits are
-# already deployed and rewriting them would change every SHA.
-noreply@anthropic.com vaskes <vaskes@kuduza.com>
-# Three bot identities were committed against kuduza.ai, a domain that does
-# not exist -- 231 commits in total. Nothing was lost, but the addresses are
-# unroutable and unattributable. KuduzaAiLab owns kuduza.com; the repo owner
-# is vaskes@kuduza.com.
-mavis@kuduza.ai       vaskes <vaskes@kuduza.com>
-mavis-agent@kuduza.ai vaskes <vaskes@kuduza.com>
-llamabot@kuduza.ai    vaskes <vaskes@kuduza.com>
-mavis@kuduza.com      vaskes <vaskes@kuduza.com>
+# BOTH addresses must be inside angle brackets. Verified against git 2.53
+# with `git check-mailmap` -- three of the forms the git docs appear to
+# allow are silently ignored, so this file is the combination that was
+# actually observed to rewrite an identity, not the one that looked right:
+#
+#   <proper@e> <commit@e>                      MATCHES
+#   <proper@e> commit@e                         ignored
+#   Proper <proper@e> commit@e                 ignored
+#   Proper <proper@e> CommitName <commit@e>     matches, but needs the
+#                                               commit's exact display name
+#
+# Names are preserved; only the address is redirected.
+
+# Claude Code appended this trailer to 22 commits. It resolves to a real
+# GitHub account, so the repo grew a second contributor who wrote nothing,
+# holds no key and opened no pull request.
+<vaskes@kuduza.com> <noreply@anthropic.com>
+
+# 231 commits were recorded against kuduza.ai, a domain that does not exist.
+# Unroutable, and matching no account, so none of that work attributes
+# anywhere. KuduzaAiLab owns kuduza.com.
+<vaskes@kuduza.com> <mavis@kuduza.ai>
+<vaskes@kuduza.com> <mavis-agent@kuduza.ai>
+<vaskes@kuduza.com> <llamabot@kuduza.ai>
+<vaskes@kuduza.com> <mavis@kuduza.com>
+<vaskes@kuduza.com> <admin@kuduza.com>
+
+# Deliberately NOT mapped: vaskes@mail.ru, 36 commits. A personal address in
+# a public repository. Whether it stays is the owner's call, not a default.
