@@ -62,13 +62,26 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Production runs python:3.11-slim (telegram-bot/Dockerfile). A
+        # 3.12-only suite is a suite that has never tested what it ships.
+        #
+        # Nine PEP 701 f-strings in test_shell_integration.py lived through
+        # several review waves for exactly this reason: they parse on 3.12
+        # and are a SyntaxError on 3.11. The version-sensitive tripwires
+        # (test_python_version_compat.py) cannot be honest from one side
+        # only -- the pre312 scan skips itself on 3.12 -- so the 3.11 job is
+        # not redundant, it is the other half of the coverage.
+        python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

@@ -105,6 +105,41 @@ def _collect():
     return rows
 
 
+def test_no_test_file_was_skipped_as_unparseable():
+    """W2-H3. UNPARSEABLE exists so one unreadable file does not take the
+    whole audit down before it checks anything. But the list was never
+    asserted anywhere, so the scan silently swallowed files -- reproducing
+    the exact failure mode it was added to replace.
+
+    Injected by a reviewer: a file that does not parse AND carries a stale
+    `dispatch.totally_missing_symbol` target. UNPARSEABLE filled up, the
+    audit stayed green, one test file went entirely unaudited.
+
+    This runs first in collection order and fails loudly, naming the files.
+    """
+    # Scan first. Asserting before anything has populated the list passes
+    # vacuously -- which is how this guard looked like it worked while
+    # catching a colleague's identical injection on the *next* test down.
+    _collect()
+    assert not UNPARSEABLE, (
+        f"these test files could not be parsed and were NOT audited: "
+        f"{UNPARSEABLE}. A patch target in any of them is unchecked -- "
+        f"which is the failure this guard was added to prevent."
+    )
+
+
+def test_unparseable_does_not_accumulate_between_runs():
+    """UNPARSEABLE is module-level and never cleared, so once anything lands
+    in it every later run in the same process stays red even after the file
+    is fixed. It must hold exactly the current scan's findings."""
+    before = len(UNPARSEABLE)
+    _collect()
+    assert len(UNPARSEABLE) == before, (
+        f"a clean scan added {len(UNPARSEABLE) - before} entries; the list is "
+        f"meant to describe this run, not every run that ever ran"
+    )
+
+
 def test_no_patch_target_names_a_missing_symbol():
     """The load-time contract: every patch target must resolve.
 
