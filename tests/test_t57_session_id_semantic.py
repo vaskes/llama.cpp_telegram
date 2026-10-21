@@ -30,20 +30,27 @@ sys.path.insert(0, str(REPO / "telegram-bot"))
 def _parse_call_llama_bash_dispatch():
     """Find the bash_command dispatch site in call_llama.py and
     return the AST node where session_id is derived."""
-    src = (REPO / "telegram-bot" / "call_llama.py").read_text()
-    tree = ast.parse(src)
-    for node in ast.walk(tree):
-        # The dispatch site is a chain of `if/elif fn_name == "..."`
-        # blocks. The compare is `Name == Constant`, so the string
-        # is in test.comparators[0], not test.left.
-        if isinstance(node, ast.If):
-            test = node.test
-            if (isinstance(test, ast.Compare)
-                and len(test.comparators) == 1
-                and isinstance(test.comparators[0], ast.Constant)
-                and test.comparators[0].value == "bash_command"):
-                return node
-    raise AssertionError("bash_command dispatch site not found in call_llama.py")
+    # Block D4 moved the bash dispatch into llm_dispatch.py. What this
+    # protects did not move: the session id is never taken from the model.
+    # One edit rather than two -- shifting the loop left costs a level of
+    # indent in its body, and the intermediate state does not parse.
+    from dispatch_location import iter_modules
+
+    for _name, src in iter_modules():
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            # The dispatch site is a chain of `if/elif fn_name == "..."`
+            # blocks. The compare is `Name == Constant`, so the string
+            # is in test.comparators[0], not test.left.
+            if isinstance(node, ast.If):
+                test = node.test
+                if (isinstance(test, ast.Compare)
+                    and len(test.comparators) == 1
+                    and isinstance(test.comparators[0], ast.Constant)
+                    and test.comparators[0].value == "bash_command"):
+                    return node
+    raise AssertionError("bash_command dispatch site not found in "
+                         "call_llama.py or llm_dispatch.py")
 
 
 def test_session_id_never_uses_args_get():
@@ -70,6 +77,22 @@ def test_session_id_uses_chat_id():
     """The session_id must reference chat_id."""
     dispatch = _parse_call_llama_bash_dispatch()
     src = ast.unparse(dispatch)
+    # Block D4: the branch delegates to _execute_bash and chat_id is read
+    # there. Followed through the module *source*, not by importing the
+    # function -- an imported function is a function object, and
+    # ast.unparse of one is a TypeError, not a result.
+    if "_execute_bash" in src:
+        from dispatch_location import source_of
+        tree = ast.parse(source_of("llm_dispatch.py"))
+        for node in tree.body:
+            if isinstance(node, ast.AsyncFunctionDef) \
+                    and node.name == "_execute_bash":
+                src += "\n" + ast.unparse(node)
+                break
+        else:
+            raise AssertionError(
+                "the bash branch calls _execute_bash but the function "
+                "is not defined in llm_dispatch.py")
     assert "chat_id" in src, (
         f"T57 #S16: session_id must be derived from chat_id. "
         f"Found dispatch site:\n{src[:500]}"
@@ -79,19 +102,39 @@ def test_session_id_uses_chat_id():
 def test_session_id_is_chat_dash_chat_id_format():
     """The session_id must follow chat-{chat_id} format and must
     not have an args.get fallback."""
-    src = (REPO / "telegram-bot" / "call_llama.py").read_text()
-    pattern = re.compile(r"sid\s*=\s*[^\n]*chat_id[^\n]*", re.MULTILINE)
-    matches = pattern.findall(src)
-    assert matches, "no sid = ... chat_id ... assignment found"
-    for match in matches:
+    # Block D4: the derivation is a named constant plus a .format()
+    # call now. Two facts instead of one adjacency -- the constant holds
+    # the chat-scoped pattern, and something formats it from chat_id.
+    # Asserting adjacency would have failed here because they are sixty
+    # lines apart, which says nothing about whether either is correct.
+    from dispatch_location import dispatch_source
+    joined_src = dispatch_source()
+    src = joined_src
+
+    inline = re.compile(r"sid\s*=\s*[^\n]*chat_id[^\n]*", re.MULTILINE)
+    for match in inline.findall(src):
         assert "args.get" not in match, (
             f"T57 #S16: sid assignment includes args.get fallback: "
             f"{match!r}. The fix: always derive session_id from chat_id."
         )
-        assert "f'" in match or 'f"' in match or "{" in match, (
-            f"T57 #S16: sid assignment doesn't use chat_id in the value: "
-            f"{match!r}"
-        )
+
+    derived = ('SESSION_ID_TEMPLATE = "chat-{chat_id}"' in src
+               and ".format(chat_id=" in src)
+    assert inline.search(src) or derived, (
+        "no chat-bound session_id derivation found -- neither an inline "
+        "assignment naming chat_id nor the constant formatted from it")
+
+    if derived:
+        assert not re.search(
+            r"SESSION_ID[^\n]*args\.get\(['\"]session_id", src), (
+            "the session id is derived from the template but the template "
+            "is filled from the model's own arguments")
+        # The original check here was `assert "f'" in match ...`, reading
+        # the last regex hit: the value has to interpolate something. The
+        # constant form interpolates chat_id inside the template instead,
+        # which is asserted above, so there is no `match` left to read.
+        assert "{chat_id}" in joined_src, (
+            "the session id template does not interpolate chat_id")
 
 
 def test_call_bash_command_validates_session_id_format():

@@ -94,14 +94,20 @@ def test_c4_rate_limit_actually_limits():
 
 
 def test_c5_design_note_in_call_llama():
-    src = CALL_LLAMA.read_text()
+    # Block D4 moved the note and the code it explains into
+    # llm_dispatch.py. Same requirement: say WHY, not just "T51 C5".
+    from dispatch_location import dispatch_source
+    src = dispatch_source()
     assert "T51 C5" in src
     # The design note must explain WHY session_id is
     # deterministic, not just comment "T51 C5".
     assert "persistent-shell" in src or "tmux-bound" in src
-    assert "AGENT_STACK_TOKEN" in src
-    # The actual code is still deterministic, not random.
-    assert "f'chat-{chat_id}'" in src
+    assert "AGENT_STACK_TOKEN" in src or "is_enabled_for_active_profile" in src
+    # The actual code is still deterministic, not random. The derivation
+    # is a module constant now, so the assertion follows the form while
+    # still requiring the chat binding.
+    assert "chat-{chat_id}" in src, \
+        "the deterministic session id lost its chat binding"
 
 
 def test_c6_command_output_header():

@@ -68,6 +68,8 @@ from llm_loop_guard import Abort, LoopGuard, Nudge
 # touches the caller.
 from llm_nonstream import tools_less_fallback
 from llm_toolcalls import normalize_tool_calls, reject_unknown_names
+from llm_dispatch import (DispatchDeps, MAX_TOOL_RESULT_CHARS,
+                         execute_tool)
 from llm_finish import (finish_fallback_empty,
                        finish_without_tool_calls, refuse_hallucinated_tools)
 from llm_toolargs import ArgsRejected, parse_tool_args
@@ -790,9 +792,20 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         msgs.append(msg)
 
         # --- execute tool calls ---
+        #
+        # The state below is the loop's, and stays here: which iteration
+        # this is, what has already run, what the model has been told.
+        # Executing one call is not a loop concern and lives in
+        # llm_dispatch.py; screening one is not either and lives in
+        # llm_toolargs.py.
         iter_had_real_result = False
         saw_unavailable_tool = False
         current_calls = []
+        deps = DispatchDeps(bot=bot, chat_id=chat_id,
+                            current_message_id=current_message_id,
+                            chat_type=chat_type, iteration=iteration,
+                            custom_tools=CUSTOM_TOOLS,
+                            donsetch_tools=DONSETCH_TOOLS)
         log.info(f"[loop] iter={iteration} tool_calls={len(tool_calls)} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)}")
         for tc in tool_calls:
             fn_name = tc.get('function', {}).get('name', '')
@@ -800,7 +813,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             # --- Defensive parse of tool call args ---
             # Qwen3.8-27B-Ultra-Heretic (and a few other recent models
             # with speculative decoding / MTP heads) sometimes emit
-            # malformed tool-call JSON during long chains — most
+            # malformed tool-call JSON during long chains -- most
             # commonly the same key repeated many times, or the
             # closing brace clipped. json.loads then either accepts
             # only the last value of a duplicated key, or raises and
@@ -832,94 +845,19 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             tc_id = tc.get('id', '')
             current_calls.append((fn_name, json.dumps(args, sort_keys=True) if isinstance(args, dict) else str(args)))
             log.info(f"[tool] iter={iteration} call {fn_name}({args})")
-            if fn_name == 'react_to_message':
-                result = await _execute_react_to_message(
-                    args,
-                    bot=bot,
-                    chat_id=chat_id,
-                    default_message_id=current_message_id,
-                )
-                _executed_tools_in_turn.append({
-                    "name": "react_to_message",
-                    "args": args if isinstance(args, dict) else {},
-                    "iter": iteration,
-                })
-            elif fn_name == 'bash_command':
-                # T39: forward to the vaskes/OpenWebUI-bash-sandbox
-                # side-car. The tool_isolation guard earlier in this
-                # iter (see T38.5) has already checked that
-                # 'bash_command' is in KNOWN_TOOL_NAMES, and the
-                # bot_side_tool_defs append above has already
-                # confirmed personal+token. Defence in depth: also
-                # check here in case the call path was reached via a
-                # tools= param from the caller.
-                try:
-                    from personal_tools import bash_command as _bc
-                except Exception as e:
-                    result = f'[bash_command unavailable: {e!r}]'
-                else:
-                    if not _bc.is_enabled_for_active_profile():
-                        result = (
-                            '[bash_command unavailable: requires '
-                            'LLAMABOT_DEPLOYMENT_PROFILE=personal '
-                            'and AGENT_STACK_TOKEN. This chat is '
-                            'not in personal mode.]'
-                        )
-                    else:
-                        # T51 C5: session_id is intentionally
-                        # chat-{chat_id} (deterministic, NOT random).
-                        # Random per-call IDs would break the
-                        # persistent-shell feature (cwd / env /
-                        # history are tmux-bound in the sandbox,
-                        # so they survive across calls only when
-                        # the same session_id is reused). The
 
-                        sid = f'chat-{chat_id}'  # T57 #S16: never trust the LLM's session_id
-                        cmd = args.get('command', '')
-                        if not cmd:
-                            result = '[bash_command: empty command]'
-                        else:
-                            r = await _bc.call_bash_command(
-                                cmd, session_id=sid, chat_type=chat_type,
-                                chat_id=chat_id)
-                            result = _bc.tool_result_to_text(r)
-                            _executed_tools_in_turn.append({
-                                "name": "bash_command",
-                                "args": args if isinstance(args, dict) else {},
-                                "iter": iteration,
-                                "ok": r.get("ok", False),
-                            })
-            elif fn_name in CUSTOM_TOOLS:
-                result = await CUSTOM_TOOLS[fn_name](args)
-                _executed_tools_in_turn.append({
-                    "name": fn_name,
-                    "args": args if isinstance(args, dict) else {},
-                    "iter": iteration,
-                })
-            elif fn_name in DONSETCH_TOOLS:
-                result = await DONSETCH_TOOLS[fn_name](args)
-                _executed_tools_in_turn.append({
-                    "name": fn_name,
-                    "args": args if isinstance(args, dict) else {},
-                    "iter": iteration,
-                })
-            else:
-                result = f'[tool {fn_name} unavailable in this mode. Bot supports: donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, donsetch_web_screenshot, react_to_message, bash_command (personal mode only).]'
+            outcome = await execute_tool(fn_name, args, deps)
+
+            if outcome.unavailable:
                 saw_unavailable_tool = True
-            r_str = str(result)
-            is_empty = (
-                '0 results' in r_str.lower() or
-                'engines unavailable' in r_str.lower() or
-                r_str.startswith('[donsetch') or
-                r_str.startswith('[fetch error') or
-                r_str.startswith('[tool')
-            )
-            if not is_empty:
+            if not outcome.empty:
                 iter_had_real_result = True
+            if outcome.ledger is not None:
+                _executed_tools_in_turn.append(outcome.ledger)
             msgs.append({
                 'role': 'tool',
                 'tool_call_id': tc_id,
-                'content': r_str[:12000],
+                'content': outcome.text[:MAX_TOOL_RESULT_CHARS],
             })
 
         # T49: removed the early-return on saw_unavailable_tool.

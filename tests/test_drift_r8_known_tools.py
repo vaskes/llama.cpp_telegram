@@ -52,7 +52,13 @@ def _extract_known_tool_names(src: str) -> set:
 
 def _extract_dispatch_names(src: str) -> set:
     names: set = set()
-    pattern_eq = re.compile(r"""fn_name\s*==\s*['"]([a-zA-Z0-9_]+)['"]""")
+    # Block D4: the dispatch chain moved into llm_dispatch.py, where the
+    # parameter is `name` rather than `fn_name`. The \b matters -- without
+    # it the pattern would match the tail of `fn_name` too and could
+    # double-count. Same property either way: a string compared against a
+    # tool-name variable is a dispatch site.
+    pattern_eq = re.compile(
+        r"""\b(?:fn_)?name\s*==\s*['"]([a-zA-Z0-9_]+)['"]""")
     for m in pattern_eq.finditer(src):
         names.add(m.group(1))
     pattern_dict = re.compile(
@@ -113,6 +119,13 @@ def test_every_known_tool_name_has_dispatch_site():
     dispatched_names = set()
     for module in _modules_with_tool_registries():
         dispatched_names |= _extract_dispatch_names(module.read_text())
+
+    # Block D4 moved the dispatch chain itself into llm_dispatch.py.
+    # Scanned through the shared location helper rather than by adding a
+    # path here, so the next extraction is one edit in one place.
+    from dispatch_location import iter_modules
+    for _name, source in iter_modules():
+        dispatched_names |= _extract_dispatch_names(source)
 
     missing = known_names - dispatched_names
     assert not missing, (

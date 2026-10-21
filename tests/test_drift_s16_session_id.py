@@ -35,7 +35,10 @@ def test_no_args_get_session_id_in_call_llama():
     untrusted; the bot owns the session_id as
     `f'chat-{chat_id}'`.
     """
-    src = CALL_LLAMA_PY.read_text()
+    # Block D4 moved the bash dispatch into llm_dispatch.py. The rule
+    # is unchanged, so the scan covers both modules.
+    from dispatch_location import dispatch_source
+    src = dispatch_source()
     # Match either single or double quotes
     patterns = [
         "args.get('session_id')",
@@ -68,12 +71,25 @@ def test_sid_is_chat_dash_chat_id():
                     # Reconstruct the f-string source
                     src_line = ast.unparse(node.value)
                     matches.append((node.lineno, src_line))
-    # Filter to only the `chat-{chat_id}` form
+    # Filter to only the chat-bound form. Block D4 moved the derivation
+    # to SESSION_ID_TEMPLATE, formatted from chat_id at the call site.
+    # Both halves have to be present: a constant nothing formats, or a
+    # format of a constant that never mentions chat_id, each pass alone.
     canonical = [
         (lineno, src)
         for lineno, src in matches
         if "chat-" in src and "chat_id" in src
     ]
+    from dispatch_location import dispatch_source
+    joined = dispatch_source()
+    constant_bound = ('SESSION_ID_TEMPLATE = "chat-{chat_id}"' in joined
+                      and ".format(chat_id=" in joined)
+    if constant_bound:
+        assert not canonical or len(canonical) == 1, (
+            f"the chat-scoped constant is formatted more than once: "
+            f"{canonical}")
+        if not canonical:
+            canonical = [(0, "SESSION_ID_TEMPLATE.format(chat_id=...)")]
     assert len(canonical) == 1, (
         f"call_llama.py must have exactly one "
         f"`sid = f'chat-{{chat_id}}'` assignment. "
@@ -83,10 +99,21 @@ def test_sid_is_chat_dash_chat_id():
     )
     # And the comment must still say "never trust the LLM"
     lineno, _ = canonical[0]
-    src = CALL_LLAMA_PY.read_text()
-    # Look at the same line / next line for the S16 comment
+    # Block D4 moved the bash dispatch into llm_dispatch.py. The rule
+    # is unchanged, so the scan covers both modules.
+    from dispatch_location import dispatch_source
+    src = dispatch_source()
+    # Look at the same line / next line for the S16 comment. With the
+    # constant form there is no single line to blame, so the marker is
+    # required somewhere in the module that derives it -- the intent of
+    # the original check, which was never about line numbers.
     lines = src.splitlines()
-    if lineno - 1 < len(lines):
+    if lineno == 0:
+        assert any("S16" in ln for ln in lines), (
+            "the session id derivation has lost its "
+            "# T57 #S16: never trust the LLM's session_id marker, so a "
+            "future contributor has nothing warning them off 'improving' it")
+    elif lineno - 1 < len(lines):
         line = lines[lineno - 1]
         if "S16" not in line and (
             lineno < len(lines) and "S16" not in lines[lineno]

@@ -100,11 +100,24 @@ def test_call_llama_has_synthetic_tool_result():
     produce a synthetic tool result that mentions the
     available tools. T49 relies on this feedback to let
     the model retry with a whitelisted tool."""
+    # Block D4: the message is UNAVAILABLE_TOOL_MESSAGE in llm_dispatch.
+    # Asserting the constant's text rather than the f-string that used to
+    # sit inline is stronger -- the message cannot be reworded or dropped
+    # without this going red.
+    from llm_dispatch import UNAVAILABLE_TOOL_MESSAGE
     src = CALL_LLAMA.read_text()
-    assert "tool {fn_name} unavailable in this mode" in src
-    # It must list bash_command in the message so the
-    # model can see what is available.
-    assert "bash_command" in src
+    assert "tool {name} unavailable in this mode" in UNAVAILABLE_TOOL_MESSAGE
+    # It must list bash_command in the MESSAGE so the model can see what
+    # is available. This read call_llama.py, where bash_command appears
+    # for unrelated reasons -- so after Block D4 it passed no matter what
+    # the message said. A mutation that dropped the whole tool list was
+    # reported as a survivor because of it.
+    assert "bash_command" in UNAVAILABLE_TOOL_MESSAGE, (
+        "the unavailable-tool message no longer names the tools, so the "
+        "model cannot tell what it may retry with")
+    for tool in ("donsetch_web_search", "react_to_message"):
+        assert tool in UNAVAILABLE_TOOL_MESSAGE, \
+            f"the unavailable-tool message stopped naming {tool}"
     # The synthetic result is appended to msgs (not just
     # logged), so the model sees it on the next iter.
     assert "msgs.append" in src

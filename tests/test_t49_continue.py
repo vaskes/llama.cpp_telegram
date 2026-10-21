@@ -85,8 +85,10 @@ def test_stuck_call_detector_intact():
 def test_t43_synthetic_tool_result_intact():
     """T43 synthetic tool result message for unhandled tools
     must still be generated and appended to msgs."""
+    # Block D4 moved the message into llm_dispatch.UNAVAILABLE_TOOL_MESSAGE.
+    from llm_dispatch import UNAVAILABLE_TOOL_MESSAGE
     assert "tool __rejected__ unavailable" in src or \
-        "tool {fn_name} unavailable" in src, \
+        "tool {name} unavailable" in UNAVAILABLE_TOOL_MESSAGE, \
         "synthetic tool result message missing"
     # The else: branch sets saw_unavailable_tool and appends
     # to msgs. Verify both code paths.
