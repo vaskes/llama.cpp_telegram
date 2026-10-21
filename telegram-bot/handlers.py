@@ -434,12 +434,29 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sem = await _check_user_slot(chat_id, update.effective_user.id, update)
     if sem is None:
         return
-    await update.message.chat.send_action(action='typing')
-    thinking = None
-    # T67.2: the v0.9.1 `persisted` flag and its two rollbacks are gone with
-    # the image write. They existed solely to undo _persist_message when the
-    # user hit Stop or the call crashed — there is nothing to undo now, and
-    # a rollback that fires without a write is worse than no rollback.
+    # B1: the per-user slot is acquired above. Everything between here and
+    # the try/finally was NOT covered by it, so an exception here -- Telegram
+    # rejecting the typing indicator, a malformed update -- discarded the slot
+    # outright. With _PER_USER_SEMAPHORE_LIMIT=2, two such failures lock the
+    # user out of the bot until the process restarts, and the only thing that
+    # could return the token is a finally that was never entered.
+    #
+    # BaseException rather than Exception: a cancelled handler leaks the same
+    # way and would never appear in a log.
+    try:
+        await update.message.chat.send_action(action='typing')
+        thinking = None
+        # T67.2: the v0.9.1 `persisted` flag and its two rollbacks are gone with
+        # the image write. They existed solely to undo _persist_message when the
+        # user hit Stop or the call crashed — there is nothing to undo now, and
+        # a rollback that fires without a write is worse than no rollback.
+    except BaseException:
+        try:
+            sem.release()
+        except Exception:
+            pass
+        raise
+
     try:
         photo = update.message.photo[-1]
         # Telegram sends multiple PhotoSize entries; we want the
@@ -662,8 +679,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
-        _abort_events.pop((chat_id, thinking.message_id), None)
-        sem.release()
+        # B1: the abort event is only registered when a thinking message
+        # exists, so there is nothing to pop otherwise -- and reaching for
+        # thinking.message_id anyway raised AttributeError, which replaced
+        # the real exception and skipped the release below. That leaked the
+        # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
+        #
+        # Both layers are deliberate. The guard makes the pop correct; the
+        # try makes it impossible for any future line added here to cost a
+        # user their access to the bot.
+        if thinking is not None:
+            try:
+                _abort_events.pop((chat_id, thinking.message_id), None)
+            except Exception:
+                pass
+        try:
+            sem.release()
+        except Exception:
+            pass
 
 # === _download_with_limit ===
 async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
@@ -721,13 +754,30 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sem = await _check_user_slot(chat_id, user_id, update)
     if sem is None:
         return
-    await update.message.chat.send_action(action='typing')
-    thinking = None
-    # Built before the try: the except below calls turn.rollback(), and a Turn
-    # constructed inside the try is unbound for any exception raised before
-    # that line -- which is the window the rollback exists to cover.
-    turn = Turn(chat_id, thread_id, "handle_voice")
-    persisted = False  # mirrors turn.persisted
+    # B1: the per-user slot is acquired above. Everything between here and
+    # the try/finally was NOT covered by it, so an exception here -- Telegram
+    # rejecting the typing indicator, a malformed update -- discarded the slot
+    # outright. With _PER_USER_SEMAPHORE_LIMIT=2, two such failures lock the
+    # user out of the bot until the process restarts, and the only thing that
+    # could return the token is a finally that was never entered.
+    #
+    # BaseException rather than Exception: a cancelled handler leaks the same
+    # way and would never appear in a log.
+    try:
+        await update.message.chat.send_action(action='typing')
+        thinking = None
+        # Built before the try: the except below calls turn.rollback(), and a Turn
+        # constructed inside the try is unbound for any exception raised before
+        # that line -- which is the window the rollback exists to cover.
+        turn = Turn(chat_id, thread_id, "handle_voice")
+        persisted = False  # mirrors turn.persisted
+    except BaseException:
+        try:
+            sem.release()
+        except Exception:
+            pass
+        raise
+
     try:
         msg = update.message
         # filters.AUDIO catches both voice messages and video notes.
@@ -859,26 +909,43 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sem = await _check_user_slot(chat_id, user_id, update)
     if sem is None:
         return
-    await update.message.chat.send_action(action='typing')
-    doc = update.message.document
-    # Reject oversized documents before downloading. We will only ever
-    # read the first 16 KB of text from the file, so anything bigger is
-    # almost certainly a mistake or an attempt to OOM the bot.
-    if doc.file_size and doc.file_size > MAX_DOC_BYTES:
-        await _reply(update, 
-            f'❌ Document too large ({doc.file_size/1e6:.1f} MB > '
-            f'{MAX_DOC_BYTES/1e6:.0f} MB).'
-        )
-        return
-    file = await context.bot.get_file(doc.file_id)
-    doc_bytes = await _download_with_limit(file, MAX_DOC_BYTES, 'Document', update)
-    if doc_bytes is None:
-        return
-    tmp_path = None
-    thinking = None
-    # v0.9.2: rollback flag for persisted document content
-    turn = Turn(chat_id, thread_id, "handle_document")
-    persisted = False  # mirrors turn.persisted
+    # B1: the per-user slot is acquired above. Everything between here and
+    # the try/finally was NOT covered by it, so an exception here -- Telegram
+    # rejecting the typing indicator, a malformed update -- discarded the slot
+    # outright. With _PER_USER_SEMAPHORE_LIMIT=2, two such failures lock the
+    # user out of the bot until the process restarts, and the only thing that
+    # could return the token is a finally that was never entered.
+    #
+    # BaseException rather than Exception: a cancelled handler leaks the same
+    # way and would never appear in a log.
+    try:
+        await update.message.chat.send_action(action='typing')
+        doc = update.message.document
+        # Reject oversized documents before downloading. We will only ever
+        # read the first 16 KB of text from the file, so anything bigger is
+        # almost certainly a mistake or an attempt to OOM the bot.
+        if doc.file_size and doc.file_size > MAX_DOC_BYTES:
+            await _reply(update, 
+                f'❌ Document too large ({doc.file_size/1e6:.1f} MB > '
+                f'{MAX_DOC_BYTES/1e6:.0f} MB).'
+            )
+            return
+        file = await context.bot.get_file(doc.file_id)
+        doc_bytes = await _download_with_limit(file, MAX_DOC_BYTES, 'Document', update)
+        if doc_bytes is None:
+            return
+        tmp_path = None
+        thinking = None
+        # v0.9.2: rollback flag for persisted document content
+        turn = Turn(chat_id, thread_id, "handle_document")
+        persisted = False  # mirrors turn.persisted
+    except BaseException:
+        try:
+            sem.release()
+        except Exception:
+            pass
+        raise
+
     try:
         ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
         with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
@@ -1014,8 +1081,24 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
-        _abort_events.pop((chat_id, thinking.message_id), None)
-        sem.release()
+        # B1: the abort event is only registered when a thinking message
+        # exists, so there is nothing to pop otherwise -- and reaching for
+        # thinking.message_id anyway raised AttributeError, which replaced
+        # the real exception and skipped the release below. That leaked the
+        # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
+        #
+        # Both layers are deliberate. The guard makes the pop correct; the
+        # try makes it impossible for any future line added here to cost a
+        # user their access to the bot.
+        if thinking is not None:
+            try:
+                _abort_events.pop((chat_id, thinking.message_id), None)
+            except Exception:
+                pass
+        try:
+            sem.release()
+        except Exception:
+            pass
 
 # === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1083,35 +1166,65 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # v0.9.2: rollback flag for persisted user message
     turn = Turn(chat_id, thread_id, "handle_text")
     persisted = False  # mirrors turn.persisted
+    thinking = None
+    # B1: the per-user slot is acquired above and everything up to the main
+    # try/finally was NOT covered by it. This window is not just awaits --
+    # it contains turn.persist(), so a failure after that write left a
+    # half-written user message in SQLite AND discarded the slot.
+    # _PER_USER_SEMAPHORE_LIMIT is 2, so two such failures lock the user out
+    # of the bot until the process restarts.
+    #
+    # The except mirrors the main one rather than just releasing: rollback if
+    # we persisted, deregister the abort event, release, re-raise.
+    # BaseException because a cancelled handler leaks the same way and would
+    # never appear in a log.
     try:
-        await update.message.chat.send_action(action='typing')
-    except Exception as e:
-        print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
-    sender_name = _sender_display_name(update.message.from_user)
-    # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
-    # click during the LLM call can roll the message back.
-    thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-    # T34 race fix v2: REUSE the early_event created at ENTRY
-    # time, so a follow-up that arrived between EARLY-RECORD
-    # and this point (and called set() on early_event) is
-    # observable here. If we created a fresh event now, the
-    # burst-set event would be orphaned and the LLM call
-    # would proceed to a half-answer.
-    abort_event = early_event
-    _register_abort_event(chat_id, thinking.message_id, abort_event)
-    await turn.persist(user_message, role='user', sender_name=sender_name)
-    persisted = turn.persisted
-    # Refresh the registry entry so the abort_event and the
-    # recorded size match (the EARLY-RECORD used text_bytes
-    # of the raw message; LATE-RECORD uses the same value but
-    # keeps the registry authoritative in case of a future
-    # refactor).
-    msg_bytes = len(user_message.encode('utf-8'))
-    _record_user_message(chat_id, user_id, msg_bytes, abort_event)
-    print(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]", flush=True)
-    persisted = True
-    history = await _load_history(chat_id, thread_id)
-    print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        try:
+            await update.message.chat.send_action(action='typing')
+        except Exception as e:
+            print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
+        sender_name = _sender_display_name(update.message.from_user)
+        # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
+        # click during the LLM call can roll the message back.
+        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+        # T34 race fix v2: REUSE the early_event created at ENTRY
+        # time, so a follow-up that arrived between EARLY-RECORD
+        # and this point (and called set() on early_event) is
+        # observable here. If we created a fresh event now, the
+        # burst-set event would be orphaned and the LLM call
+        # would proceed to a half-answer.
+        abort_event = early_event
+        _register_abort_event(chat_id, thinking.message_id, abort_event)
+        await turn.persist(user_message, role='user', sender_name=sender_name)
+        persisted = turn.persisted
+        # Refresh the registry entry so the abort_event and the
+        # recorded size match (the EARLY-RECORD used text_bytes
+        # of the raw message; LATE-RECORD uses the same value but
+        # keeps the registry authoritative in case of a future
+        # refactor).
+        msg_bytes = len(user_message.encode('utf-8'))
+        _record_user_message(chat_id, user_id, msg_bytes, abort_event)
+        print(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]", flush=True)
+        persisted = True
+        history = await _load_history(chat_id, thread_id)
+        print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+    except BaseException:
+        if persisted:
+            try:
+                await turn.rollback('aborted')
+            except Exception:
+                pass
+        if thinking is not None:
+            try:
+                _abort_events.pop((chat_id, thinking.message_id), None)
+            except Exception:
+                pass
+        try:
+            sem.release()
+        except Exception:
+            pass
+        raise
+
     try:
         rating_active = _is_rating_active(update)
         # T1 (P0-1): wrap call_llama in the global semaphore so
@@ -1240,8 +1353,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # than clear, in case the dict has been overwritten by
         # a concurrent handler (defensive — the semaphore
         # prevents same-user concurrency, but be safe).
-        _abort_events.pop((chat_id, thinking.message_id), None)
-        sem.release()
+        # B1: the abort event is only registered when a thinking message
+        # exists, so there is nothing to pop otherwise -- and reaching for
+        # thinking.message_id anyway raised AttributeError, which replaced
+        # the real exception and skipped the release below. That leaked the
+        # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
+        #
+        # Both layers are deliberate. The guard makes the pop correct; the
+        # try makes it impossible for any future line added here to cost a
+        # user their access to the bot.
+        if thinking is not None:
+            try:
+                _abort_events.pop((chat_id, thinking.message_id), None)
+            except Exception:
+                pass
+        try:
+            sem.release()
+        except Exception:
+            pass
 
 
 

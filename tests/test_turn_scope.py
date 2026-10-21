@@ -31,6 +31,27 @@ def _handler(fn_name):
     raise AssertionError(f"{fn_name} not found")
 
 
+def _calls_rollback(node):
+    """Does this try reach a .rollback() call anywhere in it?
+
+    Deliberately not `turn.rollback` as a substring of ast.dump(). ast.dump
+    renders an attribute access as
+
+        Attribute(value=Name(id='turn'), attr='rollback')
+
+    so the dotted form never appears in the output and the match is always
+    empty. That is not hypothetical: it made the assertion below fire on a
+    handler that rolls back perfectly well, which is the same
+    claim-does-not-match-the-check family this file exists to catch.
+    """
+    stmts = list(node.body) + list(node.handlers) + list(node.finalbody)
+    return any(
+        isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "rollback"
+        for stmt in stmts
+        for n in ast.walk(stmt)
+    )
+
+
 def test_turn_is_built_before_the_try_that_rolls_it_back():
     """Not inside the try. The except clause needs it bound even when the
     exception fires on the first statement of the block."""
@@ -47,20 +68,34 @@ def test_turn_is_built_before_the_try_that_rolls_it_back():
         )
         assert has_rollback, f"{name} should roll back on abort"
 
-        # The construction must not live inside any Try body.
-        for node in ast.walk(fn):
-            if isinstance(node, ast.Try):
-                inside = [b for b in builds
-                          if node.lineno < b <= (node.end_lineno or 0)
-                          and b > node.lineno]
-                assert not inside, (
-                    f"{name}: Turn is built at {inside} which is INSIDE the "
-                    f"try at {node.lineno}. Its except handler calls "
-                    f"turn.rollback(), so any exception raised before that "
-                    f"line is an UnboundLocalError and the rollback never "
-                    f"runs. Build it above the try."
-                )
+        # Only the Try blocks that actually roll back matter.
+        #
+        # The first version flagged EVERY try, and the B1 guards tripped it.
+        # `except BaseException: sem.release(); raise` wraps the window
+        # between the semaphore acquisition and the main try, and in three of
+        # the four handlers the Turn is constructed inside it. That is
+        # correct and needs no rollback: the guard fires before anything is
+        # persisted, so there is nothing to undo. Flagging it was the
+        # tripwire being suspicious of the right thing and asserting a claim
+        # other than the one it was checking.
+        rollback_trys = [n for n in ast.walk(fn)
+                         if isinstance(n, ast.Try) and _calls_rollback(n)]
+        assert rollback_trys, (
+            f"{name} persists through a Turn but no try in it calls "
+            f"rollback() -- an aborted turn would stay in SQLite"
+        )
 
+        for node in rollback_trys:
+            inside = [b for b in builds
+                      if node.lineno < b <= (node.end_lineno or 0)
+                      and b > node.lineno]
+            assert not inside, (
+                f"{name}: Turn is built at {inside} which is INSIDE the "
+                f"try at {node.lineno}. Its except handler calls "
+                f"turn.rollback(), so any exception raised before that "
+                f"line is an UnboundLocalError and the rollback never "
+                f"runs. Build it above the try."
+            )
 
 def test_every_rollback_site_reaches_a_bound_turn():
     """Defensive: count the rollbacks against the constructions.
