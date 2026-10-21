@@ -98,7 +98,13 @@ jobs:
           # side-car, which CI does not have. They are run
           # manually on a staging host before tagging stable.
           pytest tests/ \
+              # Note: tests/test_limits.py and tests/test_selftest.py
+              # still sit on the --ignore list as legacy from commit
+              # c11b9cb ("Pre-existing 2 fails: test_limits,
+              # test_selftest (both PYTHONPATH issues)"). Step 1 of the
+              # W6 cleanup removes test_limits now that 14 tests are
+              # green again; test_selftest follows after step 2 (the
+              # conftest session-unique tmp dir fix lands separately).
               --ignore=tests/test_shell_integration.py \
-              --ignore=tests/test_limits.py \
               --ignore=tests/test_selftest.py \
               -q --tb=short
