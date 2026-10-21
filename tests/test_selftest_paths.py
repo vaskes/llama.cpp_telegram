@@ -35,6 +35,19 @@ escapes `_run`, escapes `asyncio.run`, and kills the process at startup:
 
 Zero polls. The bot does not come up.
 
+The word "unconditionally" is carrying that sentence, and it is the
+part that can quietly stop being true. Measured in wave 5: wrapping
+that call in a try/except in dispatch.py makes the bot come up fine
+with the gate still removed. So the gate is load-bearing **while
+nothing in dispatch.py wraps the call** -- not unconditionally, ever.
+
+That is what test_dispatch_calls_selftest_unconditionally below is
+for: it pins the half of the contract that carries the claim, instead
+of leaving a sentence in a docstring to assert what no code checks.
+When someone adds a try/except -- a good change -- this file will say
+the paragraph above needs revisiting, rather than the docstring
+quietly becoming a lie.
+
 So the check has to look at the guard itself -- an `if` on the env var,
 returning early, inside the function -- not at the string's presence.
 """
@@ -104,12 +117,19 @@ def test_the_env_gate_is_a_guard_not_a_mention():
 
 
 def test_dispatch_calls_selftest_unconditionally():
-    """Pin the other half of the contract.
+    """Pin the half of the contract the gate importance rests on.
 
-    If dispatch ever puts _selftest() behind its own env check, the gate
-    above becomes belt-and-braces and the cost of losing it changes shape.
-    Today it is the ONLY thing standing between a bad token and a process
-    that will not start.
+    If dispatch puts _selftest() behind its own env check, the gate
+    inside selftest stops being load-bearing. If dispatch starts
+    wrapping the call in try/except, it stops being load-bearing too
+    -- wave 5 measured that the bot comes up either way once such a
+    wrapper exists.
+
+    This asserts the call sits at statement level, not under an `if`.
+    It does not assert surrounding control flow in general: a call
+    under a `with` or a `while` would still satisfy it. That gap is
+    deliberate for now (W5-L1) and is on the list if dispatch.py is
+    ever refactored around the startup path.
     """
     source = DISPATCH.read_text(encoding="utf-8")
     tree = ast.parse(source)
