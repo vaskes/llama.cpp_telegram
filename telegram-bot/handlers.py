@@ -84,9 +84,19 @@ import prompts
 import rating
 from config import (
     BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, MAX_DOC_BYTES, MAX_PHOTO_BYTES,
-    # MAX_VIDEO_NOTE_BYTES was missing while MAX_VOICE_BYTES was present, so
-    # a voice note size-checked fine and a video note raised NameError on the
-    # branch below. Same function, same shape, one name short.
+    # MAX_VIDEO_NOTE_BYTES is used by handle_voice, and that is not a typo:
+    # handlers.AUDIO catches both voice messages and round video notes, so one
+    # handler branches on update.message.voice vs .video_note and picks the
+    # cap for whichever it got. The constant names the Telegram format, not
+    # the handler, which is why it reads oddly here.
+    #
+    # It was also simply missing from this import while MAX_VOICE_BYTES was
+    # present, so a voice note size-checked fine and a video note raised
+    # NameError on the branch below -- one name short in one function.
+    #
+    # Not renamed: this is a documented env var (config.py, .env.example), and
+    # forks that set MAX_VIDEO_NOTE_BYTES would silently fall back to the
+    # default. The name is correct; the coupling was not.
     MAX_VIDEO_NOTE_BYTES,
     MAX_VOICE_BYTES, MODEL, TELEGRAM_API,
 )

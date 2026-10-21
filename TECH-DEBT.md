@@ -38,16 +38,32 @@ part; the facade was the actual item and it was still there.
   so any holder of the imported name was holding a stale reference. The copy
   in `bot.py` could never have been the live one.
 
-**What is still open.** `bot.py` remains ~15 `from X import (...)` blocks
-re-exporting other modules. That is deliberate for now: `dispatch.py` imports
-`bot` at module level and `selftest.py` imports `bot as _b`, so the facade is
-load-bearing and deleting the re-exports is a separate change with its own
-verification. The distinction that matters now: bot.py no longer *owns*
-anything. Every name it exposes comes from the module that defines it.
+**What is still open, enumerated so "PARTIALLY DONE" is not mistaken for
+"nearly done":**
 
-**Trigger to finish.** When the import graph is next touched. Then bot.py
-becomes `__all__` plus the imports the public API genuinely needs, and the
-facade stops being load-bearing.
+1. **~15 `from X import (...)` blocks** (config, prompts, persistence, rating,
+   call_llama, dispatch, handlers, state). Roughly 100 of the 261 lines.
+2. **The entry point**: `python -u bot.py` in the compose command, plus
+   `main()` under `__main__`.
+3. **Fork compatibility**: `selftest.py`'s own docstring says forks patch
+   `bot.BOT_COMMANDS`, so at least some of the re-exports are deliberate public
+   API rather than residue.
+4. **`bot.store`** — a module-level singleton captured at import time.
+
+**Correction to my own earlier claim.** I wrote that the facade was
+"load-bearing" because `dispatch.py` imports `bot` at module level. I did not
+check. Nothing in `telegram-bot/` imports `bot` at module level at all, and the
+module-level import graph has been acyclic since `b31bff3`. What remains is a
+script that happens to re-export things for forks. `tests/
+test_facade_ownership.py::test_bot_is_a_script_not_a_library` fails if a
+module-level `import bot` reappears, so the claim cannot silently become true
+again.
+
+**Trigger to finish.** Before the next feature that adds a cross-cutting
+module — this is the original trigger, unchanged. To finish: pick the public
+API the forks actually depend on, move it behind an explicit `__all__`, and
+repoint `selftest.py` and the test suite at the owning modules. Most of the
+suite already does.
 
 ---
 

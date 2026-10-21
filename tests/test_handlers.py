@@ -56,7 +56,11 @@ async def test_handle_text_rollback_on_abort(monkeypatch, tmp_path):
     monkeypatch.setattr(_st, "get_store", lambda: store)
     monkeypatch.setattr(_pers, "get_store", lambda: store)
     monkeypatch.setattr("handlers.get_store", lambda: store)
-    monkeypatch.setattr("bot.get_store", lambda: store)
+    # turn.py owns its own `from storage import get_store` binding, so it
+    # needs patching explicitly. Without this the suite only passed because
+    # `import bot` inside a test ran bot.py's module-level
+    # `store = get_store()` against an already-patched storage module.
+    monkeypatch.setattr("turn.get_store", lambda: store)
     
     # Mock _route_to_thread
     from handlers import _sender_display_name
@@ -149,7 +153,11 @@ async def test_handle_voice_rollback_on_abort(monkeypatch, tmp_path):
     monkeypatch.setattr(_st, "get_store", lambda: store)
     monkeypatch.setattr(_pers, "get_store", lambda: store)
     monkeypatch.setattr("handlers.get_store", lambda: store)
-    monkeypatch.setattr("bot.get_store", lambda: store)
+    # turn.py owns its own `from storage import get_store` binding, so it
+    # needs patching explicitly. Without this the suite only passed because
+    # `import bot` inside a test ran bot.py's module-level
+    # `store = get_store()` against an already-patched storage module.
+    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -254,7 +262,11 @@ async def test_handle_document_rollback_on_abort(monkeypatch, tmp_path):
     monkeypatch.setattr(_st, "get_store", lambda: store)
     monkeypatch.setattr(_pers, "get_store", lambda: store)
     monkeypatch.setattr("handlers.get_store", lambda: store)
-    monkeypatch.setattr("bot.get_store", lambda: store)
+    # turn.py owns its own `from storage import get_store` binding, so it
+    # needs patching explicitly. Without this the suite only passed because
+    # `import bot` inside a test ran bot.py's module-level
+    # `store = get_store()` against an already-patched storage module.
+    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -342,7 +354,11 @@ async def test_handle_photo_rollback_on_abort(monkeypatch, tmp_path):
     monkeypatch.setattr(_st, "get_store", lambda: store)
     monkeypatch.setattr(_pers, "get_store", lambda: store)
     monkeypatch.setattr("handlers.get_store", lambda: store)
-    monkeypatch.setattr("bot.get_store", lambda: store)
+    # turn.py owns its own `from storage import get_store` binding, so it
+    # needs patching explicitly. Without this the suite only passed because
+    # `import bot` inside a test ran bot.py's module-level
+    # `store = get_store()` against an already-patched storage module.
+    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", True)
@@ -429,7 +445,11 @@ async def test_handle_voice_successful_flow_keeps_transcript(monkeypatch, tmp_pa
     monkeypatch.setattr(_st, "get_store", lambda: store)
     monkeypatch.setattr(_pers, "get_store", lambda: store)
     monkeypatch.setattr("handlers.get_store", lambda: store)
-    monkeypatch.setattr("bot.get_store", lambda: store)
+    # turn.py owns its own `from storage import get_store` binding, so it
+    # needs patching explicitly. Without this the suite only passed because
+    # `import bot` inside a test ran bot.py's module-level
+    # `store = get_store()` against an already-patched storage module.
+    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -523,7 +543,11 @@ async def test_text_abort_registers_abort_event_with_thinking_message_id(monkeyp
     monkeypatch.setattr(_st, "get_store", lambda: store)
     monkeypatch.setattr(_pers, "get_store", lambda: store)
     monkeypatch.setattr("handlers.get_store", lambda: store)
-    monkeypatch.setattr("bot.get_store", lambda: store)
+    # turn.py owns its own `from storage import get_store` binding, so it
+    # needs patching explicitly. Without this the suite only passed because
+    # `import bot` inside a test ran bot.py's module-level
+    # `store = get_store()` against an already-patched storage module.
+    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -594,7 +618,11 @@ async def test_text_successful_flow_keeps_message(monkeypatch, tmp_path):
     monkeypatch.setattr(_st, "get_store", lambda: store)
     monkeypatch.setattr(_pers, "get_store", lambda: store)
     monkeypatch.setattr("handlers.get_store", lambda: store)
-    monkeypatch.setattr("bot.get_store", lambda: store)
+    # turn.py owns its own `from storage import get_store` binding, so it
+    # needs patching explicitly. Without this the suite only passed because
+    # `import bot` inside a test ran bot.py's module-level
+    # `store = get_store()` against an already-patched storage module.
+    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)

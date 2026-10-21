@@ -120,9 +120,10 @@ async def test_handle_normal_body_passes_auth_check(monkeypatch):
     captured = []
     async def fake_dispatch(upd_dict):
         captured.append(upd_dict)
-    monkeypatch.setattr("webhook._dispatch_update", fake_dispatch, raising=False)
-    # The webhook module imports _dispatch_update lazily inside _handle
-    # so we need to patch dispatch._dispatch_update as well
+    # webhook._handle resolves _dispatch_update lazily via a local import, so
+    # the patch belongs on dispatch. The old line patched webhook with
+    # raising=False, which made it a guaranteed no-op wearing the costume of
+    # a second safety net -- and the comment above it claimed it was needed.
     import dispatch
     monkeypatch.setattr(dispatch, "_dispatch_update", fake_dispatch)
     

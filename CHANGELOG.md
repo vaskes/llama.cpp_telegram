@@ -2374,3 +2374,55 @@ See `git log` for the pre-`cf96920` history. Major themes:
   fixes.
 - Earlier: `0d0a2db4` and friends — initial bot implementation
   with `conversations = {}` in-memory dict.
+
+## Unreleased — TECH-DEBT #1 facade cleanup + round-3 review
+
+### Fixed
+
+- **`bot.py` held a second, unwritable copy of the per-user semaphore table
+  (`_user_semaphores`) and the global LLM semaphore (`_global_llm_sem`).**
+  `state.py` rebinds its own module globals inside its accessor functions, so
+  the copies in `bot.py` were never the live ones: any code holding a name
+  imported from `bot` would have read a container that `state.py` never wrote
+  to. No in-tree code did this, so there is no evidence the per-user
+  concurrency cap was ever bypassed in production — but the trap was live and
+  silent. `tests/test_facade_ownership.py` now fails if either name reappears
+  in `bot.py`.
+- **Video notes raised `NameError` instead of being size-checked.**
+  `handlers.py` imported `MAX_VOICE_BYTES` but not `MAX_VIDEO_NOTE_BYTES`, and
+  one handler serves both formats because `filters.AUDIO` catches voice and
+  round video alike. Voice notes worked, video notes did not.
+- **`parse_rating_response` discarded the entire response body.** It used
+  `text[m.end():]`, but `_RATING_PREFIX_RE` is anchored with `$` and ends in
+  `(?P<rest>.*)`, so `m.end()` sits past the end of the string. Every parsed
+  rating-mode response produced `body=""` and the user received an empty
+  reply. `RATING_MODE` is off by default, so this was latent — it is the
+  failure D1 was about to walk into.
+- **`KNOWN_TOOL_NAMES` was used bare on the unknown-tool paths** of
+  `call_llama` while only two other names were imported from
+  `tool_isolation`, so the branches meant to name the known tools raised
+  `NameError` instead of producing the message.
+- **The overload notice was swallowed.** `access._check_user_slot` told the
+  user "бот перегружен" inside a bare `except Exception: pass`, so every
+  Telegram API failure on that path looked identical to a clean drop. It now
+  emits a structured line on stderr:
+  `{"level":"error","event":"overload_notice_not_delivered", ...}`.
+
+### Changed
+
+- `bot.py` 2245 → 261 lines. 73 of those are code; 165 are comments. The 1894
+  lines of `_selftest()` moved to `selftest.py`, six duplicated definitions
+  moved to their owners (`state.py`, `chat_utils.py`, `prompts.py`), and seven
+  unused imports went with them.
+- `tests/test_handlers.py` no longer patches `bot.get_store`. It was
+  compensating for `turn.py` never having been patched, and only worked
+  because `import bot` ran `bot.py`'s module-level `store = get_store()`
+  against an already-patched storage module. The fixture now patches the
+  module that owns the name.
+
+### Known still open
+
+- `bot.py` keeps its ~15 `from X import (...)` re-export blocks. It is a
+  script and an entry point, not a library — nothing in `telegram-bot/` imports
+  it — so those blocks exist for forks that patch `bot.*`. Enumerated in
+  TECH-DEBT.md #1.

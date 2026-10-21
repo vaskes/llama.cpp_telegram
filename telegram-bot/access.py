@@ -14,6 +14,8 @@ Unicode normalisation that must not be "fixed" casually; read it first.
 """
 
 import asyncio
+import json as _json
+import sys as _sys
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -156,10 +158,25 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
             from handlers import _reply
             await _reply(update, "⚠️ Бот перегружен, попробуйте позже.")
         except Exception as e:
+            # Structured on purpose. This is the one place where the bot
+            # loses a user's message outright: the slot timed out, the notice
+            # did not arrive, and the user is left looking at "...". A plain
+            # print cannot be counted per-hour or correlated to an update_id,
+            # so the incident is un-alertable -- which is the same as the
+            # incident not being tracked. stderr keeps it out of stdout's
+            # normal stream if stdout is ever piped somewhere structured.
             print(
-                f"[access] overload notice NOT delivered to user_id={user_id} "
-                f"chat={chat_id}: {type(e).__name__}: {e!r} -- slot timed out, "
-                f"message dropped and the user saw only '...'",
+                _json.dumps({
+                    "level": "error",
+                    "module": "access",
+                    "event": "overload_notice_not_delivered",
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "queue_wait_sec": MAX_QUEUE_WAIT_SEC,
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                }),
+                file=_sys.stderr,
                 flush=True,
             )
         return None
