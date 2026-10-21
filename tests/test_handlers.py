@@ -52,15 +52,14 @@ async def test_handle_text_rollback_on_abort(monkeypatch, tmp_path):
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
     store = Storage(db)
-    store.create_thread(1, "main")
+    # One patch, on the owner: handlers, turn and persistence all resolve
+    # storage.get_store() at call time now.
     monkeypatch.setattr(_st, "get_store", lambda: store)
-    monkeypatch.setattr(_pers, "get_store", lambda: store)
-    monkeypatch.setattr("handlers.get_store", lambda: store)
+    store.create_thread(1, "main")
     # turn.py owns its own `from storage import get_store` binding, so it
     # needs patching explicitly. Without this the suite only passed because
     # `import bot` inside a test ran bot.py's module-level
     # `store = get_store()` against an already-patched storage module.
-    monkeypatch.setattr("turn.get_store", lambda: store)
     
     # Mock _route_to_thread
     from handlers import _sender_display_name
@@ -150,14 +149,10 @@ async def test_handle_voice_rollback_on_abort(monkeypatch, tmp_path):
     import persistence as _pers
     store = Storage(db)
     store.create_thread(1, "main")
-    monkeypatch.setattr(_st, "get_store", lambda: store)
-    monkeypatch.setattr(_pers, "get_store", lambda: store)
-    monkeypatch.setattr("handlers.get_store", lambda: store)
     # turn.py owns its own `from storage import get_store` binding, so it
     # needs patching explicitly. Without this the suite only passed because
     # `import bot` inside a test ran bot.py's module-level
     # `store = get_store()` against an already-patched storage module.
-    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -259,14 +254,10 @@ async def test_handle_document_rollback_on_abort(monkeypatch, tmp_path):
     import persistence as _pers
     store = Storage(db)
     store.create_thread(1, "main")
-    monkeypatch.setattr(_st, "get_store", lambda: store)
-    monkeypatch.setattr(_pers, "get_store", lambda: store)
-    monkeypatch.setattr("handlers.get_store", lambda: store)
     # turn.py owns its own `from storage import get_store` binding, so it
     # needs patching explicitly. Without this the suite only passed because
     # `import bot` inside a test ran bot.py's module-level
     # `store = get_store()` against an already-patched storage module.
-    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -351,14 +342,10 @@ async def test_handle_photo_rollback_on_abort(monkeypatch, tmp_path):
     import persistence as _pers
     store = Storage(db)
     store.create_thread(1, "main")
-    monkeypatch.setattr(_st, "get_store", lambda: store)
-    monkeypatch.setattr(_pers, "get_store", lambda: store)
-    monkeypatch.setattr("handlers.get_store", lambda: store)
     # turn.py owns its own `from storage import get_store` binding, so it
     # needs patching explicitly. Without this the suite only passed because
     # `import bot` inside a test ran bot.py's module-level
     # `store = get_store()` against an already-patched storage module.
-    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", True)
@@ -442,14 +429,10 @@ async def test_handle_voice_successful_flow_keeps_transcript(monkeypatch, tmp_pa
     import persistence as _pers
     store = Storage(db)
     store.create_thread(1, "main")
-    monkeypatch.setattr(_st, "get_store", lambda: store)
-    monkeypatch.setattr(_pers, "get_store", lambda: store)
-    monkeypatch.setattr("handlers.get_store", lambda: store)
     # turn.py owns its own `from storage import get_store` binding, so it
     # needs patching explicitly. Without this the suite only passed because
     # `import bot` inside a test ran bot.py's module-level
     # `store = get_store()` against an already-patched storage module.
-    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -540,14 +523,10 @@ async def test_text_abort_registers_abort_event_with_thinking_message_id(monkeyp
     import persistence as _pers
     store = Storage(db)
     store.create_thread(1, "main")
-    monkeypatch.setattr(_st, "get_store", lambda: store)
-    monkeypatch.setattr(_pers, "get_store", lambda: store)
-    monkeypatch.setattr("handlers.get_store", lambda: store)
     # turn.py owns its own `from storage import get_store` binding, so it
     # needs patching explicitly. Without this the suite only passed because
     # `import bot` inside a test ran bot.py's module-level
     # `store = get_store()` against an already-patched storage module.
-    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -615,14 +594,10 @@ async def test_text_successful_flow_keeps_message(monkeypatch, tmp_path):
     import persistence as _pers
     store = Storage(db)
     store.create_thread(1, "main")
-    monkeypatch.setattr(_st, "get_store", lambda: store)
-    monkeypatch.setattr(_pers, "get_store", lambda: store)
-    monkeypatch.setattr("handlers.get_store", lambda: store)
     # turn.py owns its own `from storage import get_store` binding, so it
     # needs patching explicitly. Without this the suite only passed because
     # `import bot` inside a test ran bot.py's module-level
     # `store = get_store()` against an already-patched storage module.
-    monkeypatch.setattr("turn.get_store", lambda: store)
     
     async def fake_route(update, context):
         return (1, "main", False)
@@ -703,8 +678,6 @@ async def test_send_reply_does_not_crash_on_empty_text(monkeypatch, tmp_path):
     monkeypatch.setattr(_st, "_store_instance", None)
     import persistence as _pers
     store = _st.Storage(str(tmp_path / "test.db"))
-    monkeypatch.setattr(_st, "get_store", lambda: store)
-    monkeypatch.setattr(_pers, "get_store", lambda: store)
 
     # _reply mock — must NOT raise
     mock_sent = MagicMock()

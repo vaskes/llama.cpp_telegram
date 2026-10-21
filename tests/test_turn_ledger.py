@@ -24,16 +24,19 @@ if str(BOT_DIR) not in sys.path:
 
 @pytest.fixture
 def clean_store(tmp_path, monkeypatch):
+    import storage
     from storage import Storage
-    import persistence
     import turn
     st = Storage(str(tmp_path / "t.db"))
     # Patch BOTH: turn.Turn.rollback resolves its store from turn's globals,
     # while the write itself goes through persistence, which has its own
     # get_store. Patching only one sends the row and the undo to different
     # databases and the test asserts nonsense.
-    monkeypatch.setattr(turn, "get_store", lambda: st)
-    monkeypatch.setattr(persistence, "get_store", lambda: st)
+    # One patch, on the owner. The consumers resolve storage.get_store() at
+    # call time, so this reaches turn, persistence and handlers at once --
+    # the previous six-line arrangement silently missed whichever module was
+    # added next, which is exactly how turn.py went unpatched for a commit.
+    monkeypatch.setattr(storage, "get_store", lambda: st)
     yield st
     st._conn().execute("DELETE FROM messages")
     st._conn().execute("DELETE FROM chat_threads")

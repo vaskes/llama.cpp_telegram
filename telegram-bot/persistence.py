@@ -12,7 +12,7 @@ import asyncio
 import json
 
 from context_budget import FETCH_LIMIT, get_budget
-from storage import get_store
+import storage
 
 
 async def persist(chat_id: int, thread_id: str, role: str, content,
@@ -32,7 +32,7 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     """
     msg = {"role": role, "content": content}
     await asyncio.to_thread(
-        get_store().add_message, chat_id, thread_id, role,
+        storage.get_store().add_message, chat_id, thread_id, role,
         json.dumps(msg, ensure_ascii=False), None, sender_name,
     )
 
@@ -89,7 +89,7 @@ async def load_history(chat_id: int, thread_id: str) -> list:
     `_created_at` fields; call_llama strips them before the HTTP request.
     """
     rows = await asyncio.to_thread(
-        get_store().get_messages, chat_id, thread_id, FETCH_LIMIT
+        storage.get_store().get_messages, chat_id, thread_id, FETCH_LIMIT
     )
     budget = get_budget()
     messages = _decode(rows)

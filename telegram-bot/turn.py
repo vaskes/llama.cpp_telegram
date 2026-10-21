@@ -31,16 +31,26 @@ from __future__ import annotations
 
 import asyncio
 
-from storage import get_store
+import storage
 
 
 class Turn:
     """Persist/rollback bookkeeping for a single LLM turn."""
 
-    def __init__(self, chat_id: int, thread_id: str, label: str):
+    def __init__(self, chat_id: int, thread_id: str, label: str,
+                 store=None):
+        """`store` is optional and defaults to the module-level singleton.
+
+        The six modules that used to say `from storage import get_store` all
+        bound the function object at import time, so patching the owner
+        reached none of them and every test had to patch all six. Resolving
+        through the module fixes the patch point; taking the store outright
+        removes the need to patch anything for a caller that already has one.
+        """
         self.chat_id = chat_id
         self.thread_id = thread_id
         self.label = label
+        self._store = store
         self.persisted = False
         #: How many user rows this turn wrote. Not a bool, because handle_photo
         #: used to write more than one, and rolling back "the" message without
@@ -72,7 +82,7 @@ class Turn:
             return False
         try:
             await asyncio.to_thread(
-                get_store().delete_last_user_message,
+                (self._store or storage.get_store()).delete_last_user_message,
                 self.chat_id, self.thread_id,
             )
         except Exception as rb:

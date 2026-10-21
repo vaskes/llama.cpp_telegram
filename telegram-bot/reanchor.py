@@ -44,11 +44,11 @@ async def summarise_after_reanchor() -> dict:
         return {"ok": True, "skipped": True, "reason": "strategy != summarize"}
     try:
         import config
-        from storage import get_store
+        import storage
         import summarize
         return await summarize.summarise_all(
             budget=get_budget(),
-            store=get_store(),
+            store=storage.get_store(),
             llama_url=config.LLAMA_URL,
             model=config.MODEL,
         )
