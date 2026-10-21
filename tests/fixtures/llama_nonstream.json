@@ -1,0 +1,44 @@
+{
+  "status": 200,
+  "elapsed": 0.37,
+  "body": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Четыре",
+          "reasoning_content": "The user asks me to answer with one word: what is two plus two? The answer is four. In Russian, \"four\" is \"четыре\".\n"
+        }
+      }
+    ],
+    "created": 1792600220,
+    "model": "Qwen3.8-27B-Ultra-Heretic-MTP-256k",
+    "system_fingerprint": "b1-b49650a",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 39,
+      "prompt_tokens": 21,
+      "total_tokens": 60,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "id": "chatcmpl-dX6UkvrYL7A8G9ixNcEsepIGMiQeFgg9",
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 21,
+      "prompt_ms": 94.079,
+      "prompt_per_token_ms": 4.479952380952381,
+      "prompt_per_second": 223.216658340331,
+      "predicted_n": 39,
+      "predicted_ms": 276.294,
+      "predicted_per_token_ms": 7.270894736842105,
+      "predicted_per_second": 137.53465511375563,
+      "draft_n": 66,
+      "draft_n_accepted": 31
+    }
+  },
+  "raw_lines": null
+}
