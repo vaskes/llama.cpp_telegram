@@ -10,9 +10,21 @@
 
 import asyncio
 import json
+from typing import TYPE_CHECKING
 
 from context_budget import FETCH_LIMIT, get_budget
 import storage
+
+if TYPE_CHECKING:
+    # Declared so static analysers can see that persistence reaches summarize
+    # at all. The real import stays lazy, inside the function: summarisation
+    # pulls in the LLM call path, and a bot running CONTEXT_STRATEGY=window
+    # should not pay that at import time.
+    #
+    # summarize.py imports nothing local, so promoting this edge to module
+    # level cannot close a cycle -- verified by test_import_graph rather than
+    # by reading this comment.
+    import summarize
 
 
 async def persist(chat_id: int, thread_id: str, role: str, content,
