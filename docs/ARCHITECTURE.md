@@ -14,7 +14,20 @@
 telegram-bot/
 ├── bot.py                 # main entry, aiohttp webhook + handlers
 ├── handlers.py            # handle_text/photo/voice/document
-├── call_llama.py          # streaming + tool-calling loop
+├── call_llama.py          # the streaming + tool-calling loop
+│                          #   972 lines file, 825 in the function,
+│                          #   500 in the one top-level loop
+├── llm_tools.py           # fetching the tool list from llama-server
+├── llm_sse.py             # SSE -> StreamAccumulator (the parsing only)
+├── llm_nonstream.py       # one non-streaming POST + the 500 retry
+├── llm_loop_guard.py      # the four stop conditions, as LoopGuard
+├── llm_toolargs.py        # screening one call's arguments
+├── llm_toolcalls.py       # buffer -> dispatch list, and refusing a name
+├── llm_dispatch.py        # running one already-screened call
+├── llm_finish.py          # the three ways an iteration ends
+├── llm_thinking.py        # streaming the "thinking" message to Telegram
+├── llm_json.py            # dumps_body, scrub_surrogates
+├── llm_messages.py        # sender tags on stored messages
 ├── dispatch.py            # /start, /subs, _is_group_chat, chat_member
 ├── prompts.py             # system prompt + group context
 ├── rating.py              # rate-this-message reaction tool
@@ -26,8 +39,40 @@ telegram-bot/
 ├── storage.py             # file store (legacy)
 ├── personal_tools/
 │   └── bash_command.py    # T38: bash execution via sandbox side-car
-└── tests/                 # 250+ unit + integration tests
+└── tests/                 # 83 test files, 1291 tests
 ```
+
+### The leaf modules
+
+Eleven modules were cut out of `call_llama` between Blocks A and D of
+TECH-DEBT #3 and #8. Each one owns a single decision and is driven
+directly by tests, none of which build a full `call_llama`.
+
+```
+  module                lines  public surface
+  llm_dispatch.py       201  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _finish
+  llm_finish.py         140  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
+  llm_json.py            53  scrub_surrogates, dumps_body
+  llm_loop_guard.py     143  Nudge, Abort, LoopGuard
+  llm_messages.py        83  _tag_sender
+  llm_nonstream.py      229  NonStreamResult, non_stream_iteration, tools_less_fallback
+  llm_sse.py            143  Delta, StreamAccumulator
+  llm_thinking.py       131  ThinkingThrottle, push_thinking
+  llm_toolargs.py       134  ArgsOk, ArgsRejected, _rejection, parse_tool_args
+  llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
+  llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
+```
+
+The split is by *decision*, not by size. Three of them answer "should
+this call be allowed at all" (`llm_toolargs`, `llm_toolcalls`,
+`llm_dispatch`), two answer "how does this iteration end"
+(`llm_finish`, `llm_loop_guard`), and the rest are transport.
+
+**What is still in `call_llama`** and why: the iteration counter, the
+four response buffers, the message list, the turn ledger, and one block
+of three sequential POST attempts. That last block is 276 lines and is
+the whole of what TECH-DEBT #8 has left; it is specified in
+[tech-debt/08](tech-debt/08-decompose-the-tool-loop.md).
 
 ## Two code paths in `call_llama`
 

@@ -59,7 +59,7 @@ anything outside its whitelist.
    dispatch. Adding a tool = adding a name here AND shipping
    a handler.
 
-2. **Three guards in `call_llama.py`** — at every place the
+2. **Three guards, and they are not all in one place** — at every place the
    bot reads `tool_calls` out of a llama-server response:
    - non-streaming primary path,
    - streaming fallback path,
@@ -111,7 +111,10 @@ When adding a new bot tool, the following three things must
 ship together in the same commit:
 
 1. The tool definition (name, description, parameters) in
-   `telegram-bot/call_llama.py::bot_side_tool_defs` (or in
+   `telegram-bot/call_llama.py::bot_side_tool_defs`; the two runtime
+   sites now live in `llm_toolcalls.py` (`normalize_tool_calls` for the
+   streaming buffer, `reject_unknown_names` for the fallback response),
+   and argument screening is `llm_toolargs.py` (or in
    a `personal_tools/` module if it is profile-gated).
 2. The handler — wherever the bot dispatches that tool,
    e.g. `bot.py:dispatch_one_tool` for donsetch_* tools,

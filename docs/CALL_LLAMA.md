@@ -5,7 +5,10 @@ the way it is, and **what** failure modes we hit that led to the
 current shape. It is intentionally opinionated: where a design choice
 was forced by a specific incident, the incident is named.
 
-> **Freshness.** The abort ladder below (§3), the tool-intent detector
+> **Freshness.** The four stop conditions below (§3), the tool-intent
+> detector (§2), the `ensure_ascii` mutation (§6) and the MIME table (§5)
+> were re-checked against the tree. The section title used to say
+> "abort ladder", which was wrong: the guards are not ordered by cost.
 > (§2), the `ensure_ascii` mutation (§6) and the MIME table (§5) were
 > re-checked against the tree and still match. The signature (§1), the
 > handler table (§8), the persistence note (§9) and the schema (§11) did
@@ -17,7 +20,8 @@ was forced by a specific incident, the incident is named.
 If you are doing a code review, the recommended order is:
 1. The **two branches** of `call_llama` (streaming vs non-streaming).
 2. The **tool-intent detector** (`_detect_tool_intent` + `_TOOL_KEYWORDS`).
-3. The **abort ladder** (`max_iter`, identical-call, wall-clock, hallucination).
+3. The **stop conditions** (`max_iter`, identical-call, wall-clock,
+   hallucination) -- see §3 for the real order, which is not cost-ordered.
 4. The **polling loop** at the bottom of the file (PTB 21.0 workaround).
 5. **Image MIME detection** in `handle_photo`.
 6. **Config block** + auto-discover.
@@ -92,7 +96,7 @@ What it does, per iteration:
 ### 1.2 `use_stream=False` (vision — `handle_photo`)
 
 A **single** `httpx.post()`, `r.json()`, return content. No tool
-loop, no reasoning streaming, no abort ladder.
+loop, no reasoning streaming, no stop conditions.
 
 This is not laziness. The streaming path on a vision payload was
 **hanging** in production: `iter=1`, `iter=2`, `iter=3`, ... would
@@ -187,10 +191,40 @@ tool_calls but no tools were sent]` marker.
 
 ---
 
-## 3. The abort ladder — four independent guards
+## 3. The four stop conditions — `llm_loop_guard.py`
 
 The streaming path has **four** ways to stop. They are layered, not
-alternatives — any one of them is sufficient.
+alternatives — any one of them is sufficient. All four live in
+`LoopGuard.tick` in `llm_loop_guard.py`; the loop body only reads the
+outcome and returns.
+
+**They are not a ladder.** An earlier version of this document called
+them one, and the name stuck. The evaluation order is fixed and is not
+cheapest-first:
+
+| Order | Condition | Source | Returns |
+|---|---|---|---|
+| 1 | same tool + args as the previous iteration | `llm_loop_guard.py:105` | `Abort` |
+| 2 | wall-clock budget exceeded | `llm_loop_guard.py:117` | `Abort` |
+| 3 | two empty iterations in a row | `llm_loop_guard.py:140` | `Nudge` |
+| 4 | three empty iterations in a row | `llm_loop_guard.py:132` | `Abort` |
+
+Order matters and is not arbitrary. The stuck-call check reads
+`prev_calls`, which condition 3's success path rewrites — running it
+after the empty-iteration state has been touched would compare against
+the wrong thing. Sorting these by cost would change the message the
+user sees whenever two of them are true at once, which is exactly the
+situation where the message has to be the right one.
+
+`Nudge` is not an abort. It returns a message telling the model to try
+something else and the loop continues.
+
+**On the empty counter.** `last_empty` is zeroed by the success path of
+condition 3, and the three rejection sites that increment it are then
+overwritten by that zeroing whenever the iteration produced a real
+result. That looks like a bug and is not — the zero is correct, because
+an iteration with a real result is not empty. `tests/test_c3_loop_guard.py`
+pins it so a future reader does not "fix" it.
 
 ### 3.1 `max_iter=15`
 
@@ -239,18 +273,16 @@ then die at the `max_iter` cap with a confusing error message.
 
 ### 3.5 `last_empty>=3` hard abort
 
-```python
-if not content_buf and not reasoning_buf:
-    last_empty += 1
-    if last_empty >= 3:
-        abort("three empty iterations in a row")
-else:
-    last_empty = 0
-```
+`LoopGuard.tick` owns the counter. Two thresholds, not one:
 
-If the model produces nothing useful for three iterations in a row,
-something is structurally wrong (template mismatch, image attachment
-that the server did not parse, etc.). Bail.
+- **2 empty iterations** → `Nudge`: the model is told to try something
+  else and the loop continues.
+- **3 empty iterations** → `Abort`: something is structurally wrong
+  (template mismatch, an image the server did not parse). Bail.
+
+Both are `llm_loop_guard.py:132` and `:140`. The counter lives on the
+guard, not as a variable in the loop body, which is why the third
+section below no longer shows it.
 
 ---
 
