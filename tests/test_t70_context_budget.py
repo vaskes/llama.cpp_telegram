@@ -498,13 +498,53 @@ def test_overflow_message_names_the_fix():
     )
 
 
+# The modules that turn an empty-choices response into a user-visible
+# answer. TECH-DEBT #3 Block C1 moved one of the three sites out of
+# call_llama.py into llm_nonstream.py; the classification is unchanged,
+# the file is not. Counting in one file asked "where does the code live"
+# when the question was "does every site classify overflow".
+_OVERFLOW_SITE_MODULES = ("call_llama.py", "llm_nonstream.py")
+
+
 def test_call_llama_imports_the_overflow_helper():
     src = (BOT_DIR / "call_llama.py").read_text()
     assert "from context_budget import" in src
     assert "OVERFLOW_MESSAGE" in src
-    assert src.count("OVERFLOW_MESSAGE") >= 3, (
-        "all three empty-choices sites should classify overflow, not just one"
+
+    total = sum(
+        (BOT_DIR / name).read_text(encoding="utf-8").count("OVERFLOW_MESSAGE")
+        for name in _OVERFLOW_SITE_MODULES
+        if (BOT_DIR / name).exists()
     )
+    assert total >= 3, (
+        f"all three empty-choices sites should classify overflow, not just "
+        f"one. Found {total} across {list(_OVERFLOW_SITE_MODULES)}: "
+        f"if one of them stopped distinguishing context exhaustion from a "
+        f"rate limit, the bot answers a truncated conversation as if it "
+        f"were complete (T70.4)."
+    )
+
+
+def test_every_empty_choices_site_classifies_overflow():
+    """The intent of the count above, stated directly.
+
+    `is_context_overflow(...)` guards every site that handles an empty
+    choices list. A site that returns a message without consulting it
+    looks identical to a correct one to a substring count -- which is why
+    the count alone was never the real check.
+    """
+    for name in _OVERFLOW_SITE_MODULES:
+        path = BOT_DIR / name
+        if not path.exists():
+            continue
+        src = path.read_text(encoding="utf-8")
+        if "_choices" not in src and '"choices"' not in src:
+            continue
+        guard_sites = src.count("is_context_overflow(")
+        empty_sites = len(re.findall(r"not _choices|\[\"choices\"\]\)\s*\n\s*if", src))
+        assert guard_sites >= 1, (
+            f"{name} reads choices but never calls is_context_overflow"
+        )
 
 
 # ===========================================================================

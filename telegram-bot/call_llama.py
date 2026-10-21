@@ -56,6 +56,7 @@ from prompts import GROUP_CONTEXT, RATING_RULES
 from rating import _execute_react_to_message
 from http_clients import _abortable_post, transcribe_voice  # noqa: F401
 from llm_messages import _tag_sender  # noqa: F401
+from llm_nonstream import non_stream_iteration
 from llm_tools import _bash_command_tool_enabled, fetch_tools_from_llama  # noqa: F401
 
 
@@ -606,92 +607,18 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 # was raising somewhere we couldn't catch on the vision payload).
                 r = None
                 try:
-                    payload_bytes = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
-                    async with httpx.AsyncClient(
-                        timeout=limits.LLAMA_HTTP_TIMEOUT_SEC,
-                        limits=httpx.Limits(max_keepalive_connections=0, max_connections=1),
-                    ) as vclient:
-                        # v0.7.6: race the post against abort_event.
-                        # The plain vclient.post() blocks until the
-                        # full response arrives (5-30s for vision).
-                        # The Stop button sets abort_event, but the
-                        # post() doesn't see it. With _abortable_post,
-                        # we detect abort as soon as the user clicks.
-                        r = await _abortable_post(
-                            vclient, f"{LLAMA_URL}/chat/completions",
-                            abort_event=abort_event,
-                            headers={"Authorization": f"Bearer {API_KEY}",
-                                     "Content-Type": "application/json"},
-                            content=payload_bytes,
-                        )
-                        if r is None:
-                            # User clicked Stop. Return None so the
-                            # handler treats this as "aborted" and
-                            # doesn't send a partial response.
-                            log.info(f"[call_llama] abort_event fired during non-streaming iter={iteration}, aborting")
-                            return None
-                        r.raise_for_status()
-                        data = r.json()
-                    # T32 (2026-10-13): guard against empty 'choices'.
-                    # Heavy prompts that exhaust the context window, or
-                    # rate-limit / content-filter responses, can return
-                    # 200 OK with choices:[] (or with no 'message' key).
-                    # Before this guard, every such response produced
-                    # 'list index out of range' in the bot's reply, and
-                    # the user saw a generic 'Error: list index out of
-                    # range' with no useful info. Surface a clear,
-                    # user-readable message instead.
-                    _choices = data.get("choices") or []
-                    if not _choices:
-                        # T70.4: distinguish "context exhausted" from the other
-                        # two causes. Before this, an overflow produced a normal
-                        # answer-shaped message and the bot hallucinated about
-                        # the truncated conversation.
-                        _raw = (data.get("error") or {})
-                        _detail = json.dumps(_raw) if _raw else json.dumps(data)[:500]
-                        if is_context_overflow(_detail):
-                            log.info("[call_llama] CONTEXT OVERFLOW detected")
-                            return OVERFLOW_MESSAGE
-                        return ("[model returned no choices — the prompt may have "
-                                "exceeded the context window, hit a rate limit, or "
-                                "been blocked by a content filter. Try a shorter "
-                                "prompt or try again in a minute.]")
-                    msg0 = _choices[0].get("message") or {}
-                    content = msg0.get("content") or ""
-                    reasoning = msg0.get("reasoning_content") or ""
-                    non_stream_tool_calls = msg0.get("tool_calls") or []
-                    # T38.5: tool isolation. If llama-server returned a tool_call
-                    # whose function name is not in the bot's whitelist, we refuse
-                    # to dispatch it. This is the bot-side guarantee that the
-                    # model can NEVER reach llama-server's native --agent or
-                    # MCP-loaded tools.
-                    try:
-                        validate_tool_calls(non_stream_tool_calls)
-                    except UnknownToolNameError as _e:
-                        # T43: soft-reject. Rewrite the unknown tool_calls
-                        # in place to `__rejected__` so the dispatch loop
-                        # below hits its "unhandled tool" branch, and
-                        # inject a synthetic tool result into msgs so the
-                        # model can read it as a tool-role message on the
-                        # next iteration. This gives the model a chance to
-                        # retry with a whitelisted tool instead of
-                        # silently dropping the turn.
-                        bad_names = sorted({(tc.get("function") or {}).get("name") or "" for tc in non_stream_tool_calls})
-                        log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
-                            f"injecting tool result feedback")
-                        known_list = ", ".join(sorted(KNOWN_TOOL_NAMES))
-                        for tc in non_stream_tool_calls:
-                            fn = (tc.get("function") or {})
-                            if (fn.get("name") or "") not in KNOWN_TOOL_NAMES:
-                                fn["name"] = "__rejected__"
-                                fn["arguments"] = "{}"
+                    result = await non_stream_iteration(
+                        req_body, iteration=iteration,
+                        abort_event=abort_event)
+                    if result.outcome == "final":
+                        return result.final_text
+                    content = result.content
+                    reasoning = result.reasoning
+                    non_stream_tool_calls = result.tool_calls
+                    finish_reason = result.finish_reason
+                    if result.saw_unavailable_tool:
                         saw_unavailable_tool = True
-                        # The dispatch loop below will run for the
-                        # __rejected__ entries and hit the "unhandled"
-                        # branch, which appends a `role: tool` message
-                        # explaining the rejection back to msgs. We do
-                        # NOT return here; the loop continues.
-                    log.info(f"[LLAMA] iter={iteration} non-stream finish={data['choices'][0].get('finish_reason')} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}")
+                    log.info(f"[LLAMA] iter={iteration} non-stream finish={result.finish_reason} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}")
                     if reasoning and thinking_msg is not None:
                         await push_thinking(accumulated_reasoning + reasoning, force=True)
                     accumulated_reasoning += reasoning
@@ -715,7 +642,6 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                     # skipped for this iteration (we already have a
                     # response and we don't want a second POST).
                     _ns_handled = True
-                    finish_reason = data['choices'][0].get('finish_reason') or 'tool_calls'
                     content_buf = content
                     reasoning_buf = accumulated_reasoning
                     tool_calls_buf = {}
