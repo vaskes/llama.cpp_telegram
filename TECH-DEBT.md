@@ -17,49 +17,42 @@ faster than it is being paid and that is its own finding — escalate it.
 
 ---
 
-## 1. `bot.py` is a god-module of re-exports (HIGH)
+## 1. ~~`bot.py` is a god-module of re-exports~~ ✅ DONE 2026-10-21
 
-**What.** `telegram-bot/bot.py` is mostly comment banners (`# === F3 stage
-2: re-export persistence and rating modules`) and `from x import _y`
-re-exports. The monolith was split into modules, but the dependency graph was
-never untangled, so `bot.py` became the facade that papers over the cycles.
+**Was.** 2245 lines, of which **1894 were `_selftest()`** — the in-container
+smoke test. The monolith was not the architecture; it was a test harness living
+in the same file as the runtime, plus a facade over an import cycle.
 
-**Why it exists.** The cycles are real. `storage` ↔ `dispatch` ↔ `handlers`
-↔ `rating` all want each other at import time. The facade was the cheapest way
-to make the split land without a rewrite.
-
-**Cost.** Every new module has to be re-exported here or tests that import from
-`bot` break. `bot.py` grows monotonically and nobody can tell what it owns.
-
-**Trigger to fix.** Before the next feature that needs a new cross-cutting
-module. Not before.
-
-**How to fix.** Break the cycles with a dependency-inversion pass: extract the
-shared types into a `core/` with no upward imports, invert the rest behind
-small interfaces, then let `bot.py` become `__init__.py` with an explicit
-`__all__`. Do it as one focused change, not incrementally.
+**Now.** `bot.py` is 331 lines. The smoke test moved to `selftest.py`
+unchanged; it stays in the image because it has to exercise the real import
+graph and the real `/app` paths inside the running container. `tests/
+test_refactor_graph.py` pins the size so it cannot grow back.
 
 ---
 
-## 2. Late imports inside functions (HIGH)
+## 2. ~~Late imports inside functions~~ ✅ DONE 2026-10-21
 
-**What.** `handlers.py` starts most functions with `import call_llama` or
-`from state import ...` inside the function body, to dodge `ImportError` at
-startup. Consequence: static analysis (mypy, pylint, IDE navigation) treats
-those names as undefined, and a broken import fails at call time rather than
-at boot.
+**Was.** 8 late `from dispatch import X` inside handlers.py function bodies.
+The module-level graph had **zero** cycles — the cycle existed only because of
+those eight lines. Everything they reached for turned out to be leaf code, so
+it moved to `chat_utils.py` and `access.py` and handlers now imports nothing
+from dispatch at runtime.
 
-**Why it exists.** Same cycles as item 1.
+**Now.** The module-level import graph is acyclic. Pinned by
+`test_refactor_graph.py`: no cycles, no late imports back into the old cycle,
+leaf modules stay leaves. Verified that re-introducing one late import fails
+three of those tests.
 
-**Cost.** Broken imports become runtime errors instead of startup errors. That
-is the worst time to find out.
-
-**Trigger to fix.** Same refactor as item 1. They are the same problem; fixing
-one without the other is wasted work.
+**One breakage worth remembering:** `test_dispatch_start.py` patched
+`dispatch.is_authorized` to bypass the whitelist. That patch point stopped
+working the instant the function moved, because it resolves the name in its
+*own* module's globals — so the test would have kept passing while no longer
+bypassing anything. That is worse than no test, and it is the shape a move
+like this always takes.
 
 ---
 
-## 3. `call_llama` is a 1600-line function marked DO NOT REFACTOR (HIGH)
+## 3. `call_llama` is a 1177-line function marked DO NOT REFACTOR (HIGH) — **NOT TOUCHED**
 
 **What.** One `async def` holding the tool loop, streaming SSE parsing,
 non-streaming fallback, abort handling, backpressure, and fallback text
@@ -73,6 +66,11 @@ than it saved (see the CHANGELOG's hotfix count).
 function nobody wants to touch, which is precisely how the complexity got
 here.
 
+**Deliberately not started on 2026-10-21**, after items 1, 2 and 4 landed.
+This is the one item where a half-refactor is worse than none, and it needs a
+person who can watch the bot answer messages while it happens. The other three
+were mechanical; this one is not.
+
 **Trigger to fix.** When a feature needs to add a *new kind* of thing to the
 turn (a new streaming mode, a new tool-transport, a new abort semantic) rather
 than another flag. Splitting it for its own sake produces the abandoned
@@ -85,22 +83,27 @@ tool loop intact until it can be expressed as a state machine over an explicit
 
 ---
 
-## 4. Handlers duplicate the same 80% (MEDIUM)
+## 4. ~~Handlers duplicate the same 80%~~ 🟡 MOSTLY DONE 2026-10-21
 
-**What.** `handle_text`, `handle_voice`, `handle_document`, `handle_photo`
-each do: semaphore → build history → create abort event → persist →
-`call_llama` → rollback on failure in `finally`. Only the middle differs.
+**Done.** The consequential half: the persist/rollback block existed eight
+times (four handlers × abort path and exception path). `turn.py` owns it now.
+Control flow untouched. 10 tests, mostly about failure *direction* — an undo
+that does not run leaves half a conversation, so persisting sets the flag
+before awaiting, and a failed undo logs at ERROR with its consequence spelled
+out.
 
-**Cost.** The rollback path exists four times. A fix to one that misses another
-leaves a message persisted with no assistant reply — the exact failure mode
-described in `9a23083`, just via a different route.
+**Still duplicated.** The semaphore → history → abort_event → call_llama
+scaffolding itself. `handle_text`, `handle_voice` and `handle_document` remain
+structurally near-identical for ~120 lines each.
 
-**Trigger to fix.** Alongside item 3, or immediately if another handler is
-added.
+**Why not finished.** Finishing it means restructuring three 200-line handlers
+into a single template function, which is real control-flow surgery — and the
+one remaining benefit is readability, not correctness. The rollback, which is
+where a mistake costs a user message, is already in one place.
 
-**How to fix.** An `@asynccontextmanager` (`@with_llm_turn`) that owns the
-semaphore, the abort event and the DB rollback. Start with the DB half, since
-that is the half that is duplicated *and* consequential.
+**Trigger.** When item 3 lands and `call_llama` gains a stable call signature
+worth templating against. Until then the duplication is bounded and the
+dangerous part is extracted.
 
 ---
 
