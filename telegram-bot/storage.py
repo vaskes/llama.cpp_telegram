@@ -126,6 +126,20 @@ CREATE INDEX IF NOT EXISTS idx_known_topics_name
 # CONTEXT_MAX_MESSAGES, which persistence passes through as FETCH_LIMIT.
 DEFAULT_CONTEXT_MESSAGES = 20
 
+# TECH-DEBT #6: the DB clock, not the process clock.
+#
+# SQLite-side so that every writer on this schema produces timestamps the
+# same way, whether it is this module or a fork running raw SQL. NOT
+# CURRENT_TIMESTAMP: that returns TEXT ('YYYY-MM-DD HH:MM:SS') and the
+# column is REAL, so it would mean a type migration over every existing row
+# or a str->float parse on every read in the age filter. unixepoch() returns
+# seconds and leaves both alone.
+#
+# Requires SQLite 3.38+. The 3.25 floor below is for ALTER TABLE RENAME
+# COLUMN; this raises it. sub-second precision is dropped, which the
+# window filter cannot see at a 7-day boundary.
+_SQL_NOW = "unixepoch('now')"
+
 # T67: TRIM_HIGH / TRIM_LOW are gone.
 #
 # They used to cap the messages table at ~200 rows per thread by DELETING
@@ -284,12 +298,11 @@ class Storage:
     def create_thread(self, chat_id: int, thread_id: str) -> bool:
         """Returns True if a new thread was created, False if it already existed."""
         c = self._conn()
-        now = time.time()
         try:
             c.execute(
                 "INSERT INTO chat_threads (chat_id, thread_id, created_at, last_used) "
-                "VALUES (?, ?, ?, ?)",
-                (chat_id, thread_id, now, now),
+                f"VALUES (?, ?, {_SQL_NOW}, {_SQL_NOW})",
+                (chat_id, thread_id),
             )
             c.commit()
             return True
@@ -450,9 +463,9 @@ class Storage:
             (chat_id, thread_id),
         )
         c.execute(
-            "UPDATE chat_threads SET last_used = ? "
+            f"UPDATE chat_threads SET last_used = {_SQL_NOW} "
             "WHERE chat_id = ? AND thread_id = ?",
-            (time.time(), chat_id, thread_id),
+            (chat_id, thread_id),
         )
         c.commit()
 
@@ -460,9 +473,9 @@ class Storage:
         """Bump last_used without changing the active thread."""
         c = self._conn()
         c.execute(
-            "UPDATE chat_threads SET last_used = ? "
+            f"UPDATE chat_threads SET last_used = {_SQL_NOW} "
             "WHERE chat_id = ? AND thread_id = ?",
-            (time.time(), chat_id, thread_id),
+            (chat_id, thread_id),
         )
         c.commit()
 
@@ -484,9 +497,9 @@ class Storage:
         c = self._conn()
         c.execute(
             "INSERT INTO known_topics (chat_id, message_thread_id, name, created_at) "
-            "VALUES (?, ?, ?, ?) "
+            f"VALUES (?, ?, ?, {_SQL_NOW}) "
             "ON CONFLICT(chat_id, message_thread_id) DO UPDATE SET name = excluded.name",
-            (chat_id, message_thread_id, name, time.time()),
+            (chat_id, message_thread_id, name),
         )
         c.commit()
 
@@ -582,8 +595,8 @@ class Storage:
         c = self._conn()
         cur = c.execute(
             "INSERT INTO messages (chat_id, thread_id, role, content, sender_name, created_at, rating) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (chat_id, thread_id, role, content, sender_name, time.time(), rating),
+            f"VALUES (?, ?, ?, ?, ?, {_SQL_NOW}, ?)",
+            (chat_id, thread_id, role, content, sender_name, rating),
         )
         c.commit()
         return cur.lastrowid
