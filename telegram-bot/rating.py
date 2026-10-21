@@ -27,7 +27,11 @@ def is_rating_active(update) -> bool:
     used to live at the call sites is no longer needed; the
     helper is the single source of truth.
     """
-    from bot import _is_group_chat  # late import: avoid circular at module load
+    # TECH-DEBT #1: this went through the bot facade, which is a
+    # compatibility surface -- it is defined in chat_utils.py. chat_utils
+    # imports nothing from rating, so this can be module level; kept local
+    # only to keep the diff to this one function.
+    from chat_utils import _is_group_chat
     return bool(RATING_MODE) and _is_group_chat(update)
 
 

@@ -15,6 +15,9 @@ Telegram account. The fake user id is 0, which Telegram reserves.
 What this module now depends on is one-directional: selftest -> bot, never
 bot -> selftest. That is what lets dispatch.py import it at module level
 instead of late, which was the only reason bot.py had to import dispatch.
+#
+# selftest no longer imports bot at all: the names below come from the
+# modules that define them.
 """
 
 import asyncio
@@ -32,6 +35,61 @@ import os
 # The dependency stays one-directional: selftest -> dispatch/state, never
 # the reverse.
 from telegram import Update  # noqa: F401  (used via Update.de_json)
+
+# === Owning modules (TECH-DEBT #1) ===
+#
+# Everything below used to be reached through `import bot as _b`. That was
+# not a style problem, it was a correctness one: `bot` is a compatibility
+# surface, and a patch written against it lands on an attribute nobody
+# reads. The names are imported from the module that defines them.
+#
+# `dispatch` is deliberately NOT imported here. dispatch.py imports this
+# module at module level (so the dispatcher can run the smoke test), so a
+# module-level import of dispatch back would close a cycle. It stays a
+# lazy import inside the two places that need it.
+import storage
+from state import (
+    _abort_events, _bot_replies, _PER_USER_SEMAPHORE_LIMIT,
+    _register_abort_event, _get_user_semaphore,
+)
+from prompts import RATING_EMOJI, WELCOME_TEXT
+from persistence import load_history as _load_history
+from persistence import persist as _persist_message
+from rating import (
+    _apply_rating_and_persist, _execute_react_to_message,
+    _parse_rating_response,
+)
+from call_llama import call_llama
+import handlers
+from handlers import (
+    _download_with_limit, _reply, _route_to_thread,
+    _sender_display_name, handle_document, handle_photo, handle_voice,
+)
+from chat_utils import _is_group_chat
+from access import (
+    _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
+)
+
+
+def _lazy_dispatch():
+    """dispatch imports this module, so it can only be imported lazily.
+
+    Three call sites need dispatch; all three are inside _selftest().
+    """
+    import dispatch
+    return dispatch
+
+
+def _store():
+    """The single Storage instance, via the one patch point.
+
+    Not a module-level `get_store()` call: dispatch.py imports this module
+    at import time, and opening the database as a side effect of importing
+    dispatch would be a new failure mode on every restart.
+    """
+    return storage.get_store()
+
+
 
 # state is safe at module level: dispatch imports it, it imports nothing back.
 from state import _GLOBAL_LLM_SEM_LIMIT, _get_global_llm_sem  # noqa: F401
@@ -108,7 +166,6 @@ async def _selftest():
     )
     photo_b64 = base64.b64encode(png_bytes).decode('ascii')
     data_url = f"data:image/png;base64,{photo_b64}"
-    import bot as _b
     # Inject the photo message directly into the SELFTEST conversation,
     # NOT into a real user's history.
     vision_msg = {
@@ -123,15 +180,15 @@ async def _selftest():
     # self-import dance is intentional — _selftest runs in the
     # module's own async context, so going through `store` (the
     # module-level Storage instance) would race with concurrent
-    # handler writes. Accessing _b.store guarantees we hit the
+    # handler writes. Going through _store() guarantees we hit the
     # exact same singleton.
-    await asyncio.to_thread(_b.store.create_thread, 0, SELFTEST_KEY)
-    await asyncio.to_thread(_b.store.add_message, 0, SELFTEST_KEY, "user", json.dumps(vision_msg, ensure_ascii=False))
+    await asyncio.to_thread(_store().create_thread, 0, SELFTEST_KEY)
+    await asyncio.to_thread(_store().add_message, 0, SELFTEST_KEY, "user", json.dumps(vision_msg, ensure_ascii=False))
     # Diagnostic: dump what we're about to send
     import json as _j
     _b_bytes = _j.dumps(vision_msg, ensure_ascii=False).encode('utf-8')
     print(f"[selftest] vision_msg before call_llama: {len(_b_bytes)} bytes, head={_b_bytes[:200]!r}", flush=True)
-    history = await asyncio.to_thread(_b.store.get_messages, 0, SELFTEST_KEY, 20)
+    history = await asyncio.to_thread(_store().get_messages, 0, SELFTEST_KEY, 20)
     parsed_history = []
     for r in history:
         try:
@@ -143,7 +200,7 @@ async def _selftest():
     # it, keep going. The production bot should be able to start
     # even if llama-server is unreachable at boot.
     try:  # noqa
-        result = await _b.call_llama(
+        result = await call_llama(
             parsed_history,
             max_tokens=2048,
             user_text="проверь математику",
@@ -194,7 +251,7 @@ async def _selftest():
         chat = _FakeChat(chat_type, is_forum, chat_id=-1001 if chat_type != 'private' else 1)
         msg = _FakeMessage(chat, thread_id)
         upd = _FakeUpdate(chat, msg)
-        got = _b._is_group_chat(upd)
+        got = _is_group_chat(upd)
         ok = (got == expected)
         all_ok &= ok
         print(f"  [{'OK' if ok else 'FAIL'}] {label}: is_group={got} (expected {expected})", flush=True)
@@ -206,13 +263,12 @@ async def _selftest():
     # photo message since v0.6.3 crashed at the first print, so
     # the bot never replied to images. This test calls handle_photo
     # with a fake Update and asserts no NameError on is_group.
-    # We patch _b._route_to_thread to return a 3-tuple so the
-    # destructure works, and patch _b._check_user_slot to return
+    # We patch _route_to_thread to return a 3-tuple so the
+    # destructure works, and patch _check_user_slot to return
     # None so the handler short-circuits before LLM call.
     print('[selftest] running handle_photo NameError regression test...', flush=True)
     hp_ok = True
     try:  # noqa
-        import bot as _b
         class _FakePhoto:
             file_id = 'fake'
             file_size = 12345
@@ -242,9 +298,14 @@ async def _selftest():
             return (-1001, '19', True)  # is_group=True
         async def _fake_slot(*args, **kwargs):
             return None  # short-circuit before LLM
-        _b._route_to_thread = _fake_route
-        _b._check_user_slot = _fake_slot
-        await _b.handle_photo(_FakeUpdate(), _FakeContext())
+        # TECH-DEBT #1: these two are looked up in handlers' globals,
+        # so the patch has to land there. Written against `bot` it was
+        # a no-op and the handler ran for real.
+        _orig_route = handlers._route_to_thread
+        _orig_slot = handlers._check_user_slot
+        handlers._route_to_thread = _fake_route
+        handlers._check_user_slot = _fake_slot
+        await handle_photo(_FakeUpdate(), _FakeContext())
         print('  [OK] handle_photo does not NameError on is_group', flush=True)
     except NameError as e:
         if 'is_group' in str(e):
@@ -272,13 +333,17 @@ async def _selftest():
     print('[selftest] running handle_voice _stop_button_markup regression test...', flush=True)
     hv_ok = True
     try:  # noqa
-        import bot as _b
         async def _fake_route_v(_u, _c):
             return (-1001, '19', True)
         async def _fake_slot_v(*args, **kwargs):
             return None
-        _b._route_to_thread = _fake_route_v
-        _b._check_user_slot = _fake_slot_v
+        # TECH-DEBT #1: these two are looked up in handlers' globals,
+        # so the patch has to land there. Written against `bot` it was
+        # a no-op and the handler ran for real.
+        _orig_route = handlers._route_to_thread
+        _orig_slot = handlers._check_user_slot
+        handlers._route_to_thread = _fake_route_v
+        handlers._check_user_slot = _fake_slot_v
         class _FakeVoice:
             file_id = 'fake'
             file_size = 12345
@@ -296,7 +361,7 @@ async def _selftest():
             message = _FakeVoiceMessage()
         class _FakeVoiceContext:
             bot = type('B', (), {'id': 1})()
-        await _b.handle_voice(_FakeVoiceUpdate(), _FakeVoiceContext())
+        await handle_voice(_FakeVoiceUpdate(), _FakeVoiceContext())
         print('  [OK] handle_voice does not NameError on _stop_button_markup', flush=True)
     except NameError as e:
         if '_stop_button_markup' in str(e):
@@ -314,13 +379,17 @@ async def _selftest():
     print('[selftest] running handle_document _stop_button_markup regression test...', flush=True)
     hd_ok = True
     try:  # noqa
-        import bot as _b
         async def _fake_route_d(_u, _c):
             return (-1001, '19', True)
         async def _fake_slot_d(*args, **kwargs):
             return None
-        _b._route_to_thread = _fake_route_d
-        _b._check_user_slot = _fake_slot_d
+        # TECH-DEBT #1: these two are looked up in handlers' globals,
+        # so the patch has to land there. Written against `bot` it was
+        # a no-op and the handler ran for real.
+        _orig_route = handlers._route_to_thread
+        _orig_slot = handlers._check_user_slot
+        handlers._route_to_thread = _fake_route_d
+        handlers._check_user_slot = _fake_slot_d
         class _FakeDoc:
             file_id = 'fake'
             file_size = 12345
@@ -336,7 +405,7 @@ async def _selftest():
             message = _FakeDocMessage()
         class _FakeDocContext:
             bot = type('B', (), {'id': 1})()
-        await _b.handle_document(_FakeDocUpdate(), _FakeDocContext())
+        await handle_document(_FakeDocUpdate(), _FakeDocContext())
         print('  [OK] handle_document does not NameError on _stop_button_markup', flush=True)
     except NameError as e:
         if '_stop_button_markup' in str(e):
@@ -366,7 +435,6 @@ async def _selftest():
     print('[selftest] running call_llama abort during non-streaming POST test...', flush=True)
     ab_ok = True
     try:  # noqa
-        import bot as _b
         # No 'import asyncio' here - the module-level import (line 10)
         # is already in scope. A local import would shadow the module
         # one for the WHOLE function (Python scoping rules) and break
@@ -377,13 +445,13 @@ async def _selftest():
         ev = asyncio.Event()
         ev.set()  # already aborted
         # We use a fake chat_id to avoid conflicts
-        _b._register_abort_event(-999999, 0, ev)
+        _register_abort_event(-999999, 0, ev)
         # Build a minimal history
         history = [{"role": "user", "content": "hi"}]
         # Track timing
         t0 = time.time()
         try:
-            result = await _b.call_llama(
+            result = await call_llama(
                 history, max_tokens=128, user_text="hi",
                 thinking_msg=None, use_stream=False,
                 rating_active=False, abort_event=ev,
@@ -415,7 +483,7 @@ async def _selftest():
             else:
                 print(f"  [OK] call_llama returned None in {elapsed:.1f}s (abort fired correctly)", flush=True)
         # Cleanup
-        _b._abort_events.pop((-999999, 0), None)
+        _abort_events.pop((-999999, 0), None)
     except Exception as e:
         print(f"  [FAIL] test setup error: {type(e).__name__}: {e!r}", flush=True)
         ab_ok = False
@@ -430,9 +498,9 @@ async def _selftest():
     SELFTEST_TOPIC_ID = 999999
     try:  # noqa
         await asyncio.to_thread(
-            _b.store.add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
+            _store().add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
         )
-        topics = await asyncio.to_thread(_b.store.list_known_topics, SELFTEST_CHAT)
+        topics = await asyncio.to_thread(_store().list_known_topics, SELFTEST_CHAT)
         names = sorted(t["name"] for t in topics)
         if 'selftest-topic' not in names:
             print(f"  [FAIL] add_known_topic didn't persist (got {names})", flush=True)
@@ -440,7 +508,7 @@ async def _selftest():
         else:
             print(f"  [OK] add_known_topic persisted", flush=True)
         found = await asyncio.to_thread(
-            _b.store.find_known_topic_by_name, SELFTEST_CHAT, 'selftest-topic'
+            _store().find_known_topic_by_name, SELFTEST_CHAT, 'selftest-topic'
         )
         if found is None or found["message_thread_id"] != SELFTEST_TOPIC_ID:
             print(f"  [FAIL] find_known_topic_by_name returned {found}", flush=True)
@@ -448,9 +516,9 @@ async def _selftest():
         else:
             print(f"  [OK] find_known_topic_by_name returned id={found['message_thread_id']}", flush=True)
         await asyncio.to_thread(
-            _b.store.remove_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID
+            _store().remove_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID
         )
-        topics_after = await asyncio.to_thread(_b.store.list_known_topics, SELFTEST_CHAT)
+        topics_after = await asyncio.to_thread(_store().list_known_topics, SELFTEST_CHAT)
         if any(t["name"] == 'selftest-topic' for t in topics_after):
             print(f"  [FAIL] remove_known_topic didn't remove (got {[t['name'] for t in topics_after]})", flush=True)
             all_ok = False
@@ -458,10 +526,10 @@ async def _selftest():
             print(f"  [OK] remove_known_topic worked", flush=True)
         # find_known_topic_by_id: re-add, then look up by id (not name).
         await asyncio.to_thread(
-            _b.store.add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
+            _store().add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
         )
         by_id = await asyncio.to_thread(
-            _b.store.find_known_topic_by_id, SELFTEST_CHAT, SELFTEST_TOPIC_ID
+            _store().find_known_topic_by_id, SELFTEST_CHAT, SELFTEST_TOPIC_ID
         )
         if by_id is None or by_id["name"] != 'selftest-topic':
             print(f"  [FAIL] find_known_topic_by_id returned {by_id}", flush=True)
@@ -470,7 +538,7 @@ async def _selftest():
             print(f"  [OK] find_known_topic_by_id resolved to '{by_id['name']}'", flush=True)
         # Negative case: a non-existent id.
         missing = await asyncio.to_thread(
-            _b.store.find_known_topic_by_id, SELFTEST_CHAT, 999999999
+            _store().find_known_topic_by_id, SELFTEST_CHAT, 999999999
         )
         if missing is not None:
             print(f"  [FAIL] find_known_topic_by_id returned non-None for missing id: {missing}", flush=True)
@@ -479,7 +547,7 @@ async def _selftest():
             print(f"  [OK] find_known_topic_by_id returns None for missing id", flush=True)
         # Cleanup
         await asyncio.to_thread(
-            _b.store.remove_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID
+            _store().remove_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID
         )
     except Exception as e:
         print(f"  [FAIL] known_topics round-trip crashed: {type(e).__name__}: {e}", flush=True)
@@ -511,16 +579,16 @@ async def _selftest():
     NOPRUNE_THREAD = "noprun-test"
     try:  # noqa
         # Wipe any leftover rows
-        await asyncio.to_thread(_b.store.delete_thread, NOPRUNE_CHAT, NOPRUNE_THREAD)
+        await asyncio.to_thread(_store().delete_thread, NOPRUNE_CHAT, NOPRUNE_THREAD)
         for i in range(NOPRUNE_ROWS):
             await asyncio.to_thread(
-                _b.store.add_message, NOPRUNE_CHAT, NOPRUNE_THREAD,
+                _store().add_message, NOPRUNE_CHAT, NOPRUNE_THREAD,
                 "user", f'{{"role":"user","content":"msg {i}"}}'
             )
         # Read back with a ceiling above what we wrote
         rows = (
             await asyncio.to_thread(
-                _b.store.get_messages, NOPRUNE_CHAT, NOPRUNE_THREAD, 100000
+                _store().get_messages, NOPRUNE_CHAT, NOPRUNE_THREAD, 100000
             )
         )
         if len(rows) != NOPRUNE_ROWS:
@@ -529,7 +597,7 @@ async def _selftest():
         else:
             print(f"  [OK] all {NOPRUNE_ROWS} rows survived get_messages (no pruning)", flush=True)
         # Cleanup
-        await asyncio.to_thread(_b.store.delete_thread, NOPRUNE_CHAT, NOPRUNE_THREAD)
+        await asyncio.to_thread(_store().delete_thread, NOPRUNE_CHAT, NOPRUNE_THREAD)
     except Exception as e:
         print(f"  [FAIL] no-prune test crashed: {type(e).__name__}: {e}", flush=True)
         all_ok = False
@@ -541,23 +609,23 @@ async def _selftest():
     RATING_CHAT = -1003
     RATING_THREAD = "rating-test"
     try:  # noqa
-        await asyncio.to_thread(_b.store.delete_thread, RATING_CHAT, RATING_THREAD)
+        await asyncio.to_thread(_store().delete_thread, RATING_CHAT, RATING_THREAD)
         await asyncio.to_thread(
-            _b.store.add_message, RATING_CHAT, RATING_THREAD,
+            _store().add_message, RATING_CHAT, RATING_THREAD,
             "user", '{"role":"user","content":"x"}',
         )
         await asyncio.to_thread(
-            _b.store.add_message, RATING_CHAT, RATING_THREAD,
+            _store().add_message, RATING_CHAT, RATING_THREAD,
             "assistant", '{"role":"assistant","content":""}',
             rating=7,
         )
         await asyncio.to_thread(
-            _b.store.add_message, RATING_CHAT, RATING_THREAD,
+            _store().add_message, RATING_CHAT, RATING_THREAD,
             "assistant", '{"role":"assistant","content":"hi"}',
             rating=None,  # no rating for normal text response
         )
         msgs = await asyncio.to_thread(
-            _b.store.get_messages, RATING_CHAT, RATING_THREAD, 10
+            _store().get_messages, RATING_CHAT, RATING_THREAD, 10
         )
         # ms2_msgs[0] is oldest, [1] is rated, [2] is unrated
         if len(msgs) != 3:
@@ -572,7 +640,7 @@ async def _selftest():
         else:
             print(f"  [OK] rating 7 persisted on row 1, None on row 2", flush=True)
         # Cleanup
-        await asyncio.to_thread(_b.store.delete_thread, RATING_CHAT, RATING_THREAD)
+        await asyncio.to_thread(_store().delete_thread, RATING_CHAT, RATING_THREAD)
     except Exception as e:
         print(f"  [FAIL] lazy-trim test crashed: {type(e).__name__}: {e}", flush=True)
         all_ok = False
@@ -659,7 +727,7 @@ async def _selftest():
     mute_ok = True
     for label, from_user, text, chat, expected in mute_cases:
         upd = _FakeUpdate2(text, from_user, chat)
-        got = _b._should_mute_in_group(upd)
+        got = _should_mute_in_group(upd)
         ok = (got == expected)
         mute_ok &= ok
         print(f"  [{'OK' if ok else 'FAIL'}] {label}: mute={got} (expected {expected})", flush=True)
@@ -723,7 +791,7 @@ async def _selftest():
     ]
     for label, gtype, iforum, fid, rtm_id, txt, expected in cases:
         upd = _RU(gtype, iforum, fid, rtm_id, txt)
-        got = _b._is_reply_to_other_user(upd, BOT_ID)
+        got = _is_reply_to_other_user(upd, BOT_ID)
         if got != expected:
             print(f"  [FAIL] {label}: got={got} expected={expected}", flush=True)
             rpl_ok = False
@@ -738,18 +806,18 @@ async def _selftest():
     print('[selftest] running per-user semaphore test...', flush=True)
     sem_ok = True
     try:  # noqa
-        sem = _b._user_semaphore(123, 456)
+        sem = _get_user_semaphore(123, 456)
         # Manually lock it to simulate 2 in-flight requests
-        for _ in range(_b._PER_USER_SEMAPHORE_LIMIT):
+        for _ in range(_PER_USER_SEMAPHORE_LIMIT):
             await sem.acquire()
         # Third call should report locked
         if not sem.locked():
-            print(f"  [FAIL] semaphore not locked after {_b._PER_USER_SEMAPHORE_LIMIT} acquires", flush=True)
+            print(f"  [FAIL] semaphore not locked after {_PER_USER_SEMAPHORE_LIMIT} acquires", flush=True)
             sem_ok = False
         else:
             print(f"  [OK] semaphore locked at limit", flush=True)
         # Release them
-        for _ in range(_b._PER_USER_SEMAPHORE_LIMIT):
+        for _ in range(_PER_USER_SEMAPHORE_LIMIT):
             sem.release()
         if sem.locked():
             print(f"  [FAIL] semaphore still locked after release", flush=True)
@@ -757,8 +825,8 @@ async def _selftest():
         else:
             print(f"  [OK] semaphore unlocked after release", flush=True)
         # Distinct (chat_id, user_id) gets a distinct semaphore
-        sem_a = _b._user_semaphore(1, 1)
-        sem_b = _b._user_semaphore(1, 2)
+        sem_a = _get_user_semaphore(1, 1)
+        sem_b = _get_user_semaphore(1, 2)
         if sem_a is sem_b:
             print(f"  [FAIL] (1,1) and (1,2) share the same semaphore", flush=True)
             sem_ok = False
@@ -790,7 +858,7 @@ async def _selftest():
     ]
     parse_ok = True
     for text, exp_type, exp_rating, exp_rest in parse_cases:
-        got = _b._parse_rating_response(text)
+        got = _parse_rating_response(text)
         if got['type'] != exp_type or got['rating'] != exp_rating:
             print(f"  [FAIL] {text!r}: type={got['type']!r} rating={got['rating']!r} rest={got['body']!r} "
                   f"(expected type={exp_type!r}, rating={exp_rating!r})", flush=True)
@@ -807,13 +875,13 @@ async def _selftest():
     # distinct. Sanity check.
     print('[selftest] running rating-emoji map test...', flush=True)
     emoji_ok = True
-    if len(_b.RATING_EMOJI) != 10:
-        print(f"  [FAIL] RATING_EMOJI has {len(_b.RATING_EMOJI)} entries, expected 10", flush=True)
+    if len(RATING_EMOJI) != 10:
+        print(f"  [FAIL] RATING_EMOJI has {len(RATING_EMOJI)} entries, expected 10", flush=True)
         emoji_ok = False
-    elif len(set(_b.RATING_EMOJI.values())) != 10:
+    elif len(set(RATING_EMOJI.values())) != 10:
         print(f"  [FAIL] RATING_EMOJI has duplicate emoji", flush=True)
         emoji_ok = False
-    elif any(not e for e in _b.RATING_EMOJI.values()):
+    elif any(not e for e in RATING_EMOJI.values()):
         print(f"  [FAIL] RATING_EMOJI has empty emoji", flush=True)
         emoji_ok = False
     else:
@@ -829,13 +897,13 @@ async def _selftest():
     # the real Telegram API.
     print('[selftest] running chat_member / WELCOME_TEXT test...', flush=True)
     cm_ok = True
-    if not _b.WELCOME_TEXT or not _b.WELCOME_TEXT.strip():
+    if not WELCOME_TEXT or not WELCOME_TEXT.strip():
         print("  [FAIL] WELCOME_TEXT is empty", flush=True)
         cm_ok = False
-    elif '💩' not in _b.WELCOME_TEXT or '🔥' not in _b.WELCOME_TEXT:
+    elif '💩' not in WELCOME_TEXT or '🔥' not in WELCOME_TEXT:
         print("  [FAIL] WELCOME_TEXT does not contain rating scale", flush=True)
         cm_ok = False
-    elif 'TRUTH' not in _b.WELCOME_TEXT:
+    elif 'TRUTH' not in WELCOME_TEXT:
         print("  [FAIL] WELCOME_TEXT does not contain 'TRUTH' (rating rule)", flush=True)
         cm_ok = False
     else:
@@ -861,7 +929,7 @@ async def _selftest():
     upd = Update.de_json(fake_cm, None)
     mock_bot = _MockBot()
     try:  # noqa
-        await _b._handle_chat_member_update(upd, mock_bot)
+        await _lazy_dispatch()._handle_chat_member_update(upd, mock_bot)
         # Expect 2 calls: one to chat_id, one to user_id
         if len(mock_bot.calls) != 2:
             print(f"  [FAIL] expected 2 send_message calls, got {len(mock_bot.calls)}", flush=True)
@@ -904,7 +972,7 @@ async def _selftest():
     upd2 = Update.de_json(fake_leave, None)
     mock_bot2 = _MockBot()
     try:  # noqa
-        await _b._handle_chat_member_update(upd2, mock_bot2)
+        await _lazy_dispatch()._handle_chat_member_update(upd2, mock_bot2)
         if len(mock_bot2.calls) != 0:
             print(f"  [FAIL] leave event triggered {len(mock_bot2.calls)} calls, expected 0", flush=True)
             cm_ok = False
@@ -927,7 +995,7 @@ async def _selftest():
     upd3 = Update.de_json(fake_bot_join, None)
     mock_bot3 = _MockBot()
     try:  # noqa
-        await _b._handle_chat_member_update(upd3, mock_bot3)
+        await _lazy_dispatch()._handle_chat_member_update(upd3, mock_bot3)
         if len(mock_bot3.calls) != 0:
             print(f"  [FAIL] bot-join triggered {len(mock_bot3.calls)} calls, expected 0", flush=True)
             cm_ok = False
@@ -948,37 +1016,36 @@ async def _selftest():
     er_ok = True
     try:  # noqa
         # Save the existing map and clear it for the test
-        import bot as _b
-        saved = dict(_b._bot_replies)
-        _b._bot_replies.clear()
+        saved = dict(_bot_replies)
+        _bot_replies.clear()
         # Record a mapping
-        _b._bot_replies[(-1001234567890, 100)] = 200
-        _b._bot_replies[(-1001234567890, 101)] = 201
+        _bot_replies[(-1001234567890, 100)] = 200
+        _bot_replies[(-1001234567890, 101)] = 201
         # Lookup works
-        if _b._bot_replies.get((-1001234567890, 100)) != 200:
+        if _bot_replies.get((-1001234567890, 100)) != 200:
             print("  [FAIL] _bot_replies.get() returned wrong bot_msg_id", flush=True)
             er_ok = False
         else:
             print("  [OK] _bot_replies stores (chat, user_msg) → bot_msg mapping", flush=True)
         # Pop removes the entry
-        popped = _b._bot_replies.pop((-1001234567890, 100), None)
+        popped = _bot_replies.pop((-1001234567890, 100), None)
         if popped != 200:
             print(f"  [FAIL] pop returned {popped}, expected 200", flush=True)
             er_ok = False
-        elif (-1001234567890, 100) in _b._bot_replies:
+        elif (-1001234567890, 100) in _bot_replies:
             print("  [FAIL] entry not actually removed by pop", flush=True)
             er_ok = False
         else:
             print("  [OK] pop removes entry correctly", flush=True)
         # Pop on missing key returns None (no exception)
-        if _b._bot_replies.pop((-1001234567890, 99999), None) is not None:
+        if _bot_replies.pop((-1001234567890, 99999), None) is not None:
             print("  [FAIL] pop on missing key should return None", flush=True)
             er_ok = False
         else:
             print("  [OK] pop on missing key returns None", flush=True)
         # Restore the saved state
-        _b._bot_replies.clear()
-        _b._bot_replies.update(saved)
+        _bot_replies.clear()
+        _bot_replies.update(saved)
     except Exception as e:
         print(f"  [FAIL] edit-replace test raised: {type(e).__name__}: {e!r}", flush=True)
         er_ok = False
@@ -996,11 +1063,10 @@ async def _selftest():
     print('[selftest] running _download_with_limit test...', flush=True)
     dl_ok = True
     try:  # noqa
-        import bot as _b
         # The F3 module split made _download_with_limit's internal
         # `await _reply(update, ...)` resolve to handlers._reply
         # (local name in handlers.py), not bot._reply. So patching
-        # _b._reply = _fake_reply doesn't work. Instead, use a
+        # _reply = _fake_reply doesn't work. Instead, use a
         # _FakeUpdate that satisfies what the real _reply() reads:
         # update.effective_chat (via _is_group_chat) and
         # update.message (for the actual sendMessage call, which
@@ -1029,7 +1095,7 @@ async def _selftest():
             file_size = 999_999_999
             async def download_as_bytearray(self):
                 raise AssertionError("download should not be called when file_size is over the cap")
-        r = await _b._download_with_limit(_BigFile(), 100, "Photo", _FakeUpdate())
+        r = await _download_with_limit(_BigFile(), 100, "Photo", _FakeUpdate())
         if r is not None or not captured_replies or "too large" not in captured_replies[-1]:
             print("  [FAIL] oversized file: expected None + 'too large' reply", flush=True)
             dl_ok = False
@@ -1042,7 +1108,7 @@ async def _selftest():
             file_size = None
             async def download_as_bytearray(self):
                 return bytearray(b"hello" * 50)  # 250 bytes
-        r = await _b._download_with_limit(_GoodFile(), 100_000, "Photo", _FakeUpdate())
+        r = await _download_with_limit(_GoodFile(), 100_000, "Photo", _FakeUpdate())
         if r is None or len(r) != 250 or captured_replies:
             print(f"  [FAIL] small file: expected 250 bytes, got {len(r) if r else None}, replies={captured_replies}", flush=True)
             dl_ok = False
@@ -1055,7 +1121,7 @@ async def _selftest():
             file_size = None
             async def download_as_bytearray(self):
                 raise RuntimeError("network error")
-        r = await _b._download_with_limit(_FailingFile(), 100_000, "Photo", _FakeUpdate())
+        r = await _download_with_limit(_FailingFile(), 100_000, "Photo", _FakeUpdate())
         if r is not None or not captured_replies or "Failed to download" not in captured_replies[-1]:
             print(f"  [FAIL] failing file: expected None + 'Failed to download' reply, got {r!r} {captured_replies!r}", flush=True)
             dl_ok = False
@@ -1071,7 +1137,7 @@ async def _selftest():
             file_size = None  # PTB didn't populate
             async def download_as_bytearray(self):
                 return bytearray(b"x" * 200_000)  # 200 KB, > 100 KB cap
-        r = await _b._download_with_limit(_BigBufFile(), 100_000, "Photo", _FakeUpdate())
+        r = await _download_with_limit(_BigBufFile(), 100_000, "Photo", _FakeUpdate())
         if r is not None or not captured_replies or "too large" not in captured_replies[-1]:
             print(f"  [FAIL] big buf: expected None + 'too large' reply, got {r!r} {captured_replies!r}", flush=True)
             dl_ok = False
@@ -1096,14 +1162,13 @@ async def _selftest():
     print('[selftest] running sender-name flow test...', flush=True)
     sn_ok = True
     try:  # noqa
-        import bot as _b
         from telegram import User as _U
 
         # Case 1: display-name resolution.
-        n_vasya = _b._sender_display_name(_U(id=111, first_name='Vasisualy', last_name='Lohankin', username='V_bot', is_bot=False))
-        n_dima = _b._sender_display_name(_U(id=222, first_name='Dima', last_name=None, username='KlimDimm', is_bot=False))
-        n_anon = _b._sender_display_name(_U(id=333, first_name=None, last_name=None, username=None, is_bot=False))
-        n_none = _b._sender_display_name(None)
+        n_vasya = _sender_display_name(_U(id=111, first_name='Vasisualy', last_name='Lohankin', username='V_bot', is_bot=False))
+        n_dima = _sender_display_name(_U(id=222, first_name='Dima', last_name=None, username='KlimDimm', is_bot=False))
+        n_anon = _sender_display_name(_U(id=333, first_name=None, last_name=None, username=None, is_bot=False))
+        n_none = _sender_display_name(None)
         if n_vasya != 'Vasisualy Lohankin' or n_dima != 'Dima' or n_anon != 'user_333' or n_none is not None:
             print(f"  [FAIL] name resolution: {n_vasya!r} {n_dima!r} {n_anon!r} {n_none!r}", flush=True)
             sn_ok = False
@@ -1118,16 +1183,16 @@ async def _selftest():
         # Clean any leftover rows from a previous run of this test.
         def _pre_cleanup():
             import sqlite3 as _sq
-            cc = _sq.connect(_b.store.path)
+            cc = _sq.connect(_store().path)
             cc.execute('DELETE FROM messages WHERE chat_id = ? AND thread_id = ?',
                        (SN_CHAT, SN_THREAD))
             cc.commit()
             cc.close()
         await asyncio.to_thread(_pre_cleanup)
-        await _b._persist_message(SN_CHAT, SN_THREAD, 'user', 'hi from vasya', sender_name=n_vasya)
-        await _b._persist_message(SN_CHAT, SN_THREAD, 'user', 'hi from dima', sender_name=n_dima)
-        await _b._persist_message(SN_CHAT, SN_THREAD, 'assistant', 'hello both', None)
-        history = await _b._load_history(SN_CHAT, SN_THREAD)
+        await _persist_message(SN_CHAT, SN_THREAD, 'user', 'hi from vasya', sender_name=n_vasya)
+        await _persist_message(SN_CHAT, SN_THREAD, 'user', 'hi from dima', sender_name=n_dima)
+        await _persist_message(SN_CHAT, SN_THREAD, 'assistant', 'hello both', None)
+        history = await _load_history(SN_CHAT, SN_THREAD)
         # Use .get() (not []) so a missing key is a no-op (test continues
         # with sn_ok=False) instead of crashing the whole selftest with
         # a KeyError. Defensive against future schema changes.
@@ -1205,7 +1270,7 @@ async def _selftest():
         # block each other; cleanup is short-lived and best-effort.
         def _cleanup():
             import sqlite3 as _sq
-            cc = _sq.connect(_b.store.path)
+            cc = _sq.connect(_store().path)
             cc.execute('DELETE FROM messages WHERE chat_id = ? AND thread_id = ?',
                        (SN_CHAT, SN_THREAD))
             cc.commit()
@@ -1361,7 +1426,7 @@ async def _selftest():
         mock_bot.set_message_reaction = _mock_set_message_reaction
 
         # Case 1: valid emoji + explicit message_id
-        result = await _b._execute_react_to_message(
+        result = await _execute_react_to_message(
             {'emoji': '👍', 'message_id': 12345},
             bot=mock_bot, chat_id=-1004461679108, default_message_id=99999,
         )
@@ -1374,7 +1439,7 @@ async def _selftest():
 
         # Case 2: valid emoji, no message_id, default available
         mock_calls.clear()
-        result = await _b._execute_react_to_message(
+        result = await _execute_react_to_message(
             {'emoji': '🔥'},
             bot=mock_bot, chat_id=-1004461679108, default_message_id=88888,
         )
@@ -1387,7 +1452,7 @@ async def _selftest():
 
         # Case 3: empty emoji -> refuses, no API call
         mock_calls.clear()
-        result = await _b._execute_react_to_message(
+        result = await _execute_react_to_message(
             {'emoji': ''},
             bot=mock_bot, chat_id=-1004461679108, default_message_id=88888,
         )
@@ -1400,7 +1465,7 @@ async def _selftest():
 
         # Case 4: non-integer message_id -> refuses
         mock_calls.clear()
-        result = await _b._execute_react_to_message(
+        result = await _execute_react_to_message(
             {'emoji': '👍', 'message_id': 'abc'},
             bot=mock_bot, chat_id=-1004461679108, default_message_id=88888,
         )
@@ -1418,7 +1483,7 @@ async def _selftest():
             raise Exception("REACTION_NOT_ALLOWED")
 
         mock_bot.set_message_reaction = _mock_raise
-        result = await _b._execute_react_to_message(
+        result = await _execute_react_to_message(
             {'emoji': '😐', 'message_id': 11111},
             bot=mock_bot, chat_id=-1004461679108, default_message_id=88888,
         )
@@ -1450,7 +1515,6 @@ async def _selftest():
     ns_ok = True
     try:  # noqa
         from unittest.mock import patch, AsyncMock
-        from bot import call_llama
 
         # Build a fake non-streaming response: assistant message with
         # no content, one tool_call to react_to_message.
@@ -1668,10 +1732,17 @@ async def _selftest():
             # here without re-importing (a local `import asyncio` would
             # shadow the module reference for the whole function and
             # break every earlier `asyncio.X(...)` call in _selftest).
-            from bot import donsetch_call, _donsetch_session_id as _sid
-            # force re-init in case the session was set by a prior test
-            import bot as _b_module
-            _b_module._donsetch_session_id = None
+            import call_llama as _cl
+            donsetch_call = _cl.donsetch_call
+            _sid = _cl._donsetch_session_id
+            # force re-init in case the session was set by a prior test.
+            # The write has to land on call_llama: it rebinds that global
+            # inside its own accessors, so a patch anywhere else -- bot
+            # included -- would be read by nobody. The previous line bound
+            # `_b_module` inside a try/except, so the NameError from the
+            # assignment was swallowed and this whole test did nothing.
+            _orig_sid = _cl._donsetch_session_id
+            _cl._donsetch_session_id = None
 
             async def _rt():
                 # web_search: human-readable result, no [meta] envelope
@@ -1712,9 +1783,8 @@ async def _selftest():
     print('[selftest] running per-handler abort_event key test...', flush=True)
     aek_ok = True
     try:  # noqa
-        import bot as _b
-        saved = dict(_b._abort_events)
-        _b._abort_events.clear()
+        saved = dict(_abort_events)
+        _abort_events.clear()
         # Two in-flight handlers for the same (chat, user) - the
         # old shared key would let the second overwrite the first.
         ev_a = asyncio.Event()
@@ -1724,13 +1794,13 @@ async def _selftest():
         # uses the thinking message id which is unique per handler.
         # Use _register_abort_event (not raw insert) so the F4
         # LRU bound fires - the runtime path is the production path.
-        _b._register_abort_event(-1001234567890, 5001, ev_a)
-        _b._register_abort_event(-1001234567890, 5002, ev_b)
+        _register_abort_event(-1001234567890, 5001, ev_a)
+        _register_abort_event(-1001234567890, 5002, ev_b)
         # Both events present, neither overwrites the other.
-        if _b._abort_events.get((-1001234567890, 5001)) is not ev_a:
+        if _abort_events.get((-1001234567890, 5001)) is not ev_a:
             print("  [FAIL] handler A event overwritten or missing", flush=True)
             aek_ok = False
-        elif _b._abort_events.get((-1001234567890, 5002)) is not ev_b:
+        elif _abort_events.get((-1001234567890, 5002)) is not ev_b:
             print("  [FAIL] handler B event missing", flush=True)
             aek_ok = False
         else:
@@ -1747,18 +1817,18 @@ async def _selftest():
             print("  [OK] setting handler A's event does not affect handler B", flush=True)
         # Pop only the matching key; the other stays intact.
 
-        popped = _b._abort_events.pop((-1001234567890, 5001), None)
+        popped = _abort_events.pop((-1001234567890, 5001), None)
         if popped is not ev_a:
             print("  [FAIL] pop on handler A key returned wrong value", flush=True)
             aek_ok = False
-        elif (-1001234567890, 5002) not in _b._abort_events:
+        elif (-1001234567890, 5002) not in _abort_events:
             print("  [FAIL] handler B event popped by mistake (shared key regression)", flush=True)
             aek_ok = False
         else:
             print("  [OK] pop on handler A key does not touch handler B", flush=True)
         # Cleanup
-        _b._abort_events.clear()
-        _b._abort_events.update(saved)
+        _abort_events.clear()
+        _abort_events.update(saved)
     except Exception as e:
         print(f"  [FAIL] abort_event test raised: {type(e).__name__}: {e!r}", flush=True)
         aek_ok = False
@@ -1772,17 +1842,17 @@ async def _selftest():
     # regressable on the next refactor.
     print('[selftest] running F4 LRU bound test...', flush=True)
     lru_ok = True
-    saved_aes = dict(_b._abort_events)
-    _b._abort_events.clear()
+    saved_aes = dict(_abort_events)
+    _abort_events.clear()
     try:  # noqa
         for i in range(250):
-            _b._register_abort_event(0, i, asyncio.Event())
-        if len(_b._abort_events) != 200:
-            print(f"  [FAIL] F4 LRU bound: expected 200, got {len(_b._abort_events)}", flush=True)
+            _register_abort_event(0, i, asyncio.Event())
+        if len(_abort_events) != 200:
+            print(f"  [FAIL] F4 LRU bound: expected 200, got {len(_abort_events)}", flush=True)
             lru_ok = False
         else:
             print("  [OK] F4 LRU bound at 200 (250 inserts -> 200 entries)", flush=True)
-        if (0, 0) in _b._abort_events:
+        if (0, 0) in _abort_events:
             print("  [FAIL] F4 LRU should have evicted (0, 0)", flush=True)
             lru_ok = False
         else:
@@ -1791,8 +1861,8 @@ async def _selftest():
         print(f"  [FAIL] F4 LRU test raised: {type(e).__name__}: {e!r}", flush=True)
         lru_ok = False
     finally:
-        _b._abort_events.clear()
-        _b._abort_events.update(saved_aes)
+        _abort_events.clear()
+        _abort_events.update(saved_aes)
     all_ok &= lru_ok
     print(f"[selftest] F4 LRU bound: {'all pass' if lru_ok else 'FAILED'}", flush=True)
 
@@ -1804,15 +1874,19 @@ async def _selftest():
     # because it's the simplest (no media download) and exercises the
     # exact code path.
     #
-    # IMPORTANT: this test patches several module-level attrs on _b
-    # and _h. We save originals and restore in finally so we don't
-    # pollute later tests (this is the LAST test, but still good
-    # hygiene in case the test order changes).
+    # IMPORTANT: this test patches module-level attrs on handlers, which
+    # is where handle_text resolves every one of these names. We save
+    # originals and restore in finally so we don't pollute later tests
+    # (this is the LAST test, but still good hygiene in case the order
+    # changes).
+    #
+    # One entry used to be patched on bot instead of handlers, which is
+    # the fourth instance of the defect TECH-DEBT #1 fixed: a write to a
+    # module whose globals nothing reads.
     print('[selftest] running handle_text post-race abort discard test...', flush=True)
     ar_ok = True
     saved = {}
     try:  # noqa
-        import bot as _b
         import handlers as _h
 
         class _FakeMessage:
@@ -1853,7 +1927,7 @@ async def _selftest():
             (_h, '_route_to_thread'),
             (_h, '_check_user_slot'),
             (_h, '_get_global_llm_sem'),
-            (_b, '_apply_rating_and_persist'),
+            (_h, '_apply_rating_and_persist'),  # was (_b, ...) -- a no-op
             (_h, '_reply'),
             (_h, 'send_reply'),
             (_h, '_persist_message'),
@@ -1888,7 +1962,7 @@ async def _selftest():
         _h._persist_message = _persist
         async def _load_hist(*a, **k): return []
         _h._load_history = _load_hist
-        _b._apply_rating_and_persist = lambda *a, **k: a[4]  # 5th arg is bot_response
+        _apply_rating_and_persist = lambda *a, **k: a[4]  # 5th arg is bot_response
         _h._sender_display_name = lambda u: 'V'
         _h._is_rating_active = lambda u: False
         _h._stop_button_markup = lambda: None
@@ -1917,7 +1991,7 @@ async def _selftest():
         ar_ok = False
     finally:
         # Restore originals
-        for owner in ({_b, _h} if 'ar_ok' in dir() and '_h' in dir() else []):
+        for owner in ({_h} if 'ar_ok' in dir() and '_h' in dir() else []):
             for (oid, name), orig in saved.items():
                 if id(owner) == oid and orig is not None:
                     setattr(owner, name, orig)

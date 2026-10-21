@@ -34,7 +34,12 @@ async def test_in_tree_selftest(caplog, capsys):
 
 
 def test_store_singleton():
-    """Verify bot.store and storage.get_store() return the same instance."""
+    """bot.store must BE the singleton storage.get_store() hands out.
+
+    bot.store is the one object the fork surface still exposes, because
+    forks read it. So unlike the other tests in this file, this one
+    deliberately goes through bot.
+    """
     import bot
     from storage import get_store
 
@@ -47,41 +52,52 @@ def test_store_singleton():
 
 
 def test_constants_exposed():
-    """Verify the cross-module state constants are exposed on bot."""
-    import bot
+    """Verify the cross-module state constants are exposed on state.
 
-    assert hasattr(bot, "_abort_events"), "bot._abort_events missing"
-    assert hasattr(bot, "_bot_replies"), "bot._bot_replies missing"
-    assert hasattr(bot, "_register_abort_event"), "bot._register_abort_event missing"
-    assert hasattr(bot, "_GLOBAL_LLM_SEM_LIMIT"), "bot._GLOBAL_LLM_SEM_LIMIT missing"
-    assert hasattr(bot, "_PER_USER_SEMAPHORE_LIMIT"), "bot._PER_USER_SEMAPHORE_LIMIT missing"
+    TECH-DEBT #1: these were asserted on `bot`, which only re-exported them.
+    Reading them off the compatibility surface tested the re-export, not the
+    constant -- and a re-export that silently stopped happening would have
+    failed this test while production carried on.
+    """
+    import state
+
+    assert hasattr(state, "_abort_events"), "state._abort_events missing"
+    assert hasattr(state, "_bot_replies"), "state._bot_replies missing"
+    assert hasattr(state, "_register_abort_event"), "state._register_abort_event missing"
+    assert hasattr(state, "_GLOBAL_LLM_SEM_LIMIT"), "state._GLOBAL_LLM_SEM_LIMIT missing"
+    assert hasattr(state, "_PER_USER_SEMAPHORE_LIMIT"), "state._PER_USER_SEMAPHORE_LIMIT missing"
 
 
 def test_f4_lru_bound():
     """F4 (v0.6.0 P0-1) regression test."""
     import asyncio
-    import bot
+    import state
 
-    saved = dict(bot._abort_events)
-    bot._abort_events.clear()
+    # The mutation has to land on state, which is where the OrderedDict lives
+    # and where _register_abort_event reads it. state mutates the dict in
+    # place rather than rebinding the global, so bot._abort_events used to be
+    # the same object -- but asserting through the facade would have kept
+    # passing if state ever started rebinding.
+    saved = dict(state._abort_events)
+    state._abort_events.clear()
     try:
         for i in range(250):
-            bot._register_abort_event(0, i, asyncio.Event())
-        assert len(bot._abort_events) == 200, (
-            f"LRU bound failed: expected 200, got {len(bot._abort_events)}"
+            state._register_abort_event(0, i, asyncio.Event())
+        assert len(state._abort_events) == 200, (
+            f"LRU bound failed: expected 200, got {len(state._abort_events)}"
         )
-        assert (0, 0) not in bot._abort_events, "LRU should have evicted (0, 0)"
-        assert (0, 200) in bot._abort_events, "LRU should preserve newest entry (0, 200)"
+        assert (0, 0) not in state._abort_events, "LRU should have evicted (0, 0)"
+        assert (0, 200) in state._abort_events, "LRU should preserve newest entry (0, 200)"
     finally:
-        bot._abort_events.clear()
-        bot._abort_events.update(saved)
+        state._abort_events.clear()
+        state._abort_events.update(saved)
 
 
 def test_rating_parser_returns_body():
     """v0.6.3 T8 regression test."""
-    import bot
+    from rating import _parse_rating_response
 
-    result = bot._parse_rating_response("plain answer")
+    result = _parse_rating_response("plain answer")
     assert "body" in result, f"_parse_rating_response must return 'body' key, got {sorted(result.keys())}"
     assert "rest" not in result, f"_parse_rating_response must NOT return 'rest' key, got {sorted(result.keys())}"
     assert result["body"] == "plain answer"
@@ -95,28 +111,29 @@ def test_rating_parser_handles_unknown_type_as_question():
     cases. The fix: map unknown to 'question' (sane default)
     and return the whole text as body (not just post-prefix).
     """
-    import bot
+
+    from rating import _parse_rating_response
 
     # Case 1: unprefixed text -> question, whole text as body
-    r1 = bot._parse_rating_response("plain answer")
+    r1 = _parse_rating_response("plain answer")
     assert r1["type"] == "question", f"unprefixed: expected 'question', got {r1['type']!r}"
     assert r1["body"] == "plain answer"
     assert r1["rating"] is None
 
     # Case 2: explicit '[[TYPE:unknown]]' -> question, whole text as body
-    r2 = bot._parse_rating_response("[[TYPE:unknown]]")
+    r2 = _parse_rating_response("[[TYPE:unknown]]")
     assert r2["type"] == "question", f"unknown type: expected 'question', got {r2['type']!r}"
     assert r2["body"] == "[[TYPE:unknown]]", f"expected whole text as body, got {r2['body']!r}"
     assert r2["rating"] is None
 
     # Case 3: empty string -> question, empty body (no crash)
-    r3 = bot._parse_rating_response("")
+    r3 = _parse_rating_response("")
     assert r3["type"] == "question"
     assert r3["body"] == ""
     assert r3["rating"] is None
 
     # Case 4: valid prefix still works (regression)
-    r4 = bot._parse_rating_response("[[TYPE:info]] [[RATE:7]]")
+    r4 = _parse_rating_response("[[TYPE:info]] [[RATE:7]]")
     assert r4["type"] == "info"
     assert r4["rating"] == 7
     assert r4["emoji"]  # non-empty

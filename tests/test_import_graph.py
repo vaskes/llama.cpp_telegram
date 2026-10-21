@@ -285,8 +285,17 @@ def test_every_local_module_is_referenced_somewhere():
 # mistake as asserting a cycle finder had no cycles -- the test that cannot
 # fail is not a test.
 KNOWN_RUNTIME_CYCLES = [
-    ["access", "bot", "call_llama", "dispatch", "handlers", "rating",
-     "selftest", "webhook"],
+    # Two modules dropped out of this cycle with TECH-DEBT #1:
+    #   bot    -- selftest.py reached its dependencies through the bot facade.
+    #            The only edge was six monkeypatches (`_b._route_to_thread`,
+    #            `_b._check_user_slot`, `_b._apply_rating_and_persist`) that
+    #            wrote attributes nobody read. The cycle was load-bearing for
+    #            nothing, which is exactly why it also hid six broken tests.
+    #   rating -- its only back-edge was a lazy `from bot import
+    #            _is_group_chat` inside _is_rating_active(). That name is
+    #            owned by chat_utils.py, which imports nothing, so the import
+    #            is direct now and the edge is gone.
+    ["access", "call_llama", "dispatch", "handlers", "selftest", "webhook"],
     ["config", "state"],
 ]
 
