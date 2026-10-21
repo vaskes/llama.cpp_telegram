@@ -1,6 +1,6 @@
 ---
 tech_debt: 3
-marker: tests/test_c1_nonstream.py, tests/test_c2_sse.py
+marker: tests/test_c1_nonstream.py, tests/test_c2_sse.py, tests/test_c3_loop_guard.py
 marker_kind: guard
 state: partial
 issue: 2          # filled in when the Issue is created
@@ -13,11 +13,11 @@ non-streaming fallback, abort handling, backpressure, and fallback text
 generation. Cyclomatic complexity in the low hundreds. The source comment says
 `DO NOT REFACTOR` — a note left after someone tried and did not finish.
 
-**The "1177-line" figure in this title was wrong.** Measured 2026-10-21: the
-function spanned 120–1191, that is 1072 lines, in a 1202-line file. The
-original 1177 was never verified by anyone. This is the same claim-propagation
-failure that produced a `feature/composition-root` handoff earlier in the
-session: a number copied between documents until it stopped matching anything.
+**The "1177-line" figure in this title was wrong.** The function spans
+120–1191 measured on 2026-10-21, and the original number was never verified by
+anyone. This is the same claim-propagation failure that produced a
+`feature/composition-root` handoff earlier in the session: a number copied
+between documents until it stopped matching anything.
 
 **Why it exists.** It works, and every change to it has historically cost more
 than it saved (see the CHANGELOG's hotfix count).
@@ -28,8 +28,8 @@ here.
 
 ### Done (2026-10-21)
 
-1616 → 1072 lines inside the function; six leaf modules, 769 lines, each with
-tests that replay a captured live-engine response:
+Function: 1616 → **1041** lines. File: 1616 → 1172. Six leaf modules, 911
+lines, each with tests that replay a captured live-engine response:
 
 | module | lines | what moved |
 |---|---|---|
@@ -39,46 +39,65 @@ tests that replay a captured live-engine response:
 | `http_clients.py` | 87 | `_abortable_post`, `transcribe_voice` |
 | `llm_nonstream.py` | 173 | the non-streaming iteration's transport and parse |
 | `llm_sse.py` | 127 | `StreamAccumulator`, the SSE delta merge |
+| `llm_loop_guard.py` | 142 | the loop guards and the abort/nudge text |
 
-Deliberately still inside `call_llama`:
+### Not done, and why chopping further would be the wrong move
 
-  * `_ensure_model` and `_discover_default_model` — they rebind the global
-    `MODEL`, which is read at two request-construction sites. Moving either
-    silently sends `"model": ""`.
-  * the tool loop, until it can be expressed as a state machine over an
-    explicit `(messages, tools, iteration)` state.
-  * every abort guard, including the `try`/`except` whose `except` sits 120
-    lines past its `try`, past the loop-state writes.
+665 of the remaining 1041 lines are `for iteration in range(max_iter)` — the
+tool loop itself. This item's own rule was to leave it intact until it can be
+expressed as a state machine over an explicit `(messages, tools, iteration)`
+state, **not** by chopping on line counts. That condition is not met, so the
+item stays `partial`.
 
-### Not done
+Concretely, what a state machine would have to preserve:
 
-Block C3: the abort ladder (max_iter, identical-call, wall-clock,
-hallucination, last_empty) is still five inline `if`s. It is the last piece
-and the smallest, which is the usual way a block like this goes unfinished —
-it needs its own tests that the ladder fires in exactly the same situations,
-including a positive control that returns `True` on the chosen path.
+  * `msgs` is both input and output; every guard appends to it and the
+    summarize call re-sends the whole thing.
+  * `iter_had_real_result` is set inside the tool-dispatch block and read by
+    the guard at the tail, four hundred lines later.
+  * `last_empty` is incremented in two distant places (three malformed-args
+    rejection sites, and the tail) and zeroed at the tail. The zeroing
+    overwrites same-iteration rejections — see below.
+  * `content_buf` / `reasoning_buf` / `tool_calls_buf` / `finish_reason` have
+    TWO writers each: the non-streaming branch and the streaming branch.
 
-### Three defects the extraction itself introduced, and what caught them
+Until those are collapsed into one representation, splitting the loop into
+functions means threading fifteen parameters through each of them and
+keeping four buffers alive across the boundary — which is the shape of the
+problem, not a reduction of it.
+
+### The three defects the extraction introduced
+
+Recorded because a ledger listing only wins is a sales page.
 
   * `saw_unavailable_tool` was assigned only on the `UnknownToolNameError`
     path. As an enclosing-scope variable that was safe; as a local it was an
-    `UnboundLocalError` on every successful vision call. The 792-test suite
-    was green throughout — no existing test ran the vision parse end to end.
+    `UnboundLocalError` on every successful vision call, through a green
+    792-test suite.
   * `self.finish_reason` was in `__slots__`, documented, and never assigned.
-    Harmless in production because the caller reads it off the returned
-    `Delta`, and dead for everyone else.
-  * The first C2 cut deleted all three SSE framing guards — prefix check,
-    `[DONE]` break, decode catch — so `[DONE]` reached `json.loads` on every
-    stream. Compiled, and 805 tests passed.
+    Harmless in production — the caller reads the returned `Delta` — and dead
+    for everyone else.
+  * The first C2 cut deleted all three SSE framing guards, so `[DONE]` reached
+    `json.loads` on every stream. Compiled. 805 tests passed.
 
-### Trigger to fix — this one fired
+### Two findings that outlive the refactor
 
-The item said to wait until a feature needs a new kind of thing in the turn.
-What actually happened was subtler: three code-reading passes each found that
-a helper needed its globals patched, and the patches kept landing on module
-attributes rather than reaching the function. The rule that came out of it is
-the actual fix — *private module state must not be re-exported through a
-facade*, or the next reader patches a second binding that nothing reads.
+**`last_empty`'s zeroing is not a bug to fix.** Three rejected tool calls in
+one iteration are erased by the tail's `last_empty = 0` when the iteration
+had a real result. It looks wrong and it is the behaviour call_llama has
+always had. `tests/test_c3_loop_guard.py::test_rejections_are_cleared_by_the
+_next_real_iteration` exists so nobody "fixes" it silently.
 
-**How to finish.** Block C3, then a pass over the abort ladder's five guards
-for the acquire-before-try window that bit three handlers in W7-H1.
+**The abort guards are not a ladder.** Three of five sit in the loop tail; the
+hallucination guard fires before any tool runs and returns a dict while the
+rest return strings. Ordering the tail cheapest-first would change which
+message the user sees when two conditions fire on the same iteration.
+
+### Trigger to fix — the one that actually fired
+
+The item said to wait for a feature needing a new kind of thing in the turn.
+What happened was subtler: three code-reading passes each found a helper
+whose globals could not be patched, and the patches kept landing on module
+attributes nothing read. The rule that came out is the actual fix — *private
+module state must not be re-exported through a facade*, or the next reader
+patches a second binding that is never consulted.
