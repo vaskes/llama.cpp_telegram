@@ -2,7 +2,7 @@
 tech_debt: 7
 marker: none -- needs a migration, not a guard
 state: open
-issue: null          # filled in when the Issue is created
+issue: 5          # filled in when the Issue is created
 ---
 
 ## 7. `commit()` per INSERT, no migration transaction (LOW)

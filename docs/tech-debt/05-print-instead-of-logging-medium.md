@@ -2,7 +2,7 @@
 tech_debt: 5
 marker: none -- 'print instead of logging' is a style item with no assertion that would fail if it regressed
 state: open
-issue: null          # filled in when the Issue is created
+issue: 3          # filled in when the Issue is created
 ---
 
 ## 5. `print()` instead of `logging` (MEDIUM)

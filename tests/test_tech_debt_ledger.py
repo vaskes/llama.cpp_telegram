@@ -122,3 +122,78 @@ def test_sync_script_exists_and_does_not_silently_pass():
         "the sync script has no non-zero exit path; it cannot fail, so it "
         "cannot report anything"
     )
+
+# W7-H2 tripwires for scripts/tech_debt_create_missing.py: --
+# ------------------------------------------------------------------
+def test_create_missing_script_exists_and_has_dry_run_default():
+    """The auto-create counterpart to tech_debt_sync.py must exist and
+    default to dry-run. A POST-on-default-by-typo script that fires
+    before the operator has eyeballed the plan is how a maintainer
+    files 5 duplicate issues at 03:00 and only notices in the morning.
+    """
+    script = REPO_ROOT / "scripts" / "tech_debt_create_missing.py"
+    assert script.is_file(), "scripts/tech_debt_create_missing.py missing"
+    src = script.read_text(encoding="utf-8")
+    assert "--dry-run" in src and "--apply" in src, (
+        "tech_debt_create_missing.py must offer both --dry-run and --apply"
+    )
+    # The argparse mutual-exclusion pattern (or equivalent) must put
+    # --dry-run as the default; otherwise running the script with no
+    # args will POST.
+    dry_run_pattern = 'add_argument("--dry-run", dest="apply", action="store_false"'
+    assert dry_run_pattern in src, (
+        "--dry-run must be the default (action=\"store_false\" on --apply). "
+        "If the user runs the script with no arguments, nothing must hit the network."
+    )
+
+
+def test_create_missing_duplicate_guard_exists():
+    """An interrupted --apply run creates a real GitHub Issue but does
+    not rewrite the front-matter; re-running then double-posts. The
+    script must abort with a non-zero exit and a clear message if an
+    existing Issue has the same title as one it is about to create.
+    """
+    script = REPO_ROOT / "scripts" / "tech_debt_create_missing.py"
+    src = script.read_text(encoding="utf-8")
+    # The guard fetches existing GitHub Issues filtered by label, builds
+    # a title->numbers map, then bails if any candidate title is in there.
+    assert "existing_issues" in src, (
+        "create-missing script must look up existing tech-debt Issues "
+        "before POSTing so a partial previous run does not double-post"
+    )
+    assert "title_to_nos" in src, (
+        "create-missing script must build a title->numbers map and exit "
+        "non-zero when a candidate title already exists on GitHub"
+    )
+
+
+def test_create_missing_skips_closed_items():
+    """An item with `state: closed` and `issue: null` is fine -- the
+    reconciliation rules say closed items need no Issue. The create
+    script must not post for those.
+    """
+    script = REPO_ROOT / "scripts" / "tech_debt_create_missing.py"
+    src = script.read_text(encoding="utf-8")
+    # The candidates() helper excludes state == "closed" with empty issue.
+    assert 'state"] != "closed"' in src or 'state"] == "closed"' in src, (
+        "candidates() must filter out closed items -- found no closed-state guard"
+    )
+
+
+def test_create_missing_writes_back_issue_number_in_place():
+    """The whole point: after a successful POST, the front-matter must
+    stop saying `issue: null` and instead say `issue: <n>`. Otherwise
+    tech_debt_sync.py on the next run will report the same disagreement
+    and re-run will double-post.
+    """
+    script = REPO_ROOT / "scripts" / "tech_debt_create_missing.py"
+    src = script.read_text(encoding="utf-8")
+    assert "write_issue_no" in src, (
+        "create-missing script must rewrite `issue: null` to `issue: <n>` "
+        "in the front-matter after a successful POST"
+    )
+    # Sanity: --apply branches into create_issue + write_issue_no.
+    apply_branch = src.split("--apply", 1)[-1] if "--apply" in src else ""
+    assert "create_issue" in apply_branch and "write_issue_no" in apply_branch, (
+        "--apply branch must call create_issue + write_issue_no in sequence"
+    )

@@ -2,7 +2,7 @@
 tech_debt: 6
 marker: none -- needs a migration, not a guard
 state: open
-issue: null          # filled in when the Issue is created
+issue: 4          # filled in when the Issue is created
 ---
 
 ## 6. `created_at` is `time.time()`, not a DB clock (MEDIUM)

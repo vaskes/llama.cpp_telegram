@@ -2,7 +2,7 @@
 tech_debt: 3
 marker: none -- a 1177-line function cannot be pinned by a tripwire; it needs a human watching the bot answer messages
 state: open
-issue: null          # filled in when the Issue is created
+issue: 2          # filled in when the Issue is created
 ---
 
 ## 3. `call_llama` is a 1177-line function marked DO NOT REFACTOR (HIGH) — **NOT TOUCHED**

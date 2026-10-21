@@ -2,7 +2,7 @@
 tech_debt: 1
 marker: tests/test_facade_ownership.py
 state: partial
-issue: null          # filled in when the Issue is created
+issue: 1          # filled in when the Issue is created
 ---
 
 ## 1. `bot.py` is still mostly a facade of re-exports — PARTIALLY DONE 2026-10-21
