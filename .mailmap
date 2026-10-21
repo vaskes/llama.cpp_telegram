@@ -1,0 +1,8 @@
+# The Claude Code commit trailer added itself to 22 commits as
+# `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`. That email
+# resolves to a real GitHub account, so the repository grew a second
+# contributor who never wrote a line, has no key and opened no PR.
+#
+# Map the identity to the owner rather than rewriting history: 22 commits are
+# already deployed and rewriting them would change every SHA.
+noreply@anthropic.com vaskes <vaskes@kuduza.com>
