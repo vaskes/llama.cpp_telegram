@@ -564,7 +564,6 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 # Return content immediately — no tool-call loop in this path
                 # (vision tasks don't need tools, and the multi-iter loop below
                 # was raising somewhere we couldn't catch on the vision payload).
-                r = None
                 try:
                     result = await non_stream_iteration(
                         req_body, iteration=iteration,
@@ -619,12 +618,22 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                     # the .post() call; otherwise it's still None
                     # (e.g. JSONDecodeError, ConnectionError before
                     # the response object is constructed).
-                    body = r.text[:500] if r is not None else ''
+                    # The response lives on the exception. Block C1 moved
+                    # the POST into non_stream_iteration, which creates its
+                    # own client, so the caller's `r` has been None since
+                    # ac79264 -- which made the v0.8.1 retry below
+                    # unreachable for the whole of that refactor. Correct
+                    # code behind a dead guard: the fallback function was
+                    # tested properly and never called.
+                    _err_response = getattr(e, "response", None)
+                    body = (_err_response.text[:500]
+                            if _err_response is not None else '')
                     log.info(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}")
                     # v0.8.1: 500 from llama-server is usually the PEG
                     # grammar parser rejecting the model tool-call
                     # output. Retry ONCE without tools.
-                    if r is not None and getattr(r, 'status_code', None) == 500 and req_body.get('tools'):
+                    if (getattr(_err_response, "status_code", None) == 500
+                            and req_body.get('tools')):
                         return await tools_less_fallback(
                             req_body, iteration=iteration,
                             abort_event=abort_event, primary_error=e)

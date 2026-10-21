@@ -8,6 +8,10 @@ issue: null
 
 ## 8. Decompose `call_llama`'s tool loop (654 lines) — **3 OF 4 CRITERIA MET**
 
+> Last read 2026-10-22. The remaining block has been read and its shape
+> is now specified below; one earlier claim about why it was not cut is
+> corrected there.
+
 Split out of TECH-DEBT #3 on 2026-10-21. Item 3 was about *extraction* —
 moving code out of a monolith into tested modules — and that is finished:
 nine modules, 1078 lines, no uncovered function left in `call_llama.py`.
@@ -59,20 +63,39 @@ screening is `llm_toolargs`, and both response formats are already in
 `llm_nonstream` and `llm_sse` — what is left is the call site and the
 glue, not the logic.
 
-**Why it is not done here.** Line 621 of the block reads
-`if not locals().get('_ns_handled')`. That is a `locals()` lookup used as
-a control-flow flag between the streaming and non-streaming branches.
-It will not survive being lifted into a function unchanged — `locals()`
-is per-frame, so the flag silently changes meaning — and working out
-what it actually means is a reading task, not a cut. Beyond that: every
-extraction block in this pass shipped at least one defect, and two of
-them reached production. A 280-line cut across a `locals()` seam, at the
-end of a long session, with less verification capacity than at the start,
-is how you ship an incident at 2am.
+**What it actually is, now that it has been read.** Three POST attempts
+in sequence -- non-streaming, then streaming, then a non-streaming
+fallback if the stream errors. Nine terminal `return` sites across four
+types (`str`, `None`, `dict`, `NonStreamResult`), and two meanings
+mixed together: "here is your answer, leave the loop" and "here is the
+engine's response, carry on to the next stage". It also writes loop
+state on the way (`saw_unavailable_tool`, `msgs`, `final_fallback`), so
+the seam is not a clean one-way data flow. That is the specification for
+the extraction: every return is terminal, so the function returns either
+a response or a tagged terminal value.
 
-**When to do it:** with a fresh session and a full mutation round, and
-after the `_ns_handled` flag has been read and replaced with something
-that can cross a frame boundary.
+**A claim about this block was wrong and is corrected here.** An earlier
+version of this item said the cut was blocked by
+
+    if not locals().get('_ns_handled'):
+
+on the grounds that a `locals()` flag is per-frame and would silently
+change meaning when lifted. That was written without opening either
+site, and both are in the same frame, inside the same `async with`:
+
+    605:  _ns_handled = True                    # non-streaming branch
+    632:  if not locals().get('_ns_handled'):   # streaming branch
+
+Lifted, it becomes an ordinary local. The extraction removes the
+`locals()` rather than being blocked by it. Recorded because the failure
+is the one this pass exists to remove: an unverified claim, written
+confidently, and used as a reason to stop.
+
+**Known gap in the tripwires.** A name bound in one branch and read from
+another passes both checks -- name resolution treats any binding in the
+function as available, and the None-only rule only sees None-bound
+locals. Found by mutation, not by reading. Closing it needs branch-aware
+scope analysis, not another heuristic.
 
 ### Blocks landed
 
