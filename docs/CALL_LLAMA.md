@@ -5,6 +5,15 @@ the way it is, and **what** failure modes we hit that led to the
 current shape. It is intentionally opinionated: where a design choice
 was forced by a specific incident, the incident is named.
 
+> **Freshness.** The abort ladder below (§3), the tool-intent detector
+> (§2), the `ensure_ascii` mutation (§6) and the MIME table (§5) were
+> re-checked against the tree and still match. The signature (§1), the
+> handler table (§8), the persistence note (§9) and the schema (§11) did
+> not, and were corrected on 2026-10-21. If you find another section that
+> disagrees with the code, believe the code and fix it here --
+> `tests/test_docs_call_llama_freshness.py` pins the parts that have
+> already bitten someone.
+
 If you are doing a code review, the recommended order is:
 1. The **two branches** of `call_llama` (streaming vs non-streaming).
 2. The **tool-intent detector** (`_detect_tool_intent` + `_TOOL_KEYWORDS`).
@@ -24,8 +33,32 @@ documented in [ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md).
 The function signature is:
 
 ```python
-async def call_llama(messages, max_tokens=65536, user_text='', thinking_msg=None, use_stream=True)
+async def call_llama(
+    messages,
+    max_tokens=limits.MAX_TOKENS_CALL_LLAMA_DEFAULT,
+    user_text="",
+    thinking_msg=None,
+    use_stream=True,
+    shutdown_event=None,      # falls back to config.SHUTDOWN_EVENT
+    rating_active=False,      # tool loop only when the rating is enabled
+    abort_event=None,         # per-update cancel, owned by the caller
+    bot=None,                 # needed by tools that call Telegram
+    chat_id=None,
+    current_message_id=None,
+    *,
+    chat_type: str,           # keyword-only and REQUIRED -- see below
+    silent: bool = False,     # T65.1: answer another human, say nothing
+)
 ```
+
+`chat_type` is keyword-only with no default, and raises immediately when
+missing. It is required because a caller that forgets it would otherwise
+enable `bash_command` in a context that should be locked down (T52 #H1,
+T53 #R4). The T52 commit wired `chat_type` through four handlers and
+forgot it in the signature, and that shipped. If you are adding a
+parameter, add it here too --
+tests/test_docs_call_llama_freshness.py fails when this block and the
+real signature disagree.
 
 Internally it splits into two **disjoint** code paths. They share the
 function signature and the return contract (string), but inside they
@@ -223,6 +256,15 @@ that the server did not parse, etc.). Bail.
 
 ## 4. The polling loop at the bottom of the file
 
+**This is one of two modes, and it is not the one production runs.**
+`config.WEBHOOK_MODE` selects: `0` (the config default) takes the
+hand-rolled `getUpdates` loop below, `1` serves an aiohttp endpoint on
+`WEBHOOK_HOST:WEBHOOK_PORT` (default `0.0.0.0:8443`) behind
+nginx/MikroKit. The production container sets `WEBHOOK_MODE=1` and logs
+`[main] webhook mode: aiohttp on ...`. An earlier version of this section
+implied the loop was the only path; it is a fallback, and it is still
+here for forks that do not run nginx in front.
+
 **Why this exists:** python-telegram-bot 21.0's `Application.run_polling()`
 keeps a second keep-alive connection open across cycles, and Telegram's
 Bot API returns `409 Conflict` ("terminated by other getUpdates request")
@@ -388,18 +430,22 @@ follow the same pattern:
 
 Differences:
 
-| Handler         | `use_stream` | `max_tokens` | Special preprocessing                       |
-|-----------------|--------------|--------------|---------------------------------------------|
-| `handle_text`   | `True`       | 32768        | —                                           |
-| `handle_photo`  | `False`      | 16384        | MIME detection, base64 encode               |
-| `handle_voice`  | `True`       | 16384        | Whisper transcription first                 |
-| `handle_document`| `True`      | 16384        | File → text (first 16 KB)                   |
+| Handler          | `use_stream` | `max_tokens`                | Special preprocessing       |
+|------------------|--------------|-----------------------------|-----------------------------|
+| `handle_text`    | `True`       | `limits.MAX_TOKENS_DEFAULT` | —                           |
+| `handle_photo`   | `False`      | `limits.MAX_TOKENS_CAPTION` | MIME sniffing, base64 encode |
+| `handle_voice`   | `True`       | `limits.MAX_TOKENS_CAPTION` | Whisper transcription first |
+| `handle_document`| `True`       | `limits.MAX_TOKENS_CAPTION` | File → text (first 16 KB)   |
 
-`max_tokens=16384` for non-text handlers is **deliberate**: voice and
-document tasks tend to produce long reasoning on the model side
-(transcribing/reading + answering), and 4096 was a real production
-ceiling. We hit it on a math photo: `finish=length` after 227 content
-chars + 5098 reasoning chars, the answer was cut off mid-sentence.
+`max_tokens` is **no longer written at the call sites**. Every value comes
+from `limits.py`, which resolves `LLAMABOT_MAX_TOKENS*` env vars against a
+profile default. The old table hardcoded 32768 / 16384 here; those numbers
+moved when the limits module landed, and a doc that still quotes them is
+worse than one that quotes nothing.
+
+`use_stream=False` appears at exactly 2 production call sites --
+`handle_photo` (handlers.py:537) and its retry (handlers.py:587). Every
+other handler streams.
 
 ---
 
@@ -411,10 +457,13 @@ For a future reviewer / contributor:
   10 minutes to process, all subsequent updates queue up.
   Acceptable for our 2-user whitelist; would be a problem for
   higher traffic.
-- **No conversation persistence across restarts.** `conversations`
-  is an in-memory dict. Restart = lose context. For our use case
-  (single user, daily driver) this is fine; for a multi-user bot
-  it would need a database.
+- ~~**No conversation persistence across restarts.**~~ **Wrong since
+  T70.** History lives in SQLite (`storage.py`), keyed by
+  `(chat_id, thread_id)`, and survives restarts. The policy is a
+  time-based window (`BOT_REMEMBER_DAYS`, default 7) with daily re-anchor
+  and summarization on the same model, not a count or token ceiling. An
+  older revision of this document claimed an in-memory `conversations`
+  dict; there has not been one since.
 - **No image caching.** Every photo is downloaded fresh, re-encoded
   to base64, and sent. Telegram's `getFile` returns a URL valid
   for an hour, so caching by `file_id` would be cheap and friendly.
@@ -457,10 +506,18 @@ State lives in SQLite (`telegram-bot/storage.py`, default
 `./data:/app/data` bind-mount in `docker-compose.yml`):
 
 ```
-sub_talks(user_id, name, created_at, last_used)  PK(user_id, name)
-messages(id, user_id, sub_talk, role, content, created_at)
-active_sub_talk(user_id PK, name)
+chat_threads(chat_id, thread_id, created_at, last_used)  PK(chat_id, thread_id)
+messages(id, chat_id, thread_id, role, content, sender_name, created_at, rating)
+active_thread(chat_id PK, thread_id)
+known_topics(chat_id, message_thread_id, name, created_at)
 ```
+
+**The isolation key is `(chat_id, thread_id)`, not `(user_id, name)`.**
+An earlier revision of this section described `sub_talks(user_id, name)`
+and `active_sub_talk`. That is not what the schema is: per-sub-talk context
+must be isolated per chat as well as per user, or two users in one
+supergroup share a thread. `known_topics` exists for forum groups and was
+missing from the older table entirely.
 
 ### Why sub-talks at all
 
