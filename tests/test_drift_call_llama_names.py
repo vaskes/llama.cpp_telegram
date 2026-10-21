@@ -157,3 +157,57 @@ def test_every_name_in_the_guard_outcome_family_is_imported():
         f"used but not imported: {sorted(used - imported)} -- "
         f"llm_loop_guard exports {sorted(exported & {'Abort', 'Nudge', 'LoopGuard'})}"
     )
+
+# ---------------------------------------------------------------------------
+# The same check, across every module this refactor created.
+# ---------------------------------------------------------------------------
+
+EXTRACTED_MODULES = (
+    "llm_nonstream.py", "llm_sse.py", "llm_loop_guard.py",
+    "llm_thinking.py", "llm_json.py", "llm_toolargs.py",
+    "llm_tools.py", "llm_messages.py", "http_clients.py", "donsetch.py",
+)
+
+
+@pytest.mark.parametrize("module", EXTRACTED_MODULES)
+def test_extracted_module_reads_only_names_that_resolve(module):
+    """Two NameErrors shipped out of this refactor, both because a name
+    was used after its binding moved to another module.
+
+    One was found in call_llama and it is easy to assume call_llama was
+    the only place -- the fix was to check one module. Every module this
+    work created gets the same check, because the failure mode is not
+    specific to the file it was found in.
+    """
+    path = BOT_DIR / module
+    if not path.exists():
+        pytest.skip(f"{module} does not exist")
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    available = _module_bindings(tree) | set(dir(builtins))
+
+    local = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            local.add(n.name)
+
+    unresolved = {}
+    # Every function at ANY depth. The first version iterated
+    # tree.body only, so in a module made of classes -- llm_sse.py is one
+    # class and one dataclass -- it checked nothing at all and stayed
+    # green with an orphaned name injected into a method body.
+    # A tripwire that cannot be made to fail is worse than no tripwire.
+    for fn in [n for n in ast.walk(tree)
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        bound = _bound_inside(fn)
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                if n.id not in available and n.id not in bound and n.id not in local:
+                    unresolved.setdefault(n.id, n.lineno)
+
+    assert not unresolved, (
+        f"{module} reads names it never binds:\n"
+        + "\n".join(f"  line {ln}: {name}" for name, ln in sorted(unresolved.items()))
+        + "\n\nThese are runtime NameErrors. py_compile resolves names when the "
+          "line executes, not when the file parses."
+    )
