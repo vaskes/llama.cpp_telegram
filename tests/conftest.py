@@ -21,9 +21,12 @@ So the split is now explicit:
     credentials only skip the `@pytest.mark.sandbox` tests; nothing
     else changes.
 """
+import atexit
 import os
 import pathlib
+import shutil
 import subprocess
+import tempfile
 
 import pytest
 
@@ -31,10 +34,31 @@ ENV_FILE = pathlib.Path("/opt/telegram-bot/.env")
 
 # Values the suite itself needs. Deliberately NOT the real production
 # ids/users: tests must not depend on who is in the live whitelist.
+# A per-session tmp dir for CONVERSATIONS_DB, registered for cleanup.
+#
+# Earlier this value was the fixed path /tmp/pytest_conversations.db,
+# shared by every pytest run on the host. Two consequences bit the
+# operator more than once during the W6 review:
+#
+#   1. Two pytest runs in parallel collided on the same SQLite file
+#      and one of them died with "sqlite3.OperationalError: disk I/O
+#      error" mid-test.
+#   2. A pytest run that was killed by timeout left the file behind;
+#      the next run inherited a corrupted DB and 6 selftest assertions
+#      failed before any test code even started.
+#
+# tempfile.mkdtemp() gives a fresh dir per pytest process. atexit
+# hooks clean it up at interpreter shutdown. CI still gets its own
+# value via the workflow env override (os.environ.setdefault below).
+_SESSION_DB_DIR = tempfile.mkdtemp(prefix="pytest-conversations-")
+_SESSION_DB_PATH = os.path.join(_SESSION_DB_DIR, "conversations.db")
+atexit.register(shutil.rmtree, _SESSION_DB_DIR, ignore_errors=True)
+
 TEST_ENV_DEFAULTS = {
     "BOT_TOKEN": "123456:test-suite-placeholder",
     "ALLOWED_USER_IDS": "111,222",
-    "CONVERSATIONS_DB": "/tmp/pytest_conversations.db",
+    # Per-session unique; the workflow env override still wins.
+    "CONVERSATIONS_DB": _SESSION_DB_PATH,
 }
 
 
