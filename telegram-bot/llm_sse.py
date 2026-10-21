@@ -68,9 +68,24 @@ class StreamAccumulator:
     def feed(self, chunk) -> Delta:
         """Fold one parsed chunk in.
 
-        A chunk with no choices is not an error: llama-server emits a
-        usage-only object at the end of some responses, and raising on it
-        would discard the whole reply.
+        A chunk with no choices is not an error, and the reason is more
+        specific than "some servers do this".
+
+        Measured 2026-10-21 against a live Qwen3.8-27B stream: 41 data
+        lines, every one carrying `choices`. None. The engine does emit a
+        trailing object with `choices: []` and a `usage` block -- but
+        only when the caller sends
+
+            "stream_options": {"include_usage": true}
+
+        which this bot never sends. The original comment here said the
+        engine "emits a usage-only object at the end of some responses",
+        which reads as spontaneous and is not true of any configuration
+        we actually run.
+
+        It costs one `or []` to stay correct if a fork turns that flag
+        on. The alternative -- indexing choices[0] -- is exactly the T32
+        class of bug, so the defensive form stays and the claim does not.
         """
         self.chunk_count += 1
         fr = None
