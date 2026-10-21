@@ -19,6 +19,7 @@ instead of late, which was the only reason bot.py had to import dispatch.
 
 import asyncio
 import base64
+import json
 import os
 
 # TECH-DEBT #1 extracted this module from bot.py, and the extraction cut it
@@ -129,6 +130,7 @@ async def _selftest():
             user_text="проверь математику",
             thinking_msg=None,
             use_stream=False,
+            chat_type='private',
         )
         print(f"[selftest] call_llama result: {len(result)} chars, head={result[:300]!r}", flush=True)
     except Exception as e:
@@ -1502,6 +1504,7 @@ async def _selftest():
                 bot=_FakeBot(),
                 chat_id=-1004461679108,
                 current_message_id=99999,
+                chat_type='group',
             )
 
         # The bot response should NOT be empty - it should be a
@@ -1566,17 +1569,24 @@ async def _selftest():
         # Inspect the call_llama source to make sure GROUP_CONTEXT
         # is referenced in both the unconditional injection and the
         # rating branch.
-        src = open('/app/bot.py').read()
+        # GROUP_CONTEXT lives in prompts.py and the injection lives in
+        # call_llama.py. Both used to be in bot.py, so these four checks
+        # read a file that no longer contains the thing they were
+        # asserting -- and they failed against correct code for two
+        # deploys. The constant and the use have to be checked in the
+        # files that actually hold them now.
+        prompts_src = open('/app/prompts.py').read()
+        src = open('/app/call_llama.py').read()
 
         # 1. GROUP_CONTEXT must be defined as a module-level constant.
-        if 'GROUP_CONTEXT = """\\' not in src and "GROUP_CONTEXT = " not in src:
+        if 'GROUP_CONTEXT = """\\' not in prompts_src and "GROUP_CONTEXT = " not in prompts_src:
             print("  [FAIL] GROUP_CONTEXT constant not defined", flush=True)
             ctx_ok = False
         else:
             print("  [OK] GROUP_CONTEXT module constant defined", flush=True)
 
         # 2. GROUP_CONTEXT must be referenced in the call_llama function.
-        if 'content": GROUP_CONTEXT' not in src:
+        if 'content": GROUP_CONTEXT' not in src and '"content": GROUP_CONTEXT' not in src:
             print("  [FAIL] GROUP_CONTEXT not used as a system message in call_llama", flush=True)
             ctx_ok = False
         else:
@@ -1777,6 +1787,12 @@ async def _selftest():
         import handlers as _h
 
         class _FakeMessage:
+            # message_id is read by handle_text when it forwards the turn to
+            # call_llama. Without it the abort path still passes, but the
+            # smoke test prints a traceback every run -- and a smoke test
+            # that cries wolf is the kind nobody reads the day it is telling
+            # the truth.
+            message_id = 555
             text = 'user query'
             caption = None
             message_thread_id = 19
@@ -1804,10 +1820,10 @@ async def _selftest():
 
         # Save originals
         for owner, name in [
-            (_b, '_register_abort_event'),
-            (_b, '_route_to_thread'),
-            (_b, '_check_user_slot'),
-            (_b, '_get_global_llm_sem'),
+            (_h, '_register_abort_event'),
+            (_h, '_route_to_thread'),
+            (_h, '_check_user_slot'),
+            (_h, '_get_global_llm_sem'),
             (_b, '_apply_rating_and_persist'),
             (_h, '_reply'),
             (_h, 'send_reply'),
@@ -1824,13 +1840,15 @@ async def _selftest():
         captured = []
         def _capture(chat_id, msg_id, ev):
             captured.append(ev)
-        _b._register_abort_event = _capture
+        # handlers imports _register_abort_event / _route_to_thread from
+        # their own modules; patching bot's copy does nothing.
+        _h._register_abort_event = _capture
         async def _route(_u, _c): return (-1001, '19', False)
-        _b._route_to_thread = _route
+        _h._route_to_thread = _route
         class _FakeSem:
             def release(self): pass
         async def _slot(*a, **k): return _FakeSem()
-        _b._check_user_slot = _slot
+        _h._check_user_slot = _slot
         sent_texts = []
         async def _reply(_u, text, **kw):
             sent_texts.append(text)
@@ -1848,7 +1866,7 @@ async def _selftest():
         class _DummySem:
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
-        _b._get_global_llm_sem = lambda: _DummySem()
+        _h._get_global_llm_sem = lambda: _DummySem()
         RACE = 'POST_RACE_RESPONSE_SHOULD_BE_DISCARDED'
         async def _race(*a, **k):
             # Simulate user clicked Stop during call_llama

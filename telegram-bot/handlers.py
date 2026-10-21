@@ -84,6 +84,10 @@ import prompts
 import rating
 from config import (
     BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, MAX_DOC_BYTES, MAX_PHOTO_BYTES,
+    # MAX_VIDEO_NOTE_BYTES was missing while MAX_VOICE_BYTES was present, so
+    # a voice note size-checked fine and a video note raised NameError on the
+    # branch below. Same function, same shape, one name short.
+    MAX_VIDEO_NOTE_BYTES,
     MAX_VOICE_BYTES, MODEL, TELEGRAM_API,
 )
 from prompts import GROUP_CONTEXT, RATING_RULES
@@ -709,6 +713,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.chat.send_action(action='typing')
     thinking = None
+    # Built before the try: the except below calls turn.rollback(), and a Turn
+    # constructed inside the try is unbound for any exception raised before
+    # that line -- which is the window the rollback exists to cover.
+    turn = Turn(chat_id, thread_id, "handle_voice")
+    persisted = False  # mirrors turn.persisted
     try:
         msg = update.message
         # filters.AUDIO catches both voice messages and video notes.
@@ -737,8 +746,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if voice_bytes is None:
             return
         transcript = await transcribe_voice(voice_bytes)
-        turn = Turn(chat_id, thread_id, "handle_voice")
-        persisted = False  # mirrors turn.persisted
         # No parse_mode — transcript is user-generated and may contain
         # '*', '_', '[', '`', which would break Markdown rendering.
         await _reply(update, f'🎤 Transcript:\n{transcript}')
@@ -860,7 +867,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tmp_path = None
     thinking = None
     # v0.9.2: rollback flag for persisted document content
-    persisted = False
+    turn = Turn(chat_id, thread_id, "handle_document")
+    persisted = False  # mirrors turn.persisted
     try:
         ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
         with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
@@ -876,8 +884,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
-        turn = Turn(chat_id, thread_id, "handle_document")
-        persisted = False  # mirrors turn.persisted
         await turn.persist(user_content, role='user', sender_name=sender_name)
         persisted = turn.persisted
         persisted = True
@@ -1065,7 +1071,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_message = update.message.text
     # v0.9.2: rollback flag for persisted user message
-    persisted = False
+    turn = Turn(chat_id, thread_id, "handle_text")
+    persisted = False  # mirrors turn.persisted
     try:
         await update.message.chat.send_action(action='typing')
     except Exception as e:
@@ -1080,8 +1087,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # observable here. If we created a fresh event now, the
     # burst-set event would be orphaned and the LLM call
     # would proceed to a half-answer.
-    turn = Turn(chat_id, thread_id, "handle_text")
-    persisted = False  # mirrors turn.persisted
     abort_event = early_event
     _register_abort_event(chat_id, thinking.message_id, abort_event)
     await turn.persist(user_message, role='user', sender_name=sender_name)

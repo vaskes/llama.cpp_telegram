@@ -75,7 +75,15 @@ def parse_rating_response(text: str) -> dict:
     if type_ not in ("question", "request", "confirmation", "info", "statement", "bloat"):
         return {"type": "question", "rating": None, "emoji": None, "body": text}
     rate_str = m.group("rate")
-    body = text[m.end():].lstrip()
+    # m.end() is wrong here and always has been. _RATING_PREFIX_RE is
+    # anchored with `$` and its last group is `(?P<rest>.*)`, so the match
+    # ends at the end of the whole string: text[m.end():] is always "". Every
+    # rating-mode response lost its entire body, and the caller -- which
+    # returns "" for a parsed prefix -- sent the user an empty reply.
+    #
+    # Use the captured group, which is what the regex was extended to provide.
+    rest = m.group("rest")
+    body = rest.lstrip() if rest else ""
     rating = int(rate_str) if rate_str else None
     if type_ in ("info", "statement") and rating is not None:
         emoji = RATING_EMOJI[rating]

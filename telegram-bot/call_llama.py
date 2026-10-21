@@ -17,7 +17,12 @@ from typing import Any
 
 import httpx
 
-from tool_isolation import validate_tool_calls, UnknownToolNameError
+# KNOWN_TOOL_NAMES is used bare on the unknown-tool paths below, while
+# line ~1252 reaches the same value through __import__(). Only one of
+# the two was imported, so the branches that were supposed to name the
+# known tools raised NameError instead of the message.
+from tool_isolation import (KNOWN_TOOL_NAMES, UnknownToolNameError,
+                               validate_tool_calls)
 # === T39: bash_command availability helper ===
 # Lazy import + read of the personal_tools.bash_command module so
 # we don't pay the cost (or take the token-check trip) on cold
