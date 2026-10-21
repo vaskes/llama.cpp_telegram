@@ -67,6 +67,7 @@ from llm_loop_guard import Abort, LoopGuard, Nudge
 # tests were green because none of them drives the loop to a nudge:
 # touches the caller.
 from llm_nonstream import tools_less_fallback
+from llm_toolcalls import normalize_tool_calls, reject_unknown_names
 from llm_toolargs import ArgsRejected, parse_tool_args
 from llm_json import dumps_body
 from llm_thinking import ThinkingThrottle, push_thinking
@@ -720,15 +721,12 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                             validate_tool_calls(tool_calls)
                         except UnknownToolNameError as _e:
                             # T43: soft-reject (same as site 1).
-                            bad_names = sorted({(tc.get("function") or {}).get("name") or "" for tc in tool_calls})
-                            log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
-                                f"injecting tool result feedback")
-                            for tc in tool_calls:
-                                fn = (tc.get("function") or {})
-                                if (fn.get("name") or "") not in KNOWN_TOOL_NAMES:
-                                    fn["name"] = "__rejected__"
-                                    fn["arguments"] = "{}"
-                            saw_unavailable_tool = True
+                            bad_names = reject_unknown_names(
+                                tool_calls, known=KNOWN_TOOL_NAMES)
+                            if bad_names:
+                                log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject "
+                                    f"{sorted(bad_names)!r}; injecting tool result feedback")
+                                saw_unavailable_tool = True
                         if not tool_calls:
                             if msg.get("content"):
                                 return msg["content"]
@@ -761,39 +759,12 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             "content": content_buf or None,
             "reasoning_content": reasoning_buf or None,
         }
-        tool_calls = []
-        for idx, tc in tool_calls_buf.items():
-            if tc["name"]:
-                # T38.5: streaming tool_calls_buf[name] comes from llama-server's
-                # stream chunks. Reject any unknown name BEFORE building the
-                # tool_calls list that we will execute or send back to the model.
-                if tc["name"] not in KNOWN_TOOL_NAMES:
-                    # T43: soft-reject (same as site 1, applied to the
-                    # streaming chunk that just arrived). We skip this
-                    # tool call but keep the iteration alive by
-                    # appending a synthetic tool result that names the
-                    # offending tool and the available set.
-                    log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject streamed "
-                        f"tool name {tc['name']!r}; injecting tool result feedback")
-                    bad_name = tc["name"]
-                    tc["name"] = "__rejected__"
-                    saw_unavailable_tool = True
-                    # We can't easily inject a tool-role message here
-                    # because the streaming buffer is being filled in
-                    # real time; the unhandled-tool branch further down
-                    # the loop will add the role:tool message with the
-                    # rejection text. Just continue the iteration.
-                args_str = tc["arguments"]
-                try:
-                    args_obj = json.loads(args_str) if args_str else {}
-                except Exception:
-                    args_obj = {}
-                tool_calls.append({
-                    "id": tc["id"] or f"call_{idx}",
-                    "type": "function",
-                    "function": {"name": tc["name"],
-                                  "arguments": json.dumps(args_obj) if args_obj else args_str},
-                })
+        normalized = normalize_tool_calls(tool_calls_buf, known=KNOWN_TOOL_NAMES)
+        saw_unavailable_tool = saw_unavailable_tool or normalized.saw_unavailable_tool
+        for bad_name in normalized.rejected:
+            log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject streamed "
+                     f"tool name {bad_name!r}; injecting tool result feedback")
+        tool_calls = normalized.calls
         if tool_calls:
             msg["tool_calls"] = tool_calls
         tool_calls = msg.get("tool_calls") or []
