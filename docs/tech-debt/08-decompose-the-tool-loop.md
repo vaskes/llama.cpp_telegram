@@ -1,11 +1,15 @@
 ---
 tech_debt: 8
-marker: in progress -- Blocks D1, D1b and D2 landed; D3/D4 remain. 2 live
-  production NameErrors were found and fixed along the way, both introduced
-  by the extraction work this item exists to do
+marker: tests/test_drift_call_llama_names.py, tests/test_d2_toolcalls.py
 state: open
 issue: null
 ---
+
+The `marker` was a paragraph of progress for most of this item, and the
+ledger tripwire caught it: `marker` has to name a file, because it is how
+the reconciler decides whether an item is pinned. A paragraph reads as
+a filename and fails. Same lesson as the dangling reference above, one
+layer down: the field is parsed, and prose in it is not a claim.
 
 ## 8. Decompose `call_llama`'s tool loop (654 lines) — **IN PROGRESS**
 

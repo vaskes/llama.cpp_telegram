@@ -68,6 +68,8 @@ from llm_loop_guard import Abort, LoopGuard, Nudge
 # touches the caller.
 from llm_nonstream import tools_less_fallback
 from llm_toolcalls import normalize_tool_calls, reject_unknown_names
+from llm_finish import (finish_fallback_empty,
+                       finish_without_tool_calls, refuse_hallucinated_tools)
 from llm_toolargs import ArgsRejected, parse_tool_args
 from llm_json import dumps_body
 from llm_thinking import ThinkingThrottle, push_thinking
@@ -728,16 +730,10 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                                     f"{sorted(bad_names)!r}; injecting tool result feedback")
                                 saw_unavailable_tool = True
                         if not tool_calls:
-                            if msg.get("content"):
-                                return msg["content"]
-                            if msg.get("reasoning_content"):
-                                tail = msg["reasoning_content"][-3500:]
-                                return (
-                                    f'_(fallback non-stream: content пустой, '
-                                    f'reasoning_chars={len(msg["reasoning_content"])})_\n\n'
-                                    f'{tail}'
-                                )
-                            return f'[fallback empty: finish_reason={msg.get("finish_reason")}]'
+                            return finish_fallback_empty(
+                                content=msg.get("content"),
+                                reasoning=msg.get("reasoning_content"),
+                                finish_reason=msg.get("finish_reason"))
                         msgs.append(msg)
                         if msg.get("content"):
                             final_fallback = msg["content"]
@@ -773,44 +769,22 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             log.info(f"[LLAMA]   call: {tc.get('function',{}).get('name','')}({tc.get('function',{}).get('arguments','')[:200]})")
 
         if not tool_calls:
-            if content_buf:
-                return {
-                    "text": content_buf,
-                    "executed_tools": list(_executed_tools_in_turn),
-                    "aborted": False,
-                }
-            # Empty content but reasoning exists (Ornith burned the whole token budget on
-            # reasoning). Surface the reasoning as the answer rather than the generic
-            # fallback message — it's still useful info, and tells the user why the bot
-            # couldn't reply normally.
-            if reasoning_buf:
-                tail = reasoning_buf[-3500:]
-                return (
-                    f'_(модель потратила все токены на размышления, не оставив на сам ответ; '
-                    f'finish_reason={finish_reason}; reasoning_chars={len(reasoning_buf)})_\n\n'
-                    f'{tail}'
-                )
-            return (
-                f'[model returned an empty response. finish_reason={finish_reason}, '
-                f'reasoning_chars={len(reasoning_buf)}, content_chars=0]'
-            )
+            return finish_without_tool_calls(
+                content_buf=content_buf, reasoning_buf=reasoning_buf,
+                finish_reason=finish_reason,
+                executed_tools=_executed_tools_in_turn)
         # If we asked for tools and the model produced some, run them.
         # If we did NOT ask for tools (vision/math turn) and the model still
         # hallucinated a tool_call, return whatever content we have rather
         # than enter a loop the user can't escape.
         if req_tools is None:
-            log.warning(f"[LLAMA] iter={iteration} WARNING: model hallucinated tool_calls={len(tool_calls)} with req_tools=None; aborting tool loop")
-            if content_buf:
-                return {
-                    "text": content_buf,
-                    "executed_tools": list(_executed_tools_in_turn),
-                    "aborted": False,
-                }
-            return (
-                f'_(модель попыталась вызвать инструмент, хотя в этом turn\'е он не запрашивался; '
-                f'finish_reason={finish_reason}, content_chars={len(content_buf)})_\n\n'
-                f'{reasoning_buf[-3500:] if reasoning_buf else "(no reasoning)"}'
-            )
+            log.warning(f"[LLAMA] iter={iteration} WARNING: model hallucinated "
+                        f"tool_calls={len(tool_calls)} with req_tools=None; "
+                        f"aborting tool loop")
+            return refuse_hallucinated_tools(
+                content_buf=content_buf, reasoning_buf=reasoning_buf,
+                finish_reason=finish_reason,
+                executed_tools=_executed_tools_in_turn)
         if content_buf:
             final_fallback = content_buf
         msgs.append(msg)

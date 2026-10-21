@@ -22,6 +22,8 @@ from llm_toolcalls import (
     reject_unknown_names,
 )
 
+pytestmark = pytest.mark.tech_debt(item=8)
+
 BOT = Path(__file__).resolve().parent.parent / "telegram-bot"
 KNOWN = frozenset({"bash_command", "donsetch_web_search"})
 
