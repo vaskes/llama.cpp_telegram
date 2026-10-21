@@ -171,3 +171,59 @@ async def non_stream_iteration(req_body: dict, *, iteration: int,
         finish_reason=data["choices"][0].get("finish_reason") or "tool_calls",
         saw_unavailable_tool=saw_unavailable_tool,
     )
+
+async def tools_less_fallback(req_body: dict, *, iteration: int,
+                              abort_event=None, primary_error: BaseException) -> str:
+    """Retry one request with the tools removed, and decide what to say.
+
+    v0.8.1: a 500 from llama-server is usually the PEG grammar parser
+    rejecting the model's tool-call output. The model is not at fault;
+    the grammar is. One retry without tools almost always succeeds,
+    because the question itself was fine -- only the tool syntax was not.
+
+    Lives here rather than in call_llama because it needs the same httpx
+    client as the primary non-streaming call, and Block C1 moved that
+    client's binding into this module. The fallback stayed behind,
+    referencing a name that no longer existed there, and py_compile
+    cannot see that kind of break.
+
+    Returns the text for the turn. An empty-choices response aborts
+    (None) rather than answering, same as T32 on the primary path.
+    """
+    log.info(f"[call_llama] 500 on tools-enabled request; retrying "
+             f"iter={iteration} without tools")
+    fallback_body = dict(req_body)
+    fallback_body.pop("tools", None)
+    fallback_body.pop("tool_choice", None)
+
+    try:
+        async with httpx.AsyncClient(
+                timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as vclient:
+            r2 = await _abortable_post(
+                vclient, f"{LLAMA_URL}/chat/completions",
+                abort_event=abort_event,
+                headers={"Authorization": f"Bearer {API_KEY}",
+                         "Content-Type": "application/json"},
+                json=fallback_body,
+            )
+            if r2 is None:
+                return None
+            r2.raise_for_status()
+            data2 = r2.json()
+
+        # T32 (2026-10-13): same empty-choices guard as the primary and
+        # first-fallback paths. A 200 with choices:[] is a rate limit or
+        # a content filter, not an answer.
+        choices = data2.get("choices") or []
+        if not choices:
+            log.info("[call_llama] tools-less fallback: empty choices, "
+                     "returning None")
+            return None
+
+        content = (choices[0].get("message", {}) or {}).get("content") or ""
+        log.info(f"[call_llama] tools-less fallback succeeded: {len(content)} chars")
+        return content
+    except Exception as e2:
+        log.info(f"[call_llama] tools-less fallback also failed: "
+                 f"{type(e2).__name__}: {e2}")
+        return f"[llama-server request failed: {primary_error}]"

@@ -58,7 +58,15 @@ from http_clients import _abortable_post, transcribe_voice  # noqa: F401
 from llm_messages import _tag_sender  # noqa: F401
 from llm_nonstream import non_stream_iteration
 from llm_sse import StreamAccumulator
-from llm_loop_guard import Abort, LoopGuard
+from llm_loop_guard import Abort, LoopGuard, Nudge
+# Nudge was missing from this import between a079e3c and now. It is
+# used on the branch that follows `isinstance(outcome, Abort)`, so a
+# Nudge -- which happens when the empty-call budget reaches 2, i.e.
+# whenever a tool returns "[unavailable]" twice -- raised NameError
+# and took the whole turn down. py_compile cannot see it, and 925
+# tests were green because none of them drives the loop to a nudge:
+# touches the caller.
+from llm_nonstream import tools_less_fallback
 from llm_toolargs import ArgsRejected, parse_tool_args
 from llm_json import dumps_body
 from llm_thinking import ThinkingThrottle, push_thinking
@@ -601,33 +609,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                     # grammar parser rejecting the model tool-call
                     # output. Retry ONCE without tools.
                     if r is not None and getattr(r, 'status_code', None) == 500 and req_body.get('tools'):
-                        log.info(f"[call_llama] 500 on tools-enabled request; retrying iter={iteration} without tools")
-                        fallback_body = dict(req_body)
-                        fallback_body.pop('tools', None)
-                        fallback_body.pop('tool_choice', None)
-                        try:
-                            r2 = await _abortable_post(
-                                vclient, f"{LLAMA_URL}/chat/completions",
-                                abort_event=abort_event,
-                                headers={"Authorization": f"Bearer {API_KEY}",
-                                         "Content-Type": "application/json"},
-                                json=fallback_body,
-                            )
-                            if r2 is None:
-                                return None
-                            r2.raise_for_status()
-                            data2 = r2.json()
-                            # T32 (2026-10-13): same guard as the primary
-                            # and first-fallback paths.
-                            _choices3 = data2.get("choices") or []
-                            if not _choices3:
-                                log.info(f"[call_llama] tools-less fallback: empty choices, returning None")
-                                return None
-                            content2 = _choices3[0].get("message", {}).get("content") or ''
-                            log.info(f"[call_llama] tools-less fallback succeeded: {len(content2)} chars")
-                            return content2
-                        except Exception as e2:
-                            log.info(f"[call_llama] tools-less fallback also failed: {type(e2).__name__}: {e2}")
+                        return await tools_less_fallback(
+                            req_body, iteration=iteration,
+                            abort_event=abort_event, primary_error=e)
                     return f'[llama-server request failed: {e}]'
             if not locals().get('_ns_handled'):
                 try:
