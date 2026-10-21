@@ -6,3 +6,11 @@
 # Map the identity to the owner rather than rewriting history: 22 commits are
 # already deployed and rewriting them would change every SHA.
 noreply@anthropic.com vaskes <vaskes@kuduza.com>
+# Three bot identities were committed against kuduza.ai, a domain that does
+# not exist -- 231 commits in total. Nothing was lost, but the addresses are
+# unroutable and unattributable. KuduzaAiLab owns kuduza.com; the repo owner
+# is vaskes@kuduza.com.
+mavis@kuduza.ai       vaskes <vaskes@kuduza.com>
+mavis-agent@kuduza.ai vaskes <vaskes@kuduza.com>
+llamabot@kuduza.ai    vaskes <vaskes@kuduza.com>
+mavis@kuduza.com      vaskes <vaskes@kuduza.com>
