@@ -181,6 +181,91 @@ def test_selftest_module_exists_and_still_runs():
     )
 
 
+def test_selftest_every_free_name_resolves():
+    """Written after selftest.py shipped broken for two commits.
+
+    Extracting it out of bot.py cut it loose from bot.py's namespace. Six
+    names resolved through that facade and nothing else did, so they raised
+    NameError -- but only on the first await, and only when
+    LLAMABOT_SELFTEST=1, which production never sets. The test directly
+    above passed the whole time, because it checked the file existed and
+    that `_selftest` was still defined. Those are different claims.
+
+    A file whose free names all resolve cannot NameError on its first line.
+    """
+    import builtins
+
+    tree = ast.parse((BOT_DIR / "selftest.py").read_text(encoding="utf-8"))
+
+    defined = set(dir(builtins))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx,
+                                                      (ast.Store, ast.Del)):
+            defined.add(node.id)
+        elif isinstance(node, ast.arg):
+            defined.add(node.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                defined.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            defined.add(node.name)
+        elif isinstance(node, ast.Global):
+            defined.update(node.names)
+
+    used = {n.id for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+
+    missing = sorted(used - defined)
+    assert not missing, (
+        f"selftest.py references names it never imports: {missing}. These "
+        f"resolved through bot.py's facade until TECH-DEBT #1 extracted it. "
+        f"They only fail on the first await, and only with "
+        f"LLAMABOT_SELFTEST=1, which production never sets -- so they went "
+        f"unnoticed."
+    )
+
+
+def test_extracted_modules_resolve_their_free_names():
+    """Same check, applied to every module bot.py used to hold.
+
+    selftest.py was not a special case. Whatever else was moved out of the
+    facade and still leans on it has the same latent NameError, so the check
+    runs over the leaf modules too rather than over the one file that was
+    already caught.
+    """
+    import builtins
+
+    for mod in ("selftest", "turn", "chat_utils", "access"):
+        path = BOT_DIR / f"{mod}.py"
+        if not path.is_file():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        defined = set(dir(builtins))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                defined.add(node.name)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx,
+                                                          (ast.Store, ast.Del)):
+                defined.add(node.id)
+            elif isinstance(node, ast.arg):
+                defined.add(node.arg)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    defined.add((alias.asname or alias.name).split(".")[0])
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                defined.add(node.name)
+            elif isinstance(node, ast.Global):
+                defined.update(node.names)
+        used = {n.id for n in ast.walk(tree)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        missing = sorted(used - defined)
+        assert not missing, f"{mod}.py has unresolvable free names: {missing}"
+
+
 def test_dispatch_imports_selftest_at_module_level():
     """The one-way edge that lets the cycle break."""
     src = (BOT_DIR / "dispatch.py").read_text(encoding="utf-8")

@@ -137,7 +137,14 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
         # v0.10.2 (Qwen wave-3): tell the user the bot is overloaded
         # instead of silently dropping. The user would otherwise see
         # "💭 думаю…" and then nothing for 5 minutes.
+        # Lazy import: handlers is upstream of this module, so a module-level
+        # import would close the cycle the graph tripwire forbids. Lazy is the
+        # only correct option here, and this is why the call has to live
+        # inside the try -- it did not, and the NameError it raised was
+        # swallowed by the except below, which is exactly the silent drop
+        # v0.10.2 set out to fix.
         try:
+            from handlers import _reply
             await _reply(update, "⚠️ Бот перегружен, попробуйте позже.")
         except Exception:
             pass

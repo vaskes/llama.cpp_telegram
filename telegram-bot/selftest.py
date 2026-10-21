@@ -17,7 +17,28 @@ bot -> selftest. That is what lets dispatch.py import it at module level
 instead of late, which was the only reason bot.py had to import dispatch.
 """
 
+import asyncio
+import base64
 import os
+
+# TECH-DEBT #1 extracted this module from bot.py, and the extraction cut it
+# loose from bot.py's namespace. Six names used to resolve through that
+# facade and now raise NameError -- but only when LLAMABOT_SELFTEST=1, which
+# production never sets, so the shipped smoke test went unrunnable and the
+# test that claims to pin it kept passing.
+#
+# The dependency stays one-directional: selftest -> dispatch/state, never
+# the reverse.
+from telegram import Update  # noqa: F401  (used via Update.de_json)
+
+# state is safe at module level: dispatch imports it, it imports nothing back.
+from state import _GLOBAL_LLM_SEM_LIMIT, _get_global_llm_sem  # noqa: F401
+
+# _dispatch_update MUST stay a lazy import. dispatch.py imports this module at
+# module level (so the dispatcher can run the smoke test), so importing it
+# back here closes the exact cycle the import-graph tripwire forbids --
+# pytest reports it as 24 unrelated ImportError failures, not as a cycle,
+# because the cycle surfaces in whichever module happens to be imported first.
 
 # === Self-test: inject a fake Update to verify handlers actually fire ===
 # Conversation key for the selftest. Deliberately NOT a real user_id:
@@ -35,6 +56,8 @@ async def _selftest():
     if os.environ.get('LLAMABOT_SELFTEST') != '1':
         return
     import time
+    # Lazy on purpose -- see the note at the top of this file.
+    from dispatch import _dispatch_update
     print('[selftest] starting', flush=True)
     fake = {
         "update_id": 999_999_001,
