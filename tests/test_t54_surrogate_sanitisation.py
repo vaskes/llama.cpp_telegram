@@ -10,20 +10,27 @@ llama-server's parser rejects with 500.
 The fix: walk the request dict and replace lone surrogates
 with U+FFFD before serialising.
 """
-import sys, pathlib
+import json
+import sys
+import pathlib
+
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "telegram-bot"))
 
-# Inline the same logic to test it without calling the whole
-# call_llama. (call_llama imports many things; this is a
-# unit test of the sanitisation function only.)
-def _scrub_surrogates(obj):
-    if isinstance(obj, str):
-        return obj.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
-    if isinstance(obj, dict):
-        return {k: _scrub_surrogates(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_scrub_surrogates(v) for v in obj]
-    return obj
+# This file used to define its own copy of the scrubber with the comment
+# "inline the same logic to test it without calling the whole call_llama",
+# because _scrub_surrogates was a nested def inside call_llama's
+# iteration loop and could not be imported.
+#
+# That made this test decorative. It passed, and the production copy it
+# was meant to describe was never executed by anything -- a duplicate
+# that exists because the real one is unreachable is worse than no test,
+# because it reports confidence nobody earned.
+#
+# TECH-DEBT #3 Block C4 hoisted the scrubber into llm_json.py. This test
+# now imports it. If you are reading this after a future refactor and
+# find a copy here again: that is the bug, not the workaround.
+from llm_json import scrub_surrogates as _scrub_surrogates  # noqa: E402
+from llm_json import dumps_body  # noqa: E402,F401
 
 
 def test_surrogate_in_arguments_replaced():
@@ -38,9 +45,8 @@ def test_surrogate_in_arguments_replaced():
     }
     cleaned = _scrub_surrogates(msg)
     # The arguments string now has a valid UTF-8 character.
-    import json
     # If we try to encode with ensure_ascii=False, it should NOT raise.
-    raw = json.dumps(cleaned, ensure_ascii=False)
+    json.dumps(cleaned, ensure_ascii=False)
     # And it should contain the actual emoji, not the surrogate.
     assert '\ud83d' not in cleaned['tool_calls'][0]['function']['arguments']
     assert '\\ud83d' not in cleaned['tool_calls'][0]['function']['arguments']
@@ -61,7 +67,6 @@ def test_nested_dict_and_list():
         'd': 42,
     }
     cleaned = _scrub_surrogates(obj)
-    import json
     json.dumps(cleaned, ensure_ascii=False)  # must not raise
     assert '\ud83d' not in json.dumps(cleaned)
 
@@ -75,3 +80,19 @@ def test_non_string_passthrough():
 
 def test_empty_string_unchanged():
     assert _scrub_surrogates('') == ''
+
+
+def test_this_file_tests_the_production_copy():
+    """The failure mode this file used to have, now pinned.
+
+    A test that imports its own reimplementation of the thing it tests
+    reports the health of the copy, not the code.
+    """
+    import inspect
+    import llm_json
+
+    assert inspect.getsourcefile(_scrub_surrogates) is not None
+    assert _scrub_surrogates is llm_json.scrub_surrogates, (
+        "this file has drifted back to testing a local copy; the "
+        "production scrubber lives in llm_json.py"
+    )

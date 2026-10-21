@@ -102,7 +102,12 @@ def test_call_llama_accepts_silent():
 def test_silent_suppresses_the_thinking_stream():
     """push_thinking is the only thing that writes '💭 думаю…' into the chat.
     `silent` must short-circuit it, before the Telegram call."""
-    src = (BOT_DIR / "call_llama.py").read_text()
+    # push_thinking moved to llm_thinking.py in TECH-DEBT #3 Block C4. It
+    # was a nested def, so this could only ever find it by parsing
+    # call_llama.py and hunting for a closure -- which is also why no
+    # test could actually call it. The assertions below are unchanged;
+    # they were always about the function, not the file it lived in.
+    src = (BOT_DIR / "llm_thinking.py").read_text()
     fn = next(
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))

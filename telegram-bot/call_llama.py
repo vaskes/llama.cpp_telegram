@@ -59,6 +59,8 @@ from llm_messages import _tag_sender  # noqa: F401
 from llm_nonstream import non_stream_iteration
 from llm_sse import StreamAccumulator
 from llm_loop_guard import Abort, LoopGuard
+from llm_json import dumps_body
+from llm_thinking import ThinkingThrottle, push_thinking
 from llm_tools import _bash_command_tool_enabled, fetch_tools_from_llama  # noqa: F401
 
 
@@ -424,8 +426,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
 
     # Accumulated reasoning across iterations (for the live feed)
     accumulated_reasoning = ""
-    last_thinking_push = [0.0]  # mutable closure for throttling
-    last_flood_at = [0.0]       # back off edit_text for a while after Telegram flood
+    # Per-turn throttle. Was two one-element lists closed over by
+    # push_thinking; now explicit, and testable without call_llama.
+    _throttle = ThinkingThrottle()
 
     # Empty-response detection. The model sometimes returns no
     # content, no reasoning, and no finish_reason — particularly
@@ -436,58 +439,6 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
     # one place.
     EMPTY_FALLBACK_PREFIX = '[model returned an empty response.'
 
-    async def push_thinking(reasoning_text: str, force: bool = False):
-        # T65.1: `silent` turns exist for messages addressed to another human
-        # in a group. The LLM still runs and its reasoning still happens -- we
-        # want it, that is the whole point of having the model classify the
-        # message before reacting. But showing "💭 думаю…" for a message
-        # nobody asked the bot about is noise: the group is talking to each
-        # other, and the bot would be visibly thinking along. The reaction is
-        # the only outward signal in that case.
-        if silent:
-            if reasoning_text:
-                log.info(f"[LLAMA] silent reasoning ({len(reasoning_text)} chars, "
-                    f"not shown to GUI)")
-            return
-        if thinking_msg is None or not reasoning_text:
-            return
-        now = time.monotonic()
-        # If we hit a Telegram flood in the last 30s, lay off (skip edits).
-        if now - last_flood_at[0] < 30.0 and not force:
-            return
-        if not force and now - last_thinking_push[0] < 5.0:
-            return
-        last_thinking_push[0] = now
-        # Telegram message body limit is 4096 chars. Show the TAIL of the
-        # reasoning so the user always sees what the model is currently
-        # thinking. No leading "…" — just a one-line status + last 1800
-        # chars. Reasoning from earlier iterations is preserved in the
-        # final answer.
-        prefix = "💭 думаю…\n"
-        max_payload = 3800
-        body = reasoning_text
-        truncated_marker = ""
-        if len(body) > max_payload:
-            body = body[-max_payload:]
-            truncated_marker = "\n[…earlier reasoning omitted…]\n"
-        try:
-            # IMPORTANT: editMessageText removes the inline keyboard
-            # if reply_markup is not passed. To keep the ⏹ Stop
-            # button visible while reasoning streams, we must
-            # re-attach the markup on every edit.
-            await thinking_msg.edit_text(
-                f"{prefix}{truncated_marker}{body}",
-                reply_markup=_stop_button_markup(),
-            )
-        except Exception as e:
-            err = str(e).lower()
-            if 'not modified' in err:
-                pass  # no-op, the message is already up to date
-            elif 'flood' in err or 'too many requests' in err:
-                last_flood_at[0] = now
-                log.info(f"[thinking edit] flood; backing off edits for 30s")
-            else:
-                log.info(f"[thinking edit err] {type(e).__name__}: {e}")
 
     for iteration in range(max_iter):
         # T44: per-turn accumulator for executed tools.
@@ -524,25 +475,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             if iteration == 0 and not use_stream:
                 # Count the bytes that would be sent (without ever writing them).
                 try:
-                    # T54: sanitise lone surrogates before serialising.
-                    # The model sometimes returns tool_call arguments
-                    # with Python-style lone surrogates for non-BMP
-                    # characters (e.g. emoji U+1F44D as \uD83D\uDC4D
-                    # instead of UTF-8 bytes). ensure_ascii=False
-                    # passes these through, producing JSON that
-                    # llama-server's parser rejects with 500.
-                    # Walk the dict once, replacing lone surrogates
-                    # with U+FFFD (the Unicode replacement char).
-                    def _scrub_surrogates(obj):
-                        if isinstance(obj, str):
-                            return obj.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
-                        if isinstance(obj, dict):
-                            return {k: _scrub_surrogates(v) for k, v in obj.items()}
-                        if isinstance(obj, list):
-                            return [_scrub_surrogates(v) for v in obj]
-                        return obj
-                    req_body = _scrub_surrogates(req_body)
-                    raw = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
+                    raw = dumps_body(req_body)
                     log.info(f"[LLAMA] iter={iteration} payload_bytes={len(raw)} (image bytes masked)")
                     if os.environ.get("LLAMABOT_DEBUG_PAYLOAD") == "1":
                         head = raw[:400].decode('utf-8', errors='replace')
@@ -621,7 +554,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         saw_unavailable_tool = True
                     log.info(f"[LLAMA] iter={iteration} non-stream finish={result.finish_reason} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}")
                     if reasoning and thinking_msg is not None:
-                        await push_thinking(accumulated_reasoning + reasoning, force=True)
+                        await push_thinking(accumulated_reasoning + reasoning,
+                            thinking_msg=thinking_msg, silent=silent,
+                            throttle=_throttle, force=True)
                     accumulated_reasoning += reasoning
                     # If the model returned tool_calls (e.g. react_to_message
                     # on a vision task), fall through to the unified tool
@@ -749,7 +684,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                             d = acc.feed(chunk)
                             if d.grew_reasoning:
                                 await push_thinking(
-                                    accumulated_reasoning + acc.reasoning)
+                                    accumulated_reasoning + acc.reasoning,
+                                    thinking_msg=thinking_msg, silent=silent,
+                                    throttle=_throttle)
                             reasoning_buf = acc.reasoning
                             content_buf = acc.content
                             tool_calls_buf = acc.tool_calls
@@ -757,7 +694,10 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                                 finish_reason = d.finish_reason
                         # Final flush: ensure the latest reasoning text is on Telegram
                         if reasoning_buf:
-                            await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
+                            await push_thinking(
+                                accumulated_reasoning + reasoning_buf,
+                                thinking_msg=thinking_msg, silent=silent,
+                                throttle=_throttle, force=True)
                 except httpx.HTTPError as e:
                     log.info(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming")
                     # Fall back to non-streaming request

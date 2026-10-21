@@ -301,7 +301,19 @@ KNOWN_RUNTIME_CYCLES = [
     #            _is_group_chat` inside _is_rating_active(). That name is
     #            owned by chat_utils.py, which imports nothing, so the import
     #            is direct now and the edge is gone.
-    ["access", "call_llama", "dispatch", "handlers", "selftest", "webhook"],
+    ["access", "call_llama", "dispatch", "handlers", "llm_thinking", "selftest", "webhook"],
+    # The llm_thinking entry above is the same cycle call_llama already
+    # belonged to, now reached through the module that owns
+    # push_thinking. It calls  from dispatch, and
+    # dispatch imports call_llama, which imports llm_thinking. Deferred to
+    # the call site -- which is the only place it can be deferred from,
+    # since the markup is needed at edit time.
+    #
+    # The alternative was leaving push_thinking as a nested def inside
+    # call_llama, where no test could reach it at all. Trading an
+    # unreachable function for a documented edge in a cycle that already
+    # existed is not a regression, and the assertions about push_thinking
+    # moved with it (test_t65_reply_to_human, test_c4_thinking).
     ["config", "state"],
 ]
 
