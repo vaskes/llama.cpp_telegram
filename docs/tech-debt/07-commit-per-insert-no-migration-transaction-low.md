@@ -1,7 +1,7 @@
 ---
 tech_debt: 7
-marker: none -- needs a migration, not a guard
-state: open
+marker: tests/test_t5_migration_atomic.py
+state: partial
 issue: 5          # filled in when the Issue is created
 ---
 

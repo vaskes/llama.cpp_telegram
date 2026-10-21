@@ -1,7 +1,7 @@
 ---
 tech_debt: 1
 marker: tests/test_facade_ownership.py
-state: partial
+state: closed
 issue: 1          # filled in when the Issue is created
 ---
 
