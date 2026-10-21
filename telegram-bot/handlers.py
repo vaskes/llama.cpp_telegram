@@ -17,6 +17,9 @@ import os
 import re
 import tempfile
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 
 def _format_executed_tools(executed_tools):
     """T44: render a fenced ```` ```bash ... ``` ```` block listing
@@ -138,7 +141,7 @@ async def send_reply(update: Update, text: str):
                 _register_bot_reply(chat_id, user_msg.message_id, sent.message_id)
     except Exception as e:
         # Never let tracking break a reply.
-        print(f"[send_reply] tracking failed: {type(e).__name__}: {e!r}", flush=True)
+        log.info(f"[send_reply] tracking failed: {type(e).__name__}: {e!r}")
 
 # === _reply_active ===
 async def _reply_active(update: Update, user_id: int) -> str:
@@ -234,10 +237,7 @@ async def _reply(update, text, **kwargs):
         except RetryAfter as e:
             last_err = e
             wait_s = float(getattr(e, 'retry_after', 1)) + 1.0
-            print(
-                f"[_reply] RetryAfter attempt {attempt+1}/3, sleeping {wait_s:.1f}s",
-                flush=True,
-            )
+            log.info(f"[_reply] RetryAfter attempt {attempt+1}/3, sleeping {wait_s:.1f}s")
             await asyncio.sleep(wait_s)
         except TimedOut as e:
             last_err = e
@@ -245,10 +245,7 @@ async def _reply(update, text, **kwargs):
             # timeout is in our read of the response. Exponential
             # backoff: 1s, 2s, 4s.
             backoff = 2 ** attempt
-            print(
-                f"[_reply] TimedOut attempt {attempt+1}/3, sleeping {backoff}s",
-                flush=True,
-            )
+            log.info(f"[_reply] TimedOut attempt {attempt+1}/3, sleeping {backoff}s")
             await asyncio.sleep(backoff)
     # Exhausted retries. For RetryAfter, re-raise so the
     # caller's except block runs (the user already saw the
@@ -257,12 +254,9 @@ async def _reply(update, text, **kwargs):
     # does NOT get a duplicate "❌ Error" message.
     if isinstance(last_err, TimedOut):
         chat_id = update.effective_chat.id if update.effective_chat else None
-        print(
-            f"[_reply] all 3 TimedOut attempts failed; assuming Telegram "
+        log.info(f"[_reply] all 3 TimedOut attempts failed; assuming Telegram "
             f"delivered the message for chat_id={chat_id}. Suppressing "
-            f"duplicate error reply. text_len={len(text)}",
-            flush=True,
-        )
+            f"duplicate error reply. text_len={len(text)}")
         return None
     raise last_err
 
@@ -424,13 +418,13 @@ def _sender_display_name(user) -> str | None:
 
 # === handle_photo ===
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}", flush=True)
+    log.info(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}")
     result = await _route_to_thread(update, context)
     if result is None:
-        print("[handle_photo] REJECTED", flush=True)
+        log.info("[handle_photo] REJECTED")
         return
     chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
-    print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}", flush=True)
+    log.info(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}")
     sem = await _check_user_slot(chat_id, update.effective_user.id, update)
     if sem is None:
         return
@@ -491,7 +485,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_b64 = base64.b64encode(photo_bytes).decode('ascii')
         photo_data_url = f"data:{mime};base64,{photo_b64}"
         caption = update.message.caption or 'Describe the image in detail.'
-        print(f"[handle_photo] downloaded {len(photo_bytes)} bytes, caption={caption!r}", flush=True)
+        log.info(f"[handle_photo] downloaded {len(photo_bytes)} bytes, caption={caption!r}")
         photo_content = [
             {"type": "text", "text": caption},
             {"type": "image_url", "image_url": {"url": photo_data_url}}
@@ -534,7 +528,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # image is not in SQLite (T67.2) and call_llama's `user_text`
         # parameter is dead code.
         history = history + [current_turn]
-        print(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)} (image not persisted)", flush=True)
+        log.info(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} history_len={len(history)} (image not persisted)")
         # Compute rating_active here (before call_llama) so we
         # can pass it to the model AND use it in the dispatcher.
         rating_active = _is_rating_active(update)
@@ -556,21 +550,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # as "object of type 'NoneType' has no len()"). Guard it.
         response_chars = len(bot_response) if bot_response else 0
         response_head = (bot_response if bot_response else "<aborted>")[:200]
-        print(f"[handle_photo] call_llama returned: {response_chars} chars, head={response_head!r}", flush=True)
+        log.info(f"[handle_photo] call_llama returned: {response_chars} chars, head={response_head!r}")
         if bot_response is None or abort_event.is_set():
             # v0.8.0: also discard if abort_event was set, even when
             # call_llama returned a non-None response (post won the
             # race). The user clicked Stop, so the LLM response
             # should NOT be sent.
             if bot_response is not None and abort_event.is_set():
-                print(
-                    f"[handle_photo] ABORTED via Stop; "
+                log.info(f"[handle_photo] ABORTED via Stop; "
                     f"discarding {len(bot_response)}-char response "
-                    f"(post-won race)",
-                    flush=True,
-                )
+                    f"(post-won race)")
             else:
-                print(f"[handle_photo] ABORTED by user via Stop button, moving to next", flush=True)
+                log.info(f"[handle_photo] ABORTED by user via Stop button, moving to next")
             # T67.2: no rollback needed — the image was never written.
             try:
                 await thinking.edit_text('⏹ Остановлено')
@@ -586,10 +577,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # replace with a user-friendly message that suggests
         # rephrasing or trying again.
         if bot_response.startswith('[model returned an empty response.'):
-            print(
-                f"[handle_photo] empty response, retrying once",
-                flush=True,
-            )
+            log.info(f"[handle_photo] empty response, retrying once")
             try:
                 await thinking.edit_text('🔄 переспрашиваю…')
             except Exception:
@@ -604,13 +592,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if retry_response is None or abort_event.is_set():
                 # v0.8.0: same discard-on-abort as primary
                 if retry_response is not None and abort_event.is_set():
-                    print(
-                        f"[handle_photo] ABORTED on retry via Stop; "
-                        f"discarding {len(retry_response)}-char response",
-                        flush=True,
-                    )
+                    log.info(f"[handle_photo] ABORTED on retry via Stop; "
+                        f"discarding {len(retry_response)}-char response")
                 else:
-                    print(f"[handle_photo] ABORTED on retry, moving to next", flush=True)
+                    log.info(f"[handle_photo] ABORTED on retry, moving to next")
                 try:
                     await thinking.edit_text('⏹ Остановлено')
                 except Exception:
@@ -618,9 +603,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             if not retry_response.startswith('[model returned an empty response.'):
                 bot_response = retry_response
-                print(f"[handle_photo] retry succeeded", flush=True)
+                log.info(f"[handle_photo] retry succeeded")
             else:
-                print(f"[handle_photo] retry also empty, sending fallback", flush=True)
+                log.info(f"[handle_photo] retry also empty, sending fallback")
                 bot_response = (
                     '🤔 Не удалось получить ответ от модели. '
                     'Возможные причины: перегруженный длинный контекст, '
@@ -664,7 +649,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bot_response:
             await send_reply(update, bot_response)
     except Exception as e:
-        print(f"[ERR photo] {type(e).__name__}: {e}", flush=True)
+        log.info(f"[ERR photo] {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
         # T67.2: no rollback needed — the image was never written.
@@ -820,7 +805,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         persisted = turn.persisted
         persisted = True
         history = await _load_history(chat_id, thread_id)
-        print(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        log.info(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
@@ -842,14 +827,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # even though the user clicked Stop. Add the explicit check.
         if bot_response is None or abort_event.is_set():
             if bot_response is not None and abort_event.is_set():
-                print(
-                    f"[handle_voice] ABORTED via Stop; "
+                log.info(f"[handle_voice] ABORTED via Stop; "
                     f"discarding {len(bot_response)}-char response "
-                    f"(post-won race)",
-                    flush=True,
-                )
+                    f"(post-won race)")
             else:
-                print(f"[handle_voice] ABORTED by user via Stop button, moving to next", flush=True)
+                log.info(f"[handle_voice] ABORTED by user via Stop button, moving to next")
             # v0.9.2: roll back the persisted transcript so the next
             # user message is not answered about the (cancelled) voice.
             await turn.rollback('aborted')
@@ -880,7 +862,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await send_reply(update, bot_response)
     except Exception as e:
-        print(f"[ERR voice] {type(e).__name__}: {e}", flush=True)
+        log.info(f"[ERR voice] {type(e).__name__}: {e}")
         await turn.rollback('aborted')
         await _reply(update, f'❌ Error: {e}')
     finally:
@@ -965,7 +947,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         persisted = turn.persisted
         persisted = True
         history = await _load_history(chat_id, thread_id)
-        print(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        log.info(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
@@ -985,14 +967,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # race). The user clicked Stop, so the LLM response
             # should NOT be sent.
             if bot_response is not None and abort_event.is_set():
-                print(
-                    f"[handle_document] ABORTED via Stop; "
+                log.info(f"[handle_document] ABORTED via Stop; "
                     f"discarding {len(bot_response)}-char response "
-                    f"(post-won race)",
-                    flush=True,
-                )
+                    f"(post-won race)")
             else:
-                print(f"[handle_document] ABORTED by user via Stop button, moving to next", flush=True)
+                log.info(f"[handle_document] ABORTED by user via Stop button, moving to next")
             # v0.9.2: roll back the persisted document so the next user
             # message is not answered about the (cancelled) document.
             await turn.rollback('aborted')
@@ -1003,7 +982,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         # === Empty-response retry (same as handle_photo) ===
         if bot_response.startswith('[model returned an empty response.'):
-            print(f"[handle_document] empty response, retrying once", flush=True)
+            log.info(f"[handle_document] empty response, retrying once")
             try:
                 await thinking.edit_text('🔄 переспрашиваю…')
             except Exception:
@@ -1018,13 +997,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if retry_response is None or abort_event.is_set():
                 # v0.8.0: same discard-on-abort as primary
                 if retry_response is not None and abort_event.is_set():
-                    print(
-                        f"[handle_document] ABORTED on retry via Stop; "
-                        f"discarding {len(retry_response)}-char response",
-                        flush=True,
-                    )
+                    log.info(f"[handle_document] ABORTED on retry via Stop; "
+                        f"discarding {len(retry_response)}-char response")
                 else:
-                    print(f"[handle_document] ABORTED on retry, moving to next", flush=True)
+                    log.info(f"[handle_document] ABORTED on retry, moving to next")
                 # v0.9.2: rollback also on retry-abort
                 await turn.rollback('aborted')
                 try:
@@ -1034,9 +1010,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             if not retry_response.startswith('[model returned an empty response.'):
                 bot_response = retry_response
-                print(f"[handle_document] retry succeeded", flush=True)
+                log.info(f"[handle_document] retry succeeded")
             else:
-                print(f"[handle_document] retry also empty, sending fallback", flush=True)
+                log.info(f"[handle_document] retry also empty, sending fallback")
                 bot_response = (
                     '🤔 Не удалось получить ответ от модели. '
                     'Возможные причины: перегруженный длинный контекст, '
@@ -1070,7 +1046,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bot_response:
             await send_reply(update, bot_response)
     except Exception as e:
-        print(f"[ERR doc] {type(e).__name__}: {e}", flush=True)
+        log.info(f"[ERR doc] {type(e).__name__}: {e}")
         await turn.rollback('aborted')
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -1104,7 +1080,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from state import _get_user_semaphore as _user_semaphore
     from state import _check_burst_split, _record_user_message, _user_recent_msg
-    print(f"[handle_text] ENTRY t={time.monotonic():.3f} user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}", flush=True)
+    log.info(f"[handle_text] ENTRY t={time.monotonic():.3f} user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}")
     # T34 burst detection (race fix v2, 2026-10-13). Record the
     # current message in _user_recent_msg IMMEDIATELY on entry,
     # creating the abort_event at the same time. The event is
@@ -1124,7 +1100,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text_bytes = len((update.message.text or '').encode('utf-8'))
     early_event = asyncio.Event()
     _record_user_message(chat_id_check, user_id_check, text_bytes, early_event)
-    print(f"[handle_text] EARLY-RECORD t={time.monotonic():.3f} (chat={chat_id_check}, user={user_id_check}, size={text_bytes}, event_id={id(early_event)})", flush=True)
+    log.info(f"[handle_text] EARLY-RECORD t={time.monotonic():.3f} (chat={chat_id_check}, user={user_id_check}, size={text_bytes}, event_id={id(early_event)})")
     # Telegram-split detection (T34, 2026-10-13). Pattern-based:
     # if the SAME (chat, user) sent a >3000-byte message within
     # the last BURST_WINDOW_SEC (2s), the current message is
@@ -1133,7 +1109,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # previous one, then reply with a clear error.
     prev_event = _check_burst_split(chat_id_check, user_id_check, text_bytes)
     if prev_event is not None:
-        print(f"[handle_text] BURST-SPLIT: (chat={chat_id_check}, user={user_id_check}) current_size={text_bytes}; setting prev_event (id={id(prev_event)}) to abort the in-flight LLM call and dropping current message", flush=True)
+        log.info(f"[handle_text] BURST-SPLIT: (chat={chat_id_check}, user={user_id_check}) current_size={text_bytes}; setting prev_event (id={id(prev_event)}) to abort the in-flight LLM call and dropping current message")
         prev_event.set()
         # Clear the registry entry so a third consecutive message
         # within the window is not also treated as a split
@@ -1144,11 +1120,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🚫 ⚠️ Detected a Telegram auto-split: you sent two messages within 2 seconds, and the first was >3000 bytes. The first message's LLM call has been aborted and this follow-up was dropped to avoid two half-answers. Run /reset and resend as a single message, or send via the Telegram Bot API directly to bypass the 4096-char UI cap."
             )
         except Exception as e:
-            print(f"[handle_text] burst-split reply failed: {type(e).__name__}: {e!r}", flush=True)
+            log.info(f"[handle_text] burst-split reply failed: {type(e).__name__}: {e!r}")
         return
     result = await _route_to_thread(update, context)
     if result is None:
-        print(f"[handle_text] REJECTED {update.effective_user.id}", flush=True)
+        log.info(f"[handle_text] REJECTED {update.effective_user.id}")
         return
     chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
     # The actual user id, not the chat id. In private mode these
@@ -1182,7 +1158,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await update.message.chat.send_action(action='typing')
         except Exception as e:
-            print(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}", flush=True)
+            log.warning(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}")
         sender_name = _sender_display_name(update.message.from_user)
         # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
         # click during the LLM call can roll the message back.
@@ -1204,10 +1180,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # refactor).
         msg_bytes = len(user_message.encode('utf-8'))
         _record_user_message(chat_id, user_id, msg_bytes, abort_event)
-        print(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]", flush=True)
+        log.info(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]")
         persisted = True
         history = await _load_history(chat_id, thread_id)
-        print(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}", flush=True)
+        log.info(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
     except BaseException:
         if persisted:
             try:
@@ -1247,14 +1223,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # race). The user clicked Stop, so the LLM response
             # should NOT be sent.
             if bot_response is not None and abort_event.is_set():
-                print(
-                    f"[handle_text] ABORTED via Stop; "
+                log.info(f"[handle_text] ABORTED via Stop; "
                     f"discarding {len(bot_response)}-char response "
-                    f"(post-won race)",
-                    flush=True,
-                )
+                    f"(post-won race)")
             else:
-                print(f"[handle_text] ABORTED by user via Stop button, moving to next", flush=True)
+                log.info(f"[handle_text] ABORTED by user via Stop button, moving to next")
             # v0.9.2: roll back the persisted user message so the next
             # message is not answered about the (cancelled) one.
             await turn.rollback('aborted')
@@ -1265,7 +1238,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         # === Empty-response retry (same as handle_photo) ===
         if bot_response.startswith('[model returned an empty response.'):
-            print(f"[handle_text] empty response, retrying once", flush=True)
+            log.info(f"[handle_text] empty response, retrying once")
             try:
                 await thinking.edit_text('🔄 переспрашиваю…')
             except Exception:
@@ -1280,13 +1253,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if retry_response is None or abort_event.is_set():
                 # v0.8.0: same discard-on-abort as primary
                 if retry_response is not None and abort_event.is_set():
-                    print(
-                        f"[handle_text] ABORTED on retry via Stop; "
-                        f"discarding {len(retry_response)}-char response",
-                        flush=True,
-                    )
+                    log.info(f"[handle_text] ABORTED on retry via Stop; "
+                        f"discarding {len(retry_response)}-char response")
                 else:
-                    print(f"[handle_text] ABORTED on retry, moving to next", flush=True)
+                    log.info(f"[handle_text] ABORTED on retry, moving to next")
                 # v0.9.2: rollback also on retry-abort
                 await turn.rollback('aborted')
                 try:
@@ -1296,9 +1266,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             if not retry_response.startswith('[model returned an empty response.'):
                 bot_response = retry_response
-                print(f"[handle_text] retry succeeded", flush=True)
+                log.info(f"[handle_text] retry succeeded")
             else:
-                print(f"[handle_text] retry also empty, sending fallback", flush=True)
+                log.info(f"[handle_text] retry also empty, sending fallback")
                 bot_response = (
                     '🤔 Не удалось получить ответ от модели. '
                     'Возможные причины: перегруженный длинный контекст, '
@@ -1329,7 +1299,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_reply(update, bot_response)
     except Exception as e:
         import traceback
-        print(f"[ERR text] {type(e).__name__}: {e}", flush=True)
+        log.info(f"[ERR text] {type(e).__name__}: {e}")
         traceback.print_exc()
         await turn.rollback('aborted')
         await _reply(update, f'❌ Error: {e}')

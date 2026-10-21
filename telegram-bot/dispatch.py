@@ -46,6 +46,9 @@ import state
 from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores, _get_user_semaphore
 import handlers
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 # === Module-level state (lazy singleton) ===
 _dispatcher = None
 import persistence
@@ -367,7 +370,7 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name=topic_name,
             )
         except Exception as e:
-            print(f"[ERR newsub-group] {type(e).__name__}: {e}", flush=True)
+            log.info(f"[ERR newsub-group] {type(e).__name__}: {e}")
             await _reply(update, f'❌ createForumTopic failed: {e}')
             return
         # Record the topic in our local index so /subs and /delsub
@@ -629,7 +632,7 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message_thread_id=target_id,
             )
         except Exception as e:
-            print(f"[ERR delsub-group-delete] {type(e).__name__}: {e}", flush=True)
+            log.info(f"[ERR delsub-group-delete] {type(e).__name__}: {e}")
             await _reply(update, f'❌ deleteForumTopic failed: {e}')
             return
         # Remove from known_topics + wipe local message history.
@@ -702,12 +705,9 @@ async def _handle_reply_to_other_user(upd, bot) -> None:
         f"@{who.username}" if getattr(who, "username", None)
         else (getattr(who, "first_name", None) or "unknown")
     )
-    print(
-        f"[dispatch] reply-to-other-user: absorbing silently "
+    log.info(f"[dispatch] reply-to-other-user: absorbing silently "
         f"(reply_to={tag}, chat={chat_id}, thread={thread_id}) "
-        f"update_id={upd.update_id}",
-        flush=True,
-    )
+        f"update_id={upd.update_id}")
 
     # 1. Persist. ALWAYS, and before anything that can fail — this is the part
     #    the ticket is really about.
@@ -718,8 +718,7 @@ async def _handle_reply_to_other_user(upd, bot) -> None:
             chat_id, thread_id, "user", content, sender_name=sender,
         )
     except Exception as exc:
-        print(f"[dispatch] persist failed for reply-to-other-user: {exc!r}",
-              flush=True)
+        log.info(f"[dispatch] persist failed for reply-to-other-user: {exc!r}")
 
     # 2. Build context exactly as a normal turn would, then ask the model to
     #    react without answering. `silent` suppresses the reasoning stream.
@@ -743,19 +742,13 @@ async def _handle_reply_to_other_user(upd, bot) -> None:
             chat_type=upd.effective_chat.type,
             silent=True,                # reasoning stays out of the GUI
         )
-        print(
-            f"[dispatch] absorbed reply-to-other-user "
-            f"update_id={upd.update_id}",
-            flush=True,
-        )
+        log.info(f"[dispatch] absorbed reply-to-other-user "
+            f"update_id={upd.update_id}")
     except Exception as exc:
         # A failed reaction must never lose the persisted message, and must
         # never surface as an error to the group.
-        print(
-            f"[dispatch] silent-absorb failed (message already persisted) "
-            f"update_id={upd.update_id}: {type(exc).__name__}: {exc}",
-            flush=True,
-        )
+        log.info(f"[dispatch] silent-absorb failed (message already persisted) "
+            f"update_id={upd.update_id}: {type(exc).__name__}: {exc}")
 
 # === Dispatch task tracking ===
 #
@@ -785,11 +778,8 @@ def _spawn_dispatch(upd_dict: dict) -> asyncio.Task:
             return
         exc = t.exception()
         if exc is not None:
-            print(
-                f"[dispatch] update_id={upd_dict.get('update_id')} FAILED "
-                f"unhandled: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
+            log.warning(f"[dispatch] update_id={upd_dict.get('update_id')} FAILED "
+                f"unhandled: {type(exc).__name__}: {exc}")
 
     task.add_done_callback(_done)
     _dispatch_tasks.add(task)
@@ -857,17 +847,17 @@ def _webhook_auto_register_sync(url: str, secret_token: str) -> None:
         # If getWebhookInfo fails (network, transient Telegram error),
         # we proceed with setWebhook anyway. Better to risk a duplicate
         # register than to fail to start the bot.
-        print(f"[main] getWebhookInfo failed (continuing): {type(e).__name__}: {e!r}", flush=True)
+        log.info(f"[main] getWebhookInfo failed (continuing): {type(e).__name__}: {e!r}")
 
     # Idempotent: same URL, nothing to do
     if current_url == url:
-        print(f"[main] webhook already registered: {url}", flush=True)
+        log.info(f"[main] webhook already registered: {url}")
         return
     # Different URL: warn before overwriting
     if current_url:
-        print(f"[main] WARNING: overwriting existing webhook", flush=True)
-        print(f"[main]   current: {current_url}", flush=True)
-        print(f"[main]   new:     {url}", flush=True)
+        log.warning(f"[main] WARNING: overwriting existing webhook")
+        log.info(f"[main]   current: {current_url}")
+        log.info(f"[main]   new:     {url}")
 
     # Step 2: register
     payload = {
@@ -888,17 +878,17 @@ def _webhook_auto_register_sync(url: str, secret_token: str) -> None:
             try:
                 body = _json.loads(body_text)
                 if body.get("ok"):
-                    print(f"[main] webhook auto-registered: {url}", flush=True)
+                    log.info(f"[main] webhook auto-registered: {url}")
                 else:
                     err = body.get("description", "(no description)")
-                    print(f"[main] webhook auto-register REJECTED: {err}", flush=True)
+                    log.info(f"[main] webhook auto-register REJECTED: {err}")
             except _json.JSONDecodeError:
-                print(f"[main] webhook auto-registered: {url} (status={resp.status}, body not JSON)", flush=True)
+                log.info(f"[main] webhook auto-registered: {url} (status={resp.status}, body not JSON)")
     except urllib.error.HTTPError as e:
         body_text = e.read().decode("utf-8", errors="replace")
-        print(f"[main] webhook auto-register FAILED: HTTP {e.code} {body_text[:200]}", flush=True)
+        log.warning(f"[main] webhook auto-register FAILED: HTTP {e.code} {body_text[:200]}")
     except Exception as e:
-        print(f"[main] webhook auto-register FAILED: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"[main] webhook auto-register FAILED: {type(e).__name__}: {e!r}")
 
 
 def main():
@@ -910,7 +900,7 @@ def main():
     # with a single dedicated httpx.AsyncClient, de_json() into Update
     # objects, then call handler functions ourselves (not via dispatcher,
     # to skip process_update's internal queue/worker logic).
-    print('🤖 LlamaBot v2 started...', flush=True)
+    log.info('🤖 LlamaBot v2 started...')
 
     # === T25: webhook mode (replaces polling loop) ===
     # When WEBHOOK_MODE=1, run an aiohttp server bound to
@@ -923,12 +913,9 @@ def main():
     import config as _config
     if _config.WEBHOOK_MODE:
         from webhook import run as _webhook_run
-        print(
-            f"[main] webhook mode: aiohttp on "
+        log.info(f"[main] webhook mode: aiohttp on "
             f"http://{_config.WEBHOOK_HOST}:{_config.WEBHOOK_PORT}"
-            f"{_config.WEBHOOK_PATH}/",
-            flush=True,
-        )
+            f"{_config.WEBHOOK_PATH}/")
         # v0.9.3: auto-register the webhook with Telegram if WEBHOOK_URL
         # is set, using a sync HTTP call. The v0.9.2 implementation
         # initialized a Bot object in a first asyncio.run() loop and
@@ -965,7 +952,7 @@ def main():
         "TELEGRAM_API resolved to empty; check the env override in "
         "config.py and BOT_TOKEN"
     )
-    print('[main] polling mode: long-poll getUpdates', flush=True)
+    log.info('[main] polling mode: long-poll getUpdates')
 
     # Graceful shutdown: SIGINT (Ctrl+C) and SIGTERM (docker stop / systemd
     # stop) set this event; the polling loop checks it at the top of each
@@ -975,7 +962,7 @@ def main():
     shutdown_event = asyncio.Event()
 
     def _on_signal(signame: str) -> None:
-        print(f"[main] received {signame}, initiating shutdown...", flush=True)
+        log.info(f"[main] received {signame}, initiating shutdown...")
         shutdown_event.set()
 
     async def _run():
@@ -1003,7 +990,7 @@ def main():
         try:
             await _register_bot_menu()
         except Exception as e:
-            print(f"[main] setMyCommands failed (non-fatal): {e!r}", flush=True)
+            log.info(f"[main] setMyCommands failed (non-fatal): {e!r}")
         # NB: we intentionally do NOT call getUpdates with offset=-1 to
         # drop pending updates. Reasoning:
         #   - in LOCKDOWN, the handler rejects everything anyway, so
@@ -1039,7 +1026,7 @@ def main():
             ) as client:
                 while True:
                     if shutdown_event.is_set():
-                        print(f"[poll] shutdown_event set, exiting loop (after {n_polls} cycles, {n_updates} updates)", flush=True)
+                        log.info(f"[poll] shutdown_event set, exiting loop (after {n_polls} cycles, {n_updates} updates)")
                         break
                     try:
                         r = await client.get(
@@ -1066,7 +1053,7 @@ def main():
                         if updates_raw:
                             n_updates += len(updates_raw)
                             backoff = 1.0
-                            print(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})", flush=True)
+                            log.info(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})")
                             for upd_dict in updates_raw:
                                 # PII-safe dump. The previous version
                                 # printed the full JSON including
@@ -1083,17 +1070,14 @@ def main():
                                 upd_text = (upd_msg.get("text") or upd_msg.get("caption") or "")[:60]
                                 import hashlib
                                 text_hash = hashlib.sha1(upd_text.encode("utf-8", errors="replace")).hexdigest()[:10] if upd_text else "-"
-                                print(
-                                    f"[poll] update_id={upd_id} "
+                                log.info(f"[poll] update_id={upd_id} "
                                     f"chat_type={upd_chat.get('type', '?')} "
                                     f"chat_id={upd_chat.get('id', '?')} "
                                     f"is_forum={upd_chat.get('is_forum', '?')} "
                                     f"from_id={upd_from.get('id', '?')} "
                                     f"from_is_bot={upd_from.get('is_bot', '?')} "
                                     f"thread_id={upd_msg.get('message_thread_id', '-')} "
-                                    f"text_hash={text_hash}",
-                                    flush=True,
-                                )
+                                    f"text_hash={text_hash}")
                                 offset = upd_dict["update_id"] + 1
                                 # edited_message handling:
                                 #
@@ -1136,11 +1120,8 @@ def main():
                                         # `update.message.text` and friends
                                         # without per-handler branching.
                                         upd_dict["message"] = em
-                                        print(
-                                            f"[poll] treating edited_message as new command "
-                                            f"update_id={upd_dict['update_id']} cmd={em_text[:32]!r}",
-                                            flush=True,
-                                        )
+                                        log.info(f"[poll] treating edited_message as new command "
+                                            f"update_id={upd_dict['update_id']} cmd={em_text[:32]!r}")
                                     else:
                                         # Non-command edit: delete the
                                         # bot's previous reply (if any)
@@ -1156,24 +1137,18 @@ def main():
                                                         chat_id=em_chat_id,
                                                         message_id=old_bot_msg_id,
                                                     )
-                                                    print(
-                                                        f"[poll] edit-replace: deleted old bot reply "
+                                                    log.info(f"[poll] edit-replace: deleted old bot reply "
                                                         f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id} "
-                                                        f"user_msg_id={em_msg_id}",
-                                                        flush=True,
-                                                    )
+                                                        f"user_msg_id={em_msg_id}")
                                                 except Exception as e:
                                                     # Most common failure: bot
                                                     # lacks delete permission,
                                                     # or the message is too
                                                     # old. Just log and
                                                     # continue.
-                                                    print(
-                                                        f"[poll] edit-replace: delete failed "
+                                                    log.info(f"[poll] edit-replace: delete failed "
                                                         f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id}: "
-                                                        f"{type(e).__name__}: {e!r}",
-                                                        flush=True,
-                                                    )
+                                                        f"{type(e).__name__}: {e!r}")
                                         # Now rewrite the update as a
                                         # regular `message` so the
                                         # dispatcher processes it like
@@ -1181,11 +1156,8 @@ def main():
                                         # downstream handlers (handle_text
                                         # etc.) will see the edited text.
                                         upd_dict["message"] = em
-                                        print(
-                                            f"[poll] edit-replace: processing edited_message "
-                                            f"update_id={upd_dict['update_id']} text_hash={em_text[:32]!r}",
-                                            flush=True,
-                                        )
+                                        log.info(f"[poll] edit-replace: processing edited_message "
+                                            f"update_id={upd_dict['update_id']} text_hash={em_text[:32]!r}")
                                 # Dispatch as a TASK, not awaited. This is
                                 # the critical change for the Stop button:
                                 # previously, the polling loop was blocked
@@ -1210,13 +1182,13 @@ def main():
                                 try:
                                     _spawn_dispatch(upd_dict)
                                 except Exception as e:
-                                    print(f"[poll] task-create error: {type(e).__name__}: {e!r}", flush=True)
+                                    log.info(f"[poll] task-create error: {type(e).__name__}: {e!r}")
                         elif n_polls <= 5 or n_polls % 20 == 0:
-                            print(f"[poll] cycle={n_polls} no updates", flush=True)
+                            log.info(f"[poll] cycle={n_polls} no updates")
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
-                        print(f"[poll] error: {type(e).__name__}: {e!r} (backoff {backoff}s)", flush=True)
+                        log.info(f"[poll] error: {type(e).__name__}: {e!r} (backoff {backoff}s)")
                         await asyncio.sleep(backoff)
                         backoff = min(backoff * 2, 30.0)
         finally:
@@ -1229,12 +1201,12 @@ def main():
                 try:
                     await _dispatcher.shutdown()
                 except Exception as e:
-                    print(f"[main] dispatcher shutdown error: {e!r}", flush=True)
+                    log.info(f"[main] dispatcher shutdown error: {e!r}")
 
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        print('[main] KeyboardInterrupt', flush=True)
+        log.info('[main] KeyboardInterrupt')
 
 # === _register_bot_menu ===
 async def _register_bot_menu():
@@ -1295,7 +1267,7 @@ async def _register_bot_menu():
         scope=None,  # default scope covers all private chats
         language_code=None,
     )
-    print(f"[main] setMyCommands: registered {len(BOT_COMMANDS)} commands", flush=True)
+    log.info(f"[main] setMyCommands: registered {len(BOT_COMMANDS)} commands")
 
 # === cmd_callback ===
 async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1323,7 +1295,7 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.callback_query.answer()
     except Exception as e:
-        print(f"[cmd_callback] answer() failed (non-fatal): {type(e).__name__}: {e!r}", flush=True)
+        log.info(f"[cmd_callback] answer() failed (non-fatal): {type(e).__name__}: {e!r}")
     data = update.callback_query.data or ""
     # === Stop button (works in private AND group) ===
     if data == "stop:thinking":
@@ -1337,18 +1309,15 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else None
         )
         if original is None or original.from_user is None:
-            print("[callback stop] no original message in reply_to_message", flush=True)
+            log.info("[callback stop] no original message in reply_to_message")
             return
         original_user_id = original.from_user.id
         clicker_id = update.effective_user.id
         if clicker_id != original_user_id:
             # Don't reveal that the request was meaningful; just
             # answer with a notice and let the clicker move on.
-            print(
-                f"[callback stop] rejected: clicker={clicker_id} != "
-                f"original={original_user_id}",
-                flush=True,
-            )
+            log.info(f"[callback stop] rejected: clicker={clicker_id} != "
+                f"original={original_user_id}")
             await update.callback_query.answer(
                 "Только автор сообщения может остановить обработку.",
                 show_alert=True,
@@ -1374,11 +1343,8 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # stale button (rare — buttons are tied to a
             # specific thinking message which gets deleted on
             # completion).
-            print(
-                f"[callback stop] no abort_event for {key} "
-                f"(handler may have already finished)",
-                flush=True,
-            )
+            log.info(f"[callback stop] no abort_event for {key} "
+                f"(handler may have already finished)")
             # v0.7.9: retry on RetryAfter for edit_message_text
             from telegram.error import RetryAfter as _RA
             _edited_ok = False
@@ -1392,17 +1358,11 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     break
             if not _edited_ok:
-                print(
-                    f"[callback stop] edit_message_text failed for key={key}; "
-                    f"thinking message likely already deleted",
-                    flush=True,
-                )
+                log.info(f"[callback stop] edit_message_text failed for key={key}; "
+                    f"thinking message likely already deleted")
             return
         event.set()
-        print(
-            f"[callback stop] abort_event set for {key}",
-            flush=True,
-        )
+        log.info(f"[callback stop] abort_event set for {key}")
         # Delete the thinking message immediately so the user sees
         # the click took effect. We DELETE (not edit) so the inline
         # Stop button disappears with the message - editing would
@@ -1417,13 +1377,13 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # deleted by handler, etc.), try to edit with the
             # inline keyboard removed. answer() with show_alert=False
             # to not spam the user with an error toast.
-            print(f"[callback stop] delete_message failed: {type(e).__name__}: {e!r}; falling back to edit", flush=True)
+            log.info(f"[callback stop] delete_message failed: {type(e).__name__}: {e!r}; falling back to edit")
             try:
                 await update.callback_query.edit_message_text(
                     "⏹ Остановлено", reply_markup=None
                 )
             except Exception as e2:
-                print(f"[callback stop] edit fallback also failed: {type(e2).__name__}: {e2!r}", flush=True)
+                log.info(f"[callback stop] edit fallback also failed: {type(e2).__name__}: {e2!r}")
         return
 
     # The remaining branches (sub:, newsub:prompt, delsub:) are
@@ -1494,12 +1454,9 @@ async def _handle_chat_member_update(upd, bot):
     first = getattr(new_user, 'first_name', None) if new_user else None
     is_bot_user = getattr(new_user, 'is_bot', False) if new_user else False
     is_forum = getattr(chat, 'is_forum', False)
-    print(
-        f"[chat_member] chat_id={chat.id} is_forum={is_forum} "
+    log.info(f"[chat_member] chat_id={chat.id} is_forum={is_forum} "
         f"user_id={user_id} username={username!r} is_bot={is_bot_user} "
-        f"old_status={old_status!r} new_status={new_status!r}",
-        flush=True,
-    )
+        f"old_status={old_status!r} new_status={new_status!r}")
     # Only act on "new join" (left/kicked → member/admin/creator).
     # Skip leaves, promotes, demotes, bans — those are operator
     # actions, not new users.
@@ -1513,7 +1470,7 @@ async def _handle_chat_member_update(upd, bot):
     # Skip other bots joining. Their operator is responsible for
     # the bot's behaviour, and PMing another bot is wasted work.
     if is_bot_user:
-        print(f"[chat_member] skip bot user_id={user_id}", flush=True)
+        log.info(f"[chat_member] skip bot user_id={user_id}")
         return
     # Build a mention. Telegram allows @username for users with a
     # public username; fall back to a first_name or just "you".
@@ -1543,17 +1500,11 @@ async def _handle_chat_member_update(upd, bot):
             text=group_msg,
             message_thread_id=None,  # explicit: General topic
         )
-        print(
-            f"[chat_member] posted welcome in chat_id={chat.id} "
-            f"for user_id={user_id}",
-            flush=True,
-        )
+        log.info(f"[chat_member] posted welcome in chat_id={chat.id} "
+            f"for user_id={user_id}")
     except Exception as e:
-        print(
-            f"[chat_member] FAILED to post welcome in chat_id={chat.id}: "
-            f"{type(e).__name__}: {e!r}",
-            flush=True,
-        )
+        log.warning(f"[chat_member] FAILED to post welcome in chat_id={chat.id}: "
+            f"{type(e).__name__}: {e!r}")
     # 2) PM the new member. Telegram allows this because the
     # user is now in a common group with the bot. If their
     # privacy settings block PMs from non-contacts, this will
@@ -1563,16 +1514,10 @@ async def _handle_chat_member_update(upd, bot):
             chat_id=user_id,
             text=WELCOME_TEXT,
         )
-        print(
-            f"[chat_member] PM'd welcome to user_id={user_id}",
-            flush=True,
-        )
+        log.info(f"[chat_member] PM'd welcome to user_id={user_id}")
     except Exception as e:
-        print(
-            f"[chat_member] PM to user_id={user_id} FAILED: "
-            f"{type(e).__name__}: {e!r}",
-            flush=True,
-        )
+        log.warning(f"[chat_member] PM to user_id={user_id} FAILED: "
+            f"{type(e).__name__}: {e!r}")
 
 # === _dispatch_update ===
 async def _dispatch_update(upd_dict):
@@ -1606,12 +1551,12 @@ async def _dispatch_update(upd_dict):
 
         async def log_error(update, context):
             err = context.error
-            print(f"[handler error] {type(err).__name__}: {err!r}", flush=True)
+            log.info(f"[handler error] {type(err).__name__}: {err!r}")
 
         app.add_error_handler(log_error)
         await app.initialize()
         _dispatcher = app
-        print("[dispatch] Application initialized (lazy)", flush=True)
+        log.info("[dispatch] Application initialized (lazy)")
         # PTB 21 requires Application.initialize() before process_update.
         # We do not call app.start() — the hand-rolled polling loop drives
         # dispatch. initialize() sets up the application context.
@@ -1621,7 +1566,7 @@ async def _dispatch_update(upd_dict):
 
     upd = Update.de_json(upd_dict, _dispatcher.bot)
     if upd is None:
-        print(f"[dispatch] de_json returned None for {upd_dict}", flush=True)
+        log.info(f"[dispatch] de_json returned None for {upd_dict}")
         return
     # === chat_member (new join) handler ===
     # We handle chat_member updates BEFORE PTB's process_update
@@ -1636,7 +1581,7 @@ async def _dispatch_update(upd_dict):
         await _handle_chat_member_update(upd, _dispatcher.bot)
         return
     txt = upd.message.text if (upd.message and upd.message.text) else None
-    print(f"[dispatch] update_id={upd.update_id} msg={txt!r}", flush=True)
+    log.info(f"[dispatch] update_id={upd.update_id} msg={txt!r}")
     # Group-mode noise filter. Apply here (in the dispatch path) so
     # EVERY handler is covered uniformly: message handlers AND
     # command handlers. If a message is from another Telegram bot
@@ -1649,7 +1594,7 @@ async def _dispatch_update(upd_dict):
             else f"[llm] @{who.username}" if who.username
             else f"id={who.id}"
         )
-        print(f"[dispatch] muting group-mode message from {tag}", flush=True)
+        log.info(f"[dispatch] muting group-mode message from {tag}")
         return
     # T65.1: reply-to-other-user is ABSORBED, not skipped.
     # Persist + react silently; do not answer, do not show reasoning.
@@ -1657,7 +1602,7 @@ async def _dispatch_update(upd_dict):
         await _handle_reply_to_other_user(upd, _dispatcher.bot)
         return
     await _dispatcher.process_update(upd)
-    print(f"[dispatch] processed update_id={upd.update_id}", flush=True)
+    log.info(f"[dispatch] processed update_id={upd.update_id}")
 
 
 

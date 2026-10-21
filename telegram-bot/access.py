@@ -25,6 +25,11 @@ from config import ALLOWED_USER_IDS, ALLOWED_USERNAMES, LOCKDOWN
 from prompts import _LLM_TOKEN_RE
 from state import _get_user_semaphore
 
+import sys as _sys
+from logconf import get_logger
+log = get_logger(__name__)
+log_stderr = get_logger(__name__ + '.stderr', stream=_sys.stderr)
+
 
 def is_authorized(update) -> bool:
     """Return True iff the user is on the allowlist.
@@ -122,20 +127,14 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
         user_label = (update.effective_user.username or update.effective_user.id) if update.effective_user else "?"
     except Exception:
         user_label = "?"
-    print(
-        f"[check_user_slot] queueing message for user={user_label} chat={chat_id} "
-        f"(slots all in use); will process when a slot frees (timeout {MAX_QUEUE_WAIT_SEC}s)",
-        flush=True,
-    )
+    log.info(f"[check_user_slot] queueing message for user={user_label} chat={chat_id} "
+        f"(slots all in use); will process when a slot frees (timeout {MAX_QUEUE_WAIT_SEC}s)")
     try:
         await asyncio.wait_for(sem.acquire(), timeout=MAX_QUEUE_WAIT_SEC)
         return sem
     except asyncio.TimeoutError:
-        print(
-            f"[check_user_slot] queue timeout for user={user_label} chat={chat_id} "
-            f"after {MAX_QUEUE_WAIT_SEC}s; dropping message",
-            flush=True,
-        )
+        log.info(f"[check_user_slot] queue timeout for user={user_label} chat={chat_id} "
+            f"after {MAX_QUEUE_WAIT_SEC}s; dropping message")
         # v0.10.2 (Qwen wave-3): tell the user the bot is overloaded
         # instead of silently dropping. The user would otherwise see
         # "💭 думаю…" and then nothing for 5 minutes.
@@ -165,20 +164,16 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
             # so the incident is un-alertable -- which is the same as the
             # incident not being tracked. stderr keeps it out of stdout's
             # normal stream if stdout is ever piped somewhere structured.
-            print(
-                _json.dumps({
-                    "level": "error",
-                    "module": "access",
-                    "event": "overload_notice_not_delivered",
-                    "user_id": user_id,
-                    "chat_id": chat_id,
-                    "queue_wait_sec": MAX_QUEUE_WAIT_SEC,
-                    "error_type": type(e).__name__,
-                    "error": str(e),
-                }),
-                file=_sys.stderr,
-                flush=True,
-            )
+            log_stderr.error(_json.dumps({
+                "level": "error",
+                "module": "access",
+                "event": "overload_notice_not_delivered",
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "queue_wait_sec": MAX_QUEUE_WAIT_SEC,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            }))
         return None
 
 
@@ -275,5 +270,5 @@ async def reject_if_unauthorized(update: Update, context: ContextTypes.DEFAULT_T
             snippet = update.message.text[:80]
         elif update.message.caption:
             snippet = f'[cap] {update.message.caption[:60]}'
-    print(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}', flush=True)
+    log.info(f'[SECURITY] rejected id={uid} {uname} msg={snippet!r}')
     return True

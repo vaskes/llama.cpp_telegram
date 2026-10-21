@@ -18,6 +18,9 @@ import re
 import time as _time
 from collections import deque
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 #: Sub-talk names: 1-32 chars, must start with a letter or digit, may
 #: contain letters, digits, dash, underscore, dot.
 _SUBTALK_NAME_RE = re.compile(r"^[^\s]{1,32}$")
@@ -110,12 +113,9 @@ async def _rate_limit_send(chat_id: int) -> None:
         # Sleep until oldest entry ages out + 0.5s headroom
         sleep_for = _RATE_WINDOW_SEC - (now - window[0]) + 0.5
         if sleep_for > 0:
-            print(
-                f"[rate_limit] chat={chat_id} window full "
+            log.info(f"[rate_limit] chat={chat_id} window full "
                 f"({len(window)} sends in {_RATE_WINDOW_SEC}s); "
-                f"sleeping {sleep_for:.1f}s before next send",
-                flush=True,
-            )
+                f"sleeping {sleep_for:.1f}s before next send")
             await asyncio.sleep(sleep_for)
     window.append(_time.monotonic())
 

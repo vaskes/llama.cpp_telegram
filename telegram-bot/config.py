@@ -9,6 +9,9 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 # === Telegram bot identity ===
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -63,14 +66,14 @@ ALLOWED_USERNAMES = {x.lstrip("@").lower() for x in ALLOWED_USERNAMES_RAW.split(
 # relying on update_id iteration.
 if not ALLOWED_USER_IDS and not ALLOWED_USERNAMES:
     LOCKDOWN = True
-    print("[SECURITY] ALLOWED_USER_IDS and ALLOWED_USERNAMES both empty -> LOCKDOWN (reject all).", flush=True)
+    log.info("[SECURITY] ALLOWED_USER_IDS and ALLOWED_USERNAMES both empty -> LOCKDOWN (reject all).")
 else:
     LOCKDOWN = False
-    print(f"[SECURITY] whitelist: {len(ALLOWED_USER_IDS)} ids, {len(ALLOWED_USERNAMES)} usernames", flush=True)
+    log.info(f"[SECURITY] whitelist: {len(ALLOWED_USER_IDS)} ids, {len(ALLOWED_USERNAMES)} usernames")
     if ALLOWED_USERNAMES and not ALLOWED_USER_IDS:
-        print("[SECURITY] WARNING: ALLOWED_USERNAMES is set but ALLOWED_USER_IDS is empty. "
+        log.warning("[SECURITY] WARNING: ALLOWED_USERNAMES is set but ALLOWED_USER_IDS is empty. "
               "Username-based access can break if a user changes their @username. "
-              "Prefer numeric IDs.", flush=True)
+              "Prefer numeric IDs.")
 
 # === File-size limits ===
 MAX_PHOTO_BYTES = int(os.environ.get("MAX_PHOTO_BYTES", "10000000"))     # 10 MB
@@ -261,7 +264,7 @@ def emit_env_warnings() -> int:
     """Print warnings and return the count, so callers can assert on it."""
     warnings = warn_unrecognised_env()
     for w in warnings:
-        print(w, flush=True)
+        log.info(w)
     return len(warnings)
 
 

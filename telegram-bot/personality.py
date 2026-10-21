@@ -29,6 +29,9 @@ from __future__ import annotations
 import json
 import os
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 PERSONA_ENV = "BOT_PERSONA_FILE"
 LOCAL_PERSONA_FILE = "persona.local.json"
 
@@ -68,33 +71,29 @@ def load_persona(path: str | None = None) -> dict:
     except FileNotFoundError:
         return {}
     except Exception as exc:
-        print(f"[personality] cannot read {path}: {type(exc).__name__}: {exc}",
-              flush=True)
+        log.info(f"[personality] cannot read {path}: {type(exc).__name__}: {exc}")
         return {}
     if not isinstance(data, dict):
-        print(f"[personality] {path}: top level must be an object, ignoring",
-              flush=True)
+        log.info(f"[personality] {path}: top level must be an object, ignoring")
         return {}
     if not data.get("enabled"):
         return {}
     clean = {k: v for k, v in data.items() if not k.startswith("_")}
     for key in ("name", "family_name", "patronymic", "profile"):
         if key in clean and not isinstance(clean[key], str):
-            print(f"[personality] field {key!r} must be a string, dropping it",
-                  flush=True)
+            log.info(f"[personality] field {key!r} must be a string, dropping it")
             clean.pop(key)
     if "age" in clean:
         try:
             clean["age"] = int(clean["age"])
         except (TypeError, ValueError):
-            print(f"[personality] field 'age' must be a number, dropping it",
-                  flush=True)
+            log.info(f"[personality] field 'age' must be a number, dropping it")
             clean.pop("age")
     if "traits" in clean:
         if not isinstance(clean["traits"], list) or \
                 not all(isinstance(t, str) for t in clean["traits"]):
-            print("[personality] field 'traits' must be a list of strings, "
-                  "dropping it", flush=True)
+            log.info("[personality] field 'traits' must be a list of strings, "
+                  "dropping it")
             clean.pop("traits")
     return clean
 

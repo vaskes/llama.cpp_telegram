@@ -69,6 +69,9 @@ import os
 import time
 from typing import Callable, Iterable, Sequence
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 # Fetch ceiling. This is the "how much do we pull out of SQLite at all"
 # bound, NOT the context policy — the policy lives in ContextBudget. It
 # exists so a runaway thread cannot drag the entire table into memory
@@ -146,11 +149,8 @@ REANCHOR_MODE = (
 if REANCHOR_MODE not in REANCHOR_MODES:
     # Same rule as CONTEXT_STRATEGY: a typo in .env must not stop the bot
     # from starting. Fall back, and shout about it.
-    print(
-        f"[context_budget] BOT_REANCHOR_MODE={REANCHOR_MODE!r} is not one of "
-        f"{REANCHOR_MODES}; falling back to {DEFAULT_REANCHOR_MODE!r}",
-        flush=True,
-    )
+    log.info(f"[context_budget] BOT_REANCHOR_MODE={REANCHOR_MODE!r} is not one of "
+        f"{REANCHOR_MODES}; falling back to {DEFAULT_REANCHOR_MODE!r}")
     REANCHOR_MODE = DEFAULT_REANCHOR_MODE
 
 #: Only `soft` runs the in-process scheduler. In `process`/`process+engine`
@@ -208,8 +208,7 @@ def reanchor() -> dict:
     try:
         new_anchor = _anchor_for_days(REMEMBER_DAYS)
     except Exception as exc:  # pragma: no cover - defensive
-        print(f"[context_budget] reanchor failed, keeping old anchor: {exc}",
-              flush=True)
+        log.info(f"[context_budget] reanchor failed, keeping old anchor: {exc}")
         return {"ok": False, "error": str(exc)}
     CONTEXT_ANCHOR = new_anchor
     ANCHOR_GENERATION += 1
@@ -223,11 +222,8 @@ def reanchor() -> dict:
     _live = _default_instance()
     if _live is not None:
         _live.anchor = new_anchor
-    print(
-        f"[context_budget] reanchored: gen={ANCHOR_GENERATION} "
-        f"anchor={int(new_anchor)} remember_days={REMEMBER_DAYS}",
-        flush=True,
-    )
+    log.info(f"[context_budget] reanchored: gen={ANCHOR_GENERATION} "
+        f"anchor={int(new_anchor)} remember_days={REMEMBER_DAYS}")
     return {
         "ok": True,
         "anchor": new_anchor,

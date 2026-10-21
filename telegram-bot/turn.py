@@ -33,6 +33,9 @@ import asyncio
 
 import storage
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 
 class Turn:
     """Persist/rollback bookkeeping for a single LLM turn."""
@@ -89,19 +92,13 @@ class Turn:
             # The DB refused. There is no second undo, so the only thing left
             # is to make the failure loud — a silent half-rollback is how you
             # end up debugging "why does the bot think I said that".
-            print(
-                f"[{self.label}] ROLLBACK FAILED for "
+            log.warning(f"[{self.label}] ROLLBACK FAILED for "
                 f"{self.chat_id}/{self.thread_id}: "
                 f"{type(rb).__name__}: {rb}. The user message is still in the "
-                f"history with no assistant reply.",
-                flush=True,
-            )
+                f"history with no assistant reply.")
             return False
-        print(
-            f"[{self.label}] rolled back persisted turn for "
-            f"{self.chat_id}/{self.thread_id} ({reason})",
-            flush=True,
-        )
+        log.info(f"[{self.label}] rolled back persisted turn for "
+            f"{self.chat_id}/{self.thread_id} ({reason})")
         self.rows -= 1
         if self.rows <= 0:
             self.persisted = False

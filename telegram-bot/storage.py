@@ -66,6 +66,9 @@ import threading
 import time
 from typing import Optional
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 
 SCHEMA_V2 = """
 CREATE TABLE IF NOT EXISTS chat_threads (
@@ -223,7 +226,7 @@ class Storage:
         try:
             _migrate_v1_to_v2(c)
         except sqlite3.OperationalError as e:
-            print(f"[storage] WARN: migration step failed: {e}")
+            log.warning(f"[storage] WARN: migration step failed: {e}")
         # executescript() implicitly commits before it runs, so it cannot
         # live inside an explicit transaction. Every statement in SCHEMA_V2
         # is CREATE ... IF NOT EXISTS, which makes a partial application
@@ -281,13 +284,10 @@ class Storage:
             # see a slow `journal_mode=...` checkpoint.
             got = c.execute("PRAGMA journal_mode").fetchone()[0]
             if got.lower() != "wal":
-                print(
-                    f"[storage] WARN: journal_mode={got}, expected WAL; "
+                log.warning(f"[storage] WARN: journal_mode={got}, expected WAL; "
                     f"concurrent reads may block writers on this "
                     f"filesystem. Mount with shared memory support or "
-                    f"move the DB to a local volume.",
-                    flush=True,
-                )
+                    f"move the DB to a local volume.")
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA foreign_keys=ON")
             self._local.conn = c

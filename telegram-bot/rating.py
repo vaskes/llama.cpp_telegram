@@ -14,6 +14,9 @@ from prompts import (
     RATING_RULES, _EMOJI_CHAR_RE, _RATING_PREFIX_RE,
 )
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 
 def is_rating_active(update) -> bool:
     """True iff the current update should be handled in rating mode.
@@ -161,17 +164,11 @@ async def apply_reaction(context, chat_id: int, message_id: int, emoji: str) -> 
             chat_id=chat_id, message_id=message_id,
             reaction=[ReactionTypeEmoji(emoji=emoji)],
         )
-        print(
-            f"[rating] set {emoji!r} on chat_id={chat_id} message_id={message_id}",
-            flush=True,
-        )
+        log.info(f"[rating] set {emoji!r} on chat_id={chat_id} message_id={message_id}")
     except Exception as e:
         # REACTION_NOT_ALLOWED, MESSAGE_ID_INVALID, etc. are
         # all expected in some channels. Log and move on.
-        print(
-            f"[rating] set_message_reaction FAILED: {type(e).__name__}: {e!r}",
-            flush=True,
-        )
+        log.warning(f"[rating] set_message_reaction FAILED: {type(e).__name__}: {e!r}")
 
 
 async def execute_react_to_message(args, *, bot, chat_id, default_message_id):
@@ -208,10 +205,10 @@ async def execute_react_to_message(args, *, bot, chat_id, default_message_id):
             chat_id=chat_id, message_id=msg_id,
             reaction=[ReactionTypeEmoji(emoji=emoji)],
         )
-        print(f"[react_tool] set {emoji!r} on chat_id={chat_id} message_id={msg_id}", flush=True)
+        log.info(f"[react_tool] set {emoji!r} on chat_id={chat_id} message_id={msg_id}")
         return f"[bot: OK - set {emoji} reaction on message_id={msg_id} in chat_id={chat_id}]"
     except Exception as e:
-        print(f"[react_tool] set_message_reaction FAILED: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"[react_tool] set_message_reaction FAILED: {type(e).__name__}: {e!r}")
         return f"[bot: react_to_message failed: {type(e).__name__}: {e!r}]"
 
 

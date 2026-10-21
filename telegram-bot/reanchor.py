@@ -29,6 +29,9 @@ from context_budget import (
     reanchor,
 )
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 
 async def summarise_after_reanchor() -> dict:
     """T70.3 — rebuild the out-of-window summaries for every thread.
@@ -53,8 +56,8 @@ async def summarise_after_reanchor() -> dict:
             model=config.MODEL,
         )
     except Exception as exc:
-        print(f"[reanchor] summarisation failed (window strategy still "
-              f"works): {type(exc).__name__}: {exc}", flush=True)
+        log.info(f"[reanchor] summarisation failed (window strategy still "
+              f"works): {type(exc).__name__}: {exc}")
         return {"ok": False, "error": str(exc)}
 
 
@@ -112,19 +115,18 @@ def run_engine_reset(cmd: str = ENGINE_RESET_CMD, timeout: int = 120) -> dict:
             capture_output=True, text=True,
         )
     except subprocess.TimeoutExpired:
-        print(f"[reanchor] engine reset timed out after {timeout}s: {cmd}",
-              flush=True)
+        log.info(f"[reanchor] engine reset timed out after {timeout}s: {cmd}")
         return {"ok": False, "error": "timeout"}
     except Exception as exc:
-        print(f"[reanchor] engine reset failed to start: {exc}", flush=True)
+        log.info(f"[reanchor] engine reset failed to start: {exc}")
         return {"ok": False, "error": str(exc)}
     if proc.returncode != 0:
         # Log the tail: an operator debugging this needs to see WHY, and
         # these are their own command's output, not model or user data.
         tail = (proc.stderr or proc.stdout or "").strip()[-500:]
-        print(f"[reanchor] engine reset rc={proc.returncode}: {tail}", flush=True)
+        log.info(f"[reanchor] engine reset rc={proc.returncode}: {tail}")
         return {"ok": False, "returncode": proc.returncode, "output": tail}
-    print(f"[reanchor] engine reset ok: {cmd}", flush=True)
+    log.info(f"[reanchor] engine reset ok: {cmd}")
     return {"ok": True, "returncode": 0}
 
 
@@ -136,17 +138,13 @@ async def reanchor_loop(stop: asyncio.Event) -> None:
     wake re-evaluates the target from the current clock.
     """
     hour, minute = parse_hhmm(REANCHOR_AT)
-    print(
-        f"[reanchor] scheduler armed: mode={REANCHOR_MODE} at={REANCHOR_AT} "
-        f"soft={SOFT_REANCHOR_ENABLED}",
-        flush=True,
-    )
+    log.info(f"[reanchor] scheduler armed: mode={REANCHOR_MODE} at={REANCHOR_AT} "
+        f"soft={SOFT_REANCHOR_ENABLED}")
     while not stop.is_set():
         try:
             delay = seconds_until_next(hour, minute)
         except Exception as exc:
-            print(f"[reanchor] bad BOT_REANCHOR_AT {REANCHOR_AT!r}: {exc}",
-                  flush=True)
+            log.info(f"[reanchor] bad BOT_REANCHOR_AT {REANCHOR_AT!r}: {exc}")
             return
         # Wake up at least every 10 minutes so a clock jump is noticed.
         remaining = delay
@@ -183,18 +181,15 @@ def start_reanchor_scheduler() -> None:
     running loop, after initialize().
     """
     if not SOFT_REANCHOR_ENABLED:
-        print(
-            f"[reanchor] mode={REANCHOR_MODE}: no in-process scheduler; the "
-            f"anchor is re-derived when the process starts",
-            flush=True,
-        )
+        log.info(f"[reanchor] mode={REANCHOR_MODE}: no in-process scheduler; the "
+            f"anchor is re-derived when the process starts")
         return
     stop = asyncio.Event()
     task = asyncio.get_running_loop().create_task(
         reanchor_loop(stop), name="reanchor_loop"
     )
     _HANDLES.append((stop, task))
-    print("[reanchor] scheduler started", flush=True)
+    log.info("[reanchor] scheduler started")
 
 
 #: Keeps stop/task alive so they are not garbage collected mid-sleep. The
@@ -218,6 +213,6 @@ def start_summarise_on_boot() -> None:
             summarise_after_reanchor(), name="summarise_on_boot"
         )
         _HANDLES.append((None, task))
-        print("[summarize] boot summarisation scheduled", flush=True)
+        log.info("[summarize] boot summarisation scheduled")
     except Exception as exc:
-        print(f"[summarize] boot hook failed: {exc!r}", flush=True)
+        log.info(f"[summarize] boot hook failed: {exc!r}")

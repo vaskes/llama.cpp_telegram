@@ -35,6 +35,9 @@ import time
 
 import httpx
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 #: (chat_id, thread_id) -> {"text": str, "n_messages": int, "at": float}
 #: In-memory on purpose. The summary is a derived artefact; persisting it would
 #: create a second source of truth that could disagree with the first. Losing
@@ -145,8 +148,7 @@ async def _call_model(llama_url: str, model: str, old: list[dict],
             r.raise_for_status()
             data = r.json()
     except Exception as exc:
-        print(f"[summarize] model call failed: {type(exc).__name__}: {exc}",
-              flush=True)
+        log.info(f"[summarize] model call failed: {type(exc).__name__}: {exc}")
         return None
     try:
         msg = data["choices"][0]["message"]
@@ -181,17 +183,13 @@ async def summarise_thread(*, chat_id: int, thread_id: str,
             "n_messages": len(older),
             "at": time.time(),
         }
-        print(
-            f"[summarize] chat={chat_id} thread={thread_id}: "
+        log.info(f"[summarize] chat={chat_id} thread={thread_id}: "
             f"{len(older)} old messages -> {len(text)} chars "
-            f"(window keeps {len(inside)})",
-            flush=True,
-        )
+            f"(window keeps {len(inside)})")
         return {"ok": True, "old_messages": len(older),
                 "summary_chars": len(text), "in_window": len(inside)}
     except Exception as exc:
-        print(f"[summarize] thread {chat_id}/{thread_id} failed: {exc!r}",
-              flush=True)
+        log.info(f"[summarize] thread {chat_id}/{thread_id} failed: {exc!r}")
         return {"ok": False, "error": str(exc)}
 
 
@@ -206,7 +204,7 @@ async def summarise_all(*, budget, store, llama_url: str, model: str,
     try:
         chats = store.list_chats()
     except Exception as exc:
-        print(f"[summarize] cannot list chats: {exc!r}", flush=True)
+        log.info(f"[summarize] cannot list chats: {exc!r}")
         return {"ok": False, "error": str(exc)}
     total = {"threads": 0, "summarised": 0, "skipped": 0, "failed": 0}
     for chat_id, thread_id in chats:
@@ -221,9 +219,6 @@ async def summarise_all(*, budget, store, llama_url: str, model: str,
             total["skipped"] += 1
         else:
             total["failed"] += 1
-    print(
-        f"[summarize] done: {total['summarised']} summarised, "
-        f"{total['skipped']} skipped, {total['failed']} failed",
-        flush=True,
-    )
+    log.info(f"[summarize] done: {total['summarised']} summarised, "
+        f"{total['skipped']} skipped, {total['failed']} failed")
     return {"ok": total["failed"] == 0, **total}

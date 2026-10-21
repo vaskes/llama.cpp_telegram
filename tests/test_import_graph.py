@@ -78,7 +78,13 @@ def test_leaf_modules_stay_leaves():
     for leaf in ("chat_utils", "access", "turn"):
         up = sorted(d for d in edges.get(leaf, ())
                     if d not in ("storage", "state", "config", "prompts",
-                                 "limits", "chat_utils", "access"))
+                                 "limits", "chat_utils", "access",
+                                 # TECH-DEBT #3: every module takes its
+                                 # logger from here, so all of them have
+                                 # this edge. It is downward-only -- logconf
+                                 # imports nothing from the package, which
+                                 # test_logging_stdout_parity.py pins.
+                                 "logconf"))
         assert not up, (
             f"{leaf}.py is supposed to be a leaf but imports {up}. Every "
             f"edge added here is one more late import waiting to happen."

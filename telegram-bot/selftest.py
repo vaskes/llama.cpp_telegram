@@ -70,6 +70,9 @@ from access import (
     _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
 )
 
+from logconf import get_logger
+log = get_logger(__name__)
+
 
 def _lazy_dispatch():
     """dispatch imports this module, so it can only be imported lazily.
@@ -136,7 +139,7 @@ async def _selftest():
     import time
     # Lazy on purpose -- see the note at the top of this file.
     from dispatch import _dispatch_update
-    print('[selftest] starting', flush=True)
+    log.info('[selftest] starting')
     fake = {
         "update_id": 999_999_001,
         "message": {
@@ -158,7 +161,7 @@ async def _selftest():
     # === Vision test: call call_llama directly with a real PNG ===
     # Bypasses handle_photo (which needs a real Telegram file_id) but
     # exercises the same data:image/png;base64,... path the handler uses.
-    print('[selftest] running vision test...', flush=True)
+    log.info('[selftest] running vision test...')
     png_bytes = bytes.fromhex(
         '89504e470d0a1a0a0000000d49484452000000010000000108020000'
         '0090773d780000000c4944415478da6300010000050001'
@@ -187,7 +190,7 @@ async def _selftest():
     # Diagnostic: dump what we're about to send
     import json as _j
     _b_bytes = _j.dumps(vision_msg, ensure_ascii=False).encode('utf-8')
-    print(f"[selftest] vision_msg before call_llama: {len(_b_bytes)} bytes, head={_b_bytes[:200]!r}", flush=True)
+    log.info(f"[selftest] vision_msg before call_llama: {len(_b_bytes)} bytes, head={_b_bytes[:200]!r}")
     history = await asyncio.to_thread(_store().get_messages, 0, SELFTEST_KEY, 20)
     parsed_history = []
     for r in history:
@@ -208,9 +211,9 @@ async def _selftest():
             use_stream=False,
             chat_type='private',
         )
-        print(f"[selftest] call_llama result: {len(result)} chars, head={result[:300]!r}", flush=True)
+        log.info(f"[selftest] call_llama result: {len(result)} chars, head={result[:300]!r}")
     except Exception as e:
-        print(f"[selftest] FAILED: {type(e).__name__}: {e}", flush=True)
+        log.warning(f"[selftest] FAILED: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
 
@@ -221,7 +224,7 @@ async def _selftest():
     #   - forum-enabled supergroup, message in General: True
     #   - forum-enabled supergroup, message in a regular topic: True
     # We mock the minimum amount of PTB structure to feed _is_group_chat.
-    print('[selftest] running group-mode routing test...', flush=True)
+    log.info('[selftest] running group-mode routing test...')
     class _FakeChat:
         def __init__(self, type_, is_forum=None, chat_id=0):
             self.type = type_
@@ -254,7 +257,7 @@ async def _selftest():
         got = _is_group_chat(upd)
         ok = (got == expected)
         all_ok &= ok
-        print(f"  [{'OK' if ok else 'FAIL'}] {label}: is_group={got} (expected {expected})", flush=True)
+        log.info(f"  [{'OK' if ok else 'FAIL'}] {label}: is_group={got} (expected {expected})")
 
     # === handle_photo NameError regression test (v0.6.3 T11 bug) ===
     # The v0.6.3 T11 cleanup dropped is_group from all 4 message
@@ -266,7 +269,7 @@ async def _selftest():
     # We patch _route_to_thread to return a 3-tuple so the
     # destructure works, and patch _check_user_slot to return
     # None so the handler short-circuits before LLM call.
-    print('[selftest] running handle_photo NameError regression test...', flush=True)
+    log.info('[selftest] running handle_photo NameError regression test...')
     hp_ok = True
     try:  # noqa
         class _FakePhoto:
@@ -306,20 +309,20 @@ async def _selftest():
         handlers._route_to_thread = _fake_route
         handlers._check_user_slot = _fake_slot
         await handle_photo(_FakeUpdate(), _FakeContext())
-        print('  [OK] handle_photo does not NameError on is_group', flush=True)
+        log.info('  [OK] handle_photo does not NameError on is_group')
     except NameError as e:
         if 'is_group' in str(e):
-            print(f"  [FAIL] handle_photo regressed: NameError on is_group: {e!r}", flush=True)
+            log.warning(f"  [FAIL] handle_photo regressed: NameError on is_group: {e!r}")
             hp_ok = False
         else:
-            print(f"  [FAIL] handle_photo NameError (not is_group): {e!r}", flush=True)
+            log.warning(f"  [FAIL] handle_photo NameError (not is_group): {e!r}")
             hp_ok = False
     except Exception as e:
         # Other exceptions are OK (e.g. _check_user_slot returning None
         # short-circuits, or asyncio.CancelledError from send_action)
-        print(f"  [OK] handle_photo reached past is_group (other exception: {type(e).__name__})", flush=True)
+        log.info(f"  [OK] handle_photo reached past is_group (other exception: {type(e).__name__})")
     all_ok &= hp_ok
-    print(f"[selftest] handle_photo NameError regression: {'all pass' if hp_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] handle_photo NameError regression: {'all pass' if hp_ok else 'FAILED'}")
 
     # === handle_voice _stop_button_markup regression (v0.7.4) ===
     # Same bug class as v0.6.3 T8: the late-import trim dropped
@@ -330,7 +333,7 @@ async def _selftest():
     # noticed because photo sends had the same error (handle_photo
     # is_group bug, fixed in v0.7.3). voice/document were still
     # broken.
-    print('[selftest] running handle_voice _stop_button_markup regression test...', flush=True)
+    log.info('[selftest] running handle_voice _stop_button_markup regression test...')
     hv_ok = True
     try:  # noqa
         async def _fake_route_v(_u, _c):
@@ -362,21 +365,21 @@ async def _selftest():
         class _FakeVoiceContext:
             bot = type('B', (), {'id': 1})()
         await handle_voice(_FakeVoiceUpdate(), _FakeVoiceContext())
-        print('  [OK] handle_voice does not NameError on _stop_button_markup', flush=True)
+        log.info('  [OK] handle_voice does not NameError on _stop_button_markup')
     except NameError as e:
         if '_stop_button_markup' in str(e):
-            print(f"  [FAIL] handle_voice regressed: {e!r}", flush=True)
+            log.warning(f"  [FAIL] handle_voice regressed: {e!r}")
             hv_ok = False
         else:
-            print(f"  [FAIL] handle_voice NameError: {e!r}", flush=True)
+            log.warning(f"  [FAIL] handle_voice NameError: {e!r}")
             hv_ok = False
     except Exception as e:
-        print(f"  [OK] handle_voice reached past _stop_button_markup ({type(e).__name__})", flush=True)
+        log.info(f"  [OK] handle_voice reached past _stop_button_markup ({type(e).__name__})")
     all_ok &= hv_ok
-    print(f"[selftest] handle_voice _stop_button_markup regression: {'all pass' if hv_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] handle_voice _stop_button_markup regression: {'all pass' if hv_ok else 'FAILED'}")
 
     # === handle_document _stop_button_markup regression (v0.7.4) ===
-    print('[selftest] running handle_document _stop_button_markup regression test...', flush=True)
+    log.info('[selftest] running handle_document _stop_button_markup regression test...')
     hd_ok = True
     try:  # noqa
         async def _fake_route_d(_u, _c):
@@ -406,18 +409,18 @@ async def _selftest():
         class _FakeDocContext:
             bot = type('B', (), {'id': 1})()
         await handle_document(_FakeDocUpdate(), _FakeDocContext())
-        print('  [OK] handle_document does not NameError on _stop_button_markup', flush=True)
+        log.info('  [OK] handle_document does not NameError on _stop_button_markup')
     except NameError as e:
         if '_stop_button_markup' in str(e):
-            print(f"  [FAIL] handle_document regressed: {e!r}", flush=True)
+            log.warning(f"  [FAIL] handle_document regressed: {e!r}")
             hd_ok = False
         else:
-            print(f"  [FAIL] handle_document NameError: {e!r}", flush=True)
+            log.warning(f"  [FAIL] handle_document NameError: {e!r}")
             hd_ok = False
     except Exception as e:
-        print(f"  [OK] handle_document reached past _stop_button_markup ({type(e).__name__})", flush=True)
+        log.info(f"  [OK] handle_document reached past _stop_button_markup ({type(e).__name__})")
     all_ok &= hd_ok
-    print(f"[selftest] handle_document _stop_button_markup regression: {'all pass' if hd_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] handle_document _stop_button_markup regression: {'all pass' if hd_ok else 'FAILED'}")
 
     # === call_llama abort during non-streaming POST (v0.7.6) ===
     # The user reported: "the bot answered what was on the image AFTER
@@ -432,7 +435,7 @@ async def _selftest():
     # start the call_llama (which will use _abortable_post), verify
     # the call returns None quickly (within 5s) instead of waiting
     # for the full vision response.
-    print('[selftest] running call_llama abort during non-streaming POST test...', flush=True)
+    log.info('[selftest] running call_llama abort during non-streaming POST test...')
     ab_ok = True
     try:  # noqa
         # No 'import asyncio' here - the module-level import (line 10)
@@ -469,31 +472,31 @@ async def _selftest():
             # got a real response. That's also a valid outcome IF
             # it was fast (<5s). Real llama-server can respond in
             # <5s, so this is a weak test.
-            print(f"  [WARN] call_llama returned a response (not None) in {elapsed:.1f}s; abort may not have fired", flush=True)
+            log.warning(f"  [WARN] call_llama returned a response (not None) in {elapsed:.1f}s; abort may not have fired")
             if elapsed > 5.0:
-                print(f"  [FAIL] call_llama did not abort (took {elapsed:.1f}s); abort_event was pre-set", flush=True)
+                log.warning(f"  [FAIL] call_llama did not abort (took {elapsed:.1f}s); abort_event was pre-set")
                 ab_ok = False
             else:
-                print(f"  [OK] call_llama completed in {elapsed:.1f}s (abort may or may not have fired)", flush=True)
+                log.info(f"  [OK] call_llama completed in {elapsed:.1f}s (abort may or may not have fired)")
         else:
             # Good: returned None = abort took effect
             if elapsed > 5.0:
-                print(f"  [FAIL] call_llama returned None but took {elapsed:.1f}s (should be fast)", flush=True)
+                log.warning(f"  [FAIL] call_llama returned None but took {elapsed:.1f}s (should be fast)")
                 ab_ok = False
             else:
-                print(f"  [OK] call_llama returned None in {elapsed:.1f}s (abort fired correctly)", flush=True)
+                log.info(f"  [OK] call_llama returned None in {elapsed:.1f}s (abort fired correctly)")
         # Cleanup
         _abort_events.pop((-999999, 0), None)
     except Exception as e:
-        print(f"  [FAIL] test setup error: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] test setup error: {type(e).__name__}: {e!r}")
         ab_ok = False
     all_ok &= ab_ok
-    print(f"[selftest] call_llama abort test: {'all pass' if ab_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] call_llama abort test: {'all pass' if ab_ok else 'FAILED'}")
 
     # === Storage: known_topics round-trip ===    # === Storage: known_topics round-trip ===
     # Add a topic, list it, find it by name, remove it. Catches
     # typos in the SQL and the new known_topics methods (commit 8).
-    print('[selftest] running known_topics round-trip...', flush=True)
+    log.info('[selftest] running known_topics round-trip...')
     SELFTEST_CHAT = -1001
     SELFTEST_TOPIC_ID = 999999
     try:  # noqa
@@ -503,27 +506,27 @@ async def _selftest():
         topics = await asyncio.to_thread(_store().list_known_topics, SELFTEST_CHAT)
         names = sorted(t["name"] for t in topics)
         if 'selftest-topic' not in names:
-            print(f"  [FAIL] add_known_topic didn't persist (got {names})", flush=True)
+            log.warning(f"  [FAIL] add_known_topic didn't persist (got {names})")
             all_ok = False
         else:
-            print(f"  [OK] add_known_topic persisted", flush=True)
+            log.info(f"  [OK] add_known_topic persisted")
         found = await asyncio.to_thread(
             _store().find_known_topic_by_name, SELFTEST_CHAT, 'selftest-topic'
         )
         if found is None or found["message_thread_id"] != SELFTEST_TOPIC_ID:
-            print(f"  [FAIL] find_known_topic_by_name returned {found}", flush=True)
+            log.warning(f"  [FAIL] find_known_topic_by_name returned {found}")
             all_ok = False
         else:
-            print(f"  [OK] find_known_topic_by_name returned id={found['message_thread_id']}", flush=True)
+            log.info(f"  [OK] find_known_topic_by_name returned id={found['message_thread_id']}")
         await asyncio.to_thread(
             _store().remove_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID
         )
         topics_after = await asyncio.to_thread(_store().list_known_topics, SELFTEST_CHAT)
         if any(t["name"] == 'selftest-topic' for t in topics_after):
-            print(f"  [FAIL] remove_known_topic didn't remove (got {[t['name'] for t in topics_after]})", flush=True)
+            log.warning(f"  [FAIL] remove_known_topic didn't remove (got {[t['name'] for t in topics_after]})")
             all_ok = False
         else:
-            print(f"  [OK] remove_known_topic worked", flush=True)
+            log.info(f"  [OK] remove_known_topic worked")
         # find_known_topic_by_id: re-add, then look up by id (not name).
         await asyncio.to_thread(
             _store().add_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID, 'selftest-topic'
@@ -532,25 +535,25 @@ async def _selftest():
             _store().find_known_topic_by_id, SELFTEST_CHAT, SELFTEST_TOPIC_ID
         )
         if by_id is None or by_id["name"] != 'selftest-topic':
-            print(f"  [FAIL] find_known_topic_by_id returned {by_id}", flush=True)
+            log.warning(f"  [FAIL] find_known_topic_by_id returned {by_id}")
             all_ok = False
         else:
-            print(f"  [OK] find_known_topic_by_id resolved to '{by_id['name']}'", flush=True)
+            log.info(f"  [OK] find_known_topic_by_id resolved to '{by_id['name']}'")
         # Negative case: a non-existent id.
         missing = await asyncio.to_thread(
             _store().find_known_topic_by_id, SELFTEST_CHAT, 999999999
         )
         if missing is not None:
-            print(f"  [FAIL] find_known_topic_by_id returned non-None for missing id: {missing}", flush=True)
+            log.warning(f"  [FAIL] find_known_topic_by_id returned non-None for missing id: {missing}")
             all_ok = False
         else:
-            print(f"  [OK] find_known_topic_by_id returns None for missing id", flush=True)
+            log.info(f"  [OK] find_known_topic_by_id returns None for missing id")
         # Cleanup
         await asyncio.to_thread(
             _store().remove_known_topic, SELFTEST_CHAT, SELFTEST_TOPIC_ID
         )
     except Exception as e:
-        print(f"  [FAIL] known_topics round-trip crashed: {type(e).__name__}: {e}", flush=True)
+        log.warning(f"  [FAIL] known_topics round-trip crashed: {type(e).__name__}: {e}")
         all_ok = False
 
     # === Storage: history is never pruned (T67) ===
@@ -558,7 +561,7 @@ async def _selftest():
     # crossing TRIM_HIGH rows left the table at TRIM_LOW — i.e. it
     # asserted that get_messages DELETES history, which is exactly what
     # broke LoRA training data. This one asserts nothing is deleted.
-    print('[selftest] running no-prune test...', flush=True)
+    log.info('[selftest] running no-prune test...')
     # storage.py sits next to bot.py in the container (/app/storage.py
     # per the Dockerfile `COPY bot.py storage.py ./`); module name
     # "storage" would clash with stdlib's `storage` if we ever need
@@ -592,20 +595,20 @@ async def _selftest():
             )
         )
         if len(rows) != NOPRUNE_ROWS:
-            print(f"  [FAIL] history pruned: got {len(rows)} rows, expected {NOPRUNE_ROWS}", flush=True)
+            log.warning(f"  [FAIL] history pruned: got {len(rows)} rows, expected {NOPRUNE_ROWS}")
             all_ok = False
         else:
-            print(f"  [OK] all {NOPRUNE_ROWS} rows survived get_messages (no pruning)", flush=True)
+            log.info(f"  [OK] all {NOPRUNE_ROWS} rows survived get_messages (no pruning)")
         # Cleanup
         await asyncio.to_thread(_store().delete_thread, NOPRUNE_CHAT, NOPRUNE_THREAD)
     except Exception as e:
-        print(f"  [FAIL] no-prune test crashed: {type(e).__name__}: {e}", flush=True)
+        log.warning(f"  [FAIL] no-prune test crashed: {type(e).__name__}: {e}")
         all_ok = False
 
     # === Storage: rating column (v3 schema) ===
     # add_message with rating=N must persist N; get_messages
     # must return it. Round-trip.
-    print('[selftest] running rating round-trip...', flush=True)
+    log.info('[selftest] running rating round-trip...')
     RATING_CHAT = -1003
     RATING_THREAD = "rating-test"
     try:  # noqa
@@ -629,30 +632,30 @@ async def _selftest():
         )
         # ms2_msgs[0] is oldest, [1] is rated, [2] is unrated
         if len(msgs) != 3:
-            print(f"  [FAIL] expected 3 rows, got {len(msgs)}", flush=True)
+            log.warning(f"  [FAIL] expected 3 rows, got {len(msgs)}")
             all_ok = False
         elif msgs[1].get("rating") != 7:
-            print(f"  [FAIL] rated message has rating={msgs[1].get('rating')!r}, expected 7", flush=True)
+            log.warning(f"  [FAIL] rated message has rating={msgs[1].get('rating')!r}, expected 7")
             all_ok = False
         elif msgs[2].get("rating") is not None:
-            print(f"  [FAIL] unrated message has rating={msgs[2].get('rating')!r}, expected None", flush=True)
+            log.warning(f"  [FAIL] unrated message has rating={msgs[2].get('rating')!r}, expected None")
             all_ok = False
         else:
-            print(f"  [OK] rating 7 persisted on row 1, None on row 2", flush=True)
+            log.info(f"  [OK] rating 7 persisted on row 1, None on row 2")
         # Cleanup
         await asyncio.to_thread(_store().delete_thread, RATING_CHAT, RATING_THREAD)
     except Exception as e:
-        print(f"  [FAIL] lazy-trim test crashed: {type(e).__name__}: {e}", flush=True)
+        log.warning(f"  [FAIL] lazy-trim test crashed: {type(e).__name__}: {e}")
         all_ok = False
 
-    print(f"[selftest] group-mode tests: {'all pass' if all_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] group-mode tests: {'all pass' if all_ok else 'FAILED'}")
 
     # === Group-mode noise filter: _should_mute_in_group ===
     # Verifies that the bot stays silent on messages from other
     # Telegram bots OR messages that contain the "[llm]" marker
     # (in group mode). In private mode the [llm] marker is a
     # no-op because there is no "floor" to yield.
-    print('[selftest] running noise-filter test...', flush=True)
+    log.info('[selftest] running noise-filter test...')
     class _FakeFromUser:
         def __init__(self, is_bot, username='someone', uid=1):
             self.is_bot = is_bot
@@ -730,9 +733,9 @@ async def _selftest():
         got = _should_mute_in_group(upd)
         ok = (got == expected)
         mute_ok &= ok
-        print(f"  [{'OK' if ok else 'FAIL'}] {label}: mute={got} (expected {expected})", flush=True)
+        log.info(f"  [{'OK' if ok else 'FAIL'}] {label}: mute={got} (expected {expected})")
     all_ok &= mute_ok
-    print(f"[selftest] noise-filter tests: {'all pass' if mute_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] noise-filter tests: {'all pass' if mute_ok else 'FAILED'}")
 
     # === Reply-to-other-user filter ===
     # Verifies that _is_reply_to_other_user() correctly classifies
@@ -742,7 +745,7 @@ async def _selftest():
     #   - reply to another human in a group → True (bot skips)
     #   - command in reply context → False (commands always work)
     # Plus a private-chat baseline: reply to anyone → False (1:1).
-    print('[selftest] running reply-to-other-user filter test...', flush=True)
+    log.info('[selftest] running reply-to-other-user filter test...')
     rpl_ok = True
     # Build minimal Update-like objects with just .message, .chat, .from_user,
     # .reply_to_message. _is_group_chat reads chat.type and chat.is_forum.
@@ -793,17 +796,17 @@ async def _selftest():
         upd = _RU(gtype, iforum, fid, rtm_id, txt)
         got = _is_reply_to_other_user(upd, BOT_ID)
         if got != expected:
-            print(f"  [FAIL] {label}: got={got} expected={expected}", flush=True)
+            log.warning(f"  [FAIL] {label}: got={got} expected={expected}")
             rpl_ok = False
         else:
-            print(f"  [OK] {label}: skip={got}", flush=True)
+            log.info(f"  [OK] {label}: skip={got}")
     all_ok &= rpl_ok
-    print(f"[selftest] reply-to-other-user tests: {'all pass' if rpl_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] reply-to-other-user tests: {'all pass' if rpl_ok else 'FAILED'}")
 
     # === Per-user semaphore ===
     # Verifies that _check_user_slot returns None when all
     # permits are taken. We hold N=2 permits, then try a 3rd.
-    print('[selftest] running per-user semaphore test...', flush=True)
+    log.info('[selftest] running per-user semaphore test...')
     sem_ok = True
     try:  # noqa
         sem = _get_user_semaphore(123, 456)
@@ -812,35 +815,35 @@ async def _selftest():
             await sem.acquire()
         # Third call should report locked
         if not sem.locked():
-            print(f"  [FAIL] semaphore not locked after {_PER_USER_SEMAPHORE_LIMIT} acquires", flush=True)
+            log.warning(f"  [FAIL] semaphore not locked after {_PER_USER_SEMAPHORE_LIMIT} acquires")
             sem_ok = False
         else:
-            print(f"  [OK] semaphore locked at limit", flush=True)
+            log.info(f"  [OK] semaphore locked at limit")
         # Release them
         for _ in range(_PER_USER_SEMAPHORE_LIMIT):
             sem.release()
         if sem.locked():
-            print(f"  [FAIL] semaphore still locked after release", flush=True)
+            log.warning(f"  [FAIL] semaphore still locked after release")
             sem_ok = False
         else:
-            print(f"  [OK] semaphore unlocked after release", flush=True)
+            log.info(f"  [OK] semaphore unlocked after release")
         # Distinct (chat_id, user_id) gets a distinct semaphore
         sem_a = _get_user_semaphore(1, 1)
         sem_b = _get_user_semaphore(1, 2)
         if sem_a is sem_b:
-            print(f"  [FAIL] (1,1) and (1,2) share the same semaphore", flush=True)
+            log.warning(f"  [FAIL] (1,1) and (1,2) share the same semaphore")
             sem_ok = False
         else:
-            print(f"  [OK] (1,1) and (1,2) have distinct semaphores", flush=True)
+            log.info(f"  [OK] (1,1) and (1,2) have distinct semaphores")
     except Exception as e:
-        print(f"  [FAIL] semaphore test crashed: {type(e).__name__}: {e}", flush=True)
+        log.warning(f"  [FAIL] semaphore test crashed: {type(e).__name__}: {e}")
         sem_ok = False
     all_ok &= sem_ok
 
     # === Rating-mode parser ===
     # Verifies that _parse_rating_response correctly extracts
     # the type, rating, and rest text from LLM responses.
-    print('[selftest] running rating-parser test...', flush=True)
+    log.info('[selftest] running rating-parser test...')
     parse_cases = [
         # (input, expected_type, expected_rating, expected_rest_substr)
         # Default: no prefix → treated as question with full text as answer
@@ -860,32 +863,32 @@ async def _selftest():
     for text, exp_type, exp_rating, exp_rest in parse_cases:
         got = _parse_rating_response(text)
         if got['type'] != exp_type or got['rating'] != exp_rating:
-            print(f"  [FAIL] {text!r}: type={got['type']!r} rating={got['rating']!r} rest={got['body']!r} "
-                  f"(expected type={exp_type!r}, rating={exp_rating!r})", flush=True)
+            log.warning(f"  [FAIL] {text!r}: type={got['type']!r} rating={got['rating']!r} rest={got['body']!r} "
+                  f"(expected type={exp_type!r}, rating={exp_rating!r})")
             parse_ok = False
         elif exp_rest and exp_rest not in got['body']:
-            print(f"  [FAIL] {text!r}: rest={got['body']!r} doesn't contain {exp_rest!r}", flush=True)
+            log.warning(f"  [FAIL] {text!r}: rest={got['body']!r} doesn't contain {exp_rest!r}")
             parse_ok = False
     if parse_ok:
-        print(f"  [OK] all {len(parse_cases)} parse cases passed", flush=True)
+        log.info(f"  [OK] all {len(parse_cases)} parse cases passed")
     all_ok &= parse_ok
 
     # === RATING_EMOJI map ===
     # All 10 ratings must map to a non-empty string and be
     # distinct. Sanity check.
-    print('[selftest] running rating-emoji map test...', flush=True)
+    log.info('[selftest] running rating-emoji map test...')
     emoji_ok = True
     if len(RATING_EMOJI) != 10:
-        print(f"  [FAIL] RATING_EMOJI has {len(RATING_EMOJI)} entries, expected 10", flush=True)
+        log.warning(f"  [FAIL] RATING_EMOJI has {len(RATING_EMOJI)} entries, expected 10")
         emoji_ok = False
     elif len(set(RATING_EMOJI.values())) != 10:
-        print(f"  [FAIL] RATING_EMOJI has duplicate emoji", flush=True)
+        log.warning(f"  [FAIL] RATING_EMOJI has duplicate emoji")
         emoji_ok = False
     elif any(not e for e in RATING_EMOJI.values()):
-        print(f"  [FAIL] RATING_EMOJI has empty emoji", flush=True)
+        log.warning(f"  [FAIL] RATING_EMOJI has empty emoji")
         emoji_ok = False
     else:
-        print(f"  [OK] 10 distinct ratings, all map to non-empty emoji", flush=True)
+        log.info(f"  [OK] 10 distinct ratings, all map to non-empty emoji")
     all_ok &= emoji_ok
 
     # === chat_member test ===
@@ -895,19 +898,19 @@ async def _selftest():
     # without crashing. We use a fake chat_member update with a
     # mock bot that records send_message calls instead of hitting
     # the real Telegram API.
-    print('[selftest] running chat_member / WELCOME_TEXT test...', flush=True)
+    log.info('[selftest] running chat_member / WELCOME_TEXT test...')
     cm_ok = True
     if not WELCOME_TEXT or not WELCOME_TEXT.strip():
-        print("  [FAIL] WELCOME_TEXT is empty", flush=True)
+        log.warning("  [FAIL] WELCOME_TEXT is empty")
         cm_ok = False
     elif '💩' not in WELCOME_TEXT or '🔥' not in WELCOME_TEXT:
-        print("  [FAIL] WELCOME_TEXT does not contain rating scale", flush=True)
+        log.warning("  [FAIL] WELCOME_TEXT does not contain rating scale")
         cm_ok = False
     elif 'TRUTH' not in WELCOME_TEXT:
-        print("  [FAIL] WELCOME_TEXT does not contain 'TRUTH' (rating rule)", flush=True)
+        log.warning("  [FAIL] WELCOME_TEXT does not contain 'TRUTH' (rating rule)")
         cm_ok = False
     else:
-        print("  [OK] WELCOME_TEXT is non-empty, contains rating scale + TRUTH rule", flush=True)
+        log.info("  [OK] WELCOME_TEXT is non-empty, contains rating scale + TRUTH rule")
     # Mock bot that records send_message calls
     class _MockBot:
         def __init__(self):
@@ -932,28 +935,28 @@ async def _selftest():
         await _lazy_dispatch()._handle_chat_member_update(upd, mock_bot)
         # Expect 2 calls: one to chat_id, one to user_id
         if len(mock_bot.calls) != 2:
-            print(f"  [FAIL] expected 2 send_message calls, got {len(mock_bot.calls)}", flush=True)
+            log.warning(f"  [FAIL] expected 2 send_message calls, got {len(mock_bot.calls)}")
             cm_ok = False
         else:
             chat_call = next((c for c in mock_bot.calls if c["chat_id"] == -1001234567890), None)
             user_call = next((c for c in mock_bot.calls if c["chat_id"] == 555), None)
             if not chat_call or not user_call:
-                print(f"  [FAIL] missing expected calls: {[c['chat_id'] for c in mock_bot.calls]}", flush=True)
+                log.warning(f"  [FAIL] missing expected calls: {[c['chat_id'] for c in mock_bot.calls]}")
                 cm_ok = False
             elif chat_call["thread_id"] is not None:
-                print(f"  [FAIL] group welcome should be in General (thread_id=None), got {chat_call['thread_id']}", flush=True)
+                log.warning(f"  [FAIL] group welcome should be in General (thread_id=None), got {chat_call['thread_id']}")
                 cm_ok = False
             elif 'WELCOME' not in chat_call["text"] and 'Welcome' not in chat_call["text"]:
-                print(f"  [FAIL] group welcome does not contain 'Welcome': {chat_call['text'][:80]!r}", flush=True)
+                log.warning(f"  [FAIL] group welcome does not contain 'Welcome': {chat_call['text'][:80]!r}")
                 cm_ok = False
             elif '@newbie' not in chat_call["text"]:
-                print(f"  [FAIL] group welcome should mention @newbie, head={chat_call['text'][:200]!r}", flush=True)
+                log.warning(f"  [FAIL] group welcome should mention @newbie, head={chat_call['text'][:200]!r}")
                 cm_ok = False
             else:
-                print("  [OK] group welcome posted in General with @newbie mention", flush=True)
-                print("  [OK] PM sent to new user_id", flush=True)
+                log.info("  [OK] group welcome posted in General with @newbie mention")
+                log.info("  [OK] PM sent to new user_id")
     except Exception as e:
-        print(f"  [FAIL] _handle_chat_member_update raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] _handle_chat_member_update raised: {type(e).__name__}: {e!r}")
         import traceback
         traceback.print_exc()
         cm_ok = False
@@ -974,12 +977,12 @@ async def _selftest():
     try:  # noqa
         await _lazy_dispatch()._handle_chat_member_update(upd2, mock_bot2)
         if len(mock_bot2.calls) != 0:
-            print(f"  [FAIL] leave event triggered {len(mock_bot2.calls)} calls, expected 0", flush=True)
+            log.warning(f"  [FAIL] leave event triggered {len(mock_bot2.calls)} calls, expected 0")
             cm_ok = False
         else:
-            print("  [OK] leave event correctly skipped (0 calls)", flush=True)
+            log.info("  [OK] leave event correctly skipped (0 calls)")
     except Exception as e:
-        print(f"  [FAIL] _handle_chat_member_update(leave) raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] _handle_chat_member_update(leave) raised: {type(e).__name__}: {e!r}")
         cm_ok = False
     # Negative test: another bot joining should NOT trigger
     fake_bot_join = {
@@ -997,12 +1000,12 @@ async def _selftest():
     try:  # noqa
         await _lazy_dispatch()._handle_chat_member_update(upd3, mock_bot3)
         if len(mock_bot3.calls) != 0:
-            print(f"  [FAIL] bot-join triggered {len(mock_bot3.calls)} calls, expected 0", flush=True)
+            log.warning(f"  [FAIL] bot-join triggered {len(mock_bot3.calls)} calls, expected 0")
             cm_ok = False
         else:
-            print("  [OK] bot-join correctly skipped (0 calls)", flush=True)
+            log.info("  [OK] bot-join correctly skipped (0 calls)")
     except Exception as e:
-        print(f"  [FAIL] _handle_chat_member_update(bot-join) raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] _handle_chat_member_update(bot-join) raised: {type(e).__name__}: {e!r}")
         cm_ok = False
     all_ok &= cm_ok
 
@@ -1012,7 +1015,7 @@ async def _selftest():
     # (it requires a live Telegram server), but we exercise the
     # data structure: record a (chat, user_msg) → bot_msg mapping,
     # then verify it can be retrieved and popped.
-    print('[selftest] running edit-replace test...', flush=True)
+    log.info('[selftest] running edit-replace test...')
     er_ok = True
     try:  # noqa
         # Save the existing map and clear it for the test
@@ -1023,34 +1026,34 @@ async def _selftest():
         _bot_replies[(-1001234567890, 101)] = 201
         # Lookup works
         if _bot_replies.get((-1001234567890, 100)) != 200:
-            print("  [FAIL] _bot_replies.get() returned wrong bot_msg_id", flush=True)
+            log.warning("  [FAIL] _bot_replies.get() returned wrong bot_msg_id")
             er_ok = False
         else:
-            print("  [OK] _bot_replies stores (chat, user_msg) → bot_msg mapping", flush=True)
+            log.info("  [OK] _bot_replies stores (chat, user_msg) → bot_msg mapping")
         # Pop removes the entry
         popped = _bot_replies.pop((-1001234567890, 100), None)
         if popped != 200:
-            print(f"  [FAIL] pop returned {popped}, expected 200", flush=True)
+            log.warning(f"  [FAIL] pop returned {popped}, expected 200")
             er_ok = False
         elif (-1001234567890, 100) in _bot_replies:
-            print("  [FAIL] entry not actually removed by pop", flush=True)
+            log.warning("  [FAIL] entry not actually removed by pop")
             er_ok = False
         else:
-            print("  [OK] pop removes entry correctly", flush=True)
+            log.info("  [OK] pop removes entry correctly")
         # Pop on missing key returns None (no exception)
         if _bot_replies.pop((-1001234567890, 99999), None) is not None:
-            print("  [FAIL] pop on missing key should return None", flush=True)
+            log.warning("  [FAIL] pop on missing key should return None")
             er_ok = False
         else:
-            print("  [OK] pop on missing key returns None", flush=True)
+            log.info("  [OK] pop on missing key returns None")
         # Restore the saved state
         _bot_replies.clear()
         _bot_replies.update(saved)
     except Exception as e:
-        print(f"  [FAIL] edit-replace test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] edit-replace test raised: {type(e).__name__}: {e!r}")
         er_ok = False
     all_ok &= er_ok
-    print(f"[selftest] edit-replace tests: {'all pass' if er_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] edit-replace tests: {'all pass' if er_ok else 'FAILED'}")
 
     # === _download_with_limit (PTB 21 download_as_chunks regression guard) ===
     # Bug: PTB 21.0 removed File.download_as_chunks. Any code path
@@ -1060,7 +1063,7 @@ async def _selftest():
     # File.download_as_bytearray() inside _download_with_limit.
     # These 4 cases verify the helper behaves correctly with a
     # mock File object, without needing a real Telegram file.
-    print('[selftest] running _download_with_limit test...', flush=True)
+    log.info('[selftest] running _download_with_limit test...')
     dl_ok = True
     try:  # noqa
         # The F3 module split made _download_with_limit's internal
@@ -1097,10 +1100,10 @@ async def _selftest():
                 raise AssertionError("download should not be called when file_size is over the cap")
         r = await _download_with_limit(_BigFile(), 100, "Photo", _FakeUpdate())
         if r is not None or not captured_replies or "too large" not in captured_replies[-1]:
-            print("  [FAIL] oversized file: expected None + 'too large' reply", flush=True)
+            log.warning("  [FAIL] oversized file: expected None + 'too large' reply")
             dl_ok = False
         else:
-            print("  [OK] oversized file rejected via file_size pre-check (no download)", flush=True)
+            log.info("  [OK] oversized file rejected via file_size pre-check (no download)")
 
         # Case 2: file_size missing + small download -> success.
         captured_replies.clear()
@@ -1110,10 +1113,10 @@ async def _selftest():
                 return bytearray(b"hello" * 50)  # 250 bytes
         r = await _download_with_limit(_GoodFile(), 100_000, "Photo", _FakeUpdate())
         if r is None or len(r) != 250 or captured_replies:
-            print(f"  [FAIL] small file: expected 250 bytes, got {len(r) if r else None}, replies={captured_replies}", flush=True)
+            log.warning(f"  [FAIL] small file: expected 250 bytes, got {len(r) if r else None}, replies={captured_replies}")
             dl_ok = False
         else:
-            print("  [OK] small file downloaded (250 bytes, no error reply)", flush=True)
+            log.info("  [OK] small file downloaded (250 bytes, no error reply)")
 
         # Case 3: download raises -> friendly error, no download_as_chunks mention.
         captured_replies.clear()
@@ -1123,13 +1126,13 @@ async def _selftest():
                 raise RuntimeError("network error")
         r = await _download_with_limit(_FailingFile(), 100_000, "Photo", _FakeUpdate())
         if r is not None or not captured_replies or "Failed to download" not in captured_replies[-1]:
-            print(f"  [FAIL] failing file: expected None + 'Failed to download' reply, got {r!r} {captured_replies!r}", flush=True)
+            log.warning(f"  [FAIL] failing file: expected None + 'Failed to download' reply, got {r!r} {captured_replies!r}")
             dl_ok = False
         elif "download_as_chunks" in captured_replies[-1]:
-            print(f"  [FAIL] download_as_chunks still mentioned in error: {captured_replies[-1]!r}", flush=True)
+            log.warning(f"  [FAIL] download_as_chunks still mentioned in error: {captured_replies[-1]!r}")
             dl_ok = False
         else:
-            print("  [OK] download exception -> 'Failed to download' reply (no download_as_chunks mention)", flush=True)
+            log.info("  [OK] download exception -> 'Failed to download' reply (no download_as_chunks mention)")
 
         # Case 4: file_size missing + download returns oversized buf -> post-check rejects.
         captured_replies.clear()
@@ -1139,15 +1142,15 @@ async def _selftest():
                 return bytearray(b"x" * 200_000)  # 200 KB, > 100 KB cap
         r = await _download_with_limit(_BigBufFile(), 100_000, "Photo", _FakeUpdate())
         if r is not None or not captured_replies or "too large" not in captured_replies[-1]:
-            print(f"  [FAIL] big buf: expected None + 'too large' reply, got {r!r} {captured_replies!r}", flush=True)
+            log.warning(f"  [FAIL] big buf: expected None + 'too large' reply, got {r!r} {captured_replies!r}")
             dl_ok = False
         else:
-            print("  [OK] post-check on len(buf) catches oversized file when file_size is missing", flush=True)
+            log.info("  [OK] post-check on len(buf) catches oversized file when file_size is missing")
     except Exception as e:
-        print(f"  [FAIL] _download_with_limit test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] _download_with_limit test raised: {type(e).__name__}: {e!r}")
         dl_ok = False
     all_ok &= dl_ok
-    print(f"[selftest] _download_with_limit tests: {'all pass' if dl_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] _download_with_limit tests: {'all pass' if dl_ok else 'FAILED'}")
 
     # === Sender-name flow (group-mode speaker attribution) ===
     # Bug: the bot could not distinguish between two humans writing
@@ -1159,7 +1162,7 @@ async def _selftest():
     # (text and multimodal alike) so the model can read who said
     # what. Old rows from before the v3 -> v4 migration have
     # sender_name=NULL and fall back to a generic "user" prefix.
-    print('[selftest] running sender-name flow test...', flush=True)
+    log.info('[selftest] running sender-name flow test...')
     sn_ok = True
     try:  # noqa
         from telegram import User as _U
@@ -1170,10 +1173,10 @@ async def _selftest():
         n_anon = _sender_display_name(_U(id=333, first_name=None, last_name=None, username=None, is_bot=False))
         n_none = _sender_display_name(None)
         if n_vasya != 'Vasisualy Lohankin' or n_dima != 'Dima' or n_anon != 'user_333' or n_none is not None:
-            print(f"  [FAIL] name resolution: {n_vasya!r} {n_dima!r} {n_anon!r} {n_none!r}", flush=True)
+            log.warning(f"  [FAIL] name resolution: {n_vasya!r} {n_dima!r} {n_anon!r} {n_none!r}")
             sn_ok = False
         else:
-            print('  [OK] _sender_display_name resolves first+last / first / @user / user_id / None', flush=True)
+            log.info('  [OK] _sender_display_name resolves first+last / first / @user / user_id / None')
 
         # Case 2: persist + load round-trip preserves sender_name.
         # We use the real global store but a fake chat_id so the
@@ -1200,10 +1203,10 @@ async def _selftest():
                 or history[0].get('_sender_name') != n_vasya
                 or history[1].get('_sender_name') != n_dima
                 or history[2].get('_sender_name') is not None):
-            print(f"  [FAIL] persist+load: {[h.get('_sender_name') for h in history]!r}", flush=True)
+            log.warning(f"  [FAIL] persist+load: {[h.get('_sender_name') for h in history]!r}")
             sn_ok = False
         else:
-            print('  [OK] persist + _load_history round-trip preserves sender_name (3 rows)', flush=True)
+            log.info('  [OK] persist + _load_history round-trip preserves sender_name (3 rows)')
 
         # Case 3: _tag_sender formatting on text content.
         def _tag(m):
@@ -1222,16 +1225,16 @@ async def _selftest():
             return m
         tagged = [_tag(m) for m in history]
         if 'From: Vasisualy Lohankin: hi from vasya' not in tagged[0]['content']:
-            print(f"  [FAIL] text tag: {tagged[0]['content']!r}", flush=True)
+            log.warning(f"  [FAIL] text tag: {tagged[0]['content']!r}")
             sn_ok = False
         elif 'From: Dima: hi from dima' not in tagged[1]['content']:
-            print(f"  [FAIL] dima tag: {tagged[1]['content']!r}", flush=True)
+            log.warning(f"  [FAIL] dima tag: {tagged[1]['content']!r}")
             sn_ok = False
         elif tagged[2]['content'] != 'hello both':
-            print(f"  [FAIL] assistant should be untouched, got {tagged[2]['content']!r}", flush=True)
+            log.warning(f"  [FAIL] assistant should be untouched, got {tagged[2]['content']!r}")
             sn_ok = False
         else:
-            print('  [OK] _tag_sender prepends From: <name>: to text content; assistant unchanged', flush=True)
+            log.info('  [OK] _tag_sender prepends From: <name>: to text content; assistant unchanged')
 
         # Case 4: multimodal content (list of parts) - sender tag
         # goes into the first text part, image_url untouched.
@@ -1247,9 +1250,9 @@ async def _selftest():
         if (isinstance(tagged_mm['content'], list)
                 and tagged_mm['content'][0]['text'] == 'From: Vasisualy Lohankin: Что на картинке?'
                 and tagged_mm['content'][1] == {'type': 'image_url', 'image_url': {'url': 'data:...'}}):
-            print('  [OK] multimodal: sender tag in first text part, image preserved', flush=True)
+            log.info('  [OK] multimodal: sender tag in first text part, image preserved')
         else:
-            print(f"  [FAIL] multimodal tag: {tagged_mm!r}", flush=True)
+            log.warning(f"  [FAIL] multimodal tag: {tagged_mm!r}")
             sn_ok = False
 
         # Case 5: NULL sender_name (old pre-migration row) falls back
@@ -1257,10 +1260,10 @@ async def _selftest():
         # person, just unnamed.
         legacy = {'role': 'user', '_sender_name': None, 'content': 'old message'}
         if _tag(legacy)['content'] != 'From: user: old message':
-            print(f"  [FAIL] NULL fallback: {_tag(legacy)!r}", flush=True)
+            log.warning(f"  [FAIL] NULL fallback: {_tag(legacy)!r}")
             sn_ok = False
         else:
-            print('  [OK] NULL sender_name falls back to From: user: (no name but still tagged)', flush=True)
+            log.info('  [OK] NULL sender_name falls back to From: user: (no name but still tagged)')
 
         # Cleanup: remove the 3 test rows so re-running the selftest
         # is idempotent and the real DB doesn't accumulate junk. We
@@ -1277,10 +1280,10 @@ async def _selftest():
             cc.close()
         await asyncio.to_thread(_cleanup)
     except Exception as e:
-        print(f"  [FAIL] sender-name test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] sender-name test raised: {type(e).__name__}: {e!r}")
         sn_ok = False
     all_ok &= sn_ok
-    print(f"[selftest] sender-name tests: {'all pass' if sn_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] sender-name tests: {'all pass' if sn_ok else 'FAILED'}")
 
     # === Malformed tool-call JSON rejection (Qwen3.8 / MTP heads) ===
     # Bug: Qwen3.8-27B-Ultra-Heretic-MTP-256k on .6:8080 sometimes
@@ -1291,7 +1294,7 @@ async def _selftest():
     # malformed args up front and send a feedback tool result that
     # tells the LLM to re-emit cleanly. These 8 cases cover the
     # patterns we have seen in production logs.
-    print('[selftest] running malformed tool-call JSON rejection test...', flush=True)
+    log.info('[selftest] running malformed tool-call JSON rejection test...')
     rej_ok = True
     try:  # noqa
         # Replicate the dispatcher block (it's a closure inside
@@ -1322,72 +1325,72 @@ async def _selftest():
                '"max_chars":8000,"max_chars":8000,"max_chars":8000,"max_chars":8000}')
         action, args, fb = await dispatch_one_tool(raw)
         if action != "REJECT" or args is not None or "malformed args" not in fb:
-            print(f"  [FAIL] case 1: 10x max_chars should be rejected; got {action}, {args!r}", flush=True)
+            log.warning(f"  [FAIL] case 1: 10x max_chars should be rejected; got {action}, {args!r}")
             rej_ok = False
         else:
-            print("  [OK] case 1: 10x max_chars rejected with malformed-args feedback", flush=True)
+            log.info("  [OK] case 1: 10x max_chars rejected with malformed-args feedback")
 
         # Case 2: well-formed JSON should pass through.
         action, args, fb = await dispatch_one_tool('{"url":"https://x.com","max_chars":8000}')
         if action != "CALL" or args.get("url") != "https://x.com":
-            print(f"  [FAIL] case 2: well-formed JSON should pass; got {action}, {args!r}", flush=True)
+            log.warning(f"  [FAIL] case 2: well-formed JSON should pass; got {action}, {args!r}")
             rej_ok = False
         else:
-            print("  [OK] case 2: well-formed 2-key JSON passes through", flush=True)
+            log.info("  [OK] case 2: well-formed 2-key JSON passes through")
 
         # Case 3: truncated JSON (closing brace clipped) - json.loads raises.
         action, args, fb = await dispatch_one_tool('{"url":"https://x.com","max_chars":8000,"max_chars":8000')
         if action != "REJECT" or "invalid JSON" not in fb:
-            print(f"  [FAIL] case 3: truncated JSON should be rejected; got {action}", flush=True)
+            log.warning(f"  [FAIL] case 3: truncated JSON should be rejected; got {action}")
             rej_ok = False
         else:
-            print("  [OK] case 3: truncated JSON rejected via parse error", flush=True)
+            log.info("  [OK] case 3: truncated JSON rejected via parse error")
 
         # Case 4: bare 'null' - allowed (caller deals with args=None).
         action, args, fb = await dispatch_one_tool('null')
         if action != "CALL" or args is not None:
-            print(f"  [FAIL] case 4: bare null should pass through; got {action}, {args!r}", flush=True)
+            log.warning(f"  [FAIL] case 4: bare null should pass through; got {action}, {args!r}")
             rej_ok = False
         else:
-            print("  [OK] case 4: bare 'null' passes through (args=None is the caller's job)", flush=True)
+            log.info("  [OK] case 4: bare 'null' passes through (args=None is the caller's job)")
 
         # Case 5: very long arg string (>1500 chars).
         raw = '{"url":"' + 'a' * 2000 + '"}'
         action, args, fb = await dispatch_one_tool(raw)
         if action != "REJECT":
-            print(f"  [FAIL] case 5: 2KB+ args should be rejected; got {action}", flush=True)
+            log.warning(f"  [FAIL] case 5: 2KB+ args should be rejected; got {action}")
             rej_ok = False
         else:
-            print("  [OK] case 5: 2KB+ arg string rejected as too long", flush=True)
+            log.info("  [OK] case 5: 2KB+ arg string rejected as too long")
 
         # Case 6: structural noise (only '{{' - parses to garbage).
         action, args, fb = await dispatch_one_tool('{{')
         if action != "REJECT":
-            print(f"  [FAIL] case 6: '{{' should be rejected; got {action}", flush=True)
+            log.warning(f"  [FAIL] case 6: '{{' should be rejected; got {action}")
             rej_ok = False
         else:
-            print("  [OK] case 6: structural noise rejected via parse error", flush=True)
+            log.info("  [OK] case 6: structural noise rejected via parse error")
 
         # Case 7: empty {} is allowed - the tool decides if it needs args.
         action, args, fb = await dispatch_one_tool('{}')
         if action != "CALL" or args != {}:
-            print(f"  [FAIL] case 7: empty '{{}}' should pass; got {action}, {args!r}", flush=True)
+            log.warning(f"  [FAIL] case 7: empty '{{}}' should pass; got {action}, {args!r}")
             rej_ok = False
         else:
-            print("  [OK] case 7: empty '{{}}' passes through (tool decides)", flush=True)
+            log.info("  [OK] case 7: empty '{{}}' passes through (tool decides)")
 
         # Case 8: legitimate 4-key JSON.
         action, args, fb = await dispatch_one_tool('{"url":"https://x.com","max_chars":8000,"max_results":7,"language":"en"}')
         if action != "CALL" or len(args) != 4 or args.get("language") != "en":
-            print(f"  [FAIL] case 8: 4-key JSON should pass; got {action}, {args!r}", flush=True)
+            log.warning(f"  [FAIL] case 8: 4-key JSON should pass; got {action}, {args!r}")
             rej_ok = False
         else:
-            print("  [OK] case 8: 4-key JSON passes through with all 4 fields", flush=True)
+            log.info("  [OK] case 8: 4-key JSON passes through with all 4 fields")
     except Exception as e:
-        print(f"  [FAIL] tool-rejection test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] tool-rejection test raised: {type(e).__name__}: {e!r}")
         rej_ok = False
     all_ok &= rej_ok
-    print(f"[selftest] tool-call JSON rejection tests: {'all pass' if rej_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] tool-call JSON rejection tests: {'all pass' if rej_ok else 'FAILED'}")
 
     # === react_to_message tool ===
     # The LLM in non-rating mode can call react_to_message to set
@@ -1404,7 +1407,7 @@ async def _selftest():
     # with. The executor never raises — it returns a string for
     # the LLM to read, so a transient API error doesn't crash the
     # tool-calling loop.
-    print('[selftest] running react_to_message tool test...', flush=True)
+    log.info('[selftest] running react_to_message tool test...')
     react_ok = True
     try:  # noqa
         from unittest.mock import MagicMock
@@ -1432,10 +1435,10 @@ async def _selftest():
         )
         ok1 = 'OK' in result and len(mock_calls) == 1 and mock_calls[0]['message_id'] == 12345 and mock_calls[0]['emojis'] == ['👍']
         if not ok1:
-            print(f"  [FAIL] case 1: explicit message_id. result={result!r}, calls={mock_calls}", flush=True)
+            log.warning(f"  [FAIL] case 1: explicit message_id. result={result!r}, calls={mock_calls}")
             react_ok = False
         else:
-            print("  [OK] case 1: explicit message_id=12345 with 👍 -> set_message_reaction called once", flush=True)
+            log.info("  [OK] case 1: explicit message_id=12345 with 👍 -> set_message_reaction called once")
 
         # Case 2: valid emoji, no message_id, default available
         mock_calls.clear()
@@ -1445,10 +1448,10 @@ async def _selftest():
         )
         ok2 = 'OK' in result and len(mock_calls) == 1 and mock_calls[0]['message_id'] == 88888 and mock_calls[0]['emojis'] == ['🔥']
         if not ok2:
-            print(f"  [FAIL] case 2: default message_id. result={result!r}, calls={mock_calls}", flush=True)
+            log.warning(f"  [FAIL] case 2: default message_id. result={result!r}, calls={mock_calls}")
             react_ok = False
         else:
-            print("  [OK] case 2: no message_id in args -> fell back to default=88888, set 🔥", flush=True)
+            log.info("  [OK] case 2: no message_id in args -> fell back to default=88888, set 🔥")
 
         # Case 3: empty emoji -> refuses, no API call
         mock_calls.clear()
@@ -1458,10 +1461,10 @@ async def _selftest():
         )
         ok3 = 'requires' in result.lower() and len(mock_calls) == 0
         if not ok3:
-            print(f"  [FAIL] case 3: empty emoji. result={result!r}, calls={mock_calls}", flush=True)
+            log.warning(f"  [FAIL] case 3: empty emoji. result={result!r}, calls={mock_calls}")
             react_ok = False
         else:
-            print("  [OK] case 3: empty emoji refused with feedback, no API call", flush=True)
+            log.info("  [OK] case 3: empty emoji refused with feedback, no API call")
 
         # Case 4: non-integer message_id -> refuses
         mock_calls.clear()
@@ -1471,10 +1474,10 @@ async def _selftest():
         )
         ok4 = 'integer' in result.lower() and len(mock_calls) == 0
         if not ok4:
-            print(f"  [FAIL] case 4: non-int message_id. result={result!r}, calls={mock_calls}", flush=True)
+            log.warning(f"  [FAIL] case 4: non-int message_id. result={result!r}, calls={mock_calls}")
             react_ok = False
         else:
-            print("  [OK] case 4: non-integer message_id refused with feedback, no API call", flush=True)
+            log.info("  [OK] case 4: non-integer message_id refused with feedback, no API call")
 
         # Case 5: API raises -> executor returns error string, doesn't propagate
         mock_calls.clear()
@@ -1489,15 +1492,15 @@ async def _selftest():
         )
         ok5 = 'failed' in result.lower() and 'REACTION_NOT_ALLOWED' in result
         if not ok5:
-            print(f"  [FAIL] case 5: API error swallowed. result={result!r}", flush=True)
+            log.warning(f"  [FAIL] case 5: API error swallowed. result={result!r}")
             react_ok = False
         else:
-            print("  [OK] case 5: API exception caught, error string returned, no crash", flush=True)
+            log.info("  [OK] case 5: API exception caught, error string returned, no crash")
     except Exception as e:
-        print(f"  [FAIL] react_to_message test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] react_to_message test raised: {type(e).__name__}: {e!r}")
         react_ok = False
     all_ok &= react_ok
-    print(f"[selftest] react_to_message tests: {'all pass' if react_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] react_to_message tests: {'all pass' if react_ok else 'FAILED'}")
 
     # === Regression: non-streaming tool_call path (vision + react_to_message) ===
     # Bug: handle_photo uses use_stream=False (vision tasks). The
@@ -1511,7 +1514,7 @@ async def _selftest():
     # The smoke test below mocks llama-server to return a non-
     # streaming chat completion with one tool_call and verifies
     # that the executor runs.
-    print('[selftest] running non-streaming tool_call regression test...', flush=True)
+    log.info('[selftest] running non-streaming tool_call regression test...')
     ns_ok = True
     try:  # noqa
         from unittest.mock import patch, AsyncMock
@@ -1606,28 +1609,28 @@ async def _selftest():
         # care about: set_message_reaction was called with 🔥 on
         # the default message_id.
         if len(react_calls) != 1:
-            print(f"  [FAIL] expected exactly 1 set_message_reaction call, got {len(react_calls)}: {react_calls}", flush=True)
+            log.warning(f"  [FAIL] expected exactly 1 set_message_reaction call, got {len(react_calls)}: {react_calls}")
             ns_ok = False
         elif react_calls[0]['message_id'] != 99999:
-            print(f"  [FAIL] wrong message_id: {react_calls[0]}", flush=True)
+            log.warning(f"  [FAIL] wrong message_id: {react_calls[0]}")
             ns_ok = False
         elif react_calls[0]['emojis'] != ['\u2705']:
-            print(f"  [FAIL] wrong emoji: {react_calls[0]['emojis']}", flush=True)
+            log.warning(f"  [FAIL] wrong emoji: {react_calls[0]['emojis']}")
             ns_ok = False
         elif call_count[0] != 2:
-            print(f"  [FAIL] expected 2 LLM calls (1 tool + 1 follow-up), got {call_count[0]}", flush=True)
+            log.warning(f"  [FAIL] expected 2 LLM calls (1 tool + 1 follow-up), got {call_count[0]}")
             ns_ok = False
         elif 'Done' not in result:
-            print(f"  [FAIL] call_llama result doesn't contain the follow-up text: {result!r}", flush=True)
+            log.warning(f"  [FAIL] call_llama result doesn't contain the follow-up text: {result!r}")
             ns_ok = False
         else:
-            print(f"  [OK] non-streaming tool_call dispatched: chat_id={react_calls[0]['chat_id']} msg_id={react_calls[0]['message_id']} emoji={react_calls[0]['emojis']}", flush=True)
-            print(f"  [OK] call_llama returned {len(result)} chars (LLM was re-called after tool result): {result[:80]!r}", flush=True)
+            log.info(f"  [OK] non-streaming tool_call dispatched: chat_id={react_calls[0]['chat_id']} msg_id={react_calls[0]['message_id']} emoji={react_calls[0]['emojis']}")
+            log.info(f"  [OK] call_llama returned {len(result)} chars (LLM was re-called after tool result): {result[:80]!r}")
     except Exception as e:
-        print(f"  [FAIL] non-streaming tool_call test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] non-streaming tool_call test raised: {type(e).__name__}: {e!r}")
         ns_ok = False
     all_ok &= ns_ok
-    print(f"[selftest] non-streaming tool_call tests: {'all pass' if ns_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] non-streaming tool_call tests: {'all pass' if ns_ok else 'FAILED'}")
 
     # === GROUP_CONTEXT is prepended in both rating and tool modes ===
     # The LlmChatPlace rules are baked into a system message that
@@ -1637,26 +1640,26 @@ async def _selftest():
     # Acquires _GLOBAL_LLM_SEM_LIMIT slots and asserts the semaphore
     # locks (would block a 5th acquire). Catches a future refactor
     # that accidentally removes the cap or changes the limit.
-    print('[selftest] running global LLM semaphore test...', flush=True)
+    log.info('[selftest] running global LLM semaphore test...')
     sem_ok = True
     _sem = _get_global_llm_sem()
     for _ in range(_GLOBAL_LLM_SEM_LIMIT):
         await _sem.acquire()
     if not _sem.locked():
-        print("  [FAIL] global LLM sem not locked at limit", flush=True)
+        log.warning("  [FAIL] global LLM sem not locked at limit")
         sem_ok = False
     else:
-        print(f"  [OK] global LLM sem locked at limit ({_GLOBAL_LLM_SEM_LIMIT})", flush=True)
+        log.info(f"  [OK] global LLM sem locked at limit ({_GLOBAL_LLM_SEM_LIMIT})")
     for _ in range(_GLOBAL_LLM_SEM_LIMIT):
         _sem.release()
     if _sem.locked():
-        print("  [FAIL] global LLM sem still locked after release", flush=True)
+        log.warning("  [FAIL] global LLM sem still locked after release")
         sem_ok = False
     else:
-        print("  [OK] global LLM sem unlocked after release", flush=True)
+        log.info("  [OK] global LLM sem unlocked after release")
     all_ok &= sem_ok
 
-    print('[selftest] running GROUP_CONTEXT injection test...', flush=True)
+    log.info('[selftest] running GROUP_CONTEXT injection test...')
     ctx_ok = True
     try:  # noqa
         # Inspect the call_llama source to make sure GROUP_CONTEXT
@@ -1673,17 +1676,17 @@ async def _selftest():
 
         # 1. GROUP_CONTEXT must be defined as a module-level constant.
         if 'GROUP_CONTEXT = """\\' not in prompts_src and "GROUP_CONTEXT = " not in prompts_src:
-            print("  [FAIL] GROUP_CONTEXT constant not defined", flush=True)
+            log.warning("  [FAIL] GROUP_CONTEXT constant not defined")
             ctx_ok = False
         else:
-            print("  [OK] GROUP_CONTEXT module constant defined", flush=True)
+            log.info("  [OK] GROUP_CONTEXT module constant defined")
 
         # 2. GROUP_CONTEXT must be referenced in the call_llama function.
         if 'content": GROUP_CONTEXT' not in src and '"content": GROUP_CONTEXT' not in src:
-            print("  [FAIL] GROUP_CONTEXT not used as a system message in call_llama", flush=True)
+            log.warning("  [FAIL] GROUP_CONTEXT not used as a system message in call_llama")
             ctx_ok = False
         else:
-            print("  [OK] GROUP_CONTEXT used as system message in call_llama", flush=True)
+            log.info("  [OK] GROUP_CONTEXT used as system message in call_llama")
 
         # 3. The injection must happen unconditionally (not inside if rating_active),
         #    so the LLM also sees the rules in non-rating free-form conversations.
@@ -1692,30 +1695,30 @@ async def _selftest():
         #    (function body) or indented further (inside an if).
         idx = src.find('_group_ctx_msg = {"role": "system"')
         if idx < 0:
-            print("  [FAIL] _group_ctx_msg variable not assigned", flush=True)
+            log.warning("  [FAIL] _group_ctx_msg variable not assigned")
             ctx_ok = False
         else:
             # Find the next `messages = [_group_ctx_msg]` after this point
             j = src.find('messages = [_group_ctx_msg]', idx)
             if j < 0:
-                print("  [FAIL] _group_ctx_msg not used to prepend messages", flush=True)
+                log.warning("  [FAIL] _group_ctx_msg not used to prepend messages")
                 ctx_ok = False
             else:
-                print("  [OK] _group_ctx_msg used to prepend messages list", flush=True)
+                log.info("  [OK] _group_ctx_msg used to prepend messages list")
 
         # 4. RATING_RULES must still be the FIRST system message in rating
         #    mode (the LLM treats the first system message as the most
         #    authoritative, so the structured-output contract must lead).
         if 'messages = [{"role": "system", "content": RATING_RULES}] + messages' not in src:
-            print("  [FAIL] rating mode does not prepend RATING_RULES on top of GROUP_CONTEXT", flush=True)
+            log.warning("  [FAIL] rating mode does not prepend RATING_RULES on top of GROUP_CONTEXT")
             ctx_ok = False
         else:
-            print("  [OK] rating mode prepends RATING_RULES (structured-output contract) on top of GROUP_CONTEXT", flush=True)
+            log.info("  [OK] rating mode prepends RATING_RULES (structured-output contract) on top of GROUP_CONTEXT")
     except Exception as e:
-        print(f"  [FAIL] GROUP_CONTEXT test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] GROUP_CONTEXT test raised: {type(e).__name__}: {e!r}")
         ctx_ok = False
     all_ok &= ctx_ok
-    print(f"[selftest] GROUP_CONTEXT tests: {'all pass' if ctx_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] GROUP_CONTEXT tests: {'all pass' if ctx_ok else 'FAILED'}")
 
     # === Real donsetch integration (against the live MCP server) ===
     # Skip this whole block if the env doesn't expose DONSETCH_URL
@@ -1725,7 +1728,7 @@ async def _selftest():
     # split-shape (DONSETCH_MCP__TEXT_ONLY=false) gives us a
     # human-readable text result instead of the [meta] JSON envelope.
     if os.environ.get('DONSETCH_URL') or os.environ.get('LLAMABOT_SELFTEST') == '1':
-        print('[selftest] running real donsetch integration test...', flush=True)
+        log.info('[selftest] running real donsetch integration test...')
         rt_ok = True
         try:
             # asyncio is imported at the top of this file; we use it
@@ -1751,27 +1754,27 @@ async def _selftest():
                 assert isinstance(r, str), f'web_search result is not str: {type(r)}'
                 assert 'Search results' in r, f'web_search missing "Search results": {r[:100]}'
                 assert '[meta]' not in r, f'web_search still has [meta] envelope (split-shape off?): {r[:200]}'
-                print(f'  [OK] web_search: {len(r)} chars, "Search results" present, no [meta] envelope', flush=True)
+                log.info(f'  [OK] web_search: {len(r)} chars, "Search results" present, no [meta] envelope')
 
                 # web_fetch: markdown content
                 r2 = await donsetch_call('web_fetch',
                     {'url': 'https://example.com'})
                 assert isinstance(r2, str), f'web_fetch result is not str: {type(r2)}'
                 assert 'Example Domain' in r2, f'web_fetch missing "Example Domain": {r2[:200]}'
-                print(f'  [OK] web_fetch: {len(r2)} chars, markdown content delivered', flush=True)
+                log.info(f'  [OK] web_fetch: {len(r2)} chars, markdown content delivered')
 
             await _rt()
         except AssertionError as e:
-            print(f"  [FAIL] {e!r}", flush=True)
+            log.warning(f"  [FAIL] {e!r}")
             rt_ok = False
         except Exception as e:
             # If donsetch is unreachable (e.g. test env without MCP),
             # skip rather than fail - we still have the curl-level
             # test in the deployment script.
-            print(f"  [SKIP] donsetch unreachable in this env: {type(e).__name__}: {e!r}", flush=True)
+            log.info(f"  [SKIP] donsetch unreachable in this env: {type(e).__name__}: {e!r}")
             rt_ok = True
         all_ok &= rt_ok
-        print(f"[selftest] real donsetch integration tests: {'all pass' if rt_ok else 'FAILED'}", flush=True)
+        log.warning(f"[selftest] real donsetch integration tests: {'all pass' if rt_ok else 'FAILED'}")
 
     # === Per-handler abort_event key (Stop button race fix) ===
     # Bug: the dict was keyed on (chat_id, user_id). Two concurrent
@@ -1780,7 +1783,7 @@ async def _selftest():
     # LLM call ran to completion while the user thought it had been
     # stopped. Fix: key on (chat_id, thinking.message_id) so each
     # handler has its own slot.
-    print('[selftest] running per-handler abort_event key test...', flush=True)
+    log.info('[selftest] running per-handler abort_event key test...')
     aek_ok = True
     try:  # noqa
         saved = dict(_abort_events)
@@ -1798,49 +1801,49 @@ async def _selftest():
         _register_abort_event(-1001234567890, 5002, ev_b)
         # Both events present, neither overwrites the other.
         if _abort_events.get((-1001234567890, 5001)) is not ev_a:
-            print("  [FAIL] handler A event overwritten or missing", flush=True)
+            log.warning("  [FAIL] handler A event overwritten or missing")
             aek_ok = False
         elif _abort_events.get((-1001234567890, 5002)) is not ev_b:
-            print("  [FAIL] handler B event missing", flush=True)
+            log.warning("  [FAIL] handler B event missing")
             aek_ok = False
         else:
-            print("  [OK] two concurrent in-flight handlers keep distinct events", flush=True)
+            log.info("  [OK] two concurrent in-flight handlers keep distinct events")
         # Handler A's event is set; handler B's is not. Verifies the
         # race: setting one does NOT set the other.
         if not ev_a.is_set():
-            print("  [FAIL] handler A event should be set", flush=True)
+            log.warning("  [FAIL] handler A event should be set")
             aek_ok = False
         elif ev_b.is_set():
-            print("  [FAIL] handler B event should NOT be set", flush=True)
+            log.warning("  [FAIL] handler B event should NOT be set")
             aek_ok = False
         else:
-            print("  [OK] setting handler A's event does not affect handler B", flush=True)
+            log.info("  [OK] setting handler A's event does not affect handler B")
         # Pop only the matching key; the other stays intact.
 
         popped = _abort_events.pop((-1001234567890, 5001), None)
         if popped is not ev_a:
-            print("  [FAIL] pop on handler A key returned wrong value", flush=True)
+            log.warning("  [FAIL] pop on handler A key returned wrong value")
             aek_ok = False
         elif (-1001234567890, 5002) not in _abort_events:
-            print("  [FAIL] handler B event popped by mistake (shared key regression)", flush=True)
+            log.warning("  [FAIL] handler B event popped by mistake (shared key regression)")
             aek_ok = False
         else:
-            print("  [OK] pop on handler A key does not touch handler B", flush=True)
+            log.info("  [OK] pop on handler A key does not touch handler B")
         # Cleanup
         _abort_events.clear()
         _abort_events.update(saved)
     except Exception as e:
-        print(f"  [FAIL] abort_event test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] abort_event test raised: {type(e).__name__}: {e!r}")
         aek_ok = False
     all_ok &= aek_ok
-    print(f"[selftest] abort_event key tests: {'all pass' if aek_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] abort_event key tests: {'all pass' if aek_ok else 'FAILED'}")
     # === F4 LRU bound (v0.6.0 P0-1 regression test) ===
     # _abort_events is LRU-bounded at 200 entries. If someone
     # removes the OrderedDict or the popitem in
     # _register_abort_event, the 250 -> 200 assertion fails
     # loudly. Without this test, the v0.6.0 P0-1 bug is silently
     # regressable on the next refactor.
-    print('[selftest] running F4 LRU bound test...', flush=True)
+    log.info('[selftest] running F4 LRU bound test...')
     lru_ok = True
     saved_aes = dict(_abort_events)
     _abort_events.clear()
@@ -1848,23 +1851,23 @@ async def _selftest():
         for i in range(250):
             _register_abort_event(0, i, asyncio.Event())
         if len(_abort_events) != 200:
-            print(f"  [FAIL] F4 LRU bound: expected 200, got {len(_abort_events)}", flush=True)
+            log.warning(f"  [FAIL] F4 LRU bound: expected 200, got {len(_abort_events)}")
             lru_ok = False
         else:
-            print("  [OK] F4 LRU bound at 200 (250 inserts -> 200 entries)", flush=True)
+            log.info("  [OK] F4 LRU bound at 200 (250 inserts -> 200 entries)")
         if (0, 0) in _abort_events:
-            print("  [FAIL] F4 LRU should have evicted (0, 0)", flush=True)
+            log.warning("  [FAIL] F4 LRU should have evicted (0, 0)")
             lru_ok = False
         else:
-            print("  [OK] F4 LRU evicted oldest 50 entries", flush=True)
+            log.info("  [OK] F4 LRU evicted oldest 50 entries")
     except Exception as e:
-        print(f"  [FAIL] F4 LRU test raised: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] F4 LRU test raised: {type(e).__name__}: {e!r}")
         lru_ok = False
     finally:
         _abort_events.clear()
         _abort_events.update(saved_aes)
     all_ok &= lru_ok
-    print(f"[selftest] F4 LRU bound: {'all pass' if lru_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] F4 LRU bound: {'all pass' if lru_ok else 'FAILED'}")
 
     # === handle_text abort_event discard (post-won race) ===
     # v0.8.0 fix: handler discards non-None response if abort_event
@@ -1883,7 +1886,7 @@ async def _selftest():
     # One entry used to be patched on bot instead of handlers, which is
     # the fourth instance of the defect TECH-DEBT #1 fixed: a write to a
     # module whose globals nothing reads.
-    print('[selftest] running handle_text post-race abort discard test...', flush=True)
+    log.info('[selftest] running handle_text post-race abort discard test...')
     ar_ok = True
     saved = {}
     try:  # noqa
@@ -1980,14 +1983,14 @@ async def _selftest():
 
         await _h.handle_text(_FakeUpdate(), _FakeContext())
         if any(RACE in str(t) for t in sent_texts):
-            print(f"  [FAIL] post-race response was sent: {sent_texts}", flush=True)
+            log.warning(f"  [FAIL] post-race response was sent: {sent_texts}")
             ar_ok = False
         else:
-            print(f"  [OK] post-race response discarded (sent {len(sent_texts)} non-race texts)", flush=True)
+            log.info(f"  [OK] post-race response discarded (sent {len(sent_texts)} non-race texts)")
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"  [FAIL] test error: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] test error: {type(e).__name__}: {e!r}")
         ar_ok = False
     finally:
         # Restore originals
@@ -1996,14 +1999,14 @@ async def _selftest():
                 if id(owner) == oid and orig is not None:
                     setattr(owner, name, orig)
     all_ok &= ar_ok
-    print(f"[selftest] post-race abort discard: {'all pass' if ar_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] post-race abort discard: {'all pass' if ar_ok else 'FAILED'}")
 
     # === T25 webhook boot test ===
     # Verify that with WEBHOOK_MODE=1, the aiohttp server
     # starts, listens on 127.0.0.1:WEBHOOK_PORT, accepts
     # GET /healthz (200), rejects POST without secret
     # (403), and accepts POST with valid secret (200).
-    print('[selftest] running webhook boot test...', flush=True)
+    log.info('[selftest] running webhook boot test...')
     wh_ok = True
     try:  # noqa
         import aiohttp
@@ -2020,11 +2023,11 @@ async def _selftest():
             r.headers = {'X-Telegram-Bot-Api-Secret-Token': token} if token else {}
             return r
         if not _check_secret(_fake_req('test-secret-xyz')):
-            print("  [FAIL] valid token rejected", flush=True); wh_ok = False
+            log.warning("  [FAIL] valid token rejected"); wh_ok = False
         if _check_secret(_fake_req('wrong-token')):
-            print("  [FAIL] invalid token accepted", flush=True); wh_ok = False
+            log.warning("  [FAIL] invalid token accepted"); wh_ok = False
         if _check_secret(_fake_req(None)):
-            print("  [FAIL] missing token accepted", flush=True); wh_ok = False
+            log.warning("  [FAIL] missing token accepted"); wh_ok = False
         _cfg_test.WEBHOOK_SECRET_TOKEN = saved_token
 
         # 2. aiohttp server starts and responds
@@ -2037,33 +2040,33 @@ async def _selftest():
                     # healthz
                     r = await client.get('/healthz')
                     if r.status != 200:
-                        print(f"  [FAIL] /healthz returned {r.status}", flush=True)
+                        log.warning(f"  [FAIL] /healthz returned {r.status}")
                         return False
                     body = await r.text()
                     if 'webhook-ok' not in body:
-                        print(f"  [FAIL] /healthz body missing marker: {body!r}", flush=True)
+                        log.warning(f"  [FAIL] /healthz body missing marker: {body!r}")
                         return False
                     # POST without token -> 403
                     r = await client.post('/tg-webhook/abc123', json={'foo': 'bar'})
                     if r.status != 403:
-                        print(f"  [FAIL] POST without token returned {r.status}", flush=True)
+                        log.warning(f"  [FAIL] POST without token returned {r.status}")
                         return False
             return True
         result = await _run_aiohttp_test()
         if not result:
             wh_ok = False
         else:
-            print("  [OK] webhook server starts, healthz OK, secret-token enforced", flush=True)
+            log.info("  [OK] webhook server starts, healthz OK, secret-token enforced")
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"  [FAIL] test error: {type(e).__name__}: {e!r}", flush=True)
+        log.warning(f"  [FAIL] test error: {type(e).__name__}: {e!r}")
         wh_ok = False
     all_ok &= wh_ok
-    print(f"[selftest] webhook boot: {'all pass' if wh_ok else 'FAILED'}", flush=True)
+    log.warning(f"[selftest] webhook boot: {'all pass' if wh_ok else 'FAILED'}")
 
 
 
 
-    print('[selftest] done', flush=True)
-    print('[selftest] done', flush=True)
+    log.info('[selftest] done')
+    log.info('[selftest] done')

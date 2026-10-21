@@ -117,6 +117,11 @@
 import sys
 import os
 
+import sys as _sys
+from logconf import get_logger
+log = get_logger(__name__)
+log_stderr = get_logger(__name__ + '.stderr', stream=_sys.stderr)
+
 
 # === Deployment profile selector ===
 # public    — conservative; default; safe for multi-user groups.
@@ -237,21 +242,15 @@ def _env_or(env_name, profile_value):
         try:
             return int(raw)
         except ValueError:
-            print(
-                f"[limits] WARNING: {env_name}={raw!r} is not a valid int; "
-                f"using profile default {profile_value!r}",
-                file=sys.stderr,
-            )
+            log_stderr.error(f"[limits] WARNING: {env_name}={raw!r} is not a valid int; "
+                f"using profile default {profile_value!r}")
             return profile_value
     if isinstance(profile_value, float):
         try:
             return float(raw)
         except ValueError:
-            print(
-                f"[limits] WARNING: {env_name}={raw!r} is not a valid float; "
-                f"using profile default {profile_value!r}",
-                file=sys.stderr,
-            )
+            log_stderr.error(f"[limits] WARNING: {env_name}={raw!r} is not a valid float; "
+                f"using profile default {profile_value!r}")
             return profile_value
     return raw
 

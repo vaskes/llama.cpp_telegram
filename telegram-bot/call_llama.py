@@ -25,6 +25,9 @@ import httpx
 # producing the message. One import, one name, three call sites.
 from tool_isolation import (KNOWN_TOOL_NAMES, UnknownToolNameError,
                                validate_tool_calls)
+
+from logconf import get_logger
+log = get_logger(__name__)
 # === T39: bash_command availability helper ===
 # Lazy import + read of the personal_tools.bash_command module so
 # we don't pay the cost (or take the token-check trip) on cold
@@ -342,14 +345,14 @@ async def fetch_tools_from_llama():
                     }
                 })
             _TOOLS_CACHE = openai_tools
-            print(f"[tools] loaded {len(openai_tools)} enabled tools (from {len(all_tools)} total) on attempt {attempt}", flush=True)
+            log.info(f"[tools] loaded {len(openai_tools)} enabled tools (from {len(all_tools)} total) on attempt {attempt}")
             return openai_tools
         except Exception as e:
             last_err = e
-            print(f"[tools] attempt {attempt}/3 failed: {type(e).__name__}: {e}", flush=True)
+            log.info(f"[tools] attempt {attempt}/3 failed: {type(e).__name__}: {e}")
             if attempt < 3:
                 await asyncio.sleep(backoff)
-    print(f"[tools] giving up after 3 attempts, last error: {last_err}", flush=True)
+    log.info(f"[tools] giving up after 3 attempts, last error: {last_err}")
     return []
 
 
@@ -369,7 +372,7 @@ async def _ensure_model() -> str:
     global MODEL
     if not MODEL:
         MODEL = await _discover_default_model(LLAMA_URL, API_KEY)
-        print(f"[config] MODEL auto-discovered: {MODEL}", flush=True)
+        log.info(f"[config] MODEL auto-discovered: {MODEL}")
     return MODEL
 
 
@@ -761,11 +764,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # the only outward signal in that case.
         if silent:
             if reasoning_text:
-                print(
-                    f"[LLAMA] silent reasoning ({len(reasoning_text)} chars, "
-                    f"not shown to GUI)",
-                    flush=True,
-                )
+                log.info(f"[LLAMA] silent reasoning ({len(reasoning_text)} chars, "
+                    f"not shown to GUI)")
             return
         if thinking_msg is None or not reasoning_text:
             return
@@ -803,9 +803,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 pass  # no-op, the message is already up to date
             elif 'flood' in err or 'too many requests' in err:
                 last_flood_at[0] = now
-                print(f"[thinking edit] flood; backing off edits for 30s", flush=True)
+                log.info(f"[thinking edit] flood; backing off edits for 30s")
             else:
-                print(f"[thinking edit err] {type(e).__name__}: {e}", flush=True)
+                log.info(f"[thinking edit err] {type(e).__name__}: {e}")
 
     for iteration in range(max_iter):
         # T44: per-turn accumulator for executed tools.
@@ -816,13 +816,13 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # SIGKILLs after 10s, so we MUST bail faster than that.
         _sd = shutdown_event if shutdown_event is not None else SHUTDOWN_EVENT
         if _sd is not None and _sd.is_set():
-            print(f"[call_llama] shutdown_event set, aborting tool loop at iteration {iteration}", flush=True)
+            log.info(f"[call_llama] shutdown_event set, aborting tool loop at iteration {iteration}")
             return '[bot: shutdown requested, aborting tool loop]'
         # Honour per-task abort (Stop button on the thinking message).
         # Distinct from shutdown_event: shutdown is global ("kill the
         # process"), abort is per-message ("skip this one, move on").
         if abort_event is not None and abort_event.is_set():
-            print(f"[call_llama] abort_event set, aborting tool loop at iteration {iteration}", flush=True)
+            log.info(f"[call_llama] abort_event set, aborting tool loop at iteration {iteration}")
             return None
         # --- request body ---
         async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client:
@@ -861,16 +861,16 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         return obj
                     req_body = _scrub_surrogates(req_body)
                     raw = json.dumps(req_body, ensure_ascii=False).encode('utf-8')
-                    print(f"[LLAMA] iter={iteration} payload_bytes={len(raw)} (image bytes masked)", flush=True)
+                    log.info(f"[LLAMA] iter={iteration} payload_bytes={len(raw)} (image bytes masked)")
                     if os.environ.get("LLAMABOT_DEBUG_PAYLOAD") == "1":
                         head = raw[:400].decode('utf-8', errors='replace')
                         # Find the column where the bad JSON starts by scanning
                         # for known key patterns. Most useful for diagnosing
                         # 500 from llama-server: this prints the head so we
                         # can see what we sent before the parser gave up.
-                        print(f"[LLAMA-DEBUG] iter={iteration} first 400 bytes:\n{head}", flush=True)
+                        log.info(f"[LLAMA-DEBUG] iter={iteration} first 400 bytes:\n{head}")
                 except Exception as e:
-                    print(f"[LLAMA] iter=0 cannot size payload: {e}", flush=True)
+                    log.info(f"[LLAMA] iter=0 cannot size payload: {e}")
             # W2.1: the previous version built a deepcopy of req_body
             # here (mutating it to mask image_url bytes for a log line)
             # but the actual prints read req_body directly, not the
@@ -886,12 +886,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 for it in m["content"]
                 if isinstance(it, dict) and "image_url" in it
             )
-            print(
-                f"[LLAMA] iter={iteration} req_body_keys={list(req_body.keys())} "
+            log.info(f"[LLAMA] iter={iteration} req_body_keys={list(req_body.keys())} "
                 f"tools={'yes ('+str(len(req_tools))+' defs)' if req_tools else 'no'} "
-                f"msgs_count={len(_msgs)} image_msgs={_imgs}",
-                flush=True,
-            )
+                f"msgs_count={len(_msgs)} image_msgs={_imgs}")
             if iteration == 0:
                 # On first iter, also print the first AND last user
                 # message structure (the first to confirm history is
@@ -902,17 +899,17 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                     m0 = user_msgs[0]
                     c0 = m0.get("content")
                     if isinstance(c0, list):
-                        print(f"[LLAMA]   first user msg content types: {[item.get('type') for item in c0 if isinstance(item, dict)]}", flush=True)
+                        log.info(f"[LLAMA]   first user msg content types: {[item.get('type') for item in c0 if isinstance(item, dict)]}")
                     else:
-                        print(f"[LLAMA]   first user msg content head: {str(c0)[:150]!r}", flush=True)
+                        log.info(f"[LLAMA]   first user msg content head: {str(c0)[:150]!r}")
                     ml = user_msgs[-1]
                     cl = ml.get("content")
                     if isinstance(cl, list):
                         first_part = cl[0] if cl else {}
                         first_text = first_part.get("text", "") if isinstance(first_part, dict) else ""
-                        print(f"[LLAMA]   last user msg first text part head: {first_text[:150]!r}", flush=True)
+                        log.info(f"[LLAMA]   last user msg first text part head: {first_text[:150]!r}")
                     else:
-                        print(f"[LLAMA]   last user msg content head: {str(cl)[:150]!r}", flush=True)
+                        log.info(f"[LLAMA]   last user msg content head: {str(cl)[:150]!r}")
             reasoning_buf = ""
             content_buf = ""
             tool_calls_buf = {}
@@ -951,7 +948,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                             # User clicked Stop. Return None so the
                             # handler treats this as "aborted" and
                             # doesn't send a partial response.
-                            print(f"[call_llama] abort_event fired during non-streaming iter={iteration}, aborting", flush=True)
+                            log.info(f"[call_llama] abort_event fired during non-streaming iter={iteration}, aborting")
                             return None
                         r.raise_for_status()
                         data = r.json()
@@ -973,7 +970,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         _raw = (data.get("error") or {})
                         _detail = json.dumps(_raw) if _raw else json.dumps(data)[:500]
                         if is_context_overflow(_detail):
-                            print("[call_llama] CONTEXT OVERFLOW detected", flush=True)
+                            log.info("[call_llama] CONTEXT OVERFLOW detected")
                             return OVERFLOW_MESSAGE
                         return ("[model returned no choices — the prompt may have "
                                 "exceeded the context window, hit a rate limit, or "
@@ -1000,11 +997,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         # retry with a whitelisted tool instead of
                         # silently dropping the turn.
                         bad_names = sorted({(tc.get("function") or {}).get("name") or "" for tc in non_stream_tool_calls})
-                        print(
-                            f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
-                            f"injecting tool result feedback",
-                            flush=True,
-                        )
+                        log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
+                            f"injecting tool result feedback")
                         known_list = ", ".join(sorted(KNOWN_TOOL_NAMES))
                         for tc in non_stream_tool_calls:
                             fn = (tc.get("function") or {})
@@ -1017,7 +1011,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         # branch, which appends a `role: tool` message
                         # explaining the rejection back to msgs. We do
                         # NOT return here; the loop continues.
-                    print(f"[LLAMA] iter={iteration} non-stream finish={data['choices'][0].get('finish_reason')} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}", flush=True)
+                    log.info(f"[LLAMA] iter={iteration} non-stream finish={data['choices'][0].get('finish_reason')} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}")
                     if reasoning and thinking_msg is not None:
                         await push_thinking(accumulated_reasoning + reasoning, force=True)
                     accumulated_reasoning += reasoning
@@ -1052,19 +1046,19 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                             'name': fn.get('name', ''),
                             'arguments': fn.get('arguments', '') or '',
                         }
-                        print(f"[LLAMA]   call: {fn.get('name','')}({(fn.get('arguments') or '')[:200]})", flush=True)
+                        log.info(f"[LLAMA]   call: {fn.get('name','')}({(fn.get('arguments') or '')[:200]})")
                 except Exception as e:
                     # r is bound to the httpx Response if we got past
                     # the .post() call; otherwise it's still None
                     # (e.g. JSONDecodeError, ConnectionError before
                     # the response object is constructed).
                     body = r.text[:500] if r is not None else ''
-                    print(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}", flush=True)
+                    log.info(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}")
                     # v0.8.1: 500 from llama-server is usually the PEG
                     # grammar parser rejecting the model tool-call
                     # output. Retry ONCE without tools.
                     if r is not None and getattr(r, 'status_code', None) == 500 and req_body.get('tools'):
-                        print(f"[call_llama] 500 on tools-enabled request; retrying iter={iteration} without tools", flush=True)
+                        log.info(f"[call_llama] 500 on tools-enabled request; retrying iter={iteration} without tools")
                         fallback_body = dict(req_body)
                         fallback_body.pop('tools', None)
                         fallback_body.pop('tool_choice', None)
@@ -1084,13 +1078,13 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                             # and first-fallback paths.
                             _choices3 = data2.get("choices") or []
                             if not _choices3:
-                                print(f"[call_llama] tools-less fallback: empty choices, returning None", flush=True)
+                                log.info(f"[call_llama] tools-less fallback: empty choices, returning None")
                                 return None
                             content2 = _choices3[0].get("message", {}).get("content") or ''
-                            print(f"[call_llama] tools-less fallback succeeded: {len(content2)} chars", flush=True)
+                            log.info(f"[call_llama] tools-less fallback succeeded: {len(content2)} chars")
                             return content2
                         except Exception as e2:
-                            print(f"[call_llama] tools-less fallback also failed: {type(e2).__name__}: {e2}", flush=True)
+                            log.info(f"[call_llama] tools-less fallback also failed: {type(e2).__name__}: {e2}")
                     return f'[llama-server request failed: {e}]'
             if not locals().get('_ns_handled'):
                 try:
@@ -1117,11 +1111,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         # chunk arrives. The between-chunk check below
                         # handles that.
                         if abort_event is not None and abort_event.is_set():
-                            print(
-                                f"[call_llama] abort_event set pre-stream "
-                                f"iter={iteration}",
-                                flush=True,
-                            )
+                            log.info(f"[call_llama] abort_event set pre-stream "
+                                f"iter={iteration}")
                             return None
                         async for line in r.aiter_lines():
                             # Between-chunk abort check. Fires as soon
@@ -1129,11 +1120,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                             # Stop during the previous chunk's
                             # processing.
                             if abort_event is not None and abort_event.is_set():
-                                print(
-                                    f"[call_llama] abort_event set between "
-                                    f"chunks iter={iteration}",
-                                    flush=True,
-                                )
+                                log.info(f"[call_llama] abort_event set between "
+                                    f"chunks iter={iteration}")
                                 return None
                             if not line or not line.startswith("data: "):
                                 continue
@@ -1170,7 +1158,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         if reasoning_buf:
                             await push_thinking(accumulated_reasoning + reasoning_buf, force=True)
                 except httpx.HTTPError as e:
-                    print(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming", flush=True)
+                    log.info(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming")
                     # Fall back to non-streaming request
                     try:
                         async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client2:
@@ -1192,7 +1180,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         if not _choices2 and is_context_overflow(
                             json.dumps(data.get("error") or data)[:500]
                         ):
-                            print("[call_llama] CONTEXT OVERFLOW on fallback", flush=True)
+                            log.info("[call_llama] CONTEXT OVERFLOW on fallback")
                             return OVERFLOW_MESSAGE
                         if not _choices2:
                             return ("[model returned no choices on fallback — "
@@ -1207,11 +1195,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         except UnknownToolNameError as _e:
                             # T43: soft-reject (same as site 1).
                             bad_names = sorted({(tc.get("function") or {}).get("name") or "" for tc in tool_calls})
-                            print(
-                                f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
-                                f"injecting tool result feedback",
-                                flush=True,
-                            )
+                            log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
+                                f"injecting tool result feedback")
                             for tc in tool_calls:
                                 fn = (tc.get("function") or {})
                                 if (fn.get("name") or "") not in KNOWN_TOOL_NAMES:
@@ -1236,7 +1221,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         reasoning_buf = msg.get("reasoning_content") or ""
                         content_buf = msg.get("content") or ""
                     except Exception as e2:
-                        print(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}", flush=True)
+                        log.info(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}")
                         return f'[both streaming and non-streaming failed: stream_err={e!r}, fallback_err={e2!r}]'
 
             else:
@@ -1262,11 +1247,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                     # tool call but keep the iteration alive by
                     # appending a synthetic tool result that names the
                     # offending tool and the available set.
-                    print(
-                        f"[TOOL-ISOLATION] iter={iteration} soft-reject streamed "
-                        f"tool name {tc['name']!r}; injecting tool result feedback",
-                        flush=True,
-                    )
+                    log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject streamed "
+                        f"tool name {tc['name']!r}; injecting tool result feedback")
                     bad_name = tc["name"]
                     tc["name"] = "__rejected__"
                     saw_unavailable_tool = True
@@ -1289,9 +1271,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         if tool_calls:
             msg["tool_calls"] = tool_calls
         tool_calls = msg.get("tool_calls") or []
-        print(f"[LLAMA] iter={iteration} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)} tool_calls={len(tool_calls)} req_tools={'yes' if req_tools else 'no'}", flush=True)
+        log.info(f"[LLAMA] iter={iteration} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)} tool_calls={len(tool_calls)} req_tools={'yes' if req_tools else 'no'}")
         for tc in tool_calls:
-            print(f"[LLAMA]   call: {tc.get('function',{}).get('name','')}({tc.get('function',{}).get('arguments','')[:200]})", flush=True)
+            log.info(f"[LLAMA]   call: {tc.get('function',{}).get('name','')}({tc.get('function',{}).get('arguments','')[:200]})")
 
         if not tool_calls:
             if content_buf:
@@ -1320,7 +1302,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # hallucinated a tool_call, return whatever content we have rather
         # than enter a loop the user can't escape.
         if req_tools is None:
-            print(f"[LLAMA] iter={iteration} WARNING: model hallucinated tool_calls={len(tool_calls)} with req_tools=None; aborting tool loop", flush=True)
+            log.warning(f"[LLAMA] iter={iteration} WARNING: model hallucinated tool_calls={len(tool_calls)} with req_tools=None; aborting tool loop")
             if content_buf:
                 return {
                     "text": content_buf,
@@ -1340,7 +1322,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         iter_had_real_result = False
         saw_unavailable_tool = False
         current_calls = []
-        print(f"[loop] iter={iteration} tool_calls={len(tool_calls)} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)}", flush=True)
+        log.info(f"[loop] iter={iteration} tool_calls={len(tool_calls)} finish={finish_reason} content_chars={len(content_buf)} reasoning_chars={len(reasoning_buf)}")
         for tc in tool_calls:
             fn_name = tc.get('function', {}).get('name', '')
             raw_args = tc.get('function', {}).get('arguments', '{}')
@@ -1368,7 +1350,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 # E.g. "max_chars":8000,"max_chars":8000,... — we don't
                 # need exact JSON parsing to count this.
                 if raw_args.count('":') > 8 or len(raw_args) > 1500:
-                    print(f"[tool] iter={iteration} REJECTED {fn_name} args too repetitive or too long ({len(raw_args)} chars); asking model to retry", flush=True)
+                    log.info(f"[tool] iter={iteration} REJECTED {fn_name} args too repetitive or too long ({len(raw_args)} chars); asking model to retry")
                     msgs.append({
                         'role': 'tool',
                         'tool_call_id': tc.get('id', ''),
@@ -1379,7 +1361,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 try:
                     args = json.loads(raw_args)
                 except Exception as e:
-                    print(f"[tool] iter={iteration} REJECTED {fn_name} args unparseable: {e!r} (head={raw_args[:120]!r})", flush=True)
+                    log.info(f"[tool] iter={iteration} REJECTED {fn_name} args unparseable: {e!r} (head={raw_args[:120]!r})")
                     msgs.append({
                         'role': 'tool',
                         'tool_call_id': tc.get('id', ''),
@@ -1391,7 +1373,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 # the model produced only structural noise (e.g.
                 # "{{" or "null" or duplicated empty key). Reject.
                 if not args and raw_args.strip() not in ('{}', 'null', '[]'):
-                    print(f"[tool] iter={iteration} REJECTED {fn_name} args parsed to empty for raw={raw_args[:120]!r}", flush=True)
+                    log.info(f"[tool] iter={iteration} REJECTED {fn_name} args parsed to empty for raw={raw_args[:120]!r}")
                     msgs.append({
                         'role': 'tool',
                         'tool_call_id': tc.get('id', ''),
@@ -1403,7 +1385,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 args = {}
             tc_id = tc.get('id', '')
             current_calls.append((fn_name, json.dumps(args, sort_keys=True) if isinstance(args, dict) else str(args)))
-            print(f"[tool] iter={iteration} call {fn_name}({args})", flush=True)
+            log.info(f"[tool] iter={iteration} call {fn_name}({args})")
             if fn_name == 'react_to_message':
                 result = await _execute_react_to_message(
                     args,
@@ -1507,12 +1489,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # time. See the original T43 commit message for the
         # design intent.
         if saw_unavailable_tool:
-            print(
-                f"[loop] iter={iteration} unhandled tool(s) called; "
+            log.info(f"[loop] iter={iteration} unhandled tool(s) called; "
                 f"continuing so model can see the synthetic tool result "
-                f"on the next iter and retry with a whitelisted tool",
-                flush=True,
-            )
+                f"on the next iter and retry with a whitelisted tool")
 
         # If the model is asking for the same tool+args as in the previous
         # iteration, it has looped — return whatever we have and stop.
@@ -1523,7 +1502,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # a spurious "stuck" detection and IndexError. Only compare
         # when there's actually a tool call to compare.
         if current_calls and current_calls == prev_calls:
-            print(f"[loop] iter={iteration} same tool calls as previous iter; aborting", flush=True)
+            log.info(f"[loop] iter={iteration} same tool calls as previous iter; aborting")
             return (
                 f'[bot: the model asked for the same tool call twice in a row '
                 f'({current_calls[0][0]}). It is stuck in a loop. '
@@ -1536,7 +1515,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # tool calls (which defeats the identical-call detector above).
         elapsed = time.monotonic() - loop_start
         if elapsed > LOOP_BUDGET_SEC:
-            print(f"[loop] iter={iteration} time budget exceeded ({elapsed:.0f}s > {LOOP_BUDGET_SEC}s); aborting", flush=True)
+            log.info(f"[loop] iter={iteration} time budget exceeded ({elapsed:.0f}s > {LOOP_BUDGET_SEC}s); aborting")
             return (
                 f'[bot: time budget exceeded after {int(elapsed/60)} min and {iteration+1} iterations. '
                 f'The model is reasoning too slowly for this question. '
@@ -1552,7 +1531,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             # like "[unavailable]" or "0 results"). Bail with what we have.
             if last_empty >= 3:
                 tail = (accumulated_reasoning or reasoning_buf)[-3500:]
-                print(f"[loop] iter={iteration} 3 empty iters in a row; aborting", flush=True)
+                log.info(f"[loop] iter={iteration} 3 empty iters in a row; aborting")
                 return (
                     f'_(модель 3 итерации подряд не получила полезных данных от инструментов; '
                     f'останавливаю, чтобы не сжигать токены. '
@@ -1593,7 +1572,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 # the guard.
                 _choices3b = data3.get("choices") or []
                 if not _choices3b:
-                    print(f"[call_llama] summarize fallback: empty choices, returning explanatory error", flush=True)
+                    log.info(f"[call_llama] summarize fallback: empty choices, returning explanatory error")
                     return ("[bot: the model returned no choices on the summarize call — "
                             "the prompt may have exceeded the context window, hit a rate limit, "
                             "or been blocked by a content filter. Try a shorter prompt or "
