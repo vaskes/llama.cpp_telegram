@@ -15,6 +15,9 @@ import pathlib
 
 CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
 src = CALL_LLAMA.read_text()
+# The stuck-call detector moved to llm_loop_guard.py in
+# TECH-DEBT #3 Block C3; the check below reads that file.
+guard_src = CALL_LLAMA.parent.joinpath("llm_loop_guard.py").read_text()
 
 
 def _find_function_body(name):
@@ -75,8 +78,8 @@ def test_stuck_call_detector_intact():
     """T32c stuck-call detector (`current_calls == prev_calls`)
     must still be in place to catch models that keep retrying
     the same forbidden tool."""
-    assert "current_calls == prev_calls" in src
-    assert "same tool calls as previous iter; aborting" in src
+    assert "current_calls == self.prev_calls" in guard_src
+    assert "same tool calls as previous iter; aborting" in guard_src
 
 
 def test_t43_synthetic_tool_result_intact():

@@ -132,5 +132,8 @@ def test_call_llama_has_stuck_call_detector():
     forbidden tool must be stopped by the stuck-call
     detector after 2 iters."""
     src = CALL_LLAMA.read_text()
-    assert "current_calls == prev_calls" in src
-    assert "same tool calls as previous iter; aborting" in src
+    # The detector moved to llm_loop_guard.py in TECH-DEBT #3 Block C3.
+    # Reading only call_llama.py reports it deleted.
+    guard_src = CALL_LLAMA.parent.joinpath("llm_loop_guard.py").read_text()
+    assert "current_calls == self.prev_calls" in guard_src
+    assert "same tool calls as previous iter; aborting" in guard_src

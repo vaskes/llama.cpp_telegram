@@ -58,6 +58,7 @@ from http_clients import _abortable_post, transcribe_voice  # noqa: F401
 from llm_messages import _tag_sender  # noqa: F401
 from llm_nonstream import non_stream_iteration
 from llm_sse import StreamAccumulator
+from llm_loop_guard import Abort, LoopGuard
 from llm_tools import _bash_command_tool_enabled, fetch_tools_from_llama  # noqa: F401
 
 
@@ -416,11 +417,10 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         msgs = [sys_prompt] + messages
         req_tools = None
     max_iter = 15
-    last_empty = 0
     final_fallback = None
-    prev_calls = []  # detect identical-call loops
     loop_start = time.monotonic()
-    LOOP_BUDGET_SEC = limits.LOOP_BUDGET_SEC  # configurable via LLAMABOT_LOOP_BUDGET_SEC; default 600 (10 min)
+    LOOP_BUDGET_SEC = limits.LOOP_BUDGET_SEC
+    guard = LoopGuard(LOOP_BUDGET_SEC)  # configurable via LLAMABOT_LOOP_BUDGET_SEC; default 600 (10 min)
 
     # Accumulated reasoning across iterations (for the live feed)
     accumulated_reasoning = ""
@@ -957,7 +957,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         'tool_call_id': tc.get('id', ''),
                         'content': f'[bot: your tool call for {fn_name} had malformed args (length={len(raw_args)}, possibly duplicate keys or clipped). Please re-emit the tool call with a single, well-formed JSON object.]',
                     })
-                    last_empty += 1
+                    guard.note_rejected_call()
                     continue
                 try:
                     args = json.loads(raw_args)
@@ -968,7 +968,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         'tool_call_id': tc.get('id', ''),
                         'content': f'[bot: your tool call for {fn_name} had invalid JSON ({e!r}). Please re-emit with a single well-formed JSON object.]',
                     })
-                    last_empty += 1
+                    guard.note_rejected_call()
                     continue
                 # If parsing yielded {} for a non-empty raw string,
                 # the model produced only structural noise (e.g.
@@ -980,7 +980,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         'tool_call_id': tc.get('id', ''),
                         'content': f'[bot: your tool call for {fn_name} parsed to an empty object. Please re-emit with actual parameters.]',
                     })
-                    last_empty += 1
+                    guard.note_rejected_call()
                     continue
             else:
                 args = {}
@@ -1102,88 +1102,58 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # equals prev_calls=[] on the first iter, which would trigger
         # a spurious "stuck" detection and IndexError. Only compare
         # when there's actually a tool call to compare.
-        if current_calls and current_calls == prev_calls:
-            log.info(f"[loop] iter={iteration} same tool calls as previous iter; aborting")
-            return (
-                f'[bot: the model asked for the same tool call twice in a row '
-                f'({current_calls[0][0]}). It is stuck in a loop. '
-                f'Final answer so far: {final_fallback or "(none)"}]'
-            )
-        prev_calls = current_calls
-
-        # Hard wall-clock budget so the bot cannot burn 30+ minutes in
-        # slow-reasoning loops even when every iteration produces different
-        # tool calls (which defeats the identical-call detector above).
         elapsed = time.monotonic() - loop_start
-        if elapsed > LOOP_BUDGET_SEC:
-            log.info(f"[loop] iter={iteration} time budget exceeded ({elapsed:.0f}s > {LOOP_BUDGET_SEC}s); aborting")
-            return (
-                f'[bot: time budget exceeded after {int(elapsed/60)} min and {iteration+1} iterations. '
-                f'The model is reasoning too slowly for this question. '
-                f'Try a simpler question, /reset, or a different model.]'
-            )
+        outcome = guard.tick(
+            iteration=iteration,
+            current_calls=current_calls,
+            elapsed=elapsed,
+            iter_had_real_result=iter_had_real_result,
+            final_fallback=final_fallback,
+            reasoning_tail=(accumulated_reasoning or reasoning_buf)[-3500:],
+            finish_reason=finish_reason,
+        )
+        if isinstance(outcome, Abort):
+            return outcome.text
+        if outcome is not None:
+            msgs.append({'role': 'user', 'content': outcome.text})
 
-        if iter_had_real_result:
-            last_empty = 0
-        else:
-            last_empty += 1
-            # Hard abort: 3 iterations in a row with no real tool result
-            # (either no tools called, or every tool returned a placeholder
-            # like "[unavailable]" or "0 results"). Bail with what we have.
-            if last_empty >= 3:
-                tail = (accumulated_reasoning or reasoning_buf)[-3500:]
-                log.info(f"[loop] iter={iteration} 3 empty iters in a row; aborting")
-                return (
-                    f'_(модель 3 итерации подряд не получила полезных данных от инструментов; '
-                    f'останавливаю, чтобы не сжигать токены. '
-                    f'finish_reason={finish_reason}, reasoning_chars={len(accumulated_reasoning + reasoning_buf)})\n\n'
-                    f'{tail}'
+        if isinstance(outcome, Nudge):
+
+            # Final non-streamed summarize call (no tools — we want a plain answer)
+            async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client3:
+                r3 = await client3.post(
+                    f"{LLAMA_URL}/chat/completions",
+                    headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                    json={
+                        "model": MODEL,
+                        "messages": msgs,
+                        "tool_choice": "none",
+                        "max_tokens": max_tokens,
+                        "stream": False,
+                    }
                 )
-            if last_empty >= 2:
-                msgs.append({
-                    'role': 'user',
-                    'content': (
-                        'The previous tool calls returned no useful data. '
-                        'Please stop searching and give your final answer now — '
-                        'if you cannot find the requested information, say so honestly '
-                        'and suggest where the user can find it themselves.'
-                    ),
-                })
-                # Final non-streamed summarize call (no tools — we want a plain answer)
-                async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client3:
-                    r3 = await client3.post(
-                        f"{LLAMA_URL}/chat/completions",
-                        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-                        json={
-                            "model": MODEL,
-                            "messages": msgs,
-                            "tool_choice": "none",
-                            "max_tokens": max_tokens,
-                            "stream": False,
-                        }
-                    )
-                    r3.raise_for_status()
-                    data3 = r3.json()
-                # T32b (2026-10-13): guard. Without this, a 200 OK
-                # with choices:[] (rate limit / content filter /
-                # context overflow on the summarize call) would
-                # produce 'list index out of range' in the bot's
-                # reply, the same regression T32 was supposed to
-                # close. This is the 5th call site that needed
-                # the guard.
-                _choices3b = data3.get("choices") or []
-                if not _choices3b:
-                    log.info(f"[call_llama] summarize fallback: empty choices, returning explanatory error")
-                    return ("[bot: the model returned no choices on the summarize call — "
-                            "the prompt may have exceeded the context window, hit a rate limit, "
-                            "or been blocked by a content filter. Try a shorter prompt or "
-                            "try again in a minute.]")
-                msg3 = _choices3b[0].get("message") or {}
-                return msg3.get("content") or (
-                    '[bot: search returned no useful data. '
-                    'For live data (flight prices, news, stocks), please use a direct service '
-                    'like Aviasales, Google Flights, or your browser.]'
-                )
+                r3.raise_for_status()
+                data3 = r3.json()
+            # T32b (2026-10-13): guard. Without this, a 200 OK
+            # with choices:[] (rate limit / content filter /
+            # context overflow on the summarize call) would
+            # produce 'list index out of range' in the bot's
+            # reply, the same regression T32 was supposed to
+            # close. This is the 5th call site that needed
+            # the guard.
+            _choices3b = data3.get("choices") or []
+            if not _choices3b:
+                log.info(f"[call_llama] summarize fallback: empty choices, returning explanatory error")
+                return ("[bot: the model returned no choices on the summarize call — "
+                        "the prompt may have exceeded the context window, hit a rate limit, "
+                        "or been blocked by a content filter. Try a shorter prompt or "
+                        "try again in a minute.]")
+            msg3 = _choices3b[0].get("message") or {}
+            return msg3.get("content") or (
+                '[bot: search returned no useful data. '
+                'For live data (flight prices, news, stocks), please use a direct service '
+                'like Aviasales, Google Flights, or your browser.]'
+            )
 
     if final_fallback:
         return final_fallback

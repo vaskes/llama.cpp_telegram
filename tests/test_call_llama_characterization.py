@@ -230,22 +230,35 @@ ABORT_GUARDS = {
 }
 
 
+# Which module owns which guard, as of TECH-DEBT #3 Block C3. Measured,
+# not assumed: the ledger called these an "abort ladder" and they are not
+# one. hallucination fires before any tool runs and returns a dict while
+# the rest return strings, so it stayed in call_llama; the three tail
+# guards moved to llm_loop_guard.
+#
+# A single concatenated source answers "does the string appear anywhere",
+# not "is the guard in the place that runs it" -- which is how the
+# previous version stayed green as the code moved underneath it.
+GUARD_OWNERS = {
+    "max_iter":       ("call_llama.py",      "range(max_iter)"),
+    "hallucination":  ("call_llama.py",      "hallucinat"),
+    "identical-call": ("llm_loop_guard.py",  "current_calls == self.prev_calls"),
+    "wall-clock":     ("llm_loop_guard.py",  "elapsed > self.budget_sec"),
+    "last_empty":     ("llm_loop_guard.py",  "self.last_empty >= 3"),
+}
+
+
 def test_all_five_abort_guards_are_present_in_the_source():
     """Structural, not behavioural: each guard has its own failure shape
     and losing one does not raise -- it spins. So assert they exist."""
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    present = {
-        "max_iter": "max_iter" in src,
-        "identical-call": "prev_calls" in src,
-        "wall-clock": "LOOP_BUDGET_SEC" in src or "wall_clock" in src,
-        "hallucination": "hallucinat" in src,
-        "last_empty": "last_empty" in src,
-    }
-    missing = sorted(k for k, v in present.items() if not v)
+    missing = []
+    for guard, (filename, needle) in GUARD_OWNERS.items():
+        if needle not in (BOT_DIR / filename).read_text(encoding="utf-8"):
+            missing.append(f"{guard} (expected in {filename})")
     assert not missing, (
-        f"abort guards missing from call_llama.py: {missing}. Each one is a "
-        f"distinct way the loop stops; losing one is silent -- the call runs "
-        f"to max_iter instead."
+        f"abort guards missing: {missing}. Each one is a distinct way the "
+        f"loop stops; losing one is silent -- the call runs to max_iter "
+        f"instead."
     )
     assert len(ABORT_GUARDS) == 5, "this test and the guard list have drifted"
 
