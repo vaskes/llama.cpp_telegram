@@ -207,4 +207,5 @@ there rather than left as a comment.
 * The whole thing under a mutation harness with a clean-tree preflight --
   `scripts/mutation_harness_selftest.py`, preflight + 14 mutations.
 
-Full suite: 1646 passed, 20 skipped. Golden: six lines across seven slices.
+Full suite: 1647 passed, 20 skipped. Golden: six lines across seven slices.
+Mutation harness: 11 mutations, 11 caught, 0 survived, 0 refused, 0 invalid.
