@@ -362,3 +362,56 @@ def non_stream_step(
         accumulated_reasoning=accumulated_reasoning,
         saw_unavailable_tool=saw_unavailable_tool,
     )
+
+
+# --- TECH-DEBT #8 block 4 (T3.3) ---------------------------------------
+# What a FAILED non-streaming POST means for the turn.
+#
+# The await stays in call_llama, for the same reason C1 put it there:
+# `tools_less_fallback` is a second network attempt, and if it raises
+# the caller's own handler is what should see it. What moves is the
+# decision -- 500 from llama-server means the PEG grammar parser
+# rejected the model's tool-call output, so asking once more without
+# tools usually succeeds; anything else is a dead turn.
+#
+# This was inline `if getattr(e, "response", None)... == 500 and
+# req_body.get("tools")`. Reading it required holding three things at
+# once: which exceptions carry `.response`, what status means what, and
+# whether this request even offered tools.
+
+
+@dataclass(frozen=True)
+class ErrorStep:
+    """Either retry once without tools, or the turn is over.
+
+    `retry_without_tools` is a flag rather than a message because the
+    two branches return different KINDS of thing -- one hands back an
+    await, the other a string the handler posts to Telegram. Returning
+    a value from here and letting the caller decide would smuggle both
+    through one field, which is the shape `NonStreamResult` was built
+    to avoid.
+    """
+    retry_without_tools: bool = False
+    message: str = ""
+    status_code: Optional[int] = None
+    body: str = ""
+
+
+def classify_error(exc: BaseException, req_body: dict) -> ErrorStep:
+    """Pure: no await, no clock, no client. Directly testable.
+
+    `exc.response` exists only once httpx has a response to attach --
+    JSONDecodeError and ConnectionError arrive without one, and reading
+    `exc.response.status_code` unguarded raises AttributeError from
+    inside the handler that is supposed to be reporting the failure.
+    """
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    body = response.text[:500] if response is not None else ""
+    retry = status == 500 and bool(req_body.get("tools"))
+    return ErrorStep(
+        retry_without_tools=retry,
+        message="" if retry else f"[llama-server request failed: {exc}]",
+        status_code=status,
+        body=body,
+    )

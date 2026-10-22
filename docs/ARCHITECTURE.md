@@ -15,8 +15,8 @@ telegram-bot/
 ├── bot.py                 # main entry, aiohttp webhook + handlers
 ├── handlers.py            # handle_text/photo/voice/document
 ├── call_llama.py          # the streaming + tool-calling loop
-│                          #   794 lines file, 641 in the function,
-│                          #   317 in the one top-level loop
+│                          #   796 lines file, 642 in the function,
+│                          #   318 in the one top-level loop
 ├── llm_tools.py           # fetching the tool list from llama-server
 ├── llm_request.py         # request body + shape logging + accumulator reset
 ├── llm_sse.py             # SSE -> StreamAccumulator (the parsing only)
@@ -60,7 +60,7 @@ directly by tests, none of which build a full `call_llama`.
   llm_loop_guard.py     143  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py        83  _tag_sender
-  llm_nonstream.py      364  NonStreamResult, non_stream_iteration, tools_less_fallback
+  llm_nonstream.py      417  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         307  StreamOutcome, stream_iteration, _fallback_to_nonstream
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape

@@ -2,7 +2,8 @@
 tech_debt: 8
 marker: tests/test_drift_call_llama_names.py, tests/test_d2_toolcalls.py,
   tests/test_d3_finish.py, tests/test_d4_dispatch.py,
-  tests/test_llm_stream.py, tests/test_no_duplicate_definitions.py
+  tests/test_llm_stream.py, tests/test_no_duplicate_definitions.py,
+  tests/test_nonstream_error.py
 state: partial
 issue: null
 ---
@@ -287,3 +288,57 @@ were real:
 
 Marker: `tests/test_llm_stream.py` (20 tests),
 `tests/test_no_duplicate_definitions.py`.
+
+
+## Progress, 2026-10-22 (block 4 — T3.3, the last of the three)
+
+The non-streaming branch is out. What moved is the DECISION about a
+failed POST — `llm_nonstream.classify_error`, a pure function — and the
+`await tools_less_fallback(...)` stays in `call_llama` for the reason C1
+gave: a failure in the retry belongs to the handler that knows which
+iteration it was in.
+
+`ErrorStep.retry_without_tools` is a flag rather than a message, because
+the two branches return different KINDS of thing. One hands back an
+await, the other a string destined for Telegram. Collapsing both into
+one field is the shape `NonStreamResult` was built to avoid.
+
+### The last `terminal is not None`
+
+    if _ns_step.terminal is not None:
+        return _ns_step.terminal
+
+was the last place in the loop that inferred terminality from a value.
+It happened to be correct — `outcome == "final"` returns earlier, so the
+only `is_terminal=True` reaching it carries a string — but it is the
+fragile form, and it sits directly next to the abort path where a
+terminal value is legitimately None. Now `if _ns_step.is_terminal:
+return _ns_step.assert_terminal()`, the same rule the module has carried
+since block 2, applied at the one site that had not adopted it.
+
+A structural tripwire pins it: `call_llama` may not compare any
+`.terminal` against None anywhere in the loop.
+
+### Where the branch stands
+
+`call_llama`: 917 -> 796 lines in the file, 766 -> 642 in the function,
+the loop 441 -> 318. All three POST attempts now live outside it. What
+remains in the function is the iteration: the buffers, the message list,
+the turn ledger, the dispatch of one already-screened call, and the
+decision of whether to go round again.
+
+Criterion 1 of this item — "an iteration is a named unit" — is the one
+still open. `stream_iteration` and `non_stream_iteration` are named and
+tested, but they are called from a `for` statement rather than being the
+body of one, so the loop's own state (four buffers, `msgs`, the ledger,
+`iter_had_real_result`) is still shared mutable scope across all of it.
+That is the next piece and it is a different kind of work: not moving
+lines, but deciding what an iteration is allowed to own.
+
+### Verification
+
+Third harness, 7 mutations against `classify_error`: 7 caught, 0
+survived. Running total across all three: **30 mutations, 30 caught.**
+Full suite 1555 passed.
+
+Marker: `tests/test_nonstream_error.py` (14 tests).

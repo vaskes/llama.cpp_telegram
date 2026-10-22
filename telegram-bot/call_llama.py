@@ -56,7 +56,8 @@ from prompts import GROUP_CONTEXT, RATING_RULES
 from rating import _execute_react_to_message
 from http_clients import _abortable_post, transcribe_voice  # noqa: F401
 from llm_messages import _tag_sender  # noqa: F401
-from llm_nonstream import non_stream_iteration, non_stream_step
+from llm_nonstream import (classify_error, non_stream_iteration,
+                           non_stream_step)
 from llm_sse import StreamAccumulator
 from llm_markup import _stop_button_markup  # noqa: F401  (re-export)
 from llm_stream import StreamOutcome, stream_iteration
@@ -526,30 +527,31 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                     accumulated_reasoning=accumulated_reasoning,
                     saw_unavailable_tool=saw_unavailable_tool,
                 )
-                if _ns_step.terminal is not None:
-                    return _ns_step.terminal
+                # is_terminal, not `terminal is not None`. The two
+                # disagree on the abort path, where the turn ends with a
+                # legitimate None; reading the value instead of the
+                # decision would fall through into the dispatch loop and
+                # answer a cancelled question.
+                if _ns_step.is_terminal:
+                    return _ns_step.assert_terminal()
                 ns_handled = True
                 saw_unavailable_tool = _ns_step.saw_unavailable_tool
                 content_buf = _ns_step.content_buf
                 reasoning_buf = _ns_step.reasoning_buf
                 tool_calls_buf = _ns_step.tool_calls_buf
             except Exception as e:
-                # `response` is on the exception only once it exists;
-                # before that it is None (JSONDecodeError, ConnectionError).
-                _err_response = getattr(e, "response", None)
-                _body = (_err_response.text[:500]
-                         if _err_response is not None else '')
+                # TECH-DEBT #8 block 4: the DECISION moved out; the await
+                # stays, because C1 is right that a failure in the retry
+                # belongs to this handler and not to a module with no
+                # idea what the loop was doing.
+                _err = classify_error(e, req_body)
                 log.info(f"[non-stream err iter={iteration}] "
-                    f"{type(e).__name__}: {e}; body={_body!r}")
-                # v0.8.1: a 500 from llama-server is usually the PEG grammar
-                # parser rejecting the model's tool-call output. Retry ONCE
-                # without tools.
-                if (getattr(_err_response, "status_code", None) == 500
-                        and req_body.get('tools')):
+                    f"{type(e).__name__}: {e}; body={_err.body!r}")
+                if _err.retry_without_tools:
                     return await tools_less_fallback(
                         req_body, iteration=iteration, abort_event=abort_event,
                         primary_error=e)
-                return f'[llama-server request failed: {e}]'
+                return _err.message
             if not ns_handled:
                 # TECH-DEBT #8 block 3: the streaming branch and the
                 # non-streaming fallback it owns now live in llm_stream.
