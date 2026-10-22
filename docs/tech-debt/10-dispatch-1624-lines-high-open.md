@@ -1,7 +1,7 @@
 ---
 tech_debt: 10
-marker: none yet
-marker_kind: none
+marker: tests/test_dispatch_routing.py
+marker_kind: tripwire
 state: open
 issue: null
 ---
@@ -37,6 +37,34 @@ the extraction:
 (c) `_safe_sender_label` into `sanitizer.py`. Naming note: "sanitisation"
 here is display-name normalisation, not a security filter. Do not let a
 future reader assume the latter and bolt filtering onto it.
+
+**Routing tripwire landed first — `tests/test_dispatch_routing.py`.**
+The decomposition must not be allowed to break routing, because routing
+has already cost production twice, and the tripwire has to exist while
+the file is being moved.
+
+Properties pinned, not the presence of a function:
+
+- every delivery mode reaches `_dispatch_update` (webhook awaits it,
+  polling goes through `_spawn_dispatch`);
+- the edit rewrite runs **before** `Update.de_json`, not after;
+- `Update.de_json` is called **exactly once** in the entry point;
+- `edited_message` is gone from the dict afterwards, on both rewrite
+  paths -- leaving it makes PTB route the same text twice;
+- the rewrite preserves `message_thread_id`, which is the attribute
+  whose absence produced the original `AttributeError`;
+- an update that already carries `message` is left alone;
+- no module other than `dispatch.py` and `webhook.py` calls `de_json`.
+
+**10 mutations, 10 caught**, on a clean-tree preflight. Two things the
+run changed rather than confirmed:
+
+- the `de_json` census was a substring search, so it would have matched
+  the word in a comment -- in the one file whose history is a comment
+  that named the wrong place for years. It walks AST now.
+- `webhook.py` calls `de_json` to *validate* before handing the dict on,
+  which is a decision, not a route. The test allows exactly those two
+  modules and says why, so a third one has to argue for itself.
 
 **Depends on** item 8 being finished first, so the command handlers do
 not move against a moving `call_llama` signature.
