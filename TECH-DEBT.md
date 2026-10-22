@@ -35,7 +35,7 @@ disagreement again without a test going red.
 | 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
 | 10 | `dispatch.py` — 1672 lines | **open** | none yet | Every command is a routing change |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
-| 12 | `prompts.py` — 422 lines of module constants | **partial** — test exists | `test_prompts.py` | Relocation still to do |
+| 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
 | 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1357, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
 | 14 | Duplicate top-level definitions in `tests/` | **closed** | `test_no_duplicate_definitions.py` | — |
 

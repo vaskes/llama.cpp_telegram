@@ -2,11 +2,11 @@
 tech_debt: 12
 marker: tests/test_prompts.py
 marker_kind: tripwire
-state: partial
+state: closed
 issue: null
 ---
 
-## 12. `prompts.py` is 423 lines of module constants with no test (MEDIUM, open)
+## 12. `prompts.py` is 423 lines of module constants (MEDIUM, closed)
 
 **Measured 2026-10-22:** 422 lines, **zero** top-level functions. It is
 entirely prompt text.
@@ -49,9 +49,44 @@ Two of the six mutations changed no pinned constant and were caught only
 by the semantic layer, which is the evidence that the second layer is
 doing work rather than restating the first.
 
-**Still open:** the relocation itself. 422 lines of prose becomes
-several files, and `persona.json` -- already data rather than code --
-needs to be carried to the same shape.
+**Relocation done — `6c6adc1`, Dockerfile `ad9850d`.** The prose is in
+`telegram-bot/prompt_text/`, one file per prompt: `group_context.py`,
+`rating_rules.py`, `welcome.py`, `commands.py`, `emoji.py`.
+`prompts.py` is a facade at 75 lines — four regexes, `RATING_MODE`,
+and re-exports, because eight modules import from it. `RATING_MODE`
+stays because it reads the environment: a switch, not a sentence.
+
+Every constant is byte-identical, verified by hashing all twelve against
+the previous revision. Not read, not eyeballed: 13828 characters of
+English and Russian. The sha256 pins now read `prompt_text`, so they
+are a contract about the files and not about a re-export.
+
+**9 mutations, 9 caught. Two were INVALID first time and were rewritten
+rather than counted** — one broke an import, the other edited a string
+that is not in the file. The harness now hashes every candidate file
+and refuses to report a no-op as a survivor.
+
+**The Dockerfile was the interesting failure.** The image built and the
+bot died on startup with `ModuleNotFoundError: No module named
+'prompt_text'`: `COPY *.py ./` matches top-level files only, and the
+suite was green the whole time because it runs against the host tree,
+which has the package. The same trap already had a comment and a
+dedicated COPY line for `personal_tools`, for the same reason.
+
+**Three tripwires read `prompts.py` as text** and had to be pointed at
+the package, including `selftest_llm`'s GROUP_CONTEXT check — which had
+already been bitten by exactly this once, by reading a file that no
+longer held the thing it asserted, and which failed against correct
+code for two deploys. #12 walked it into the same trap one step
+further, in the other direction.
+
+**The never-invent directive was moved out of a docstring on
+2026-10-22 and nothing held it.** Deleting the line that appends it to
+the rendered persona leaves every other test green and the bot quietly
+starts filling in a biography the operator never wrote.
+`test_t69_personality.py` says so now, and checks that the directive is
+*last* in the block, so it reads as the thing that settles any question
+about identity rather than one rule among many.
 
 **Found while writing the test, not fixed:** `_RATING_PREFIX_RE` accepts
 `[[RATE:0]]` and `[[RATE:11]]`. The RATE group is optional, so an
