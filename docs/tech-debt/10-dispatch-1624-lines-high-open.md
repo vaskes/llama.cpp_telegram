@@ -125,7 +125,38 @@ file pins the payloads as payloads and checks the filter has exactly one
 definition, because two copies drift and that is how the Application
 builders drifted two blocks ago.
 
-## Closed
+## Not verified: live edit-replace against a real user (manual only)
+
+The edit-replace path -- user edits a message, the bot deletes its old
+answer and recomputes -- has **never been observed running against live
+Telegram traffic**. It is characterised by unit tests and by
+`_apply_edited_message` exercising the rewritten update dict, and that
+is the whole of the evidence.
+
+This is not an oversight that a better test would fix. To see the bug
+you need three things at once, and production has none of them:
+
+1. **two people**, because you must edit your own message while the bot
+   is mid-answer, so one person cannot stage it alone;
+2. **a deliberately slow model**, because the window where
+   `message_thread_id` is missing is the window between "user edited"
+   and "bot finished answering" -- on a fast model it is already closed;
+3. **an active thread**, since the original `AttributeError` was about
+   `message_thread_id`, which is only present in a forum topic.
+
+Production is the opposite: fast model, one user, topic traffic
+happening. So this case will hang open indefinitely unless the bot is
+deliberately run against a slow model with two people present. That is
+the intended arrangement, not a gap someone forgot.
+
+Consequences for how to read the tripwires: `test_dispatch_routing.py`
+proves the rewrite runs before `de_json`, that `edited_message` is
+removed, and that `message_thread_id` survives. It cannot prove the
+Telegram client behaves the way the rewrite assumes, because that needs
+a real update from the real API. Treat the live path as untested by
+design, and do not read the green suite as evidence about it.
+
+
 
 **1672 → 1278 lines**, three blocks. Routing is pinned in
 `test_dispatch_routing.py`, the startup sequence in
