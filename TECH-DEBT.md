@@ -32,7 +32,7 @@ disagreement again without a test going red.
 | 6 | `created_at` from the Python clock | **closed** — decision, see file | `test_t6_db_clock.py` | — |
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
 | 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
-| 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
+| 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `scripts/mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
 | 10 | `dispatch.py` — 1672 → 1278 | **closed** — blocks A+B+C, 27 mutations | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
@@ -89,6 +89,11 @@ the 1940-line figure below it is the size it *started* from.
 
 Recorded so the question stops resurfacing at every review.
 
+- **`dispatch.py` below 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
+  It is 974. The safe decomposition is done (three blocks, 27 mutations); what
+  is left is `_poll_loop` at 164 and the PTB glue, and splitting those is the
+  half-refactor case the ticket itself warns about. Closed as far as safe
+  decomposition goes, explicitly short of the number — not "done".
 - **ORM / `pypika` for `storage.py`.** `Storage` is already an
   encapsulating class, `get_store()` is the sole entry point, and the 41
   statements are plain SQL. A query builder would not have prevented any

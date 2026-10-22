@@ -172,6 +172,36 @@ because nothing in the suite had ever entered `main`.
 `_dispatch_update`, `_apply_edited_message`, `_spawn_dispatch`,
 `_handle_chat_member_update` -- and the wiring between them.
 
+### The ticket's target was ≤ 400 lines. It is 974. That is not done.
+
+Stating it plainly because the alternative is the failure this ledger
+already has two of: a stale claim in an index that a review report gets
+built on. The ticket said **1612 → ≤ 400**. The result is **974**.
+
+What is left, by size, and why each is still here:
+
+| lines | what | why it stayed |
+|---|---|---|
+| 164 | `_poll_loop` | the polling path end to end; splitting it means a seam across the whole turn, and there is no caller left to test through |
+| 93 | `_handle_chat_member_update` | join/leave handling; PTB's type surface, not ours |
+| 87 | `_webhook_auto_register_sync` | PTB `get_webhook_info` fallback |
+| 82 | `_apply_edited_message` | the edit-replace rewrite, and the one path with no live coverage |
+| 78 | `main` | delivery-mode choice |
+| 74 | `_dispatch_update` | routing |
+| 36+29+26 | `_prepare_runtime` / `_install_signal_handlers` / `_attach_handlers` | already extracted in block B |
+
+So the remaining 974 is not one function. It is fourteen, the largest is
+164, and the three blocks of extraction that were safe have been done.
+Going to 400 means splitting `_poll_loop` and the PTB glue, which is the
+"half-refactor is worse than none" case the ticket itself names -- and
+`_apply_edited_message` is the one path where a half-refactor would be
+undetectable, because it has no live coverage (see the manual-only note
+above).
+
+**This item is closed as far as the safe decomposition goes and is
+explicitly short of the ticket's number.** A reviewer reading "closed"
+should read that as "closed, not at 400" and not as "done".
+
 **Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
 
