@@ -633,7 +633,16 @@ async def check_nonstream_tool_call() -> bool:
             log.info(f"  [OK] non-streaming tool_call dispatched: chat_id={react_calls[0]['chat_id']} msg_id={react_calls[0]['message_id']} emoji={react_calls[0]['emojis']}")
             log.info(f"  [OK] call_llama returned {len(result)} chars (LLM was re-called after tool result): {result[:80]!r}")
     except Exception as e:
-        log.warning(f"  [FAIL] non-streaming tool_call test raised: {type(e).__name__}: {e!r}")
+        # The traceback, not just the type and message. On 2026-10-22 this
+        # line read
+        #   AttributeError: '_FakeAsyncClient' object has no attribute 'stream'
+        # which names a missing attribute and nothing else -- not which
+        # of the call sites wanted it, and not that the caller was the
+        # streaming branch at all.
+        import traceback as _tb
+        log.warning(f"  [FAIL] non-streaming tool_call test raised: "
+                    f"{type(e).__name__}: {e!r}\n"
+                    f"{_tb.format_exc()}")
         ns_ok = False
     all_ok = ns_ok
     log.warning(f"[selftest] non-streaming tool_call tests: {'all pass' if ns_ok else 'FAILED'}")

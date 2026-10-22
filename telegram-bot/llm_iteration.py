@@ -193,50 +193,84 @@ class ToolLoop:
             # function. The await stays here, inside this try, and so
             # does push_thinking -- C1 and C4 both require it and both
             # are right.
-            try:
-                result = await non_stream_iteration(
-                    req_body, iteration=iteration,
-                    abort_event=self.abort_event)
-                if result.outcome == "final":
-                    return IterationResult.done(result.final_text)
-                log.info(f"[LLAMA] iter={iteration} non-stream "
-                         f"finish={result.finish_reason} "
-                         f"content_chars={len(result.content)} "
-                         f"reasoning_chars={len(result.reasoning)} "
-                         f"tool_calls={len(result.tool_calls)}")
-                if result.reasoning and self.thinking_msg is not None:
-                    await push_thinking(
-                        self.accumulated_reasoning + result.reasoning,
-                        thinking_msg=self.thinking_msg, silent=self.silent,
-                        throttle=self.throttle, force=True)
-                self.accumulated_reasoning += result.reasoning
-                _ns_step = non_stream_step(
-                    result,
-                    accumulated_reasoning=self.accumulated_reasoning,
-                    saw_unavailable_tool=saw_unavailable_tool,
-                )
-                # is_terminal, not `terminal is not None`: the two
-                # disagree on the abort path, where the turn ends with a
-                # legitimate None.
-                if _ns_step.is_terminal:
-                    return IterationResult.done(_ns_step.assert_terminal())
-                saw_unavailable_tool = _ns_step.saw_unavailable_tool
-                content_buf = _ns_step.content_buf
-                reasoning_buf = _ns_step.reasoning_buf
-                tool_calls_buf = _ns_step.tool_calls_buf
-                ns_handled = True
-            except Exception as e:
-                # TECH-DEBT #8 block 4: the DECISION moved out; the await
-                # stays, because C1 is right that a failure in the retry
-                # belongs to the handler that knows which iteration it is.
-                _err = classify_error(e, req_body)
-                log.info(f"[non-stream err iter={iteration}] "
-                         f"{type(e).__name__}: {e}; body={_err.body!r}")
-                if _err.retry_without_tools:
-                    return IterationResult.done(await tools_less_fallback(
+            # THE BRANCH SELECTION. Removed by 0673c5c (T3.1 block 2)
+            # and never restored: the non-streaming POST ran first and
+            # unconditionally, with a body that still carried
+            # `"stream": use_stream`. For handle_text use_stream is True
+            # -- that is the default -- so the request asked for SSE and
+            # the parse expected JSON. llama-server complied:
+            #
+            #   [call_llama] non-stream parse failed iter=0: JSONDecodeError
+            #     ... status=200 bytes=30330 transfer-encoding='chunked'
+            #     body='data: {"choices":[{"finish_reason":null,...
+            #
+            # i.e. the server answered exactly what was asked for. It was
+            # never malformed. handle_photo / handle_document pass
+            # use_stream=False and were unaffected, which is why the
+            # failures lined up with text turns and read as a flaky
+            # engine rather than a request-building bug. 11 of 35
+            # requests on 2026-10-22.
+            #
+            # ac79264 and a079e3c both had this condition; b8d8c11 lost it
+            # again while moving the body into ToolLoop.run_one.
+            # ns_handled = False, and it goes HERE -- before the branch
+            # that may set it True, and before the branch that reads
+            # it. Placed next to the read it is a bug, not a safety
+            # net: the non-streaming branch has already assigned True
+            # by then, this resets it to False, and the streaming
+            # branch runs on every turn -- including the
+            # use_stream=False ones that just took the non-streaming
+            # path. The mutation run on 2026-10-22 caught that:
+            # selftest_llm's check_nonstream_tool_call reached
+            # stream_iteration with a fake client that has no .stream,
+            # and the only thing the log said was an AttributeError
+            # about a missing method.
+            ns_handled = False
+            if not self.use_stream:
+                try:
+                    result = await non_stream_iteration(
                         req_body, iteration=iteration,
-                        abort_event=self.abort_event, primary_error=e))
-                return IterationResult.done(_err.message)
+                        abort_event=self.abort_event)
+                    if result.outcome == "final":
+                        return IterationResult.done(result.final_text)
+                    log.info(f"[LLAMA] iter={iteration} non-stream "
+                             f"finish={result.finish_reason} "
+                             f"content_chars={len(result.content)} "
+                             f"reasoning_chars={len(result.reasoning)} "
+                             f"tool_calls={len(result.tool_calls)}")
+                    if result.reasoning and self.thinking_msg is not None:
+                        await push_thinking(
+                            self.accumulated_reasoning + result.reasoning,
+                            thinking_msg=self.thinking_msg, silent=self.silent,
+                            throttle=self.throttle, force=True)
+                    self.accumulated_reasoning += result.reasoning
+                    _ns_step = non_stream_step(
+                        result,
+                        accumulated_reasoning=self.accumulated_reasoning,
+                        saw_unavailable_tool=saw_unavailable_tool,
+                    )
+                    # is_terminal, not `terminal is not None`: the two
+                    # disagree on the abort path, where the turn ends with a
+                    # legitimate None.
+                    if _ns_step.is_terminal:
+                        return IterationResult.done(_ns_step.assert_terminal())
+                    saw_unavailable_tool = _ns_step.saw_unavailable_tool
+                    content_buf = _ns_step.content_buf
+                    reasoning_buf = _ns_step.reasoning_buf
+                    tool_calls_buf = _ns_step.tool_calls_buf
+                    ns_handled = True
+                except Exception as e:
+                    # TECH-DEBT #8 block 4: the DECISION moved out; the await
+                    # stays, because C1 is right that a failure in the retry
+                    # belongs to the handler that knows which iteration it is.
+                    _err = classify_error(e, req_body)
+                    log.info(f"[non-stream err iter={iteration}] "
+                             f"{type(e).__name__}: {e}; body={_err.body!r}")
+                    if _err.retry_without_tools:
+                        return IterationResult.done(await tools_less_fallback(
+                            req_body, iteration=iteration,
+                            abort_event=self.abort_event, primary_error=e))
+                    return IterationResult.done(_err.message)
             if not ns_handled:
                 # TECH-DEBT #8 block 3: the streaming branch and the
                 # non-streaming fallback it owns live in llm_stream. The
