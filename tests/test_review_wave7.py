@@ -103,8 +103,23 @@ def test_anchor_default_is_utc_and_says_so(monkeypatch):
 
 def test_utc_and_moscow_disagree_by_three_hours(monkeypatch):
     """The actual regression, as a difference: same instant, same 05:00."""
-    import time
-    now = time.time()
+    # `now` is pinned, not time.time().
+    #
+    # This test compares the two zones' NEXT 05:00 and expects a 3h
+    # difference -- which only holds while the current instant sits
+    # between 02:00 and 05:00 UTC. Outside that window one zone has
+    # already passed 05:00 and rolls to tomorrow while the other has
+    # not, and the difference becomes 21h instead of 3h. It went green
+    # all evening and red at 02:06 UTC on 2026-10-22, with no code
+    # change anywhere: a time-of-day-dependent assertion waiting for
+    # the clock to reach it.
+    #
+    # Noon UTC is comfortably inside the window on every day of the
+    # year, so the property under test -- same wall clock, two zones,
+    # three hours apart -- is what runs.
+    import datetime
+    now = datetime.datetime(2026, 7, 1, 12, 0,
+                             tzinfo=datetime.timezone.utc).timestamp()
     a = _fresh_reanchor(monkeypatch, BOT_REANCHOR_TZ="UTC")
     utc = a.seconds_until_next(5, 0, now)
     b = _fresh_reanchor(monkeypatch, BOT_REANCHOR_TZ="Europe/Moscow")
