@@ -115,16 +115,17 @@ jobs:
           CONVERSATIONS_DB: /tmp/pytest.db
           AGENT_STACK_TOKEN: ""
         run: |
-          # Run everything that is not a live-sandbox test.
-          # The live-sandbox tests (test_shell_integration.py)
-          # require a running vaskes/OpenWebUI-bash-sandbox
-          # side-car, which CI does not have. They are run
+          # Run everything that is not a live-sandbox test; they are run
           # manually on a staging host before tagging stable.
+          #
+          # test_shell_integration.py needs a live
+          # vaskes/OpenWebUI-bash-sandbox side-car that CI does not have.
+          # The comment that used to sit HERE, between the line-continuation
+          # and --ignore, is why this job had never once passed: the backslash
+          # bound only the comment, so pytest ran as `pytest tests/` and
+          # `--ignore=...` was then executed as a command of its own --
+          # "No such file or directory", exit 127, after 2029 passing tests.
+          # A comment inside a backslash continuation is not a comment.
           pytest tests/ \
-              # test_shell_integration.py still needs a live
-              # vaskes/OpenWebUI-bash-sandbox side-car that CI does not
-              # have. Both limits/test_selftest quarantines are gone
-              # (came from c11b9cb, removed across 9b9b85a / 4327e4b /
-              # this commit after the W6 review measured they pass).
               --ignore=tests/test_shell_integration.py \
               -q --tb=short
