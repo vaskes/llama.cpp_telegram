@@ -1,0 +1,190 @@
+[OK] private 1:1: is_group=False (expected False)
+[OK] private 1:1: is_group=False (expected False)
+[OK] private with message_id: is_group=False (expected False)
+[OK] private with message_id: is_group=False (expected False)
+[OK] group (legacy, no forum): is_group=True (expected True)
+[OK] group (legacy, no forum): is_group=True (expected True)
+[OK] supergroup, no forum: is_group=True (expected True)
+[OK] supergroup, no forum: is_group=True (expected True)
+[OK] supergroup + forum + General: is_group=True (expected True)
+[OK] supergroup + forum + General: is_group=True (expected True)
+[OK] supergroup + forum + topic 42: is_group=True (expected True)
+[OK] supergroup + forum + topic 42: is_group=True (expected True)
+[OK] handle_photo does not NameError on is_group
+[OK] handle_photo does not NameError on is_group
+[OK] handle_voice does not NameError on _stop_button_markup
+[OK] handle_voice does not NameError on _stop_button_markup
+[OK] handle_document does not NameError on _stop_button_markup
+[OK] handle_document does not NameError on _stop_button_markup
+[OK] call_llama returned None in <elapsed> (abort fired correctly)
+[OK] call_llama returned None in <elapsed> (abort fired correctly)
+[OK] add_known_topic persisted
+[OK] add_known_topic persisted
+[OK] find_known_topic_by_name returned id=999999
+[OK] find_known_topic_by_name returned id=999999
+[OK] remove_known_topic worked
+[OK] remove_known_topic worked
+[OK] find_known_topic_by_id resolved to 'selftest-topic'
+[OK] find_known_topic_by_id resolved to 'selftest-topic'
+[OK] find_known_topic_by_id returns None for missing id
+[OK] find_known_topic_by_id returns None for missing id
+[OK] all 700 rows survived get_messages (no pruning)
+[OK] all 700 rows survived get_messages (no pruning)
+[OK] rating 7 persisted on row 1, None on row 2
+[OK] rating 7 persisted on row 1, None on row 2
+[OK] group: human, no marker: mute=False (expected False)
+[OK] group: human, no marker: mute=False (expected False)
+[OK] group: human, contains [llm]: mute=True (expected True)
+[OK] group: human, contains [llm]: mute=True (expected True)
+[OK] group: other Telegram bot: mute=True (expected True)
+[OK] group: other Telegram bot: mute=True (expected True)
+[OK] group: bot with [llm] too: mute=True (expected True)
+[OK] group: bot with [llm] too: mute=True (expected True)
+[OK] group: case-insensitive: mute=True (expected True)
+[OK] group: case-insensitive: mute=True (expected True)
+[OK] group: [llm] inside word "x[llm]s": mute=False (expected False)
+[OK] group: [llm] inside word "x[llm]s": mute=False (expected False)
+[OK] group: [llm] in URL "https://x/[llm]": mute=False (expected False)
+[OK] group: [llm] in URL "https://x/[llm]": mute=False (expected False)
+[OK] group: [llm] glued to period "done.[llm].": mute=False (expected False)
+[OK] group: [llm] glued to period "done.[llm].": mute=False (expected False)
+[OK] group: [llm] at start, period after "[llm].": mute=True (expected True)
+[OK] group: [llm] at start, period after "[llm].": mute=True (expected True)
+[OK] group: [llm] at very start: mute=True (expected True)
+[OK] group: [llm] at very start: mute=True (expected True)
+[OK] group: [llm] with leading spaces: mute=True (expected True)
+[OK] group: [llm] with leading spaces: mute=True (expected True)
+[OK] group: [llm] alone: mute=True (expected True)
+[OK] group: [llm] alone: mute=True (expected True)
+[OK] group: [llm] at end of string: mute=False (expected False)
+[OK] group: [llm] at end of string: mute=False (expected False)
+[OK] group: [llm] in middle of sentence: mute=False (expected False)
+[OK] group: [llm] in middle of sentence: mute=False (expected False)
+[OK] group: [llm] mid-sentence (regression 2026-10-10): mute=False (expected False)
+[OK] group: [llm] mid-sentence (regression 2026-10-10): mute=False (expected False)
+[OK] private: human, contains [llm]: mute=False (expected False)
+[OK] private: human, contains [llm]: mute=False (expected False)
+[OK] group: no from_user: mute=False (expected False)
+[OK] group: no from_user: mute=False (expected False)
+[OK] top-level group: human, no reply: skip=False
+[OK] top-level group: human, no reply: skip=False
+[OK] reply to bot in group: human: skip=False
+[OK] reply to bot in group: human: skip=False
+[OK] reply to another human in group: skip=True
+[OK] reply to another human in group: skip=True
+[OK] command in reply to other human: skip=False
+[OK] command in reply to other human: skip=False
+[OK] command in reply to bot: skip=False
+[OK] command in reply to bot: skip=False
+[OK] top-level private: human, no reply: skip=False
+[OK] top-level private: human, no reply: skip=False
+[OK] reply in private: to bot: skip=False
+[OK] reply in private: to bot: skip=False
+[OK] forum General: top-level: skip=False
+[OK] forum General: top-level: skip=False
+[OK] forum General: reply to human: skip=True
+[OK] forum General: reply to human: skip=True
+[OK] semaphore locked at limit
+[OK] semaphore locked at limit
+[OK] semaphore unlocked after release
+[OK] semaphore unlocked after release
+[OK] (1,1) and (1,2) have distinct semaphores
+[OK] (1,1) and (1,2) have distinct semaphores
+[OK] all 10 parse cases passed
+[OK] all 10 parse cases passed
+[OK] 10 distinct ratings, all map to non-empty emoji
+[OK] 10 distinct ratings, all map to non-empty emoji
+[OK] WELCOME_TEXT is non-empty, contains rating scale + TRUTH rule
+[OK] WELCOME_TEXT is non-empty, contains rating scale + TRUTH rule
+[OK] group welcome posted in General with @newbie mention
+[OK] group welcome posted in General with @newbie mention
+[OK] PM sent to new user_id
+[OK] PM sent to new user_id
+[OK] leave event correctly skipped (0 calls)
+[OK] leave event correctly skipped (0 calls)
+[OK] bot-join correctly skipped (0 calls)
+[OK] bot-join correctly skipped (0 calls)
+[OK] _bot_replies stores (chat, user_msg) → bot_msg mapping
+[OK] _bot_replies stores (chat, user_msg) → bot_msg mapping
+[OK] pop removes entry correctly
+[OK] pop removes entry correctly
+[OK] pop on missing key returns None
+[OK] pop on missing key returns None
+[OK] oversized file rejected via file_size pre-check (no download)
+[OK] oversized file rejected via file_size pre-check (no download)
+[OK] small file downloaded (250 bytes, no error reply)
+[OK] small file downloaded (250 bytes, no error reply)
+[OK] download exception -> 'Failed to download' reply (no download_as_chunks mention)
+[OK] download exception -> 'Failed to download' reply (no download_as_chunks mention)
+[OK] post-check on len(buf) catches oversized file when file_size is missing
+[OK] post-check on len(buf) catches oversized file when file_size is missing
+[OK] _sender_display_name resolves first+last / first / @user / user_id / None
+[OK] _sender_display_name resolves first+last / first / @user / user_id / None
+[OK] persist + _load_history round-trip preserves sender_name (3 rows)
+[OK] persist + _load_history round-trip preserves sender_name (3 rows)
+[OK] _tag_sender prepends From: <name>: to text content; assistant unchanged
+[OK] _tag_sender prepends From: <name>: to text content; assistant unchanged
+[OK] multimodal: sender tag in first text part, image preserved
+[OK] multimodal: sender tag in first text part, image preserved
+[OK] NULL sender_name falls back to From: user: (no name but still tagged)
+[OK] NULL sender_name falls back to From: user: (no name but still tagged)
+[OK] case 1: 10x max_chars rejected with malformed-args feedback
+[OK] case 1: 10x max_chars rejected with malformed-args feedback
+[OK] case 2: well-formed 2-key JSON passes through
+[OK] case 2: well-formed 2-key JSON passes through
+[OK] case 3: truncated JSON rejected via parse error
+[OK] case 3: truncated JSON rejected via parse error
+[OK] case 4: bare 'null' passes through (args=None is the caller's job)
+[OK] case 4: bare 'null' passes through (args=None is the caller's job)
+[OK] case 5: 2KB+ arg string rejected as too long
+[OK] case 5: 2KB+ arg string rejected as too long
+[OK] case 6: structural noise rejected via parse error
+[OK] case 6: structural noise rejected via parse error
+[OK] case 7: empty '{{}}' passes through (tool decides)
+[OK] case 7: empty '{{}}' passes through (tool decides)
+[OK] case 8: 4-key JSON passes through with all 4 fields
+[OK] case 8: 4-key JSON passes through with all 4 fields
+[OK] case 1: explicit message_id=12345 with 👍 -> set_message_reaction called once
+[OK] case 1: explicit message_id=12345 with 👍 -> set_message_reaction called once
+[OK] case 2: no message_id in args -> fell back to default=88888, set 🔥
+[OK] case 2: no message_id in args -> fell back to default=88888, set 🔥
+[OK] case 3: empty emoji refused with feedback, no API call
+[OK] case 3: empty emoji refused with feedback, no API call
+[OK] case 4: non-integer message_id refused with feedback, no API call
+[OK] case 4: non-integer message_id refused with feedback, no API call
+[OK] case 5: API exception caught, error string returned, no crash
+[OK] case 5: API exception caught, error string returned, no crash
+[OK] non-streaming tool_call dispatched: chat_id=-1004461679108 msg_id=99999 emoji=['✅']
+[OK] non-streaming tool_call dispatched: chat_id=-1004461679108 msg_id=99999 emoji=['✅']
+[OK] call_llama returned 23 chars (LLM was re-called after tool result): 'Done, set the reaction.'
+[OK] call_llama returned 23 chars (LLM was re-called after tool result): 'Done, set the reaction.'
+[OK] global LLM sem locked at limit (4)
+[OK] global LLM sem locked at limit (4)
+[OK] global LLM sem unlocked after release
+[OK] global LLM sem unlocked after release
+[OK] GROUP_CONTEXT module constant defined
+[OK] GROUP_CONTEXT module constant defined
+[OK] GROUP_CONTEXT used as system message in call_llama
+[OK] GROUP_CONTEXT used as system message in call_llama
+[OK] _group_ctx_msg used to prepend messages list
+[OK] _group_ctx_msg used to prepend messages list
+[OK] rating mode prepends RATING_RULES (structured-output contract) on top of GROUP_CONTEXT
+[OK] rating mode prepends RATING_RULES (structured-output contract) on top of GROUP_CONTEXT
+[OK] web_search: 266 chars, "Search results" present, no [meta] envelope
+[OK] web_search: 266 chars, "Search results" present, no [meta] envelope
+[OK] web_fetch: 258 chars, markdown content delivered
+[OK] web_fetch: 258 chars, markdown content delivered
+[OK] two concurrent in-flight handlers keep distinct events
+[OK] two concurrent in-flight handlers keep distinct events
+[OK] setting handler A's event does not affect handler B
+[OK] setting handler A's event does not affect handler B
+[OK] pop on handler A key does not touch handler B
+[OK] pop on handler A key does not touch handler B
+[OK] F4 LRU bound at 200 (250 inserts -> 200 entries)
+[OK] F4 LRU bound at 200 (250 inserts -> 200 entries)
+[OK] F4 LRU evicted oldest 50 entries
+[OK] F4 LRU evicted oldest 50 entries
+[OK] post-race response discarded (sent 1 non-race texts)
+[OK] post-race response discarded (sent 1 non-race texts)
+[OK] webhook server starts, healthz OK, secret-token enforced
+[OK] webhook server starts, healthz OK, secret-token enforced
