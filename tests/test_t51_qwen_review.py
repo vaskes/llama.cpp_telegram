@@ -180,16 +180,32 @@ def test_no_network_call_when_rate_limited():
     from unittest.mock import patch, MagicMock
     import bash_command
 
-    # Reset the bucket for this test
     test_sid = "pytest-no-network"
     bash_command._t51_rate_limit_buckets.pop(test_sid, None)
 
-    # Drain the bucket
-    for _ in range(10):
-        asyncio.run(bash_command.call_bash_command(
-            "echo drain", session_id=test_sid,
-        chat_type="private",
-    ))
+    # Drain the bucket by consuming tokens directly, NOT by making ten real
+    # calls. This used to do the latter, and that made the test a function of
+    # how fast the network happened to be:
+    #
+    #   the bucket refills at 10 tokens per 60s (1 token per 6s), and the
+    #   drain loop's ten real HTTP calls took ~72s each on the CI runner --
+    #   the whole suite took 719s. Twelve tokens came back while the test was
+    #   spending ten, so the eleventh call was allowed and the test failed.
+    #
+    # It failed on every run for eight days, 100/100, and the failure looks
+    # like "the rate limiter stopped working" rather than "the test spent two
+    # minutes on the network". Verified on the real module: with no delay the
+    # eleventh call is refused; with a 6s delay per call it is allowed.
+    #
+    # Consuming tokens directly keeps the property under test -- that the
+    # limiter refuses before any network call -- and drops the dependency on
+    # how long a round trip takes.
+    bucket = bash_command._t51_rate_limit_buckets[test_sid]
+    bucket["tokens"] = 0.0
+    bucket["last_refill"] = bash_command._t51_time.monotonic()
+    assert not bash_command._t51_check_rate_limit(test_sid), (
+        "setup is wrong: the bucket must be empty before the test means "
+        "anything, and the limiter must refuse while it is")
 
     # Now mock httpx.AsyncClient.post to track if it's called
     mock_post = MagicMock()
