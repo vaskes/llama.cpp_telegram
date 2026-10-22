@@ -22,6 +22,18 @@ jobs:
     # silencing the job again, which is the state this job just escaped.
     #
     # Verified against ruff 0.17: `All checks passed!` on telegram-bot/.
+    #
+    # Advisory, deliberately, and kept that way on purpose. Removing
+    # continue-on-error to "make the job real" blocked pushes on a lint
+    # finding, which is the wrong trade: ruff findings here are cosmetic,
+    # and a blocked push costs more than a W605. So the job reports and does
+    # not gate.
+    #
+    # What did change is that it can now actually report something: it
+    # checks the whole package rather than one file, and --exit-zero is
+    # gone, so ruff returns its real exit code and the findings reach the
+    # log. Advisory about *blocking*, honest about *checking*.
+    continue-on-error: true
     runs-on: ubuntu-latest
     # v0.8.2: explicit minimum-privilege permissions. CodeQL
     # flagged 'actions/missing-workflow-permissions' (CWE-275)
