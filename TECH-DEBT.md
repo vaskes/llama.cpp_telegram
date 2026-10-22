@@ -31,7 +31,7 @@ disagreement again without a test going red.
 | 5 | `print()` instead of `logging` | **closed** `83c5092` | `test_logging_stdout_parity.py` | — |
 | 6 | `created_at` from the Python clock | **closed** — decision, see file | `test_t6_db_clock.py` | — |
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
-| 8 | Decompose `call_llama`'s tool loop | **partial** — all 3 POST branches out, loop state left | `test_drift_call_llama_names.py`, `test_d2_toolcalls.py`, `test_llm_request.py`, `test_llm_stream.py` | The iteration itself is still one function |
+| 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
 | 9 | `selftest._selftest` — 1940-line function | **open** | none yet | Untestable in any unit-sized piece |
 | 10 | `dispatch.py` — 1625 lines | **open** | none yet | Every command is a routing change |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |

@@ -4,11 +4,12 @@ marker: tests/test_drift_call_llama_names.py, tests/test_d2_toolcalls.py,
   tests/test_d3_finish.py, tests/test_d4_dispatch.py,
   tests/test_llm_stream.py, tests/test_no_duplicate_definitions.py,
   tests/test_nonstream_error.py
-state: partial
+marker_kind: tripwire   # the 13 marked tests now pin a closed fix
+state: closed
 issue: null
 ---
 
-## 8. Decompose `call_llama`'s tool loop — **FIRST BLOCK LANDED 2026-10-22**
+## 8. Decompose `call_llama`'s tool loop — **CLOSED 2026-10-22**
 
 > Last read 2026-10-22. The remaining block has been read and its shape
 > is now specified below; one earlier claim about why it was not cut is
@@ -47,9 +48,13 @@ green preflight first, compiles each mutation before running it, and
 reports CAUGHT / SURVIVED / ERROR apart — an earlier version reported
 "SURVIVED" for mutations that had not even parsed.
 
-**1. An iteration is a named unit — NOT MET.** Every decision inside an
-iteration now has a name and a module. The iteration itself is still a
-`for` statement, and about 190 lines of glue remain in its body.
+**1. An iteration is a named unit — MET, by T8.1.** Every decision inside
+an iteration has a name and a module, and the iteration itself is now
+`ToolLoop.run_one(iteration)` in `llm_iteration.py` rather than the body
+of a `for` statement. The loop that drives it is `ToolLoop.run`, four
+lines. Measured after the extraction: `call_llama` 478 lines, the method
+285, and `walk_defs` finds no nested definition inside any function body
+in either module.
 
 ### What is left, precisely
 
@@ -342,3 +347,80 @@ survived. Running total across all three: **30 mutations, 30 caught.**
 Full suite 1555 passed.
 
 Marker: `tests/test_nonstream_error.py` (14 tests).
+
+## T8.1 — "an iteration is a named unit": MET
+
+Criterion 1 asked for the iteration to be reachable by name, and the
+question it turns on is not "which file is it in" but *what is it
+allowed to own*. The answer here: an iteration owns its own state and
+the loop owns nothing but the counter.
+
+`telegram-bot/llm_iteration.py` (473 lines) holds `ToolLoop`:
+
+- `run_one(iteration) -> IterationResult` is the loop body, verbatim in
+  what it does, and now a method a reader can open, a test can drive,
+  and a mutation harness can aim at. It was a 285-line stretch of
+  reachable-by-`next(...)` AST.
+- `run()` is four lines and is the whole of the loop: iterate, read the
+  decision, return. `call_llama` is now 478 lines and ends with
+  `return await ToolLoop(...).run()`.
+
+The one thing that made this more than moving lines is that the two
+halves now pass a value, and the value has to say *which kind* of
+ending it is. Two exits legitimately carry `terminal=None` — SIGTERM
+and the Stop button — so a loop asking "is `terminal` set?" carries on
+past both and ships the previous iteration's buffers to a user who
+cancelled. `IterationResult` carries an explicit `is_terminal` for
+exactly that reason, mirroring what T3.2 did for `StreamOutcome`.
+
+### What the harness found that the tests did not
+
+15 mutations against the seam, and the first run came back
+**13 caught, 1 survived, 1 invalid**. The survivor is the one worth
+writing down: dropping `.run()` from `call_llama`'s return left a
+`ToolLoop` where an answer belongs, and **333 tests stayed green**.
+
+Every test in the loop's own suite drives `run()` or `run_one()`
+directly, so none of them can see whether `call_llama` calls it at all.
+A suite that only tests the new unit cannot find the seam the new unit
+was created to expose. `test_llm_iteration.py` now also calls
+`call_llama` with the engine stubbed and asserts on the value that comes
+back — which is the only direction that could have caught it.
+
+That is the T0.4 lesson arriving a second time in a new shape: the
+extracted block got its own tests, and they still were not enough,
+because they were all pointed inward.
+
+### Verification
+
+Fourth harness, `scripts/mutation_harness_iteration.py`, 15 mutations
+against `run`/`run_one` and the value object: **15 caught, 0 survived,
+0 refused, 0 invalid.** The first run's survivor is the pair of
+`call_llama`-side tests added afterwards.
+
+`tests/test_llm_iteration.py` (17 tests) drives the seam
+behaviourally: `run` stopping on a terminal result, treating a `None`
+payload as terminal, counting from zero, honouring the cap, returning
+the collected fallback when exhausted, and `call_llama` awaiting it.
+
+Full suite **1577 passed, 20 skipped.**
+
+Marker: `tests/test_llm_iteration.py`,
+`scripts/mutation_harness_iteration.py`.
+
+Running total across all four harnesses: **45 mutations, 45 caught.**
+
+### Closed
+
+All four criteria are met and measured: criterion 1 by T8.1 above, 2 by
+the 15 leaf modules each driven directly by tests that never build a full
+`call_llama`, 3 by `walk_defs` finding no nested definition inside any
+function body, 4 by four mutation harnesses (45 mutations, 45 caught).
+`call_llama` 1616 -> 478 lines; the tool loop is 473 lines in its own
+module with a named iteration and a four-line driver.
+
+There is no outstanding sub-block of this item. A reference to a "1.1"
+appeared in a stray root-level copy of this document for one commit
+(`b8d8c11`) and named no work that exists anywhere in the repository or in
+its history. That copy was a duplicate of this file, drifted from it, and
+has been removed; this file is the one `TECH-DEBT.md` points at.
