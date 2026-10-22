@@ -13,7 +13,7 @@
 ```
 telegram-bot/
 ├── bot.py                 # main entry, aiohttp webhook + handlers
-├── handlers.py            # handle_text/photo/voice/document (1322 lines)
+├── handlers.py            # handle_text/photo/voice/document (1356 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   478 lines file, 324 in the function
 ├── llm_iteration.py      # one tool-loop iteration, as a named unit

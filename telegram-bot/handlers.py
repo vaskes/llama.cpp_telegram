@@ -194,6 +194,42 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
     return user_id, 'main', False
 
 
+
+# === _persist_for_reply ===
+
+
+async def _persist_for_reply(context, update, chat_id, thread_id, bot_response,
+                              rating_active, abort_event=None):
+    """Rating dispatch, persist the turn, and say whether there is an answer.
+
+    Returns the text to send, or None when nothing should go out: the
+    rating path consumed it (an emoji reaction and no text), the model
+    answered nothing, or the user pressed Stop in the window between the
+    transcript write and the reply.
+
+    That last one is why `abort_event` is a parameter and not a check
+    left at the call site. A Stop landing after the answer is persisted
+    but before it is sent would otherwise put a cancelled turn on screen
+    with a transcript entry behind it. The two streaming handlers pass
+    the event; photo and document do not, because they do not stream and
+    have no such window between the two points -- their guard was always
+    `if bot_response`.
+
+    The >4000-char chunking is deliberately NOT here. Only the two
+    streaming handlers do it, and they send it with `_reply` rather than
+    `send_reply`. Folding it in would change what photo and document
+    send for a long answer, which is a behaviour change wearing an
+    extraction's clothes.
+    """
+    bot_response = await _apply_rating_and_persist(
+        context, update, chat_id, thread_id, bot_response, rating_active,
+    )
+    if not bot_response:
+        return None
+    if abort_event is not None and abort_event.is_set():
+        return None
+    return bot_response
+
 # === _acquire_turn_slot ===
 
 
@@ -642,9 +678,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 log.info(f"[handle_photo] retry succeeded")
             else:
                 log.info(f"[handle_photo] retry also empty, sending fallback")
-                bot_response = (
-                                        EMPTY_RESPONSE_USER_FALLBACK
-                )
+                bot_response = EMPTY_RESPONSE_USER_FALLBACK
         # === Edit-during-LLM detection: removed (was v0.4) ===
         # Earlier versions compared the user's current message
         # text against a snapshot taken at handler entry, to
@@ -673,8 +707,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # (rating_active off, info/statement with rating, bloat,
         # question/request/confirmation) and returns the text
         # to reply with (possibly empty for rating-only turns).
-        bot_response = await _apply_rating_and_persist(
-            context, update, chat_id, thread_id, bot_response, rating_active,
+        bot_response = await _persist_for_reply(
+            context, update, chat_id, thread_id, bot_response,
+            rating_active,
         )
         if bot_response:
             await send_reply(update, bot_response)
@@ -862,11 +897,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # (rating_active off, info/statement with rating, bloat,
         # question/request/confirmation) and returns the text
         # to reply with (possibly empty for rating-only turns).
-        bot_response = await _apply_rating_and_persist(
-            context, update, chat_id, thread_id, bot_response, rating_active,
+        bot_response = await _persist_for_reply(
+            context, update, chat_id, thread_id, bot_response,
+            rating_active, abort_event=abort_event,
         )
         # v0.10.1 (Qwen wave-2 review): final abort check before sending.
-        if bot_response and not abort_event.is_set():
+        if bot_response:
             # In rating mode the response is short (no chunking needed).
             # The original 4000-char chunking applied to voice transcripts
             # which are unlikely to exceed 4k after going through the LLM
@@ -1013,9 +1049,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     log.info(f"[handle_document] retry succeeded")
                 else:
                     log.info(f"[handle_document] retry also empty, sending fallback")
-                    bot_response = (
-                                                EMPTY_RESPONSE_USER_FALLBACK
-                    )
+                    bot_response = EMPTY_RESPONSE_USER_FALLBACK
             # Edit-during-LLM detection removed: the check is a
             # no-op without a concurrent getUpdates consumer.
             # See handle_photo for the full rationale.
@@ -1034,8 +1068,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # (rating_active off, info/statement with rating, bloat,
             # question/request/confirmation) and returns the text
             # to reply with (possibly empty for rating-only turns).
-            bot_response = await _apply_rating_and_persist(
-                context, update, chat_id, thread_id, bot_response, rating_active,
+            bot_response = await _persist_for_reply(
+                context, update, chat_id, thread_id, bot_response,
+                rating_active,
             )
             if bot_response:
                 await send_reply(update, bot_response)
@@ -1240,9 +1275,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     log.info(f"[handle_text] retry succeeded")
                 else:
                     log.info(f"[handle_text] retry also empty, sending fallback")
-                    bot_response = (
-                                                EMPTY_RESPONSE_USER_FALLBACK
-                    )
+                    bot_response = EMPTY_RESPONSE_USER_FALLBACK
             # Edit-during-LLM detection removed: the check is a
             # no-op without a concurrent getUpdates consumer.
             # See handle_photo for the full rationale.
@@ -1252,11 +1285,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # (rating_active off, info/statement with rating, bloat,
             # question/request/confirmation) and returns the text
             # to reply with (possibly empty for rating-only turns).
-            bot_response = await _apply_rating_and_persist(
-                context, update, chat_id, thread_id, bot_response, rating_active,
+            bot_response = await _persist_for_reply(
+                context, update, chat_id, thread_id, bot_response,
+                rating_active, abort_event=abort_event,
             )
             # v0.10.1 (Qwen wave-2 review): final abort check before sending.
-            if bot_response and not abort_event.is_set():
+            if bot_response:
                 if len(bot_response) > 4000:
                     for i in range(0, len(bot_response), 4000):
                         await _reply(update, bot_response[i:i+4000])

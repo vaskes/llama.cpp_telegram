@@ -93,7 +93,10 @@ STAGES = [
     "_is_rating_active",
     "_get_global_llm_sem",
     "call_llama",
-    "_apply_rating_and_persist",
+    # rating dispatch + persist, as one stage: moved into
+    # `_persist_for_reply` in block E. The name changed because the
+    # handler now makes one call instead of reaching in for two.
+    "_persist_for_reply",
     "send_reply",
 ]
 
@@ -254,7 +257,9 @@ def test_the_reply_is_sent_after_the_turn_is_persisted(handler):
     one on screen.
     """
     fn = _handler(handler)
-    persist = min(_sites(fn, "_apply_rating_and_persist"))
+    # the handler's own call; the rating dispatch and the write live
+    # inside the helper, so the handler no longer reaches in for them
+    persist = min(_sites(fn, "_persist_for_reply"))
     reply = min(_sites(fn, "send_reply"))
     assert persist < reply, (
         f"{handler}: persists at {persist} but replies at {reply}"
