@@ -1,6 +1,6 @@
 ---
 tech_debt: 13
-marker: tests/test_llm_abort.py
+marker: tests/test_handler_skeleton.py
 marker_kind: tripwire
 state: open
 issue: null

@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.tech_debt(item=13)
+
 BOT = Path(__file__).resolve().parent.parent / "telegram-bot"
 if str(BOT) not in sys.path:
     sys.path.insert(0, str(BOT))
