@@ -32,7 +32,8 @@ A helper returning a bare string would have to smuggle "return None",
 is the bug.
 """
 import json
-from typing import NamedTuple
+from dataclasses import dataclass
+from typing import Any, Dict, NamedTuple, Optional
 
 import httpx
 
@@ -227,3 +228,127 @@ async def tools_less_fallback(req_body: dict, *, iteration: int,
         log.info(f"[call_llama] tools-less fallback also failed: "
                  f"{type(e2).__name__}: {e2}")
         return f"[llama-server request failed: {primary_error}]"
+
+
+# --- TECH-DEBT #8, block 2 -----------------------------------------
+# What the non-streaming branch does with the result, moved out.
+#
+# My first version of this took the whole branch, `await
+# non_stream_iteration` and the push_thinking call included. Two
+# existing tripwires refused it, correctly:
+#
+#   test_c1_nonstream -- call_llama must call non_stream_iteration
+#     inside its OWN try. C1's docstring says why: the try stays out
+#     here so that a failure in push_thinking, which happens after the
+#     helper returns, is caught by the same handler. Moving the try in
+#     turns that failure into a terminal "[llama-server request
+#     failed]" the user reads.
+#
+#   test_c4_thinking -- three push_thinking call sites, each passing
+#     its context explicitly. One of them moved.
+#
+# So the seam is the RESULT, not the call. What is extracted is the
+# decision: given what the engine answered, either the turn is over, or
+# the loop continues carrying these six values. It is a pure function,
+# which is why it needs no client, no clock and no await -- and is
+# testable without any of them.
+#
+# `_ns_handled` disappears here too. It used to be set in this branch
+# and read three blocks later through `locals()`; the caller now owns
+# it as an ordinary local.
+
+
+@dataclass(frozen=True)
+class NonStreamStep:
+    """Either the turn ends with `terminal`, or the loop continues.
+
+    `is_terminal` is set by the DECISION, not inferred from `terminal`
+    being non-empty. My first version inferred it, and the abort path --
+    outcome "final" with final_text=None -- came back flagged as "neither"
+    and raised. A None text is a real terminal value: it means the turn
+    ended without a reply, which is what abort is for.
+
+    `assert_terminal` rejects the genuinely-neither case, so a future
+    edit that decides nothing is caught here rather than showing up as
+    an empty reply in production with nothing in the log to explain it.
+    """
+    is_terminal: bool = False
+    terminal: Optional[str] = None
+    content_buf: str = ""
+    reasoning_buf: str = ""
+    tool_calls_buf: Optional[Dict[int, Dict[str, Any]]] = None
+    accumulated_reasoning: str = ""
+    saw_unavailable_tool: bool = False
+
+    def assert_terminal(self) -> Optional[str]:
+        if self.is_terminal and self.tool_calls_buf:
+            raise AssertionError(
+                "NonStreamStep is both terminal and a continuation; the "
+                "loop would return and also dispatch tool calls")
+        if not self.is_terminal and not self.tool_calls_buf:
+            raise AssertionError(
+                "NonStreamStep is neither terminal nor a continuation: "
+                "is_terminal is False and tool_calls_buf is empty, so the "
+                "loop would continue with nothing to dispatch and nothing "
+                "to say")
+        return self.terminal
+
+
+def non_stream_step(
+    result: "NonStreamResult",
+    *,
+    accumulated_reasoning: str,
+    saw_unavailable_tool: bool,
+) -> NonStreamStep:
+    """Decide what one non-streaming response means for the loop.
+
+    `result` is what `non_stream_iteration` produced. `accumulated_
+    reasoning` is the caller's running total, already including this
+    iteration's reasoning -- push_thinking has run by the time this is
+    called, which is why it stays in call_llama.
+
+    The three exits, unchanged from the inline branch:
+
+      FINAL   outcome == "final". The helper already decided this one:
+              abort -> None, context overflow -> OVERFLOW_MESSAGE, no
+              choices -> the "try a shorter prompt" text.
+      TEXT    content with no tool calls. Short-circuit.
+      TOOLS   react_to_message on a vision task, or any other tool call.
+              Fill tool_calls_buf in the SAME shape the SSE parser
+              produces -- {idx: {id, name, arguments}} -- so the code
+              that reconstructs the final list, shared with the
+              streaming path, handles both without knowing which ran.
+
+    The unconditional `return content` that used to sit here was
+    removed when react_to_message landed, because it silently dropped
+    the tool call and the user saw an empty response.
+    """
+    if result.outcome == "final":
+        # is_terminal=True even when final_text is None: abort ends the
+        # turn with no reply, and that is a decision, not an absence.
+        return NonStreamStep(is_terminal=True, terminal=result.final_text)
+
+    if result.saw_unavailable_tool:
+        saw_unavailable_tool = True
+
+    if not result.tool_calls:
+        return NonStreamStep(is_terminal=True, terminal=result.content,
+                             accumulated_reasoning=accumulated_reasoning,
+                             saw_unavailable_tool=saw_unavailable_tool)
+
+    tool_calls_buf: Dict[int, Dict[str, Any]] = {}
+    for idx, tc in enumerate(result.tool_calls):
+        fn = tc.get("function", {}) or {}
+        tool_calls_buf[idx] = {
+            "id": tc.get("id", f"call_ns_{idx}"),
+            "name": fn.get("name", ""),
+            "arguments": fn.get("arguments", "") or "",
+        }
+    return NonStreamStep(
+        terminal=None,
+        content_buf=result.content,
+        reasoning_buf=accumulated_reasoning,
+        tool_calls_buf=tool_calls_buf,
+        accumulated_reasoning=accumulated_reasoning,
+        saw_unavailable_tool=saw_unavailable_tool,
+    )

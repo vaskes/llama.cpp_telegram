@@ -56,7 +56,7 @@ from prompts import GROUP_CONTEXT, RATING_RULES
 from rating import _execute_react_to_message
 from http_clients import _abortable_post, transcribe_voice  # noqa: F401
 from llm_messages import _tag_sender  # noqa: F401
-from llm_nonstream import non_stream_iteration
+from llm_nonstream import non_stream_iteration, non_stream_step
 from llm_sse import StreamAccumulator
 from llm_loop_guard import Abort, LoopGuard, Nudge
 # Nudge was missing from this import between a079e3c and now. It is
@@ -477,6 +477,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # finishes (could be 5-7 min for a hard problem). docker stop
         # SIGKILLs after 10s, so we MUST bail faster than that.
         _sd = shutdown_event if shutdown_event is not None else SHUTDOWN_EVENT
+        ns_handled = False
         if _sd is not None and _sd.is_set():
             log.info(f"[call_llama] shutdown_event set, aborting tool loop at iteration {iteration}")
             return '[bot: shutdown requested, aborting tool loop]'
@@ -500,90 +501,55 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             tool_calls_buf = _acc.tool_calls_buf
             finish_reason = _acc.finish_reason
 
-            if not use_stream:
-                # --- non-streaming POST (vision tasks, slow-reasoning models) ---
-                # Use a fresh client with no keep-alive — somehow a keep-alive
-                # connection from a prior streaming call to llama-server was
-                # producing 400 for the next request even though the bytes
-                # were identical. Closing the client per call avoids that.
-                # Return content immediately — no tool-call loop in this path
-                # (vision tasks don't need tools, and the multi-iter loop below
-                # was raising somewhere we couldn't catch on the vision payload).
-                try:
-                    result = await non_stream_iteration(
-                        req_body, iteration=iteration,
-                        abort_event=abort_event)
-                    if result.outcome == "final":
-                        return result.final_text
-                    content = result.content
-                    reasoning = result.reasoning
-                    non_stream_tool_calls = result.tool_calls
-                    finish_reason = result.finish_reason
-                    if result.saw_unavailable_tool:
-                        saw_unavailable_tool = True
-                    log.info(f"[LLAMA] iter={iteration} non-stream finish={result.finish_reason} content_chars={len(content)} reasoning_chars={len(reasoning)} tool_calls={len(non_stream_tool_calls)}")
-                    if reasoning and thinking_msg is not None:
-                        await push_thinking(accumulated_reasoning + reasoning,
-                            thinking_msg=thinking_msg, silent=silent,
-                            throttle=_throttle, force=True)
-                    accumulated_reasoning += reasoning
-                    # If the model returned tool_calls (e.g. react_to_message
-                    # on a vision task), fall through to the unified tool
-                    # loop below - DO NOT short-circuit with `return content`,
-                    # otherwise the tool call is silently dropped and the
-                    # user sees an empty response. The non-streaming path
-                    # was originally vision-only with no tools, so the
-                    # unconditional return was safe; once we added
-                    # react_to_message (Oct 2026) it isn't.
-                    if not non_stream_tool_calls:
-                        return content
-                    # Populate the streaming-side tool_calls_buf in the same
-                    # shape the SSE parser produces ({idx: {id, name,
-                    # arguments}}). The code that reconstructs the final
-                    # `tool_calls` list (just below) iterates over this
-                    # buffer, so by populating it here we let the same
-                    # shared dispatch path handle the non-streaming case.
-                    # Set a sentinel so the streaming block below is
-                    # skipped for this iteration (we already have a
-                    # response and we don't want a second POST).
-                    _ns_handled = True
-                    content_buf = content
-                    reasoning_buf = accumulated_reasoning
-                    tool_calls_buf = {}
-                    for idx, tc in enumerate(non_stream_tool_calls):
-                        fn = tc.get('function', {}) or {}
-                        tool_calls_buf[idx] = {
-                            'id': tc.get('id', f'call_ns_{idx}'),
-                            'name': fn.get('name', ''),
-                            'arguments': fn.get('arguments', '') or '',
-                        }
-                        log.info(f"[LLAMA]   call: {fn.get('name','')}({(fn.get('arguments') or '')[:200]})")
-                except Exception as e:
-                    # r is bound to the httpx Response if we got past
-                    # the .post() call; otherwise it's still None
-                    # (e.g. JSONDecodeError, ConnectionError before
-                    # the response object is constructed).
-                    # The response lives on the exception. Block C1 moved
-                    # the POST into non_stream_iteration, which creates its
-                    # own client, so the caller's `r` has been None since
-                    # ac79264 -- which made the v0.8.1 retry below
-                    # unreachable for the whole of that refactor. Correct
-                    # code behind a dead guard: the fallback function was
-                    # tested properly and never called.
-                    _err_response = getattr(e, "response", None)
-                    body = (_err_response.text[:500]
-                            if _err_response is not None else '')
-                    log.info(f"[non-stream err iter={iteration}] {type(e).__name__}: {e}; body={body!r}")
-                    # v0.8.1: 500 from llama-server is usually the PEG
-                    # grammar parser rejecting the model tool-call
-                    # output. Retry ONCE without tools.
-                    if (getattr(_err_response, "status_code", None) == 500
-                            and req_body.get('tools')):
-                        return await tools_less_fallback(
-                            req_body, iteration=iteration,
-                            abort_event=abort_event, primary_error=e)
-                    return f'[llama-server request failed: {e}]'
-            if not locals().get('_ns_handled'):
+            # TECH-DEBT #8 block 2: what to DO with a non-streaming
+            # response now lives in llm_nonstream.non_stream_step, a pure
+            # function. The await stays here, inside this try, and so does
+            # push_thinking -- C1 and C4 both require it and both are right.
+            try:
+                result = await non_stream_iteration(
+                    req_body, iteration=iteration, abort_event=abort_event)
+                if result.outcome == "final":
+                    return result.final_text
+                log.info(f"[LLAMA] iter={iteration} non-stream "
+                    f"finish={result.finish_reason} "
+                    f"content_chars={len(result.content)} "
+                    f"reasoning_chars={len(result.reasoning)} "
+                    f"tool_calls={len(result.tool_calls)}")
+                if result.reasoning and thinking_msg is not None:
+                    await push_thinking(accumulated_reasoning + result.reasoning,
+                        thinking_msg=thinking_msg, silent=silent,
+                        throttle=_throttle, force=True)
+                accumulated_reasoning += result.reasoning
+                _ns_step = non_stream_step(
+                    result,
+                    accumulated_reasoning=accumulated_reasoning,
+                    saw_unavailable_tool=saw_unavailable_tool,
+                )
+                if _ns_step.terminal is not None:
+                    return _ns_step.terminal
+                ns_handled = True
+                saw_unavailable_tool = _ns_step.saw_unavailable_tool
+                content_buf = _ns_step.content_buf
+                reasoning_buf = _ns_step.reasoning_buf
+                tool_calls_buf = _ns_step.tool_calls_buf
+            except Exception as e:
+                # `response` is on the exception only once it exists;
+                # before that it is None (JSONDecodeError, ConnectionError).
+                _err_response = getattr(e, "response", None)
+                _body = (_err_response.text[:500]
+                         if _err_response is not None else '')
+                log.info(f"[non-stream err iter={iteration}] "
+                    f"{type(e).__name__}: {e}; body={_body!r}")
+                # v0.8.1: a 500 from llama-server is usually the PEG grammar
+                # parser rejecting the model's tool-call output. Retry ONCE
+                # without tools.
+                if (getattr(_err_response, "status_code", None) == 500
+                        and req_body.get('tools')):
+                    return await tools_less_fallback(
+                        req_body, iteration=iteration, abort_event=abort_event,
+                        primary_error=e)
+                return f'[llama-server request failed: {e}]'
+            if not ns_handled:
                 try:
                     async with client.stream("POST", f"{LLAMA_URL}/chat/completions",
                                               headers={"Authorization": f"Bearer {API_KEY}",
