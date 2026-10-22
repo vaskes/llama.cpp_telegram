@@ -14,7 +14,7 @@ part; the facade was the actual item and it was still there.
 
 **What actually landed:**
 
-- `bot.py` 2245 → 261 lines.
+- `bot.py` 2245 → 124 lines.
 - `_selftest()` moved to `selftest.py`, unchanged.
 - Six dead duplicates deleted, after confirming nothing outside `bot.py` read
   them: `_SUBTALK_NAME_RE` and `_TOPIC_NAME_RE` (owner: `chat_utils.py`),
@@ -31,7 +31,7 @@ part; the facade was the actual item and it was still there.
 "nearly done":**
 
 1. **~15 `from X import (...)` blocks** (config, prompts, persistence, rating,
-   call_llama, dispatch, handlers, state). Roughly 100 of the 261 lines.
+   call_llama, dispatch, handlers, state). Roughly 100 of the 124 lines.
 2. **The entry point**: `python -u bot.py` in the compose command, plus
    `main()` under `__main__`.
 3. **Fork compatibility**: `selftest.py`'s own docstring says forks patch
@@ -55,3 +55,5 @@ repoint `selftest.py` and the test suite at the owning modules. Most of the
 suite already does.
 
 ---
+
+<!-- current: bot.py=124 -->

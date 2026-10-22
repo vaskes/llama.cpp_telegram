@@ -65,7 +65,7 @@ caller never uses was worse than leaving it out.
 
 ## Closed
 
-Six blocks. `handlers.py` 1464 → 1357 lines, **48 mutations and 48
+Six blocks. `handlers.py` 1464 → 1357 (then 1278, when TECH-DEBT #10 block C moved the sender-label filter out) lines, **48 mutations and 48
 caught**, suite 1859 passed. What is left shared across the four handlers
 is the `call_llama` call itself, and that is deliberate:
 
@@ -95,3 +95,5 @@ sides of the change in `tests/test_handler_skeleton.py`.
 - `tests/test_handler_tail.py` — block E: persist and the abort window.
 - `tests/test_handler_middle.py` — block F: thinking, sender name,
   history and rating mode.
+
+<!-- current: handlers.py=1278 -->

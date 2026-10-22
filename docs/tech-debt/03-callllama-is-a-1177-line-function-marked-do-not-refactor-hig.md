@@ -121,3 +121,5 @@ patched, and the patches kept landing on module attributes nothing read.
 The rule that came out is the actual fix — **private module state must not
 be re-exported through a facade**, or the next reader patches a second
 binding that is never consulted.
+
+<!-- current: call_llama.py=478 -->

@@ -209,3 +209,5 @@ there rather than left as a comment.
 
 Full suite: 1647 passed, 20 skipped. Golden: six lines across seven slices.
 Mutation harness: 11 mutations, 11 caught, 0 survived, 0 refused, 0 invalid.
+
+<!-- current: selftest.py=239 -->

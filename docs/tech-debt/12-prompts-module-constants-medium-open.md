@@ -95,3 +95,5 @@ marker lands in `rest`, where the user sees it. Pinned as current
 behaviour. Tightening the alternation changes what counts as a rating in
 production, so it is a product decision about malformed model output,
 not a test-writing one.
+
+<!-- current: prompts.py=75 -->

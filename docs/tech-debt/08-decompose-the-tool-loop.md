@@ -424,3 +424,5 @@ appeared in a stray root-level copy of this document for one commit
 (`b8d8c11`) and named no work that exists anywhere in the repository or in
 its history. That copy was a duplicate of this file, drifted from it, and
 has been removed; this file is the one `TECH-DEBT.md` points at.
+
+<!-- current: call_llama.py=478, llm_iteration.py=507 -->

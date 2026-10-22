@@ -54,3 +54,5 @@ dozen settings through `_env_or(env_name, ...)`, so a regex over
 recursive glob also hid `personal_tools/bash_command.py` and the whole
 bash-sandbox subpackage until reverting it to a recursive one was tried
 as a mutation.
+
+<!-- current: config.py=306 -->

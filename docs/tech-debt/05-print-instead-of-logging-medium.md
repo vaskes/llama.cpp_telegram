@@ -28,3 +28,5 @@ existing greps keep working. Do it as one sweep, not incrementally — half
 migrated is the worst state.
 
 ---
+
+<!-- current: logconf.py=129 -->

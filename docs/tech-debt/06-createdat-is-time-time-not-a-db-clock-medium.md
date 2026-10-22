@@ -30,3 +30,5 @@ because the anchor only moves forward), and `ContextBudget._keep` tolerates
 unparseable timestamps by keeping the message.
 
 ---
+
+<!-- current: storage.py=725 -->

@@ -158,7 +158,8 @@ design, and do not read the green suite as evidence about it.
 
 
 
-**1672 → 1278 lines**, three blocks. Routing is pinned in
+**1672 → 974 lines**, three blocks. (1278 is `handlers.py`, which
+block C shrank from 1357.) Routing is pinned in
 `test_dispatch_routing.py`, the startup sequence in
 `test_startup_order.py`, the injection filter in `test_prompt_guard.py`,
 and every module is checked for names it reads but does not bind.
@@ -173,3 +174,5 @@ because nothing in the suite had ever entered `main`.
 
 **Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
+
+<!-- current: dispatch.py=974, handlers.py=1278 -->
