@@ -289,7 +289,12 @@ def test_helpers_live_where_the_graph_says():
                        "_parse_topic_arg", "_rate_limit_send"]),
         ("access", ["is_authorized", "reject_if_unauthorized",
                     "_should_mute_in_group", "_is_reply_to_other_user",
-                    "_check_user_slot", "_stop_button_markup"]),
+                    "_check_user_slot"]),
+        # TECH-DEBT #8 block 3. It lived in access, which is in the import
+        # cycle, and llm_thinking reached it through dispatch at call time.
+        # The graph said access; the graph was where the function was, not
+        # where the cycle allowed it to be.
+        ("llm_markup", ["_stop_button_markup"]),
     ):
         src = (BOT_DIR / f"{mod}.py").read_text(encoding="utf-8")
         for helper in names:

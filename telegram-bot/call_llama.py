@@ -58,6 +58,8 @@ from http_clients import _abortable_post, transcribe_voice  # noqa: F401
 from llm_messages import _tag_sender  # noqa: F401
 from llm_nonstream import non_stream_iteration, non_stream_step
 from llm_sse import StreamAccumulator
+from llm_markup import _stop_button_markup  # noqa: F401  (re-export)
+from llm_stream import StreamOutcome, stream_iteration
 from llm_loop_guard import Abort, LoopGuard, Nudge
 # Nudge was missing from this import between a079e3c and now. It is
 # used on the branch that follows `isinstance(outcome, Abort)`, so a
@@ -202,7 +204,6 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
 
 
     await _ensure_model()  # lazy first-call discovery
-    from dispatch import _stop_button_markup
     tools = await fetch_tools_from_llama()
     # custom_weather_tool is now in bot_side_tool_defs below; see "Add our
     # bot-side tool implementations" comment. Keeping the legacy variable
@@ -550,135 +551,35 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                         primary_error=e)
                 return f'[llama-server request failed: {e}]'
             if not ns_handled:
-                try:
-                    async with client.stream("POST", f"{LLAMA_URL}/chat/completions",
-                                              headers={"Authorization": f"Bearer {API_KEY}",
-                                                       "Content-Type": "application/json"},
-                                              json=req_body) as r:
-                        r.raise_for_status()
-                        # Pre-check for abort before entering the line
-                        # iteration. This catches the case where the
-                        # user clicks Stop RIGHT after the bot sends
-                        # the thinking message but before the LLM has
-                        # produced any chunks.
-                        #
-                        # IMPORTANT: do NOT use `asyncio.wait_for` with
-                        # a short timeout on `__anext__()`. Cancelling
-                        # the read task mid-stream corrupts httpx's
-                        # internal state and causes the LLM to return
-                        # empty responses on subsequent calls. Plain
-                        # `async for` is safe; the only downside is a
-                        # small window (typically <1s) where an abort
-                        # set after the LLM has started but before the
-                        # first chunk is not seen until the first
-                        # chunk arrives. The between-chunk check below
-                        # handles that.
-                        if abort_event is not None and abort_event.is_set():
-                            log.info(f"[call_llama] abort_event set pre-stream "
-                                f"iter={iteration}")
-                            return None
-                        acc = StreamAccumulator()
-                        async for line in r.aiter_lines():
-                            # Between-chunk abort check. Fires as soon
-                            # as a chunk arrives if the user clicked
-                            # Stop during the previous chunk's
-                            # processing.
-                            if abort_event is not None and abort_event.is_set():
-                                log.info(f"[call_llama] abort_event set between "
-                                    f"chunks iter={iteration}")
-                                return None
-                            # SSE framing stays here, NOT in feed():
-                            # the accumulator parses JSON objects, and the
-                            # line protocol is the transport's business.
-                            # The first draft of this cut dropped all three
-                            # guards below, which sent the "[DONE]" sentinel
-                            # into json.loads on every single stream.
-                            if not line or not line.startswith("data: "):
-                                continue
-                            payload = line[6:]
-                            if payload.strip() == "[DONE]":
-                                break
-                            try:
-                                chunk = json.loads(payload)
-                            except json.JSONDecodeError:
-                                continue
-                            d = acc.feed(chunk)
-                            if d.grew_reasoning:
-                                await push_thinking(
-                                    accumulated_reasoning + acc.reasoning,
-                                    thinking_msg=thinking_msg, silent=silent,
-                                    throttle=_throttle)
-                            reasoning_buf = acc.reasoning
-                            content_buf = acc.content
-                            tool_calls_buf = acc.tool_calls
-                            if d.finish_reason:
-                                finish_reason = d.finish_reason
-                        # Final flush: ensure the latest reasoning text is on Telegram
-                        if reasoning_buf:
-                            await push_thinking(
-                                accumulated_reasoning + reasoning_buf,
-                                thinking_msg=thinking_msg, silent=silent,
-                                throttle=_throttle, force=True)
-                except httpx.HTTPError as e:
-                    log.info(f"[stream err iter={iteration}] {type(e).__name__}: {e}; falling back to non-streaming")
-                    # Fall back to non-streaming request
-                    try:
-                        async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client2:
-                            r2 = await client2.post(
-                                f"{LLAMA_URL}/chat/completions",
-                                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-                                json={**req_body, "stream": False},
-                            )
-                            r2.raise_for_status()
-                            data = r2.json()
-                        # T32 (2026-10-13): same guard as the primary
-                        # non-streaming path above — 'choices' may be
-                        # empty on rate-limit / context-overflow / filter
-                        # responses. Without this, the user gets a
-                        # 'list index out of range' on the fallback path
-                        # too, even though we already guarded the
-                        # primary path.
-                        _choices2 = data.get("choices") or []
-                        if not _choices2 and is_context_overflow(
-                            json.dumps(data.get("error") or data)[:500]
-                        ):
-                            log.info("[call_llama] CONTEXT OVERFLOW on fallback")
-                            return OVERFLOW_MESSAGE
-                        if not _choices2:
-                            return ("[model returned no choices on fallback — "
-                                    "the prompt may have exceeded the context window, "
-                                    "hit a rate limit, or been blocked by a content "
-                                    "filter. Try a shorter prompt or try again in a minute.]")
-                        msg = _choices2[0].get("message") or {}
-                        tool_calls = msg.get("tool_calls") or []
-                        # T38.5: tool isolation (see validate_tool_calls docstring).
-                        try:
-                            validate_tool_calls(tool_calls)
-                        except UnknownToolNameError as _e:
-                            # T43: soft-reject (same as site 1).
-                            bad_names = reject_unknown_names(
-                                tool_calls, known=KNOWN_TOOL_NAMES)
-                            if bad_names:
-                                log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject "
-                                    f"{sorted(bad_names)!r}; injecting tool result feedback")
-                                saw_unavailable_tool = True
-                        if not tool_calls:
-                            return finish_fallback_empty(
-                                content=msg.get("content"),
-                                reasoning=msg.get("reasoning_content"),
-                                finish_reason=msg.get("finish_reason"))
-                        msgs.append(msg)
-                        if msg.get("content"):
-                            final_fallback = msg["content"]
-                        # jump into tool execution below by reusing local var
-                        reasoning_buf = msg.get("reasoning_content") or ""
-                        content_buf = msg.get("content") or ""
-                    except Exception as e2:
-                        log.info(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}")
-                        return f'[both streaming and non-streaming failed: stream_err={e!r}, fallback_err={e2!r}]'
-
-            else:
-                pass
+                # TECH-DEBT #8 block 3: the streaming branch and the
+                # non-streaming fallback it owns now live in llm_stream.
+                # The outcome carries both meanings the branch used to
+                # mix -- "the turn is over" and "here is what the loop
+                # carries on with" -- because two of its six exits were
+                # None, and a caller asking "is terminal empty?" gets the
+                # wrong answer on exactly the path the Stop button takes.
+                _stream = await stream_iteration(
+                    client, req_body,
+                    iteration=iteration,
+                    abort_event=abort_event,
+                    accumulated_reasoning=accumulated_reasoning,
+                    thinking_msg=thinking_msg, silent=silent,
+                    throttle=_throttle,
+                    saw_unavailable_tool=saw_unavailable_tool,
+                    final_fallback=final_fallback,
+                    finish_reason=finish_reason,
+                    tool_calls_buf=tool_calls_buf)
+                # Branch on is_terminal, never on `terminal is not None`.
+                if _stream.is_terminal:
+                    return _stream.assert_terminal()
+                if _stream.append_msg is not None:
+                    msgs.append(_stream.append_msg)
+                saw_unavailable_tool = _stream.saw_unavailable_tool
+                final_fallback = _stream.final_fallback
+                reasoning_buf = _stream.reasoning_buf
+                content_buf = _stream.content_buf
+                tool_calls_buf = _stream.tool_calls_buf
+                finish_reason = _stream.finish_reason
         # commit accumulated reasoning for next-iteration display
         accumulated_reasoning += reasoning_buf
 
@@ -854,11 +755,21 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             # the guard.
             _choices3b = data3.get("choices") or []
             if not _choices3b:
+                # Same classification as every other empty-choices site.
+                # The guard below was missing here and the test that claims
+                # to cover it passed anyway: it asked whether the MODULE
+                # called is_context_overflow anywhere, and until block 3
+                # moved the streaming fallback out, it was answering with
+                # a guard that belonged to a different branch.
+                if is_context_overflow(
+                        json.dumps(data3.get("error") or data3)[:500]):
+                    log.info(f"[call_llama] CONTEXT OVERFLOW on summarize fallback")
+                    return OVERFLOW_MESSAGE
                 log.info(f"[call_llama] summarize fallback: empty choices, returning explanatory error")
                 return ("[bot: the model returned no choices on the summarize call — "
                         "the prompt may have exceeded the context window, hit a rate limit, "
                         "or been blocked by a content filter. Try a shorter prompt or "
-                        "try again in a minute.]")
+                        "try again in a minute.")
             msg3 = _choices3b[0].get("message") or {}
             return msg3.get("content") or (
                 '[bot: search returned no useful data. '

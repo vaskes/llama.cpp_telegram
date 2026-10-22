@@ -1,7 +1,8 @@
 ---
 tech_debt: 8
 marker: tests/test_drift_call_llama_names.py, tests/test_d2_toolcalls.py,
-  tests/test_d3_finish.py, tests/test_d4_dispatch.py
+  tests/test_d3_finish.py, tests/test_d4_dispatch.py,
+  tests/test_llm_stream.py, tests/test_no_duplicate_definitions.py
 state: partial
 issue: null
 ---
@@ -170,3 +171,119 @@ call site and requires the keyword argument to be the global itself.
 Worth reading before trusting any count-based check on this function.
 
 Marker: `tests/test_llm_request.py`, `tests/test_b2_extraction.py`.
+
+
+## Progress, 2026-10-22 (block 3 — T3.2)
+
+The streaming branch and the non-streaming fallback it owns are out, in
+`telegram-bot/llm_stream.py`. `call_llama`: 917 -> 794 lines in the
+file, 766 -> 641 in the function, the loop 441 -> 317. Everything
+between blocks 2 and 3 was glue; what is left in `call_llama` is the
+iteration itself.
+
+`StreamOutcome` carries both meanings the branch used to mix. Two of its
+six exits are `None` — the Stop button, before the first chunk and
+between chunks — so a caller asking `terminal is not None` treats them
+as continuations and answers a cancelled question with the previous
+iteration's buffers. `is_terminal` is set by the decision and never
+inferred, the same rule `NonStreamStep` already carried. Both abort
+paths are mutation-verified individually, because they are the two lines
+in this module a plausible refactor would delete.
+
+### The import cycle was already there
+
+Adding `llm_stream` failed `test_import_graph` — it had joined a
+seven-module runtime cycle. The honest reading is not "one more module
+became cyclic": `llm_thinking`'s only back-edge was a lazy
+`from dispatch import _stop_button_markup`, and `llm_stream` inherited
+it by importing `llm_thinking`.
+
+The comment at that import named dispatch as the owner of the function.
+It did not own it. The function has lived in `access.py` since
+TECH-DEBT #2, and `llm_thinking` was reaching it through a re-export.
+Moving it to a leaf (`llm_markup.py`, 46 lines, one function) closed the
+edge for real. The cycle went 7 modules -> 3 -> 2, and `call_llama` and
+`llm_thinking` left it entirely. A pre-existing `dispatch <-> webhook`
+pair became separately visible once `call_llama` stopped joining them;
+it was always a cycle and had never been named on its own.
+
+Recording that as "add llm_stream to the list" would have been a green
+tick on a regression, which is the failure mode this whole pass exists
+to remove.
+
+### Two empty-choices sites had no overflow guard
+
+`test_t70_context_budget` asked whether a *module* calls
+`is_context_overflow` anywhere. It passed on the summarize call site and
+on `tools_less_fallback`, neither of which classified anything — because
+the streaming fallback in the same file had one. Moving that fallback
+out made the tautology visible as a red test.
+
+Both are fixed. The check is now per SITE: every branch that handles an
+empty choices list must contain the classification. Five sites, all
+guarded. `llm_stream`'s own first draft had the same defect in a
+different shape — `if not X and is_context_overflow(...)` followed by a
+bare `if not X:` — which satisfies no check that asks whether *this*
+branch classified. It is now one guard with the check nested inside.
+
+### Nineteen copies of one test
+
+Cleaning up after the block turned up `tests/test_blockers.py` at 1743
+lines containing NINETEEN copies of a single 60-line test. Python binds
+the last definition; the other eighteen never ran. 1115 lines of dead
+code, invisible to a green suite, to a passing mutation harness, and to
+anyone reading the file.
+
+Nobody hand-wrote nineteen. A tool appended a block without checking
+whether it was already there, and nothing objected because a duplicate
+definition is not an error in Python — it is silently the later one.
+`tests/test_no_duplicate_definitions.py` now fails on a test defined
+twice, on any top-level definition defined twice, and on a name bound
+twice by imports. It found one live instance on arrival: `Path`
+imported at line 25 and again at line 199 of `test_drift_t63_env_names.py`.
+
+Worth recording because it is the same shape as everything else here: a
+check that could not go red was read as coverage.
+
+### Tripwires that had to be widened, not loosened
+
+Six went red on correct code and all six were pinned to a location
+rather than a property. None was deleted; the check they were making
+moved with the code:
+
+  * `test_c4_thinking` counted three `push_thinking` sites in
+    `call_llama.py`. Two moved to `llm_stream`. It now scans both
+    modules and checks a *scope* property rather than a spelling: each
+    kwarg must be a plain name bound in the enclosing function. The old
+    check demanded `throttle=_throttle`, which is the same property as
+    `throttle=throttle` in the new module, so it would have failed the
+    extraction instead of catching it.
+  * `test_c2_sse` pointed at `call_llama.py` for the SSE framing.
+  * `test_d2_toolcalls` and `test_d3_finish` asserted a set of delegated
+    names against one file. Each name now names its owner.
+  * `test_t70_context_budget` — see above, per site.
+  * `test_refactor_graph` said `_stop_button_markup` lives in `access`.
+    It did, and that was the problem.
+
+### Verification
+
+`scripts/mutation_harness.py` (block 1/2, 13 mutations) and this
+block's 10: **23 mutations, 23 caught, 0 survived.** Each harness runs a
+green preflight first, refuses a mutation whose declared site count does
+not match what the regex finds, scores a non-compiling mutation INVALID
+rather than SURVIVED, scores a hang as a catch, and restores the tree
+even when it is killed.
+
+Four of the ten initially survived or were refused, and both survivors
+were real:
+
+  * "the between-chunk abort stops declaring itself terminal" survived.
+    The test used an always-set abort event, which returned at the
+    PRE-STREAM check — the between-chunk branch never executed. A test
+    that cannot reach the line it names is a comment.
+  * dropping `tool_calls_buf` / `finish_reason` from the fallback's
+    return survived. Both are silent: the fallback's own tool calls
+    travel in `append_msg`, so nothing looks wrong.
+
+Marker: `tests/test_llm_stream.py` (20 tests),
+`tests/test_no_duplicate_definitions.py`.

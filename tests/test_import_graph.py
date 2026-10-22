@@ -291,30 +291,43 @@ def test_every_local_module_is_referenced_somewhere():
 # mistake as asserting a cycle finder had no cycles -- the test that cannot
 # fail is not a test.
 KNOWN_RUNTIME_CYCLES = [
-    # Two modules dropped out of this cycle with TECH-DEBT #1:
-    #   bot    -- selftest.py reached its dependencies through the bot facade.
-    #            The only edge was six monkeypatches (`_b._route_to_thread`,
-    #            `_b._check_user_slot`, `_b._apply_rating_and_persist`) that
-    #            wrote attributes nobody read. The cycle was load-bearing for
-    #            nothing, which is exactly why it also hid six broken tests.
-    #   rating -- its only back-edge was a lazy `from bot import
-    #            _is_group_chat` inside _is_rating_active(). That name is
-    #            owned by chat_utils.py, which imports nothing, so the import
-    #            is direct now and the edge is gone.
-    ["access", "call_llama", "dispatch", "handlers", "llm_thinking", "selftest", "webhook"],
-    # The llm_thinking entry above is the same cycle call_llama already
-    # belonged to, now reached through the module that owns
-    # push_thinking. It calls  from dispatch, and
-    # dispatch imports call_llama, which imports llm_thinking. Deferred to
-    # the call site -- which is the only place it can be deferred from,
-    # since the markup is needed at edit time.
+    # Was seven modules, is now two.
     #
-    # The alternative was leaving push_thinking as a nested def inside
-    # call_llama, where no test could reach it at all. Trading an
-    # unreachable function for a documented edge in a cycle that already
-    # existed is not a regression, and the assertions about push_thinking
-    # moved with it (test_t65_reply_to_human, test_c4_thinking).
+    # Dropped by TECH-DEBT #1:
+    #   bot    -- selftest.py reached its dependencies through the bot
+    #            facade. The only edge was six monkeypatches
+    #            (`_b._route_to_thread`, `_b._check_user_slot`,
+    #            `_b._apply_rating_and_persist`) that wrote attributes
+    #            nobody read. The cycle was load-bearing for nothing,
+    #            which is exactly why it also hid six broken tests.
+    #   rating -- its only back-edge was a lazy `from bot import
+    #            _is_group_chat` inside _is_rating_active(). That name
+    #            is owned by chat_utils.py, which imports nothing, so
+    #            the import is direct now and the edge is gone.
+    #
+    # Dropped by TECH-DEBT #8 block 3, which is what made them visible:
+    #   llm_thinking -- its ONLY back-edge was a lazy `from dispatch
+    #     import _stop_button_markup` inside push_thinking(). The
+    #     comment there said dispatch owned the function. It did not:
+    #     the function lived in access.py and was reached through a
+    #     re-export. Moving it to its own leaf (llm_markup) closed the
+    #     edge for real. That comment was an unverified claim sitting
+    #     next to the code it misdescribed.
+    #   call_llama, dispatch, selftest, webhook -- all four were only
+    #     reachable *from* llm_thinking through that one import.
+    #
+    # The honest reading of the failure that prompted this was not "one
+    # more module became cyclic". llm_stream inherited a cycle that was
+    # already there, and adding it to this list would have been a green
+    # tick for a regression.
+    ["access", "handlers"],
     ["config", "state"],
+    # Was hidden inside the seven-module component above. `dispatch`
+    # imports `webhook` at /main, `webhook` imports `dispatch` in its
+    # request handler, and selftest imports dispatch to drive updates.
+    # It was always a cycle; call_llama just used to sit in the same
+    # component, so the pair was never named on its own.
+    ["dispatch", "selftest", "webhook"],
 ]
 
 

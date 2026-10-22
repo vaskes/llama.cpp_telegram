@@ -269,13 +269,29 @@ def test_both_sites_share_one_sentinel():
 # call sites are wired
 # --------------------------------------------------------------------------
 
+# TECH-DEBT #8 block 3 moved one of the two soft-reject sites into
+# llm_stream, which owns the non-streaming fallback. The property is
+# "the module is called, not reimplemented", and it is per-owner: a
+# single set checked against one file would have gone red on correct
+# code, and the tempting fix -- loosening it to "called somewhere" --
+# is what let a second site drift in the first place. Each name names
+# the module that is supposed to call it.
+_REJECT_OWNERS = {
+    "normalize_tool_calls": "call_llama.py",   # shared dispatch loop
+    "reject_unknown_names": "llm_stream.py",   # fallback soft-reject
+}
+
+
 def test_call_llama_calls_the_module_rather_than_reimplementing_it():
-    tree = ast.parse((BOT / "call_llama.py").read_text(encoding="utf-8"))
-    fn = next(n for n in tree.body
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
-    called = {c.func.id for c in ast.walk(fn)
-              if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-    assert {"normalize_tool_calls", "reject_unknown_names"} <= called
+    for name, owner in _REJECT_OWNERS.items():
+        tree = ast.parse((BOT / owner).read_text(encoding="utf-8"))
+        called = {c.func.id for n in ast.walk(tree)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                  for c in [n]}
+        assert name in called, (
+            f"{owner} no longer calls {name}(); the logic may have been "
+            f"reimplemented inline, which is the thing this checks"
+        )
 
 
 def test_no_indexed_iteration_over_the_buffer_remains():
@@ -369,8 +385,11 @@ def test_the_rejection_is_still_logged_from_the_caller():
 def test_both_reject_sites_are_logged():
     """Two sites, two log lines, and both must survive -- they are the
     only record that tool isolation fired."""
-    src = (BOT / "call_llama.py").read_text(encoding="utf-8")
-    assert src.count("TOOL-ISOLATION") == 2, (
-        f"expected two TOOL-ISOLATION log sites, found "
-        f"{src.count('TOOL-ISOLATION')}"
+    # Two sites: one in the shared dispatch loop, one in llm_stream's
+    # non-streaming fallback. Counting them in one file goes red the
+    # moment the fallback moves; they are a property of the package.
+    total = sum((BOT / f).read_text(encoding="utf-8").count("TOOL-ISOLATION")
+                for f in ("call_llama.py", "llm_stream.py"))
+    assert total == 2, (
+        f"expected two TOOL-ISOLATION log sites, found {total}"
     )

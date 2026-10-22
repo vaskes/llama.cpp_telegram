@@ -30,6 +30,7 @@ one rejected edit.
 """
 import time
 
+from llm_markup import _stop_button_markup
 from logconf import get_logger
 
 log = get_logger(__name__)
@@ -107,10 +108,6 @@ async def push_thinking(reasoning_text: str, *, thinking_msg, silent: bool,
         truncated_marker = "\n[…earlier reasoning omitted…]\n"
 
     try:
-        # Late import: dispatch imports call_llama, which imports this
-        # module. Importing dispatch at module scope here closes the
-        # cycle. Same pattern call_llama already uses for this symbol.
-        from dispatch import _stop_button_markup
 
         # editMessageText drops the inline keyboard unless reply_markup
         # is passed again. The ⏹ Stop button has to survive every edit.

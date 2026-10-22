@@ -217,6 +217,16 @@ async def tools_less_fallback(req_body: dict, *, iteration: int,
         # a content filter, not an answer.
         choices = data2.get("choices") or []
         if not choices:
+            # Classify before giving up. The other four empty-choices
+            # sites do, and this one returned None for every cause: a
+            # context overflow -- the most likely one here, since the
+            # primary request just failed with a 500 -- left the user
+            # looking at nothing after a long wait, when the honest
+            # answer was sitting in the error body.
+            if is_context_overflow(
+                    json.dumps(data2.get("error") or data2)[:500]):
+                log.info("[call_llama] tools-less fallback: context overflow")
+                return OVERFLOW_MESSAGE
             log.info("[call_llama] tools-less fallback: empty choices, "
                      "returning None")
             return None

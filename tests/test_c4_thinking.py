@@ -356,30 +356,76 @@ def test_every_call_site_passes_its_context_explicitly():
     raises AttributeError inside the first rate check; a missing
     `silent` silently starts showing reasoning for messages addressed to
     other people. None of them show up in a green suite.
+
+    Scoped to the package, not to one file. TECH-DEBT #8 block 3 moved
+    the two streaming sites into llm_stream, and a check pinned to
+    call_llama.py went red on correct code. "Every site in this file" is a
+    location; the property is "every site passes a name that is actually
+    bound where it is used".
+
+    So the value check is scope, not spelling. `throttle=_throttle` in
+    call_llama and `throttle=throttle` in llm_stream are the same
+    property -- a parameter passed straight through -- and a test that
+    demanded one spelling would have failed the extraction instead of
+    catching it. What is rejected is a kwarg that is a computed
+    expression, or a name that does not exist in the enclosing scope:
+    both are the `throttle=None` bug wearing a different hat.
     """
     import ast
 
-    tree = ast.parse((BOT_DIR / "call_llama.py").read_text(encoding="utf-8"))
-    expected = {"thinking_msg": "thinking_msg", "silent": "silent",
-                "throttle": "_throttle"}
-    calls = [n for n in ast.walk(tree)
-             if isinstance(n, ast.Await) and isinstance(n.value, ast.Call)
-             and getattr(n.value.func, "id", None) == "push_thinking"]
-    assert len(calls) == 3, f"expected 3 call sites, found {len(calls)}"
-    for c in calls:
-        for kw in c.value.keywords:
-            if kw.arg in expected:
-                assert isinstance(kw.value, ast.Name), (
-                    f"call at line {c.lineno}: {kw.arg}= is not a plain name "
-                    f"-- it evaluates to something else at runtime"
-                )
-                assert kw.value.id == expected[kw.arg], (
-                    f"call at line {c.lineno}: {kw.arg}={kw.value.id}, "
-                    f"expected {expected[kw.arg]}"
-                )
-        got = {k.arg for k in c.value.keywords}
-        assert set(expected) <= got, (
-            f"call at line {c.lineno} missing {set(expected) - got}")
+    required = ("thinking_msg", "silent", "throttle")
+    owners = ["call_llama.py", "llm_stream.py"]
+    calls = []
+    for owner in owners:
+        src = (BOT_DIR / owner).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        parents = {child: parent
+                   for parent in ast.walk(tree) for child
+                   in ast.iter_child_nodes(parent)}
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Await) and isinstance(n.value, ast.Call)
+                    and getattr(n.value.func, "id", None) == "push_thinking"):
+                continue
+            fn = parents.get(n)
+            while fn is not None and not isinstance(
+                    fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn = parents.get(fn)
+            assert fn is not None, (
+                f"{owner}: push_thinking called outside any function")
+            bound = set()
+            a = fn.args
+            for arg in (a.posonlyargs + a.args + a.kwonlyargs):
+                bound.add(arg.arg)
+            if a.vararg:
+                bound.add(a.vararg.arg)
+            if a.kwarg:
+                bound.add(a.kwarg.arg)
+            for sub in ast.walk(fn):
+                if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                    bound.add(sub.id)
+            calls.append((owner, n, fn.name, bound))
+
+    # The floor is what keeps this from passing vacuously: delete a site
+    # and the keyword checks have nothing left to inspect.
+    assert len(calls) == 3, (
+        f"expected 3 push_thinking call sites across {owners}, "
+        f"found {len(calls)}"
+    )
+    for owner, node, fname, bound in calls:
+        call = node.value
+        got = {k.arg for k in call.keywords}
+        assert set(required) <= got, (
+            f"{owner}:{node.lineno} in {fname}() missing "
+            f"{set(required) - got}")
+        for kw in call.keywords:
+            if kw.arg not in required:
+                continue
+            assert isinstance(kw.value, ast.Name), (
+                f"{owner}:{node.lineno} {kw.arg}= is not a plain name -- "
+                f"it evaluates to something else at runtime")
+            assert kw.value.id in bound, (
+                f"{owner}:{node.lineno} in {fname}(): {kw.arg}={kw.value.id}, "
+                f"and that name is not bound anywhere in the function")
 
 
 def test_the_throttle_is_constructed_per_call_not_at_module_scope():

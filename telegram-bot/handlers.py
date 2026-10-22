@@ -73,8 +73,9 @@ from chat_utils import (
 )
 from access import (
     _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
-    _stop_button_markup, is_authorized, reject_if_unauthorized,
+    is_authorized, reject_if_unauthorized,
 )
+from llm_markup import _stop_button_markup
 import storage
 from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event, _register_bot_reply
 from rating import _is_rating_active, _apply_rating_and_persist

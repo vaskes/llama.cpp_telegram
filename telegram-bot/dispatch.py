@@ -35,8 +35,9 @@ from prompts import BOT_COMMANDS
 # tests reach them through `dispatch`.
 from access import (
     _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
-    _stop_button_markup, is_authorized, reject_if_unauthorized,
+    is_authorized, reject_if_unauthorized,
 )
+from llm_markup import _stop_button_markup
 from chat_utils import (
     _RATE_MAX_PER_WINDOW, _RATE_WINDOW_SEC, _SEND_WINDOW_MAX_KEYS,
     _is_group_chat, _parse_subtalk_arg, _parse_topic_arg,

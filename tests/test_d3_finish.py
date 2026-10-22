@@ -382,13 +382,27 @@ def test_the_two_loop_branches_are_in_order():
 
 
 def test_all_three_endings_are_delegated():
-    """No `if not tool_calls:` branch in call_llama decides on its own any
-    more. Three existed inline; all three are here."""
-    fn = _call_llama()
-    called = {c.func.id for c in ast.walk(fn)
-              if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-    assert {"finish_fallback_empty", "finish_without_tool_calls",
-            "refuse_hallucinated_tools"} <= called
+    """No `if not tool_calls:` branch decides on its own any more. Three
+    existed inline; all three are delegated.
+
+    Per-owner as of TECH-DEBT #8 block 3: `finish_fallback_empty` belongs
+    to the non-streaming fallback, which now lives in llm_stream, and the
+    other two to the shared dispatch loop. One set against one file goes
+    red on a correct extraction; "called somewhere" would let a site
+    vanish, so each name names its owner.
+    """
+    owners = {
+        "finish_fallback_empty": "llm_stream.py",
+        "finish_without_tool_calls": "call_llama.py",
+        "refuse_hallucinated_tools": "call_llama.py",
+    }
+    for name, owner in owners.items():
+        tree = ast.parse((BOT / owner).read_text(encoding="utf-8"))
+        called = {c.func.id for c in ast.walk(tree)
+                  if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+        assert name in called, (
+            f"{owner} no longer delegates to {name}()"
+        )
 
 
 # --------------------------------------------------------------------------

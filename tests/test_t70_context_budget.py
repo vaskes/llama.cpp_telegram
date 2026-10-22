@@ -503,7 +503,12 @@ def test_overflow_message_names_the_fix():
 # call_llama.py into llm_nonstream.py; the classification is unchanged,
 # the file is not. Counting in one file asked "where does the code live"
 # when the question was "does every site classify overflow".
-_OVERFLOW_SITE_MODULES = ("call_llama.py", "llm_nonstream.py")
+# llm_stream joined as of TECH-DEBT #8 block 3: it owns the non-streaming
+# fallback, and that fallback has its own empty-choices site with its own
+# overflow guard. Dropping it from this list would have made the count
+# below pass on a tree where the guard is gone.
+_OVERFLOW_SITE_MODULES = ("call_llama.py", "llm_nonstream.py",
+                          "llm_stream.py")
 
 
 def test_call_llama_imports_the_overflow_helper():
@@ -525,26 +530,84 @@ def test_call_llama_imports_the_overflow_helper():
     )
 
 
-def test_every_empty_choices_site_classifies_overflow():
-    """The intent of the count above, stated directly.
+def _empty_choices_sites(tree):
+    """Every `if not X:` whose X was filled from a `.get("choices")`.
 
-    `is_context_overflow(...)` guards every site that handles an empty
-    choices list. A site that returns a message without consulting it
-    looks identical to a correct one to a substring count -- which is why
-    the count alone was never the real check.
+    Per SITE, not per module. The previous version asked whether the
+    module calls is_context_overflow anywhere, which is a property of
+    the file rather than of the branch -- and it passed on a summarize
+    call site that had no overflow guard at all, because the streaming
+    fallback in the same file had one. TECH-DEBT #8 block 3 moved that
+    fallback to llm_stream and the tautology surfaced as a red test.
     """
+    sites = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        filled = set()
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            t = node.targets[0]
+            if not isinstance(t, ast.Name):
+                continue
+            # Structural, not substring. ast.dump renders an attribute
+            # access as `attr='choices'`, never as the word "Get" -- my
+            # first version looked for "Get" and found zero sites, then
+            # the floor assertion caught it, which is the only reason
+            # this was not a vacuous green.
+            v = node.value
+            if not (isinstance(v, ast.BoolOp) and isinstance(v.op, ast.Or)):
+                continue
+            if any(isinstance(x, ast.Call)
+                   and isinstance(x.func, ast.Attribute)
+                   and x.func.attr == "get" and x.args
+                   and isinstance(x.args[0], ast.Constant)
+                   and x.args[0].value == "choices"
+                   for x in v.values):
+                filled.add(t.id)
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.If):
+                continue
+            test = node.test
+            if not (isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)):
+                continue
+            name = test.operand
+            if not (isinstance(name, ast.Name) and name.id in filled):
+                continue
+            sites.append((fn.name, node.lineno, node))
+    return sites
+
+
+def test_every_empty_choices_site_classifies_overflow():
+    """Every branch that handles an empty choices list asks WHY it is empty.
+
+    A site that returns a message without consulting
+    is_context_overflow looks identical to a correct one to a substring
+    count -- which is why the count alone was never the real check, and
+    why a module-wide `>= 1` is not it either.
+    """
+    seen = 0
     for name in _OVERFLOW_SITE_MODULES:
         path = BOT_DIR / name
         if not path.exists():
             continue
         src = path.read_text(encoding="utf-8")
-        if "_choices" not in src and '"choices"' not in src:
+        if "choices" not in src:
             continue
-        guard_sites = src.count("is_context_overflow(")
-        empty_sites = len(re.findall(r"not _choices|\[\"choices\"\]\)\s*\n\s*if", src))
-        assert guard_sites >= 1, (
-            f"{name} reads choices but never calls is_context_overflow"
-        )
+        tree = ast.parse(src)
+        for fname, lineno, node in _empty_choices_sites(tree):
+            seen += 1
+            body = " ".join(ast.dump(n) for n in ast.walk(node))
+            assert "is_context_overflow" in body, (
+                f"{name}:{lineno} in {fname}() handles empty choices "
+                f"without classifying context overflow"
+            )
+    assert seen >= 4, (
+        f"expected at least 4 empty-choices sites across "
+        f"{_OVERFLOW_SITE_MODULES}, found {seen} -- if this dropped, the "
+        f"per-site check above is inspecting nothing"
+    )
 
 
 # ===========================================================================

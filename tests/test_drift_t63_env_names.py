@@ -195,5 +195,3 @@ def test_whitelist_env_var_is_referenced_exactly_as_config_reads_it():
         "dispatch rebinds nothing"
     )
 
-
-from pathlib import Path  # noqa: E402  (used by _test_env_vars via __file__)

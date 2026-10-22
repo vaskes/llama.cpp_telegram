@@ -31,12 +31,13 @@ disagreement again without a test going red.
 | 5 | `print()` instead of `logging` | **closed** `83c5092` | `test_logging_stdout_parity.py` | — |
 | 6 | `created_at` from the Python clock | **closed** — decision, see file | `test_t6_db_clock.py` | — |
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
-| 8 | Decompose `call_llama`'s tool loop | **partial** — 1 of 3 blocks, `7bf5999` | `test_drift_call_llama_names.py`, `test_d2_toolcalls.py`, `test_llm_request.py` | New turn features still land in one function |
+| 8 | Decompose `call_llama`'s tool loop | **partial** — 3 of 4 blocks, streaming branch out | `test_drift_call_llama_names.py`, `test_d2_toolcalls.py`, `test_llm_request.py`, `test_llm_stream.py` | The iteration itself is still one function |
 | 9 | `selftest._selftest` — 1940-line function | **open** | none yet | Untestable in any unit-sized piece |
-| 10 | `dispatch.py` — 1624 lines | **open** | none yet | Every command is a routing change |
+| 10 | `dispatch.py` — 1625 lines | **open** | none yet | Every command is a routing change |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **partial** — test exists | `test_prompts.py` | Relocation still to do |
 | 13 | `handlers.py` shared wrapper remains | **open** — waits on #8 | `test_finally_hosts.py` | ~9 duplicated calls per handler |
+| 14 | Duplicate top-level definitions in `tests/` | **closed** | `test_no_duplicate_definitions.py` | — |
 
 Four tripwires were found to be measuring something other than their
 property while this was being fixed, and all four are recorded in the
@@ -56,7 +57,7 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    1624 lines, 18 top-level defs
+dispatch.py    1625 lines, 18 top-level defs
 selftest.py    2074 lines, _selftest = 1940 lines   <- largest single unit
 call_llama.py   972 lines, call_llama = 825 lines, 11 llm_* leaf modules
 handlers.py    1464 lines, 4 handlers at 158-291 lines each

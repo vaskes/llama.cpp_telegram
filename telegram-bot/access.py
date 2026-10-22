@@ -71,24 +71,6 @@ def is_authorized(update) -> bool:
 
 # --- moved verbatim from dispatch.py (TECH-DEBT #2) ---
 
-def _stop_button_markup():
-    """Inline keyboard markup for the "💭 думаю…" thinking message.
-
-    One button: "⏹ Stop". When the user clicks it, the callback
-    handler looks up the per-(chat, user) abort event and sets
-    it; call_llama() then bails out at the next iteration of
-    the tool loop. The handler edits the thinking message to
-    "⏹ Остановлено" and moves to the next update.
-
-    We import InlineKeyboardButton lazily so this module is
-    still importable in environments where the full PTB extras
-    are not installed (selftest imports, for example).
-    """
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏹ Stop", callback_data="stop:thinking")],
-    ])
-
 
 async def _check_user_slot(chat_id: int, user_id: int, update):
     """Claim one of the user's concurrency slots, queuing if all

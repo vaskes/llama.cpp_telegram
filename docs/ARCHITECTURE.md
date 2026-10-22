@@ -15,11 +15,13 @@ telegram-bot/
 ├── bot.py                 # main entry, aiohttp webhook + handlers
 ├── handlers.py            # handle_text/photo/voice/document
 ├── call_llama.py          # the streaming + tool-calling loop
-│                          #   883 lines file, 732 in the function,
-│                          #   407 in the one top-level loop
+│                          #   794 lines file, 641 in the function,
+│                          #   317 in the one top-level loop
 ├── llm_tools.py           # fetching the tool list from llama-server
 ├── llm_request.py         # request body + shape logging + accumulator reset
 ├── llm_sse.py             # SSE -> StreamAccumulator (the parsing only)
+├── llm_stream.py          # the streaming POST, its framing, and the
+│                          #   non-streaming fallback it owns
 ├── llm_nonstream.py       # one non-streaming POST + the 500 retry
 ├── llm_loop_guard.py      # the four stop conditions, as LoopGuard
 ├── llm_toolargs.py        # screening one call's arguments
@@ -27,6 +29,7 @@ telegram-bot/
 ├── llm_dispatch.py        # running one already-screened call
 ├── llm_finish.py          # the three ways an iteration ends
 ├── llm_thinking.py        # streaming the "thinking" message to Telegram
+├── llm_markup.py          # the Stop button, and nothing else
 ├── llm_json.py            # dumps_body, scrub_surrogates
 ├── llm_messages.py        # sender tags on stored messages
 ├── dispatch.py            # /start, /subs, _is_group_chat, chat_member
@@ -55,11 +58,13 @@ directly by tests, none of which build a full `call_llama`.
   llm_finish.py         140  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_json.py            53  scrub_surrogates, dumps_body
   llm_loop_guard.py     143  Nudge, Abort, LoopGuard
+  llm_markup.py           46  _stop_button_markup
   llm_messages.py        83  _tag_sender
-  llm_nonstream.py      354  NonStreamResult, non_stream_iteration, tools_less_fallback
+  llm_nonstream.py      364  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
+  llm_stream.py         307  StreamOutcome, stream_iteration, _fallback_to_nonstream
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape
-  llm_thinking.py       131  ThinkingThrottle, push_thinking
+  llm_thinking.py       128  ThinkingThrottle, push_thinking
   llm_toolargs.py       134  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
@@ -70,10 +75,19 @@ this call be allowed at all" (`llm_toolargs`, `llm_toolcalls`,
 `llm_dispatch`), two answer "how does this iteration end"
 (`llm_finish`, `llm_loop_guard`), and the rest are transport.
 
+`llm_markup` is the smallest module here and exists for one reason:
+`_stop_button_markup` was defined in `access.py`, which sits in an
+import cycle, and `llm_thinking` reached it through `dispatch` at call
+time. That one lazy import was holding a seven-module cycle open. It is
+now a module-scope import of a leaf.
+
 **What is still in `call_llama`** and why: the iteration counter, the
-four response buffers, the message list, the turn ledger, and one block
-of three sequential POST attempts. That last block is 276 lines and is
-the whole of what TECH-DEBT #8 has left; it is specified in
+four response buffers, the message list, the turn ledger, and the
+dispatch of one already-screened tool call. All three POST attempts
+have moved out — the request body to `llm_request`, the non-streaming
+branch to `llm_nonstream`, the streaming branch and its fallback to
+`llm_stream` — so what is left is the loop, not the transport. What
+TECH-DEBT #8 has left is specified in
 [tech-debt/08](tech-debt/08-decompose-the-tool-loop.md).
 
 ## Two code paths in `call_llama`

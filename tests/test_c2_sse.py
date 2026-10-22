@@ -307,14 +307,18 @@ def test_the_data_prefix_and_done_sentinel_are_handled_by_the_caller():
     """
     import ast
 
-    tree = ast.parse((BOT_DIR / "call_llama.py").read_text(encoding="utf-8"))
+    # TECH-DEBT #8 block 3 moved the streaming loop into llm_stream. The
+    # property did not move with the address: feed() still takes parsed
+    # chunks and the line protocol is still the transport's business.
+    tree = ast.parse((BOT_DIR / "llm_stream.py").read_text(encoding="utf-8"))
 
     # A substring check for "[DONE]" is not a check. Deleting the guard
     # leaves the word in the comment above it, so the first version of
     # this test stayed green with the sentinel parsing as JSON on every
     # stream. It has to be the break statement, in the right place.
     call = next(n for n in ast.walk(tree)
-                if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+                if isinstance(n, ast.AsyncFunctionDef)
+                and n.name == "stream_iteration")
     loop = next(n for n in ast.walk(call)
                 if isinstance(n, ast.AsyncFor) and "aiter_lines" in ast.dump(n))
 
@@ -374,7 +378,9 @@ def test_the_streaming_loop_feeds_the_accumulator_it_creates():
     Hoisting it reuses buffers across iterations and iteration 2 answers
     with iteration 1's text.
     """
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
+    # As of block 3 the accumulator lives in llm_stream. Counting it in
+    # call_llama would assert 0 == 1 and prove nothing about the loop.
+    src = (BOT_DIR / "llm_stream.py").read_text(encoding="utf-8")
     assert src.count("acc = StreamAccumulator()") == 1
     loop_at = src.index("aiter_lines()")
     created_at = src.index("acc = StreamAccumulator()")
