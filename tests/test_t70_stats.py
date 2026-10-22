@@ -17,6 +17,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BOT_DIR = REPO_ROOT / "telegram-bot"
+
+# TECH-DEBT #10: `stats` moved out of dispatch.py. Every test that
+# walks the `stats` function reads the file that holds it now.
+STATS_PY = BOT_DIR / "commands" / "stats_cmd.py"
 if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
@@ -125,15 +129,21 @@ def test_oldest_message_age_never_negative(store):
 # /stats wiring
 # ---------------------------------------------------------------------------
 
-def test_dispatch_imports_the_budget():
-    src = (BOT_DIR / "dispatch.py").read_text()
+def test_the_stats_handler_imports_the_budget():
+    """It moved with /stats, so the assertion moved with it.
+
+    Reading dispatch.py here would have kept passing for a reason that
+    had nothing to do with /stats: the module still imports the budget
+    for other code. The check has to follow the handler.
+    """
+    src = STATS_PY.read_text(encoding="utf-8")
     assert "from context_budget import" in src, (
         "/stats needs the live ContextBudget to describe the active window"
     )
 
 
 def test_stats_renders_the_memory_block():
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = STATS_PY.read_text(encoding="utf-8")
     fn = next(
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "stats"
@@ -154,7 +164,7 @@ def test_stats_renders_the_memory_block():
 def test_stats_reports_the_anchor_as_non_sliding():
     """The operator reads this in Telegram and should not have to wonder
     whether the window moves under him."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = STATS_PY.read_text(encoding="utf-8")
     assert "не скользит" in src, (
         "/stats should state that the window is anchored at bot start, not "
         "sliding — that is the whole point of the anchored design"
@@ -165,7 +175,7 @@ def test_stats_explains_history_is_kept():
     """The operator is keeping history for LoRA training. /stats showing a "
     "big 'not sent' count could read as data loss; say plainly that it is "
     "stored."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = STATS_PY.read_text()
     assert "обучения" in src, (
         "/stats must tell the user that out-of-window history is still "
         "stored, not discarded"
@@ -181,7 +191,7 @@ def test_memory_lines_helper_is_a_coroutine():
     So: a nested helper that awaits must be `async def`. Assert the AST shape
     rather than trusting py_compile.
     """
-    tree = ast.parse((BOT_DIR / "dispatch.py").read_text())
+    tree = ast.parse(STATS_PY.read_text(encoding="utf-8"))
     stats = next(
         n for n in ast.walk(tree)
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "stats"

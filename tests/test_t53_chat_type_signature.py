@@ -172,9 +172,14 @@ def test_call_bash_command_refuses_non_private_chat():
 def test_dispatch_group_chat_hides_bash_command():
     """The /start text shown in group chats must mention that
     bash is unavailable. T52 #M4 user-facing copy."""
-    src = (REPO / "telegram-bot" / "dispatch.py").read_text()
-    assert "_is_group_chat" in src, "dispatch must check _is_group_chat"
+    # /start moved to commands/ in TECH-DEBT #10. The copy is what this
+    # guards, so it is read from the file that holds it now; reading
+    # dispatch.py would pass on an empty assertion and the user would
+    # lose the line without a single test going red.
+    src = (REPO / "telegram-bot" / "commands" / "start_cmd.py").read_text(
+        encoding="utf-8")
+    assert "_is_group_chat" in src, "the /start handler must check _is_group_chat"
     assert "Shell-команды (bash) недоступны" in src, (
-        "dispatch /start must show 'bash unavailable' line in group chats. "
-        "T52 #M4."
+        "the /start handler must show 'bash unavailable' line in group "
+        "chats. T52 #M4."
     )

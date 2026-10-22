@@ -82,605 +82,13 @@ from rating import (
     _apply_rating_and_persist, _apply_reaction, _execute_react_to_message,
     _is_rating_active, _parse_rating_response,
 )
-
-
-# === start ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await reject_if_unauthorized(update, context):
-        return
-    # T39: show the shell tools bullet ONLY in personal profile.
-    # The public profile MUST NEVER see the "available" copy - it
-    # is the single bit of user-facing text that signals the bot
-    # can execute shell commands. The actual enforcement is in
-    # personal_tools.bash_command (profile gate) and tool_isolation
-    # (whitelist); this line is just user-facing copy.
-    try:
-        from personal_tools import bash_command as _bc
-        _shell_enabled = _bc.is_enabled_for_active_profile()
-    except Exception:
-        _shell_enabled = False
-    if _shell_enabled:
-        if _is_group_chat(update):
-            # T52 #M4: group chats get a clear "unavailable" line
-            # instead of the misleading "only for you" copy. The
-            # real per-chat guard is in call_bash_command (T52 #H1);
-            # this is just honest user-facing copy.
-            shell_line = (
-                chr(8226) + ' 🚫 **Shell-команды (bash) недоступны '
-                'в этом чате** — песочница включается только в '
-                'личке с ботом (by design, см. docs/BASH-SANDBOX.md).'
-                + chr(10)
-            )
-        else:
-            shell_line = (
-                chr(8226) + ' 🐚 **Запускать shell-команды в '
-                'изолированной песочнице** (bash_command — личный '
-                'режим, доступен ТОЛЬКО здесь, в личке с ботом)'
-                + chr(10)
-            )
-    else:
-        shell_line = (
-            chr(8226) + ' 🚫 **Shell-команды (bash) — недоступны в '
-            'этом режиме**. Песочница включается только в personal '
-            '(LLAMABOT_DEPLOYMENT_PROFILE=personal) и недоступна в '
-            'публичных чатах. Это by design.' + chr(10)
-        )
-    # T58: dev mode is invisible in the user-facing chat by
-    # operator design (2026-10-14 11:19 MSK). No badge, no prefix,
-    # no warning in /start. The scary "!! WARNING" comment lives
-    # in the code (see personal_tools/bash_command.py + limits.py),
-    # not in the chat. See BASH-SANDBOX.md "Dev mode" section
-    # for the operator's exact requirements.
-    await _reply(update,
-        chr(129302) + ' **LlamaBot v2 запущен!**' + chr(10) + chr(10) +
-        'Я могу:' + chr(10) +
-        chr(8226) + ' Отвечать на вопросы (с tool-calling)' + chr(10) +
-        chr(8226) + ' Искать в интернете ' + chr(127760) + chr(10) +
-        chr(8226) + ' Анализировать изображения (отправьте фото)' + chr(10) +
-        chr(8226) + ' Расшифровывать голосовые ' + chr(127908) + chr(10) +
-        chr(8226) + ' Читать документы (TXT, PDF)' + chr(10) +
-        shell_line + chr(10) +
-        'Команды: /reset, /stats, /help'
-    )
-
-# === reset ===
-async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
-    """Clear the messages in the current sub-talk / topic."""
-    # === Group mode: clear history in the current topic ===
-    if _is_group_chat(update):
-        chat_id = update.effective_chat.id
-        # Use "general" sentinel for the General topic so the DB
-        # key is consistent with _route_to_thread.
-        msg_thread_id = update.message.message_thread_id
-        thread_id = str(msg_thread_id) if msg_thread_id is not None else _general_thread_id()
-        n = await asyncio.to_thread(
-            storage.get_store().delete_thread, chat_id, thread_id
-        )
-        # Look up the topic name for a friendlier message
-        if msg_thread_id is not None:
-            entry = await asyncio.to_thread(
-                storage.get_store().find_known_topic_by_id, chat_id, msg_thread_id
-            )
-            topic_label = f"#{msg_thread_id} — {entry['name']}" if entry else f"#{msg_thread_id}"
-        else:
-            topic_label = "General"
-        await _reply(update,
-            f'🗑 Cleared {n} message(s) in {topic_label}.\n'
-            f'The Telegram topic itself is unchanged — only the '
-            f"bot's memory of past messages in it is wiped.\n"
-            f'In private mode the active sub-talk is re-created; in '
-            f'group mode the topic is owned by Telegram and just '
-            f'loses its conversation history.'
-        )
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
-    thread_id = await _resolve_active(user_id)
-    n = await asyncio.to_thread(storage.get_store().delete_thread, user_id, thread_id)
-    # delete_thread removes the thread row too, so re-create it
-    # (empty) and keep it active. The user can still /subs to see it.
-    await asyncio.to_thread(storage.get_store().create_thread, user_id, thread_id)
-    await asyncio.to_thread(storage.get_store().set_active_thread, user_id, thread_id)
-    await _reply(update,
-        f'🔄 Cleared {n} message(s) in sub-talk "{thread_id}".\n'
-        f'Sub-talk is preserved. Use /delsub to remove the whole thread.'
-    )
-
-# === cmd_help ===
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show the full command reference. Same content as the bot menu
-    but with examples and the sub-talk workflow explained in prose."""
-    if await reject_if_unauthorized(update, context):
-        return
-    # Build a ReplyKeyboardMarkup with the most common actions as
-    # one-tap buttons. This is a *custom keyboard* (replaces the
-    # input area) — it stays in the chat until the user dismisses
-    # it. Useful for first-time users; they tap to discover.
-    from telegram import KeyboardButton, ReplyKeyboardMarkup
-    rows = [
-        [KeyboardButton("/here"), KeyboardButton("/subs")],
-        [KeyboardButton("/newsub research"), KeyboardButton("/sub research")],
-        [KeyboardButton("/reset"), KeyboardButton("/stats")],
-    ]
-    await _reply(update, 
-        '🤖 **LlamaBot — help**\n\n'
-        '**Sub-talks** — named conversation threads. The bot keeps a '
-        'separate history for each one and only the active thread is in '
-        'the model\'s context window.\n\n'
-        '**Workflow:**\n'
-        '1. /newsub <name>  → create a new sub-talk and switch to it\n'
-        '2. Send messages — they go into the active sub-talk\n'
-        '3. /sub <name>     → switch to a different sub-talk\n'
-        '4. /here           → see what\'s in the current sub-talk\n'
-        '5. /subs           → list all sub-talks (with tap-to-switch buttons)\n'
-        '6. /delsub <name>  → remove a sub-talk and its history\n\n'
-        '**Other commands:**\n'
-        '• /start  — welcome + feature list\n'
-        '• /reset  — clear messages in the current sub-talk (keeps the thread)\n'
-        '• /stats  — model + tool count + sub-talk list\n'
-        '• /help   — this message\n\n'
-        'Send any photo / voice / document and it lands in the active '
-        'sub-talk. Use /sub to switch.',
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=rows, resize_keyboard=True, one_time_keyboard=False,
-        ),
-    )
-
-# === stats ===
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
-    # T70 observability: the context policy is the one thing a user cannot
-    # see from the outside. "Remembers 847 of 4231" is the question that
-    # matters — and until /stats answered it, the only way to check was to
-    # open SQLite by hand.
-    _b = get_budget()
-    policy = _b.describe()
-    window_days = policy["remember_days"]
-
-    async def _memory_lines(chat_id: int, thread_id: str, stored: int) -> str:
-        """One block: what the model sees vs what the DB holds."""
-        store = storage.get_store()
-        anchor = _b.anchor
-        # sqlite counts are blocking; run them off the event loop.
-        loop = asyncio.get_running_loop()
-        in_window = loop.run_in_executor(
-            None, store.count_since, chat_id, thread_id, anchor
-        )
-        oldest = loop.run_in_executor(
-            None, store.oldest_message_age, chat_id, thread_id
-        )
-        n_in = await in_window
-        age = await oldest
-        if window_days <= 0:
-            window_text = "без ограничения по времени"
-        else:
-            window_text = f"{window_days} дн. от старта бота (якорь не скользит)"
-        age_text = "—" if age is None else f"{int(age // 86400)} дн."
-        return (
-            f' • В контексте сейчас: {n_in} сообщ.\n'
-            f' • Всего в базе: {stored} сообщ.\n'
-            f' • Старше окна (не отправляется): {max(0, stored - n_in)} сообщ.\n'
-            f' • Окно памяти: {window_text}\n'
-            f' • Старейшее сообщение в базе: {age_text}\n'
-            f' • Стратегия: {policy["strategy"]}, потолок {policy["max_messages"]}'
-        )
-
-    # === Group mode: show topic count + total stored messages ===
-    if _is_group_chat(update):
-        chat_id = update.effective_chat.id
-        thread_id = str(update.message.message_thread_id)
-        topics = await asyncio.to_thread(
-            storage.get_store().list_known_topics, chat_id
-        )
-        # Per-topic message count from local DB
-        all_subs = await asyncio.to_thread(storage.get_store().list_threads, chat_id)
-        msg_total = sum(s["msg_count"] for s in all_subs)
-        cur_count = next(
-            (s["msg_count"] for s in all_subs if s["thread_id"] == thread_id),
-            0
-        )
-        memory = await _memory_lines(chat_id, thread_id, cur_count)
-        await _reply(update,
-            f'📊 Group stats\n'
-            f' • Topics (bot-known): {len(topics)}\n'
-            f' • Current topic: #{update.message.message_thread_id} '
-            f'({cur_count} stored message(s))\n'
-            f' • Total stored messages across topics: {msg_total}\n'
-            f'\n🧠 Память (этот топик):\n{memory}'
-        )
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
-    subs = await asyncio.to_thread(storage.get_store().list_threads, user_id)
-    thread_id = await _resolve_active(user_id)
-    current_count = next((s["msg_count"] for s in subs if s["thread_id"] == thread_id), 0)
-    tools = await fetch_tools_from_llama()
-    sub_lines = "\n".join(
-        f'  → "{s["thread_id"]}" ({s["msg_count"]} msgs)' if s["thread_id"] == thread_id
-        else f'    "{s["thread_id"]}" ({s["msg_count"]} msgs)'
-        for s in subs
-    ) or "    (no sub-talks yet)"
-    memory = await _memory_lines(user_id, thread_id, current_count)
-    await _reply(update,
-        f'📊 **Статистика:**\n'
-        f'Активный sub-talk: "{thread_id}" — {current_count} сообщений\n'
-        f'Всего sub-talks: {len(subs)}\n'
-        f'{sub_lines}\n'
-        f'Модель: {MODEL}\n'
-        f'Tools: {len(tools)} from llama-server + 1 weather (custom)\n'
-        f'\n🧠 **Память:**\n{memory}\n'
-        f'\n💡 История хранится целиком (в т.ч. для будущего обучения). '
-        f'В контекст уходит только то, что попадает в окно выше.'
-    )
-
-
-# === cmd_newsub ===
-async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
-    # === Group mode: create a forum topic via createForumTopic ===
-    if _is_group_chat(update):
-        topic_name = _parse_topic_arg(update.message.text)
-        if not topic_name:
-            await _reply(update,
-                '❌ Usage: /newsub <name>\n'
-                'Name: 1-128 chars, no whitespace. Any UTF-8 ok.\n'
-                'Example: /newsub research'
-            )
-            return
-        try:
-            topic = await context.bot.create_forum_topic(
-                chat_id=update.effective_chat.id,
-                name=topic_name,
-            )
-        except Exception as e:
-            log.info(f"[ERR newsub-group] {type(e).__name__}: {e}")
-            await _reply(update, f'❌ createForumTopic failed: {e}')
-            return
-        # Record the topic in our local index so /subs and /delsub
-        # can find it later. Telegram Bot API does NOT expose a
-        # "list topics" method to bots, so the bot's local DB is
-        # the only way to enumerate topics we know about.
-        await asyncio.to_thread(
-            storage.get_store().add_known_topic,
-            update.effective_chat.id,
-            topic.message_thread_id,
-            topic_name,
-        )
-        await _reply(update,
-            f'✅ Created topic "{topic_name}" (id={topic.message_thread_id}).\n'
-            f'Switch to it in the sidebar to start the conversation.'
-        )
-        return
-    # === Private mode: sub-talk in DB ===
-    thread_id = _parse_subtalk_arg(update.message.text)
-    if not thread_id:
-        await _reply(update,
-            '❌ Usage: /newsub <name>\n'
-            'Name: 1-32 chars, no whitespace. Any UTF-8 ok.\n'
-            'Example: /newsub research'
-        )
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
-    created = await asyncio.to_thread(storage.get_store().create_thread, user_id, thread_id)
-    if not created:
-        # Already exists — just switch to it.
-        await asyncio.to_thread(storage.get_store().set_active_thread, user_id, thread_id)
-        await _reply(update,
-            f'ℹ Sub-talk "{thread_id}" already existed. Now active.'
-        )
-        return
-    await asyncio.to_thread(storage.get_store().set_active_thread, user_id, thread_id)
-    await _reply(update,
-        f'✅ Created sub-talk "{thread_id}" — now active.\n'
-        f'Send any message to add to this thread. '
-        f'Use /sub to switch, /subs to list, /delsub to remove.'
-    )
-
-# === cmd_sub ===
-async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
-    # === Group mode: navigate-by-name is not really a thing in
-    # Telegram forum topics (the user just taps the topic in the
-    # sidebar). Best we can do is show the current topic. ===
-    if _is_group_chat(update):
-        await _reply(update,
-            f'📍 You are in topic #{update.message.message_thread_id}.\n\n'
-            f'In group mode, just tap a topic in the sidebar to switch —\n'
-            f'there is no command to "navigate" between topics programmatically.'
-        )
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
-    thread_id = _parse_subtalk_arg(update.message.text)
-    if not thread_id:
-        # /sub with no arg: show current
-        current = await _reply_active(update, user_id)
-        await _reply(update,
-            f'You are in sub-talk "{current}".\n'
-            f'Use /sub <thread_id> to switch, /subs to list all.'
-        )
-        return
-    existing = await asyncio.to_thread(storage.get_store().get_thread, user_id, thread_id)
-    if existing is None:
-        # Auto-create on /sub to a non-existent thread_id — friendlier than
-        # asking the user to /newsub first.
-        await asyncio.to_thread(storage.get_store().create_thread, user_id, thread_id)
-    await asyncio.to_thread(storage.get_store().set_active_thread, user_id, thread_id)
-    await _reply(update, f'✅ Switched to sub-talk "{thread_id}".')
-
-# === cmd_here ===
-async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
-    # === Group mode: show the current topic's name + last snippet ===
-    if _is_group_chat(update):
-        chat_id = update.effective_chat.id
-        msg_thread_id = update.message.message_thread_id
-        # In the General topic message_thread_id is None — use the
-        # "general" sentinel so the DB key is consistent.
-        thread_id = str(msg_thread_id) if msg_thread_id is not None else _general_thread_id()
-        # Look up the topic name. In the General topic (or any
-        # topic the bot did not create), the name is unknown —
-        # show the id alone.
-        if msg_thread_id is not None:
-            entry = await asyncio.to_thread(
-                storage.get_store().find_known_topic_by_id, chat_id, msg_thread_id
-            )
-            if entry:
-                topic_label = f"#{msg_thread_id} — {entry['name']}"
-            else:
-                topic_label = f"#{msg_thread_id} (not in known_topics)"
-        else:
-            topic_label = "General"
-        last = await asyncio.to_thread(storage.get_store().get_last_message, chat_id, thread_id)
-        if last is None:
-            snippet = '(empty)'
-        else:
-            try:
-                content = json.loads(last["content"])
-                text = content.get("text", "")
-                if len(text) > 200:
-                    text = text[:200] + "…"
-                role_emoji = "🧑" if last["role"] == "user" else "🤖"
-                snippet = f'{role_emoji} {text}' if text else '(non-text message)'
-            except Exception:
-                snippet = '(unreadable)'
-        await _reply(update,
-            f'📍 Current topic: {topic_label}\n'
-            f'Last message in this topic: {snippet}'
-        )
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
-    current = await _reply_active(update, user_id)
-    # Also show the thread_id's last message snippet so the user
-    # remembers what they were doing here.
-    last = await asyncio.to_thread(storage.get_store().get_last_message, user_id, current)
-    if last is None:
-        snippet = '(empty)'
-    else:
-        try:
-            content = json.loads(last["content"])
-            text = content.get("text", "")
-            if len(text) > 200:
-                text = text[:200] + "…"
-            role_emoji = "🧑" if last["role"] == "user" else "🤖"
-            snippet = f'{role_emoji} {text}' if text else '(non-text message)'
-        except Exception:
-            snippet = "(unreadable)"
-    await _reply(update,
-        f'📍 Current sub-talk: "{current}"\n'
-        f'Last message: {snippet}\n\n'
-        f'Use /subs to list, /sub <name> to switch, /newsub <name> to create.'
-    )
-
-# === cmd_subs ===
-async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
-    # === Group mode: list known topics from local DB ===
-    # Telegram Bot API does NOT expose a "list all forum topics"
-    # method to bots, so we list from our local known_topics table
-    # (populated by /newsub). Topics created outside the bot
-    # (manually in Telegram UI, or by another bot) won't appear
-    # here. The Telegram sidebar is the authoritative list.
-    if _is_group_chat(update):
-        topics = await asyncio.to_thread(
-            storage.get_store().list_known_topics, update.effective_chat.id
-        )
-        if not topics:
-            await _reply(update,
-                'No topics yet. Use /newsub <name> to create one.\n'
-                '\n'
-                'Note: topics you created via /newsub appear here.\n'
-                'Topics created directly in Telegram UI are not\n'
-                'enumerated by the bot (Telegram does not expose a\n'
-                '"list topics" API to bots).'
-            )
-            return
-        cur = update.message.message_thread_id
-        lines = ['📚 **Topics in this group** (active marked ✅):\n']
-        for t in topics:
-            mark = '✅ ' if t["message_thread_id"] == cur else '  '
-            lines.append(
-                f'{mark}#{t["message_thread_id"]} — {t["name"]}'
-            )
-        await _reply(update, '\n'.join(lines))
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
-    subs = await asyncio.to_thread(storage.get_store().list_threads, user_id)
-    active = await _reply_active(update, user_id)
-    if not subs:
-        await _reply(update,
-            'You have no sub-talks yet. Send any message to start '
-            'the default "main" sub-talk, or /newsub <name> to create one.'
-        )
-        return
-    # Build inline-keyboard rows. One button per sub-talk — tap to
-    # switch. Active sub-talk gets a checkmark prefix. Buttons send
-    # the /sub <name> command as a callback so the user does not
-    # need to type it.
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    buttons = []
-    for s in subs:
-        label = f'{"✅ " if s["thread_id"] == active else "↔️ "}{s["thread_id"]}'
-        # callback_data must be <=64 bytes; thread_id names already
-        # match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/ so this is safe.
-        buttons.append(
-            [InlineKeyboardButton(label, callback_data=f"sub:{s['thread_id']}")]
-        )
-    # New thread / cancel row
-    # No "New sub-talk" button: the previous one triggered a
-    # ForceReply hint that the user had to then type the name
-    # into, but the bot would just process it as a regular
-    # question. Better to just use /newsub directly. See
-    # cmd_callback's "newsub:prompt" branch for the redirect
-    # message.
-    await _reply(update,
-        f'📚 **Your sub-talks** (active marked ✅)\n\n'
-        f'Tap a button to switch. Use /delsub <name> to remove one.',
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
-
-# === cmd_delsub ===
-async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
-    # === Group mode: look up the topic in known_topics, then deleteForumTopic ===
-    # Telegram Bot API does NOT expose a "list all topics" method to
-    # bots, so we look up the topic by name (or numeric id) in our
-    # local known_topics index. The index is populated by /newsub.
-    if _is_group_chat(update):
-        arg = _parse_topic_arg(update.message.text)
-        if not arg:
-            await _reply(update,
-                '❌ Usage: /delsub <name>   (or /delsub <id>)\n'
-                'Removes the topic AND all its messages. Cannot be undone.\n'
-                'Names match the /subs list; numeric ids also work.'
-            )
-            return
-        target_id = None
-        target_name = None
-        # Numeric id? Direct SQL lookup (no Python-side scan).
-        if arg.isdigit():
-            tid = int(arg)
-            entry = await asyncio.to_thread(
-                storage.get_store().find_known_topic_by_id,
-                update.effective_chat.id,
-                tid,
-            )
-            if entry is None:
-                await _reply(update, f'❌ No topic with id={arg} in this group.')
-                return
-            target_id = entry["message_thread_id"]
-            target_name = entry["name"]
-        else:
-            entry = await asyncio.to_thread(
-                storage.get_store().find_known_topic_by_name,
-                update.effective_chat.id,
-                arg,
-            )
-            if entry is None:
-                await _reply(update,
-                    f'❌ No topic named "{arg}" in this group.\n'
-                    f'(The bot only knows topics created via /newsub;\n'
-                    f'topics created manually in Telegram UI are not\n'
-                    f'enumerated. Use the sidebar\'s "Delete topic".)'
-                )
-                return
-            target_id = entry["message_thread_id"]
-            target_name = entry["name"]
-        try:
-            await context.bot.delete_forum_topic(
-                chat_id=update.effective_chat.id,
-                message_thread_id=target_id,
-            )
-        except Exception as e:
-            log.info(f"[ERR delsub-group-delete] {type(e).__name__}: {e}")
-            await _reply(update, f'❌ deleteForumTopic failed: {e}')
-            return
-        # Remove from known_topics + wipe local message history.
-        await asyncio.to_thread(
-            storage.get_store().remove_known_topic,
-            update.effective_chat.id,
-            target_id,
-        )
-        n = await asyncio.to_thread(
-            storage.get_store().delete_thread, update.effective_chat.id, str(target_id)
-        )
-        await _reply(update,
-            f'🗑 Deleted topic "{target_name}" (id={target_id}) '
-            f'and {n} locally-stored message(s).'
-        )
-        return
-    # === Private mode ===
-    thread_id = _parse_subtalk_arg(update.message.text)
-    if not thread_id:
-        await _reply(update,
-            '❌ Usage: /delsub <name>\n'
-            'Removes the sub-talk AND all its messages. Cannot be undone.'
-        )
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
-    n = await asyncio.to_thread(storage.get_store().delete_thread, user_id, thread_id)
-    if n == 0:
-        await _reply(update, f'❌ Sub-talk "{thread_id}" not found.')
-        return
-    # If we just deleted the active one, the next get_active will
-    # fall back to most-recent or to 'main'.
-    await _reply(update,
-        f'🗑 Deleted sub-talk "{thread_id}" and {n} message(s).'
-    )
+# TECH-DEBT #10: the command handlers moved into `commands/`. Re-exported
+# under their old names because bot.py and the tests reach them through
+# `dispatch`, and because the routing here refers to them by bare name.
+from commands import (
+    cmd_callback, cmd_delsub, cmd_here, cmd_help, cmd_newsub, cmd_sub,
+    cmd_subs, reset, start, stats,
+)
 
 
 async def _handle_reply_to_other_user(upd, bot) -> None:
@@ -1168,6 +576,55 @@ def main():
     except KeyboardInterrupt:
         log.info('[main] KeyboardInterrupt')
 
+# === application assembly ===
+def _attach_handlers(app: Application) -> None:
+    """Register every handler, in one place, once.
+
+    This list existed twice -- here and in `main` -- and the two copies
+    had drifted: one registered `/help` twice and put it before
+    `/reset`, the other put it last. Neither copy was wrong on its own
+    terms, which is what made it survive: reading one site tells you
+    nothing about the other, and a command added to one of them is
+    present in the source, absent from the running bot, and green in
+    every test.
+
+    Order is the PTB handler order: commands, then callbacks, then the
+    media and text handlers, which must stay last so a caption arrives
+    at `handle_photo` rather than `handle_text`.
+    """
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("newsub", cmd_newsub))
+    app.add_handler(CommandHandler("sub", cmd_sub))
+    app.add_handler(CommandHandler("subs", cmd_subs))
+    app.add_handler(CommandHandler("delsub", cmd_delsub))
+    app.add_handler(CommandHandler("here", cmd_here))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CallbackQueryHandler(cmd_callback))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+
+def _build_application() -> Application:
+    """The Application every code path must end up with.
+
+    `main` and `_register_bot_menu` each built one, and both had to
+    remember `base_url(TELEGRAM_API)` -- W2-H2, without it the PTB Bot
+    talks to api.telegram.org no matter what the env override says, so
+    a smoke test against a mock server sends half its traffic to the
+    real Telegram. One builder means the override cannot be forgotten.
+    """
+    app = Application.builder() \
+           .token(BOT_TOKEN) \
+           .base_url(TELEGRAM_API) \
+           .build()
+    _attach_handlers(app)
+    return app
+
+
 # === _register_bot_menu ===
 async def _register_bot_menu():
     # Late import: BOT_COMMANDS lives in bot.py; bot.py imports this
@@ -1193,25 +650,7 @@ async def _register_bot_menu():
         # ever covered the raw-httpx getUpdates loop. Without this line a
         # smoke test against a mock server sends half its traffic to the
         # real Telegram.
-        app = (Application.builder()
-               .token(BOT_TOKEN)
-               .base_url(TELEGRAM_API)
-               .build())
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("help", cmd_help))
-        app.add_handler(CommandHandler("reset", reset))
-        app.add_handler(CommandHandler("stats", stats))
-        app.add_handler(CommandHandler("newsub", cmd_newsub))
-        app.add_handler(CommandHandler("sub", cmd_sub))
-        app.add_handler(CommandHandler("subs", cmd_subs))
-        app.add_handler(CommandHandler("delsub", cmd_delsub))
-        app.add_handler(CommandHandler("here", cmd_here))
-        app.add_handler(CommandHandler("help", cmd_help))
-        app.add_handler(CallbackQueryHandler(cmd_callback))
-        app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-        app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
-        app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        app = _build_application()
         _dispatcher = app
         # PTB 21 requires Application.initialize() before process_update.
         # We do not run app.start() — the hand-rolled polling loop drives
@@ -1228,168 +667,6 @@ async def _register_bot_menu():
         language_code=None,
     )
     log.info(f"[main] setMyCommands: registered {len(BOT_COMMANDS)} commands")
-
-# === cmd_callback ===
-async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
-    """Handle inline-keyboard button presses.
-
-    callback_data format:
-      sub:<name>     — switch to sub-talk <name>  (private mode)
-      newsub:prompt  — show a one-time reply keyboard asking for the new name
-      delsub:<name>  — confirm-then-delete (we delete immediately; no confirm step)
-      stop:thinking  — abort the in-flight LLM call for the user
-
-    The Stop button is on every "💭 думаю…" message in both
-    private and group mode. The original user (the one whose
-    message is being processed) is the only one allowed to
-    stop it — identified via the thinking message's
-    reply_to_message.from_user.id. We compare that against
-    the callback's from_user.id.
-    """
-    # answer() acknowledges the callback (removes the loading
-    # spinner in the Telegram client). It's best-effort: if
-    # the callback is too old (Telegram's timeout is short,
-    # typically 30s) the call raises BadRequest. The action
-    # itself proceeds regardless. Wrapped in try/except so
-    # the rest of the handler runs even if answer() fails.
-    try:
-        await update.callback_query.answer()
-    except Exception as e:
-        log.info(f"[cmd_callback] answer() failed (non-fatal): {type(e).__name__}: {e!r}")
-    data = update.callback_query.data or ""
-    # === Stop button (works in private AND group) ===
-    if data == "stop:thinking":
-        # Identify the original user from the thinking message.
-        # The thinking message was sent as a reply to the user's
-        # original message, so reply_to_message is set.
-        thinking_msg = update.callback_query.message
-        original = (
-            thinking_msg.reply_to_message
-            if thinking_msg and thinking_msg.reply_to_message
-            else None
-        )
-        if original is None or original.from_user is None:
-            log.info("[callback stop] no original message in reply_to_message")
-            return
-        original_user_id = original.from_user.id
-        clicker_id = update.effective_user.id
-        if clicker_id != original_user_id:
-            # Don't reveal that the request was meaningful; just
-            # answer with a notice and let the clicker move on.
-            log.info(f"[callback stop] rejected: clicker={clicker_id} != "
-                f"original={original_user_id}")
-            await update.callback_query.answer(
-                "Только автор сообщения может остановить обработку.",
-                show_alert=True,
-            )
-            return
-        chat_id = update.effective_chat.id
-        # Key on the thinking message id, NOT (chat_id, user_id).
-        # Two concurrent in-flight handlers for the same (chat, user)
-        # would otherwise overwrite each other in the dict: the LATER
-        # handler wins the dict slot, so the Stop click on the EARLIER
-        # message sets the wrong event, leaving the earlier LLM call to
-        # run to completion. The user then sees a "stopped" thinking
-        # message followed by a full response from the still-running LLM.
-        # Using the thinking message id makes each handler own its own
-        # slot, and the Stop click on a specific thinking message always
-        # targets the matching handler.
-        key = (chat_id, thinking_msg.message_id)
-        event = _abort_events.get(key)
-        if event is None:
-            # No in-flight request for this user. Either the
-            # handler finished between when the user clicked
-            # Stop and when the callback arrived, or this is a
-            # stale button (rare — buttons are tied to a
-            # specific thinking message which gets deleted on
-            # completion).
-            log.info(f"[callback stop] no abort_event for {key} "
-                f"(handler may have already finished)")
-            # v0.7.9: retry on RetryAfter for edit_message_text
-            from telegram.error import RetryAfter as _RA
-            _edited_ok = False
-            for _att in range(3):
-                try:
-                    await update.callback_query.edit_message_text("⏹ Уже завершено")
-                    _edited_ok = True
-                    break
-                except _RA as _e:
-                    await asyncio.sleep(float(getattr(_e, 'retry_after', 1)) + 1.0)
-                except Exception:
-                    break
-            if not _edited_ok:
-                log.info(f"[callback stop] edit_message_text failed for key={key}; "
-                    f"thinking message likely already deleted")
-            return
-        event.set()
-        log.info(f"[callback stop] abort_event set for {key}")
-        # Delete the thinking message immediately so the user sees
-        # the click took effect. We DELETE (not edit) so the inline
-        # Stop button disappears with the message - editing would
-        # keep the button on the 'Остановлено' text, which looks
-        # 'sticky' in the chat scroll. The handler's abort path
-        # also tries to delete, but it's a no-op if the message is
-        # already gone.
-        try:
-            await update.callback_query.delete_message()
-        except Exception as e:
-            # Fallback: if delete fails (message too old, already
-            # deleted by handler, etc.), try to edit with the
-            # inline keyboard removed. answer() with show_alert=False
-            # to not spam the user with an error toast.
-            log.info(f"[callback stop] delete_message failed: {type(e).__name__}: {e!r}; falling back to edit")
-            try:
-                await update.callback_query.edit_message_text(
-                    "⏹ Остановлено", reply_markup=None
-                )
-            except Exception as e2:
-                log.info(f"[callback stop] edit fallback also failed: {type(e2).__name__}: {e2!r}")
-        return
-
-    # The remaining branches (sub:, newsub:prompt, delsub:) are
-    # only emitted by the private-mode /subs inline keyboard.
-    # Group mode: no inline buttons exist there.
-    if _is_group_chat(update):
-        return
-    if await reject_if_unauthorized(update, context):
-        return
-    user_id = update.effective_user.id
-    if data.startswith("sub:"):
-        thread_id = data[4:]
-        existing = await asyncio.to_thread(storage.get_store().get_thread, user_id, thread_id)
-        if existing is None:
-            await asyncio.to_thread(storage.get_store().create_thread, user_id, thread_id)
-        await asyncio.to_thread(storage.get_store().set_active_thread, user_id, thread_id)
-        await update.callback_query.edit_message_text(
-            f'✅ Switched to sub-talk "{thread_id}".'
-        )
-    elif data == "newsub:prompt":
-        # The button used to fire a ForceReply that asked the user
-        # to "send the new sub-talk name" — but the next text
-        # message the user typed would be routed through
-        # handle_text as a regular question, not a name. The
-        # button was confusing (review P2-4). Drop it; the user
-        # can just type /newsub <name> directly.
-        await update.effective_message.reply_text(
-            'Use /newsub <name> to create a new sub-talk.'
-        )
-    elif data.startswith("delsub:"):
-        thread_id = data[7:]
-        n = await asyncio.to_thread(storage.get_store().delete_thread, user_id, thread_id)
-        await update.callback_query.edit_message_text(
-            f'🗑 Deleted "{thread_id}" and {n} message(s).'
-        )
-    else:
-        await update.callback_query.edit_message_text(
-            f'(unknown action: {data!r})'
-        )
 
 # === _handle_chat_member_update ===
 async def _handle_chat_member_update(upd, bot):
@@ -1583,24 +860,7 @@ async def _dispatch_update(upd_dict):
         # ever covered the raw-httpx getUpdates loop. Without this line a
         # smoke test against a mock server sends half its traffic to the
         # real Telegram.
-        app = (Application.builder()
-               .token(BOT_TOKEN)
-               .base_url(TELEGRAM_API)
-               .build())
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("reset", reset))
-        app.add_handler(CommandHandler("stats", stats))
-        app.add_handler(CommandHandler("newsub", cmd_newsub))
-        app.add_handler(CommandHandler("sub", cmd_sub))
-        app.add_handler(CommandHandler("subs", cmd_subs))
-        app.add_handler(CommandHandler("delsub", cmd_delsub))
-        app.add_handler(CommandHandler("here", cmd_here))
-        app.add_handler(CommandHandler("help", cmd_help))
-        app.add_handler(CallbackQueryHandler(cmd_callback))
-        app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-        app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
-        app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        app = _build_application()
 
         async def log_error(update, context):
             err = context.error

@@ -30,13 +30,23 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import sys
 
 
-_SRC = (
-    pathlib.Path(__file__).parent.parent
-    / "telegram-bot"
-    / "dispatch.py"
-)
+# TECH-DEBT #10 moved `start` into commands/start_cmd.py. The tripwire
+# walks the function, so it reads the file that holds it; against
+# dispatch.py it found nothing and reported "start() not found", which is
+# the same message a broken refactor produces.
+_BOT = pathlib.Path(__file__).parent.parent / "telegram-bot"
+
+# `start` moved into commands/ in TECH-DEBT #10, so the tests that walk
+# the FUNCTION read that file. The test that checks which handlers the
+# Application registers still reads dispatch.py, because that is where
+# registration happens -- and reading start_cmd.py for it produced
+# "handle_photo is not referenced", which is a true sentence about the
+# wrong file.
+_SRC = _BOT / "commands" / "start_cmd.py"
+_DISPATCH_SRC = _BOT / "dispatch.py"
 
 # Standard-library / known-builtin names that AST may pick up
 # as Name() references. We subtract these from "undefined"
@@ -86,7 +96,7 @@ def _start_function(src: str) -> ast.AsyncFunctionDef:
     for node in tree.body:
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "start":
             return node
-    raise AssertionError("dispatch.start() not found in source")
+    raise AssertionError("start() not found in commands/start_cmd.py")
 
 
 def _imported_names(tree: ast.Module) -> set[str]:
@@ -238,7 +248,7 @@ def test_dispatch_registers_only_imported_handlers():
     dispatch.py. Otherwise PTB raises NameError when
     _safe_dispatch is called.
     """
-    src = _SRC.read_text()
+    src = _DISPATCH_SRC.read_text()
     tree = ast.parse(src)
     imported = set()
     for node in ast.walk(tree):
@@ -343,11 +353,20 @@ def test_start_invokable_without_nameerror(monkeypatch, tmp_path):
         user_data = {}
         chat_data = {}
 
-    orig_reply = dispatch_mod._reply
+    # Patch the module `start` is DEFINED in, not the one it was
+    # reachable through. `commands/start_cmd.py` does its own
+    # `from handlers import _reply`, so assigning `dispatch._reply`
+    # rebinds a name nobody reads: the real `_reply` runs, gets a
+    # fake update, raises, and the assertion below blames the handler
+    # for skipping the response. Silent, and it would have kept
+    # passing while testing nothing.
+    start_mod = sys.modules.get("commands.start_cmd") or __import__(
+        "commands.start_cmd", fromlist=["start"])
+    orig_reply = start_mod._reply
     called_reply: list = []
-    async def fake_reply(update, text):
+    async def fake_reply(update, text, **kw):
         called_reply.append(text)
-    dispatch_mod._reply = fake_reply
+    start_mod._reply = fake_reply
     try:
         import asyncio
         async def run():
@@ -369,4 +388,4 @@ def test_start_invokable_without_nameerror(monkeypatch, tmp_path):
             "the response."
         )
     finally:
-        dispatch_mod._reply = orig_reply
+        start_mod._reply = orig_reply

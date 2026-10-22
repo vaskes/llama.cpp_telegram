@@ -49,6 +49,12 @@ COPY personal_tools/ ./personal_tools/
 # image is not in the product.
 COPY prompt_text/ ./prompt_text/
 
+# commands holds the command handlers (TECH-DEBT #10). Same trap as the
+# two above, and it is not hypothetical: #12 moved the prompt prose into
+# a package without this line and the bot died on startup while the
+# suite stayed green. Every new subdirectory gets its own COPY.
+COPY commands/ ./commands/
+
 # Drop privileges. Anything that needs to write here must be writable
 # by uid 1000, which is fine because we only write to /app/files
 # and /app/data.

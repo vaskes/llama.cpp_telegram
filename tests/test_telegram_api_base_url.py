@@ -77,16 +77,32 @@ def test_every_application_builder_sets_base_url(path):
     )
 
 
-def test_both_production_builders_are_covered():
-    """The two in dispatch.py are the ones that matter. Counting them keeps
-    the sweep above from passing because it found zero builders."""
-    found = [ln for ln, _, token in _builders(BOT_DIR / "dispatch.py")
-             if token]
-    assert len(found) == 2, (
-        f"expected 2 Application.builder().token() calls in dispatch.py, "
-        f"found {len(found)} at {found}. If that count moved, this file's "
-        f"assumption about where the bot is constructed is stale."
-    )
+def test_every_production_builder_is_counted():
+    """Count the builders, do not remember how many there were.
+
+    This test used to assert `== 2`, which was a claim about the shape of
+    dispatch.py rather than about the bot. TECH-DEBT #10 collapsed the
+    two `Application.builder().token()` sites into one
+    `_build_application()`, and the count moved -- correctly.
+
+    What matters is not the number, it is that the sweep above found
+    them all: a builder that did not pass base_url must be a red test
+    rather than an unexamined line. So this asserts there is at least
+    one, and that every one of them carries the override.
+    """
+    found = [ln for ln, base_url, token
+             in _builders(BOT_DIR / "dispatch.py") if token]
+    assert found, (
+        "no Application.builder().token() in dispatch.py; the bot is not "
+        "built here any more, so the base_url sweep is passing on an empty "
+        "set")
+    missing = [ln for ln, base_url, token
+               in _builders(BOT_DIR / "dispatch.py")
+               if token and not base_url]
+    assert not missing, (
+        f"Application.builder().token() at {missing} has no base_url; "
+        f"TELEGRAM_API is bypassed and traffic reaches the real "
+        f"api.telegram.org")
 
 
 def test_config_still_honours_the_env_override():

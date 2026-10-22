@@ -71,10 +71,17 @@ def bot_calls(monkeypatch):
             return True
         return f
 
+    import commands.start_cmd as _sc
+    import commands.subtalking as _st
     import dispatch as _d
-    # dispatch holds its own bindings (from handlers import _reply ...),
-    # so patching handlers alone leaves dispatch calling the real one.
-    # Same trap as _check_user_slot earlier today.
+
+    # Patch the module a name is *called from*, not the module the test
+    # used to reach it through. TECH-DEBT #10 moved the command handlers
+    # into `commands/`; each one does its own `from handlers import _reply`,
+    # so patching `dispatch._reply` now patches a name nothing reads, and
+    # the real `_reply` runs against a MagicMock -- the test would keep
+    # passing while asserting nothing. Both command modules are patched
+    # because the command set spans them.
     async def _fake_reply(update, text, **kw):
         calls.append(("reply", {"text": text}))
         m = MagicMock()
@@ -83,17 +90,25 @@ def bot_calls(monkeypatch):
         m.delete = AsyncMock()
         return m
 
-    # Only dispatch: these are the bindings the command handlers call.
-    monkeypatch.setattr(_d, "_reply", _fake_reply)
-    monkeypatch.setattr(_d, "send_reply", _fake_reply)
-    monkeypatch.setattr("dispatch._is_group_chat", lambda u: True)
-    monkeypatch.setattr("dispatch._route_to_thread",
-                        AsyncMock(return_value=(1, "main", True)))
-    monkeypatch.setattr("dispatch._check_user_slot",
-                        AsyncMock(return_value=asyncio.Semaphore(1)))
-    monkeypatch.setattr("dispatch._is_rating_active", lambda u: False)
-    monkeypatch.setattr("dispatch._stop_button_markup", lambda: None)
-    monkeypatch.setattr("dispatch._start_reanchor_scheduler", lambda: None)
+    for mod in (_sc, _st, _d):
+        for attr in ("_reply", "send_reply"):
+            if hasattr(mod, attr):
+                monkeypatch.setattr(mod, attr, _fake_reply)
+    for mod in (_sc, _st, _d):
+        if hasattr(mod, "_is_group_chat"):
+            monkeypatch.setattr(mod, "_is_group_chat", lambda u: True)
+        if hasattr(mod, "_check_user_slot"):
+            monkeypatch.setattr(mod, "_check_user_slot",
+                                AsyncMock(return_value=asyncio.Semaphore(1)))
+        if hasattr(mod, "_is_rating_active"):
+            monkeypatch.setattr(mod, "_is_rating_active", lambda u: False)
+        if hasattr(mod, "_stop_button_markup"):
+            monkeypatch.setattr(mod, "_stop_button_markup", lambda: None)
+        if hasattr(mod, "_start_reanchor_scheduler"):
+            monkeypatch.setattr(mod, "_start_reanchor_scheduler", lambda: None)
+    if hasattr(_d, "_route_to_thread"):
+        monkeypatch.setattr(_d, "_route_to_thread",
+                            AsyncMock(return_value=(1, "main", True)))
     monkeypatch.setattr("handlers._register_abort_event", lambda *a: None)
     return calls
 
