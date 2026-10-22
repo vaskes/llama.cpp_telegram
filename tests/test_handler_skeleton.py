@@ -79,8 +79,13 @@ def _sites(fn, want):
 # must-happen-before. Two names are deliberately absent: they are the
 # pair that swaps between handlers.
 STAGES = [
-    "_route_to_thread",
-    "_check_user_slot",
+    # route + per-user slot, as one stage. It was two names until block D
+    # moved them into `_acquire_turn_slot`; this stage is now named after
+    # the call the handler makes, not after the two calls it used to make
+    # itself. A stage list that keeps the old names goes red on correct
+    # code the moment someone dedups, and a tripwire that reds on correct
+    # code is one people delete.
+    "_acquire_turn_slot",
     "send_action",
     ("_sender_display_name", "_stop_button_markup"),
     "_register_abort_event",
@@ -260,7 +265,10 @@ def test_the_reply_is_sent_after_the_turn_is_persisted(handler):
 def test_no_handler_sends_thinking_before_taking_the_slot(handler):
     """`send_action` is the typing indicator. Before the slot it means a
     user who was already being told to wait also gets a rejection
-    message."""
+    message.
+
+    The slot is taken inside `_acquire_turn_slot`, so the comparison is
+    against that call."""
     fn = _handler(handler)
-    assert min(_sites(fn, "_check_user_slot")) < min(_sites(fn, "send_action")), \
+    assert min(_sites(fn, "_acquire_turn_slot")) < min(_sites(fn, "send_action")), \
         f"{handler}: typing starts before the slot is held"

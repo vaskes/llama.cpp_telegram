@@ -64,6 +64,8 @@ from rating import _is_rating_active, _apply_rating_and_persist
 import persistence
 import prompts
 import rating
+from typing import NamedTuple
+
 from config import (
     BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, EMPTY_RESPONSE_PREFIX,
     EMPTY_RESPONSE_USER_FALLBACK,
@@ -190,6 +192,51 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
     await asyncio.to_thread(storage.get_store().create_thread, user_id, 'main')
     await asyncio.to_thread(storage.get_store().set_active_thread, user_id, 'main')
     return user_id, 'main', False
+
+
+# === _acquire_turn_slot ===
+
+
+class _TurnSlot(NamedTuple):
+    """What a handler needs once routing and the per-user slot are done.
+
+    A named tuple rather than a bare one: all four callers unpack four
+    values in the same order, and a bare tuple makes a reordered field a
+    silent runtime swap instead of a compile error.
+    """
+    sem: object          # the per-user semaphore; released in the finally
+    chat_id: int
+    thread_id: str
+    user_id: int
+
+
+async def _acquire_turn_slot(update, context, *, label: str):
+    """Route the message, then take the per-user slot. None means drop it.
+
+    The first half of every handler, written four times. It stays here
+    rather than in a leaf module because `_route_to_thread` is here, and
+    moving that out would make the leaf import the module it was
+    extracted from.
+
+    `user_id` is the effective user's id, never the chat id. In private
+    mode Telegram uses the same value for both, but in group mode
+    chat_id is the group's id and user_id must be the user's. The old
+    `user_id = chat_id` alias made the abort_event key mismatch what the
+    callback handler looks up -- (group_id, group_id) instead of
+    (group_id, real user_id) -- and the Stop button failed silently.
+    """
+    result = await _route_to_thread(update, context)
+    if result is None:
+        log.info(f"[{label}] REJECTED")
+        return None
+    chat_id, thread_id, is_group = result
+    log.info(f"[{label}] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}")
+    user_id = update.effective_user.id
+    sem = await _check_user_slot(chat_id, user_id, update)
+    if sem is None:
+        return None
+    return _TurnSlot(sem=sem, chat_id=chat_id, thread_id=thread_id, user_id=user_id)
+
 
 # === _reply ===
 
@@ -419,15 +466,10 @@ def _sender_display_name(user) -> str | None:
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.info(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}")
-    result = await _route_to_thread(update, context)
-    if result is None:
-        log.info("[handle_photo] REJECTED")
+    slot = await _acquire_turn_slot(update, context, label='handle_photo')
+    if slot is None:
         return
-    chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
-    log.info(f"[handle_photo] chat_id={chat_id} thread_id={thread_id!r} is_group={is_group}")
-    sem = await _check_user_slot(chat_id, update.effective_user.id, update)
-    if sem is None:
-        return
+    sem, chat_id, thread_id, user_id = slot
     # B1: the per-user slot is acquired above. Everything between here and
     # the try/finally was NOT covered by it, so an exception here -- Telegram
     # rejecting the typing indicator, a malformed update -- discarded the slot
@@ -717,21 +759,10 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    result = await _route_to_thread(update, context)
-    if result is None:
+    slot = await _acquire_turn_slot(update, context, label='handle_voice')
+    if slot is None:
         return
-    chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
-    # The actual user id, not the chat id. In private mode these
-    # are equal (Telegram uses the same value for both), but in
-    # group mode chat_id is the group's id and user_id must be
-    # the user's id. The previous `user_id = chat_id` alias
-    # caused the abort_event key to mismatch what the callback
-    # handler looks up: (group_id, group_id) vs (group_id, real
-    # user_id) — the Stop button failed silently.
-    user_id = update.effective_user.id
-    sem = await _check_user_slot(chat_id, user_id, update)
-    if sem is None:
-        return
+    sem, chat_id, thread_id, user_id = slot
     # B1: the per-user slot is acquired above. Everything between here and
     # the try/finally was NOT covered by it, so an exception here -- Telegram
     # rejecting the typing indicator, a malformed update -- discarded the slot
@@ -862,21 +893,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    result = await _route_to_thread(update, context)
-    if result is None:
+    slot = await _acquire_turn_slot(update, context, label='handle_document')
+    if slot is None:
         return
-    chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
-    # The actual user id, not the chat id. In private mode these
-    # are equal (Telegram uses the same value for both), but in
-    # group mode chat_id is the group's id and user_id must be
-    # the user's id. The previous `user_id = chat_id` alias
-    # caused the abort_event key to mismatch what the callback
-    # handler looks up: (group_id, group_id) vs (group_id, real
-    # user_id) — the Stop button failed silently.
-    user_id = update.effective_user.id
-    sem = await _check_user_slot(chat_id, user_id, update)
-    if sem is None:
-        return
+    sem, chat_id, thread_id, user_id = slot
     # 2026-10-22: built above the try whose except calls turn.rollback().
     # Inside it, an exception during the download left `turn` unbound and
     # the rollback turned into an UnboundLocalError that replaced the real
@@ -1100,22 +1120,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             log.info(f"[handle_text] burst-split reply failed: {type(e).__name__}: {e!r}")
         return
-    result = await _route_to_thread(update, context)
-    if result is None:
-        log.info(f"[handle_text] REJECTED {update.effective_user.id}")
+    slot = await _acquire_turn_slot(update, context, label='handle_text')
+    if slot is None:
         return
-    chat_id, thread_id, is_group = result  # is_group is unused in this handler (tuple shape kept for symmetry)
-    # The actual user id, not the chat id. In private mode these
-    # are equal (Telegram uses the same value for both), but in
-    # group mode chat_id is the group's id and user_id must be
-    # the user's id. The previous `user_id = chat_id` alias
-    # caused the abort_event key to mismatch what the callback
-    # handler looks up: (group_id, group_id) vs (group_id, real
-    # user_id) — the Stop button failed silently.
-    user_id = update.effective_user.id
-    sem = await _check_user_slot(chat_id, user_id, update)
-    if sem is None:
-        return
+    sem, chat_id, thread_id, user_id = slot
     user_message = update.message.text
     # v0.9.2: rollback flag for persisted user message
     turn = Turn(chat_id, thread_id, "handle_text")
