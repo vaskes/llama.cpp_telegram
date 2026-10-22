@@ -52,10 +52,47 @@ def test_file_references_resolve():
         "\n".join(dangling)
 
 
-def test_the_known_dangling_reference_is_pinned():
-    """Control. This is what it looked like, so the checker above has to
-    be able to fail on exactly this shape."""
-    fake = "see item 9 for the lesson"
-    numbers = {int(m.group(1)) for m in re.finditer(r"\bitem (\d+)\b", fake)}
-    assert numbers - set(BY_NUMBER), "the control does not dangle -- the" \
-        " checker cannot detect this shape and proves nothing"
+def _dangling_in(text):
+    """The same detection the two tests above use.
+
+    Factored out so the control below exercises the real thing rather
+    than a reimplementation that could drift from it.
+    """
+    out = []
+    for match in re.finditer(r"\bitem (\d+)\b", text):
+        if int(match.group(1)) not in BY_NUMBER:
+            out.append(int(match.group(1)))
+    return out
+
+
+def test_the_control_shape_is_actually_detectable():
+    """Control: the checker can still fail on the shape it was built for.
+
+    Was hardcoded to "see item 9 for the lesson", which became a live
+    ledger entry on 2026-10-22. Pinning a control to a number that will
+    eventually be filled in disarms it silently -- the test keeps
+    passing while proving nothing.
+
+    My first repair derived the number as `max(BY_NUMBER) + 1` and
+    asserted it was absent. That is a tautology: the number is absent
+    by construction, so the assert cannot fail. What the control needs
+    to prove is not that some number is missing, but that the detector
+    fires on this text. So it runs the detector.
+    """
+    missing_number = max(BY_NUMBER) + 1
+    fake = f"see item {missing_number} for the lesson"
+    assert _dangling_in(fake), (
+        "the control does not dangle -- the checker cannot detect this "
+        "shape and proves nothing")
+
+
+def test_a_real_reference_is_not_flagged():
+    """Positive control, so the control above cannot pass by breakage.
+
+    If the detector stopped matching `item NN` entirely, every reference
+    would resolve clean and the negative control would still pass.
+    """
+    real = "see item 1 and item " + str(min(BY_NUMBER))
+    assert not _dangling_in(real), (
+        "the detector flags references that DO resolve -- it is matching "
+        "wrongly, not narrowly")

@@ -34,6 +34,10 @@ from pathlib import Path
 
 import pytest
 
+# TECH-DEBT #13 -- the wrapper duplication in item 13 is what this
+# pins while it stays open.
+pytestmark = pytest.mark.tech_debt(item=13)
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "telegram-bot"))
 
