@@ -87,8 +87,26 @@ MAX_PHOTO_BYTES = int(os.environ.get("MAX_PHOTO_BYTES", "10000000"))     # 10 MB
 # The message is in English because the LLM error path is
 # language-agnostic — even a Russian bot user should understand
 # "the LLM didn't return a reply, try /reset".
+# The marker for "the model produced no answer", as one string.
+#
+# This used to be a local of call_llama called EMPTY_FALLBACK_PREFIX with
+# a comment claiming it kept "the marker and the recovery logic in one
+# place". It did: call_llama defined it and read it nowhere, while two
+# producers wrote the text out longhand and six consumers in handlers.py
+# matched on a sixth copy. A constant nobody reads is a comment with a
+# name, and the comment was the part that was false.
+#
+# Both producers now build from this one string, so they cannot drift
+# apart, and every consumer matches on it rather than on a literal.
+EMPTY_RESPONSE_PREFIX = "[model returned an empty response."
+
+# User-facing version of the same message. Built from the prefix rather
+# than restating it, so the text handlers.py screens for and the text
+# the user reads cannot disagree about where one ends and the other
+# starts.
 EMPTY_RESPONSE_FALLBACK = (
-    "[model returned an empty response. This usually means the LLM "
+    EMPTY_RESPONSE_PREFIX
+    + " This usually means the LLM "
     "spent all its tokens on internal reasoning without writing a reply. "
     "Try /reset to clear context, or switch to a less reasoning-heavy model.]"
 )

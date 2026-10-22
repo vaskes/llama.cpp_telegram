@@ -87,7 +87,8 @@ import persistence
 import prompts
 import rating
 from config import (
-    BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, MAX_DOC_BYTES, MAX_PHOTO_BYTES,
+    BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, EMPTY_RESPONSE_PREFIX,
+    MAX_DOC_BYTES, MAX_PHOTO_BYTES,
     # MAX_VIDEO_NOTE_BYTES is used by handle_voice, and that is not a typo:
     # handlers.AUDIO catches both voice messages and round video notes, so one
     # handler branches on update.message.voice vs .video_note and picks the
@@ -599,12 +600,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # === Empty-response retry ===
         # The LLM sometimes returns no content, no reasoning,
         # and no finish_reason — usually on hard questions
-        # (future predictions, niche facts). The call_llama
-        # fallback string starts with "[model returned an
-        # empty response." We retry once. If still empty,
-        # replace with a user-friendly message that suggests
-        # rephrasing or trying again.
-        if bot_response.startswith('[model returned an empty response.'):
+        # (future predictions, niche facts). The empty-response
+        # marker is config.EMPTY_RESPONSE_PREFIX; this is
+        # EMPTY_RESPONSE_PREFIX + the rest of the finish_reason.
+        # We retry once. If still empty, replace with a
+        # user-friendly message that suggests rephrasing or
+        # trying again.
+        if bot_response.startswith(EMPTY_RESPONSE_PREFIX):
             log.info(f"[handle_photo] empty response, retrying once")
             try:
                 await thinking.edit_text('🔄 переспрашиваю…')
@@ -646,7 +648,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 retry_response = _retry_text
             if not (isinstance(retry_response, str)
                     and retry_response.startswith(
-                        '[model returned an empty response.')):
+                        EMPTY_RESPONSE_PREFIX)):
                 bot_response = retry_response
                 log.info(f"[handle_photo] retry succeeded")
             else:
@@ -1052,7 +1054,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                 return
             # === Empty-response retry (same as handle_photo) ===
-            if bot_response.startswith('[model returned an empty response.'):
+            if bot_response.startswith(EMPTY_RESPONSE_PREFIX):
                 log.info(f"[handle_document] empty response, retrying once")
                 try:
                     await thinking.edit_text('🔄 переспрашиваю…')
@@ -1096,7 +1098,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     retry_response = _retry_text
                 if not (isinstance(retry_response, str)
                         and retry_response.startswith(
-                            '[model returned an empty response.')):
+                            EMPTY_RESPONSE_PREFIX)):
                     bot_response = retry_response
                     log.info(f"[handle_document] retry succeeded")
                 else:
@@ -1331,7 +1333,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                 return
             # === Empty-response retry (same as handle_photo) ===
-            if bot_response.startswith('[model returned an empty response.'):
+            if bot_response.startswith(EMPTY_RESPONSE_PREFIX):
                 log.info(f"[handle_text] empty response, retrying once")
                 try:
                     await thinking.edit_text('🔄 переспрашиваю…')
@@ -1375,7 +1377,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     retry_response = _retry_text
                 if not (isinstance(retry_response, str)
                         and retry_response.startswith(
-                            '[model returned an empty response.')):
+                            EMPTY_RESPONSE_PREFIX)):
                     bot_response = retry_response
                     log.info(f"[handle_text] retry succeeded")
                 else:

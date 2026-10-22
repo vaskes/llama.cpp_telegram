@@ -35,6 +35,12 @@ No logging here: the caller owns the log line and the runbook greps it.
 """
 from typing import Any, NamedTuple
 
+# The empty-response marker lives in config because handlers.py
+# screens for it and config is the module both can reach. The
+# consumer side is six call sites; the producer side is this
+# function plus config.EMPTY_RESPONSE_FALLBACK.
+from config import EMPTY_RESPONSE_PREFIX
+
 REASONING_TAIL_CHARS = 3500
 
 
@@ -79,7 +85,7 @@ def finish_without_tool_calls(*, content_buf: str, reasoning_buf: str,
             f'{ending.reasoning_tail}'
         )
     return (
-        f"[model returned an empty response. finish_reason={finish_reason}, "
+        f"{EMPTY_RESPONSE_PREFIX} finish_reason={finish_reason}, "
         f'reasoning_chars={len(reasoning_buf)}, content_chars=0]'
     )
 

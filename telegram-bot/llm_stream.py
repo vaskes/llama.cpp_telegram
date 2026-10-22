@@ -88,9 +88,9 @@ class StreamOutcome:
         unlike `NonStreamStep`, a non-terminal streaming outcome is
         always a real continuation -- an empty answer still reaches
         `finish_without_tool_calls`, which is what turns it into the
-        "[model returned an empty response]" text the user sees. A
-        check that could only be false on a bug nobody can write is a
-        check that reads as coverage and is not.
+        `config.EMPTY_RESPONSE_PREFIX` text the user sees. A check
+        that could only be false on a bug nobody can write is a check
+        that reads as coverage and is not.
         """
         if self.is_terminal and self.append_msg is not None:
             raise AssertionError(

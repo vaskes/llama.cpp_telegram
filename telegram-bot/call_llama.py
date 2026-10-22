@@ -446,14 +446,14 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
     # push_thinking; now explicit, and testable without call_llama.
     _throttle = ThinkingThrottle()
 
-    # Empty-response detection. The model sometimes returns no
-    # content, no reasoning, and no finish_reason — particularly
-    # on hard questions (future predictions, niche facts). The
-    # caller checks for this sentinel string and either retries
-    # or substitutes a user-friendly message. Defining it as a
-    # constant here keeps the marker and the recovery logic in
-    # one place.
-    EMPTY_FALLBACK_PREFIX = '[model returned an empty response.'
+    # Empty-response detection used to be a local here, called
+    # EMPTY_FALLBACK_PREFIX, with a comment saying it kept "the
+    # marker and the recovery logic in one place". Nothing read
+    # it: the marker is written by llm_finish.finish_fallback_empty
+    # and config.EMPTY_RESPONSE_FALLBACK, and screens for in six
+    # places in handlers.py. All of them now share one constant,
+    # config.EMPTY_RESPONSE_PREFIX, because this one was a comment
+    # with a name and the name was the part that looked load-bearing.
 
 
     return await ToolLoop(
