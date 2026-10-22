@@ -1,3 +1,6 @@
+import ast  # noqa: E402
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree, run_one)
 """llm_nonstream.classify_error -- a failed POST, decided purely.
 
 TECH-DEBT #8 block 4 (T3.3). The branch this replaces was
@@ -118,10 +121,7 @@ def test_the_call_site_awaits_the_retry_rather_than_returning_a_value():
     surfaces to a function that has no idea which iteration it was in.
     """
     import ast
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    fn = run_one()
     called = {c.func.id for c in ast.walk(fn)
               if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
     assert "tools_less_fallback" in called
@@ -142,10 +142,7 @@ def test_the_non_stream_terminal_is_read_from_the_flag_not_the_text():
     the value falls through into the dispatch loop.
     """
     import ast
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    fn = run_one()
     for node in ast.walk(fn):
         if (isinstance(node, ast.Compare) and node.ops
                 and isinstance(node.ops[0], ast.IsNot)

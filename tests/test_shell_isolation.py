@@ -22,7 +22,10 @@ import pytest
 
 TESTS_DIR = pathlib.Path(__file__).parent
 TI_PATH = pathlib.Path(__file__).parent.parent / "telegram-bot" / "tool_isolation.py"
-CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
+# T8.1: the tool loop moved to llm_iteration.py. Every assertion
+# below is about the loop's body, not about call_llama, which now
+# only builds a ToolLoop and awaits its run().
+CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "llm_iteration.py"
 
 
 def test_known_tool_names_exact_set():

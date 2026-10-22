@@ -24,6 +24,7 @@ Note the marker is declared through pytestmark, not a docstring prefix:
 one round trip.
 """
 import ast
+from loop_owner import loop_tree, run_one  # noqa: E402
 import re
 from pathlib import Path
 
@@ -46,10 +47,13 @@ SURFACE = re.compile(r"^[ \t]*(llm_\w+\.py)[ \t]+\d+[ \t]+(.+)$", re.MULTILINE)
 
 
 def _call_llama():
-    tree = ast.parse((BOT / "call_llama.py").read_text(encoding="utf-8"))
-    fn = next(n for n in tree.body
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
-    loop = next(n for n in fn.body if isinstance(n, ast.For))
+    """The loop is a method now; `run_one` is the iteration."""
+    fn = run_one()
+    cls = next(n for n in loop_tree().body
+               if isinstance(n, ast.ClassDef) and n.name == "ToolLoop")
+    run = next(n for n in cls.body
+               if isinstance(n, ast.AsyncFunctionDef) and n.name == "run")
+    loop = next(n for n in run.body if isinstance(n, ast.For))
     return fn, loop
 
 

@@ -1,3 +1,6 @@
+import ast  # noqa: E402
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree, run_one)
 """C1 -- non_stream_iteration, driven by the captured engine response.
 
 The extracted function is the vision path. It has exactly one job with
@@ -256,9 +259,7 @@ def test_call_llama_keeps_the_try_that_wraps_the_helper():
     """
     import ast
 
-    tree = ast.parse((BOT_DIR / "call_llama.py").read_text(encoding="utf-8"))
-    fn = next(n for n in tree.body
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    fn = run_one()
 
     def finds_call(node):
         for n in ast.walk(node):

@@ -1,3 +1,5 @@
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree, run_one)
 """C3 -- LoopGuard, driven directly.
 
 Before this extraction, checking that a stuck model gets stopped meant an
@@ -264,9 +266,8 @@ def test_nudge_and_abort_are_distinguishable_types():
 
 
 def _call_llama_node():
-    tree = ast.parse((BOT_DIR / "call_llama.py").read_text(encoding="utf-8"))
-    return next(n for n in tree.body
-                if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    """The named iteration, `ToolLoop.run_one` (T8.1)."""
+    return run_one()
 
 
 def branch_on(cls):
@@ -303,7 +304,7 @@ def test_call_llama_no_longer_owns_the_loop_state():
     """prev_calls and last_empty must exist in exactly one place. Two
     counters means the tail reads one and the rejections feed the other,
     and the guard quietly stops seeing malformed tool calls."""
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
     for stale in ("last_empty", "prev_calls"):
         code = [l for l in src.split("\n")
                 if stale in l and not l.strip().startswith("#")]
@@ -323,7 +324,7 @@ def test_every_rejection_site_goes_through_the_guard():
     nothing reads -- the exact failure this block already had once with
     saw_unavailable_tool.
     """
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
 
     assert "last_empty += 1" not in src, (
         "a bare increment bypasses the guard's budget entirely"
@@ -376,10 +377,25 @@ def test_the_nudge_still_reaches_the_summarize_call():
     branch = branch_on("Nudge")
     assert branch is not None, "the Nudge branch is gone"
 
-    # the summarize POST must be inside it
-    assert walks_to(branch, lambda n: isinstance(n, ast.AsyncWith)), (
-        "the summarize call is no longer under the Nudge branch"
+    # Since T8.1 the summarize POST lives in the `_summarize`
+    # helper; the Nudge branch calls it. The property is
+    # "the summarize POST only runs on the nudge path", so the
+    # check follows the call and fails if either half moves.
+    calls_summarize = walks_to(
+        branch, lambda n: isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "_summarize")
+    assert calls_summarize or walks_to(branch, lambda n: isinstance(n, ast.AsyncWith)), (
+        "the summarize call is no longer reachable from the Nudge branch"
     )
+    if calls_summarize:
+        helper = next((m for m in ast.walk(loop_tree())
+                       if isinstance(m, ast.AsyncFunctionDef)
+                       and m.name == "_summarize"), None)
+        assert helper is not None, "_summarize is called but not defined"
+        assert walks_to(helper, lambda n: isinstance(n, ast.AsyncWith)), (
+            "_summarize no longer contains the POST -- the branch "
+            "calls it and it does nothing")
     assert walks_to(branch, lambda n: isinstance(n, ast.Return)), \
         "the Nudge branch no longer returns the summarize result"
 

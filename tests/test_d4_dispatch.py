@@ -1,3 +1,5 @@
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree, run_one)
 """Block D4 -- llm_dispatch: running one tool call.
 
 Before this, the only way to test any branch of the dispatch was to make
@@ -334,9 +336,13 @@ async def test_deps_is_positional_and_readable():
 # --------------------------------------------------------------------------
 
 def _call_llama():
-    tree = ast.parse((BOT / "call_llama.py").read_text(encoding="utf-8"))
-    return next(n for n in tree.body
-                if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    """The tool loop's body, which since T8.1 is `ToolLoop.run_one`.
+
+    Every assertion below is about what one iteration does. The helper
+    keeps the old name so the test bodies read the same; what it
+    resolves changed.
+    """
+    return run_one()
 
 
 def test_call_llama_calls_execute_tool_and_nothing_else():
@@ -349,7 +355,7 @@ def test_call_llama_calls_execute_tool_and_nothing_else():
 def test_no_handler_body_is_left_inline():
     """If one of these comes back, the module is not the single owner and
     the tests above stop describing production."""
-    src = (BOT / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
     for gone in ("_execute_react_to_message(", "is_enabled_for_active_profile()",
                  "call_bash_command(", "CUSTOM_TOOLS[fn_name]", "DONSETCH_TOOLS[fn_name]"):
         assert gone not in src, f"still inline: {gone}"
@@ -358,12 +364,12 @@ def test_no_handler_body_is_left_inline():
 def test_the_result_cap_is_applied_by_the_caller():
     """The cap belongs where the message is built, because only there does
     the protocol shape exist."""
-    src = (BOT / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
     assert "outcome.text[:MAX_TOOL_RESULT_CHARS]" in src
 
 
 def test_the_ledger_is_appended_only_when_present():
-    src = (BOT / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
     assert "if outcome.ledger is not None:" in src
 
 

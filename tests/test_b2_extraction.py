@@ -10,6 +10,8 @@ responsible for. A module that imports cleanly but cannot resolve its own
 globals is the failure mode worth pinning, because it is invisible to
 every tool that does not execute the body.
 """
+import ast  # noqa: E402
+from loop_owner import loop_tree  # noqa: E402
 import importlib
 import sys
 from pathlib import Path
@@ -189,11 +191,11 @@ def test_ensure_model_and_discover_stayed_behind():
     # property. This version resolves the call site instead: the keyword
     # argument handed to build_request_body must be the global itself,
     # not a literal and not a copy taken earlier.
-    fn_tree = ast.parse((BOT / "call_llama.py").read_text(encoding="utf-8"))
+    fn_tree = loop_tree()
     call_sites = [n for n in ast.walk(fn_tree)
                   if isinstance(n, ast.Call)
                   and getattr(n.func, "id", None) == "build_request_body"]
-    assert call_sites, "build_request_body is never called from call_llama"
+    assert call_sites, "build_request_body is never called from the loop"
 
     bad = []
     for call in call_sites:

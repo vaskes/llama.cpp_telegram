@@ -1,3 +1,6 @@
+import ast  # noqa: E402
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree, run_one)
 """llm_stream.stream_iteration -- the streaming branch, driven directly.
 
 TECH-DEBT #8 block 3. Before this module existed the branch was a
@@ -388,10 +391,7 @@ def test_the_caller_branches_on_is_terminal_and_not_on_the_text():
     through and the loop answers a cancelled question.
     """
     import ast
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    fn = run_one()
     for node in ast.walk(fn):
         if not (isinstance(node, ast.If) and isinstance(node.test, ast.Attribute)
                 and node.test.attr == "is_terminal"):
@@ -414,23 +414,24 @@ def test_the_remaining_buffers_are_copied_off_the_outcome():
     and no explanation.
     """
     import ast
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    fn = run_one()
+    # `x = outcome.y` before T8.1, `self.x = outcome.y` after. Both
+    # carry the same value across the iteration boundary, which is
+    # the property being checked, so both shapes count.
     assigned = set()
     for node in ast.walk(fn):
-        if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and isinstance(node.value, ast.Attribute)
-                and isinstance(node.value.value, ast.Name)):
-            assigned.add(node.value.attr)
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        tgt = node.targets[0]
+        if (isinstance(tgt, ast.Name)
+                or isinstance(tgt, ast.Attribute)):
+            assigned.add(tgt.id if isinstance(tgt, ast.Name) else tgt.attr)
     # `terminal` is not in the list because it is RETURNED through
     # assert_terminal(), not assigned to a loop variable.
     missing = {"saw_unavailable_tool", "final_fallback",
                "reasoning_buf", "content_buf", "tool_calls_buf",
                "finish_reason"} - assigned
-    assert not missing, f"call_llama reads the outcome but never assigns {missing}"
+    assert not missing, f"the iteration never assigns {missing} from the outcome"
 
 # --- the carry-through ------------------------------------------------
 

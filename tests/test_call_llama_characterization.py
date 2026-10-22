@@ -1,3 +1,5 @@
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree)
 """Block A -- characterization ("golden master") for call_llama.
 
 Why this file exists before any refactor code does
@@ -240,7 +242,7 @@ ABORT_GUARDS = {
 # not "is the guard in the place that runs it" -- which is how the
 # previous version stayed green as the code moved underneath it.
 GUARD_OWNERS = {
-    "max_iter":       ("call_llama.py",      "range(max_iter)"),
+    "max_iter":       ("llm_iteration.py",   "MAX_ITER = 15"),
     "hallucination":  ("call_llama.py",      "hallucinat"),
     "identical-call": ("llm_loop_guard.py",  "current_calls == self.prev_calls"),
     "wall-clock":     ("llm_loop_guard.py",  "elapsed > self.budget_sec"),
@@ -266,8 +268,9 @@ def test_all_five_abort_guards_are_present_in_the_source():
 def test_max_iter_is_still_fifteen():
     """Pinned by value, not just presence. 15 was chosen; a silent change
     to 50 turns a 10-second hang into a 30-minute one."""
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    assert "max_iter = 15" in src, (
-        "max_iter is no longer 15. If that was deliberate, say so in the "
-        "docstring -- the number is an incident response, not a preference"
+    src = loop_source()
+    assert "MAX_ITER = 15" in src, (
+        "the iteration cap is no longer 15. If that was deliberate, say so "
+        "in the docstring -- the number is an incident response, not a "
+        "preference"
     )

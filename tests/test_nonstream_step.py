@@ -21,6 +21,8 @@ So the seam is the RESULT, not the call. The tests below pin the
 decision, and two more pin the seam itself, since that is the part that
 was nearly got wrong.
 """
+from loop_owner import loop_source, run_one  # noqa: E402
+import ast  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -167,9 +169,8 @@ def test_call_llama_still_owns_the_await_and_the_try():
     reason survives even if that file is refactored: the try has to stay
     out here or a push_thinking failure becomes a user-visible error."""
     import ast
-    src = (ROOT / "telegram-bot" / "call_llama.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.parse(src).body
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    src = loop_source()
+    fn = run_one()
     def _callee(node):
         # bare `non_stream_iteration(...)` is an ast.Name, not an
         # ast.Attribute -- my first check only looked for the latter and
@@ -191,9 +192,8 @@ def test_the_sentinel_is_an_ordinary_local_not_a_locals_lookup():
     a different `if`. Nothing connected the two but the function's local
     namespace."""
     import ast
-    src = (ROOT / "telegram-bot" / "call_llama.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.parse(src).body
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    src = loop_source()
+    fn = run_one()
     for node in ast.walk(fn):
         if (isinstance(node, ast.Call)
                 and (getattr(node.func, "id", None)

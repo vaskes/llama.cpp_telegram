@@ -507,8 +507,10 @@ def test_overflow_message_names_the_fix():
 # fallback, and that fallback has its own empty-choices site with its own
 # overflow guard. Dropping it from this list would have made the count
 # below pass on a tree where the guard is gone.
+# llm_iteration joined at T8.1: it owns the summarize fallback, which is
+# one of the five empty-choices sites.
 _OVERFLOW_SITE_MODULES = ("call_llama.py", "llm_nonstream.py",
-                          "llm_stream.py")
+                          "llm_stream.py", "llm_iteration.py")
 
 
 def test_call_llama_imports_the_overflow_helper():

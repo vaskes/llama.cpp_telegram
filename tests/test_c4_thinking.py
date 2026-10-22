@@ -1,3 +1,6 @@
+import ast  # noqa: E402
+from loop_owner import (call_source, call_tree,  # noqa: F401
+                       loop_source, loop_tree, run_one)
 """C4 -- push_thinking and the request-body scrubber, tested directly.
 
 Two functions were the last uncovered ones in call_llama, and both were
@@ -327,7 +330,7 @@ def test_neither_function_is_defined_inside_call_llama_again():
     scrub_surrogates."""
     import ast
 
-    tree = ast.parse((BOT_DIR / "call_llama.py").read_text(encoding="utf-8"))
+    tree = loop_tree()
     names = {n.name for n in ast.walk(tree)
              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     for gone in ("push_thinking", "_scrub_surrogates", "scrub_surrogates"):
@@ -337,10 +340,20 @@ def test_neither_function_is_defined_inside_call_llama_again():
         )
 
 
-def test_call_llama_imports_both_from_their_modules():
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    assert "from llm_thinking import" in src and "push_thinking" in src
-    assert "from llm_json import" in src
+def test_the_loop_imports_thinking_and_call_llama_keeps_the_json_scrubber():
+    """Two separate claims, two modules.
+
+    The loop owns the push_thinking call now. `dumps_body` never moved --
+    it scrubs surrogate pairs out of request bodies, which call_llama
+    builds and hands over. Checking both against one file is the mistake
+    that makes a test red on a correct extraction.
+    """
+    loop_src = loop_source()
+    assert "from llm_thinking import" in loop_src and "push_thinking" in loop_src
+    call_src = call_source()
+    assert "from llm_json import" in call_src, (
+        "dumps_body scrubs the request body call_llama builds; it did not "
+        "move into the loop")
 
 
 def test_every_call_site_passes_its_context_explicitly():
@@ -374,7 +387,7 @@ def test_every_call_site_passes_its_context_explicitly():
     import ast
 
     required = ("thinking_msg", "silent", "throttle")
-    owners = ["call_llama.py", "llm_stream.py"]
+    owners = ["llm_iteration.py", "llm_stream.py"]
     calls = []
     for owner in owners:
         src = (BOT_DIR / owner).read_text(encoding="utf-8")
@@ -420,9 +433,19 @@ def test_every_call_site_passes_its_context_explicitly():
         for kw in call.keywords:
             if kw.arg not in required:
                 continue
+            # `self.thinking_msg` is as bound as a local name: it is an
+            # attribute of the instance, resolved at run time and not a
+            # computed expression. Since T8.1 the loop's state lives on
+            # `self`, and demanding a bare Name would fail every correct
+            # call in the module.
+            if isinstance(kw.value, ast.Attribute) and \
+                    isinstance(kw.value.value, ast.Name) \
+                    and kw.value.value.id == "self":
+                continue
             assert isinstance(kw.value, ast.Name), (
-                f"{owner}:{node.lineno} {kw.arg}= is not a plain name -- "
-                f"it evaluates to something else at runtime")
+                f"{owner}:{node.lineno} {kw.arg}= is neither a plain name "
+                f"nor a self attribute -- it evaluates to something else "
+                f"at runtime")
             assert kw.value.id in bound, (
                 f"{owner}:{node.lineno} in {fname}(): {kw.arg}={kw.value.id}, "
                 f"and that name is not bound anywhere in the function")
@@ -433,9 +456,10 @@ def test_the_throttle_is_constructed_per_call_not_at_module_scope():
     the process: one chat's flood silences another chat's reasoning."""
     import ast
 
-    tree = ast.parse((BOT_DIR / "call_llama.py").read_text(encoding="utf-8"))
-    fn = next(n for n in tree.body
+    fn = next(n for n in call_tree().body
               if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    tree = call_tree()
+
     def constructs(node):
         """ast.dump renders `ThinkingThrottle()` as
         Call(func=Name(id='ThinkingThrottle', ctx=Load()), args=[], ...)

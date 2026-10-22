@@ -14,6 +14,7 @@ like bugs and are not:
   arrives alone in the chunk that opens its index, with arguments
   dribbled out one or two characters at a time.
 """
+import ast  # noqa: E402
 import json
 import sys
 from pathlib import Path

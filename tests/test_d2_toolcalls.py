@@ -1,3 +1,5 @@
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree, run_one)
 """Block D2 -- llm_toolcalls.
 
 Two reject sites, one rule. These tests hold the rule and check that
@@ -260,7 +262,7 @@ def test_both_sites_share_one_sentinel():
     """If these ever diverge, a rejected call dispatched from one path
     will not be recognised by the unhandled-tool branch, and the model
     gets no explanation."""
-    src = (BOT / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
     assert '"__rejected__"' not in src, "a sentinel literal is back inline"
     assert "REJECTED_NAME" in Path(BOT / "llm_toolcalls.py").read_text(encoding="utf-8")
 
@@ -277,7 +279,7 @@ def test_both_sites_share_one_sentinel():
 # is what let a second site drift in the first place. Each name names
 # the module that is supposed to call it.
 _REJECT_OWNERS = {
-    "normalize_tool_calls": "call_llama.py",   # shared dispatch loop
+    "normalize_tool_calls": "llm_iteration.py",   # shared dispatch loop
     "reject_unknown_names": "llm_stream.py",   # fallback soft-reject
 }
 
@@ -295,7 +297,7 @@ def test_call_llama_calls_the_module_rather_than_reimplementing_it():
 
 
 def test_no_indexed_iteration_over_the_buffer_remains():
-    src = (BOT / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
     assert "tool_calls_buf.items()" not in src
 
 # --------------------------------------------------------------------------
@@ -308,9 +310,8 @@ def test_no_indexed_iteration_over_the_buffer_remains():
 # --------------------------------------------------------------------------
 
 def _call_llama() -> ast.AsyncFunctionDef:
-    tree = ast.parse((BOT / "call_llama.py").read_text(encoding="utf-8"))
-    return next(n for n in tree.body
-                if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    """The named iteration, `ToolLoop.run_one` (T8.1)."""
+    return run_one()
 
 
 def test_the_caller_does_not_rewrite_the_buffer():
@@ -389,7 +390,7 @@ def test_both_reject_sites_are_logged():
     # non-streaming fallback. Counting them in one file goes red the
     # moment the fallback moves; they are a property of the package.
     total = sum((BOT / f).read_text(encoding="utf-8").count("TOOL-ISOLATION")
-                for f in ("call_llama.py", "llm_stream.py"))
+                for f in ("llm_iteration.py", "llm_stream.py"))
     assert total == 2, (
         f"expected two TOOL-ISOLATION log sites, found {total}"
     )

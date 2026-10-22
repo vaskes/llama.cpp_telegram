@@ -14,9 +14,11 @@
 telegram-bot/
 ├── bot.py                 # main entry, aiohttp webhook + handlers
 ├── handlers.py            # handle_text/photo/voice/document
-├── call_llama.py          # the streaming + tool-calling loop
-│                          #   796 lines file, 642 in the function,
-│                          #   318 in the one top-level loop
+├── call_llama.py          # the turn: build the request, drive the loop
+│                          #   478 lines file, 324 in the function
+├── llm_iteration.py      # one tool-loop iteration, as a named unit
+│                          #   473 lines file; ToolLoop.run_one is 285
+│                          #   lines, ToolLoop.run owns the 4-line for
 ├── llm_tools.py           # fetching the tool list from llama-server
 ├── llm_request.py         # request body + shape logging + accumulator reset
 ├── llm_sse.py             # SSE -> StreamAccumulator (the parsing only)
@@ -56,7 +58,9 @@ directly by tests, none of which build a full `call_llama`.
   module                lines  public surface
   llm_dispatch.py       201  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _finish
   llm_finish.py         140  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
+  llm_iteration.py      473  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
+  call_llama.py         478  call_llama
   llm_loop_guard.py     143  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py        83  _tag_sender

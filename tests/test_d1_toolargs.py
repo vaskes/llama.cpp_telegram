@@ -1,3 +1,6 @@
+import ast  # noqa: E402
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree, run_one)
 """D1 -- parse_tool_args, driven directly.
 
 Before this, deciding whether a tool call could be dispatched required
@@ -222,9 +225,7 @@ def test_the_loop_branches_on_the_result_object():
     the model to retry."""
     import ast
 
-    tree = ast.parse((BOT_DIR / "call_llama.py").read_text(encoding="utf-8"))
-    fn = next(n for n in tree.body
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    fn = run_one()
 
     branches = [n for n in ast.walk(fn)
                 if isinstance(n, ast.If) and isinstance(n.test, ast.Call)
@@ -252,9 +253,7 @@ def test_the_loop_sends_the_specific_message_to_the_model():
     """
     import ast
 
-    tree = ast.parse((BOT_DIR / "call_llama.py").read_text(encoding="utf-8"))
-    fn = next(n for n in tree.body
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
+    fn = run_one()
 
     def branches_on_rejected():
         for n in ast.walk(fn):
@@ -306,7 +305,7 @@ def test_no_argument_screening_is_left_inline():
     inlined json.loads(raw_args or "{}"), which is exactly what the
     mutation produced.
     """
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
     for gone in (QUOTE_MARK_COLON, "json.loads(raw_args",
                  "len(raw_args) > 1500", "raw_args.count"):
         assert gone not in src, f"{gone!r} is back inline in call_llama"

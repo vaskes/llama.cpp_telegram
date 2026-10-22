@@ -65,11 +65,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+DEFAULT_ROOT = "/opt/telegrambot/bot/repo"
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT)
 IMAGE = "bot-testimg311"
-TARGETS = "tests/test_blockers.py"
-DEFAULT_ROOT = "/opt/telegrambot/bot/repo"
-# Short on purpose: a mutation that hangs must be scored within a
+TARGETS = "tests/test_blockers.py"# Short on purpose: a mutation that hangs must be scored within a
 # bounded time rather than stalling the whole harness.
 PER_TEST_TIMEOUT = 150
 

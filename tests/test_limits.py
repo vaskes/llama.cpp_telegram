@@ -224,7 +224,11 @@ def test_call_llama_uses_limits_for_timeouts():
         _reload_with({})
         from call_llama import call_llama
         import inspect
-        src = inspect.getsource(call_llama)
+        # The three POSTs moved to llm_iteration at T8.1; the timeout
+        # travelled with them. Checking call_llama's source for it is
+        # exactly the pin-to-a-location that keeps going red.
+        from llm_iteration import ToolLoop
+        src = inspect.getsource(ToolLoop.run_one)
         assert 'limits.LLAMA_HTTP_TIMEOUT_SEC' in src
         assert 'timeout=600.0' not in src
     finally:

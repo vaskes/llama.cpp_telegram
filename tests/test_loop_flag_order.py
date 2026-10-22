@@ -1,3 +1,5 @@
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree, run_one)
 """Loop-local flags must be bound before anything reads them.
 
 Production, twice, on the same variable.
@@ -47,6 +49,11 @@ def _plain_assign_targets(loop):
     Not for-targets, not tuple targets, not comprehension targets, not
     augmented assignment. Those are updates or bindings with their own
     guarantees; none of them is the shape that broke.
+
+    Since T8.1 the loop state lives on `self`, so `self.flag = ...`
+    binds the same property `flag = ...` bound when the code was
+    local. Keyed on the bare attribute name, because that is the name
+    both the write and the read use.
     """
     found = {}
     for node in ast.walk(loop):
@@ -122,10 +129,15 @@ def test_no_loop_reads_a_plain_flag_before_binding_it(module):
 
 
 def _tool_loop():
-    tree = ast.parse((BOT / "call_llama.py").read_text(encoding="utf-8"))
-    fn = next(n for n in tree.body
-              if isinstance(n, ast.AsyncFunctionDef) and n.name == "call_llama")
-    return next(n for n in fn.body if isinstance(n, ast.For))
+    """The iteration itself.
+
+    Before T8.1 this returned the `for tc in tool_calls` node, and the
+    loop flags were initialised inside it. They are initialised at the
+    top of the iteration method now -- which is the point of the
+    extraction -- so the method is the unit that owns both the
+    initialisation and the first thing that can consume it.
+    """
+    return run_one()
 
 
 def test_the_outage_variable_is_pinned_by_name():
@@ -172,7 +184,11 @@ def test_it_is_initialised_before_the_iteration_can_do_anything():
             return True
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Await):
             return True
-        return False
+        # A bare `if ...: return` is an exit too, and the shutdown
+        # guard is exactly that shape. Walking for the Return or the
+        # Await anywhere inside is the general form.
+        return any(isinstance(d, (ast.Return, ast.Await))
+                   for d in ast.walk(node))
 
     escape_at = None
     for node in loop.body:

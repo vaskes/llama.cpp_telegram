@@ -13,7 +13,10 @@ import ast
 import pathlib
 
 
-CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
+# T8.1: the tool loop moved to llm_iteration.py. Every assertion
+# below is about the loop's body, not about call_llama, which now
+# only builds a ToolLoop and awaits its run().
+CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "llm_iteration.py"
 src = CALL_LLAMA.read_text()
 # The stuck-call detector moved to llm_loop_guard.py in
 # TECH-DEBT #3 Block C3; the check below reads that file.
@@ -32,7 +35,7 @@ def test_no_early_return_on_saw_unavailable_tool():
     """T49: the `if saw_unavailable_tool:` block in the
     iter loop must NOT contain a Return statement. It only
     logs."""
-    fn = _find_function_body("call_llama")
+    fn = _find_function_body("run_one")
     assert fn is not None
 
     # Find the post-loop if-block (the one after the
@@ -66,10 +69,8 @@ def test_no_early_return_on_saw_unavailable_tool():
 def test_post_loop_block_only_logs():
     """The post-loop `if saw_unavailable_tool:` block must
     only contain a print/log statement."""
-    fn = _find_function_body("call_llama")
-    assert fn is not None
-    # Find the post-loop block. It has the T49 comment
-    # "removed the early-return".
+    fn = _find_function_body("run_one")
+    assert fn is not None, "the named iteration is gone"
     assert "T49: removed the early-return" in src, \
         "T49 marker comment missing"
 

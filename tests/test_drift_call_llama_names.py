@@ -1,3 +1,5 @@
+from loop_owner import (call_source, loop_source,  # noqa: F401
+                       loop_tree)
 """Every name call_llama reads must actually resolve.
 
 TECH-DEBT #8. `Nudge` was used at call_llama.py:1036 and never imported,
@@ -84,6 +86,41 @@ def _bound_inside(node):
     return names
 
 
+def _referenced_names(src):
+    """Names the code actually touches, docstrings excluded.
+
+    `LoopGuard` appears in llm_iteration's prose -- it says what the
+    guard is -- and a substring search reports that as a use. Only a
+    real `Name`/`Attribute` reference is a use, so strip the
+    docstrings and read the tree.
+    """
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, (ast.Module, ast.FunctionDef,
+                              ast.AsyncFunctionDef, ast.ClassDef)):
+            if (node.body and isinstance(node.body[0], ast.Expr)
+                    and isinstance(node.body[0].value, ast.Constant)
+                    and isinstance(node.body[0].value.value, str)):
+                node.body = node.body[1:]
+    got = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Name):
+            got.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            got.add(node.attr)
+        elif isinstance(node, (ast.ImportFrom, ast.Import)):
+            continue
+    return got
+
+
+def _imports_from(src, module):
+    """Names bound by `from <module> import ...` in `src`."""
+    got = set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.ImportFrom) and n.module == module:
+            got.update(a.asname or a.name for a in n.names)
+    return got
+
+
 def test_call_llama_reads_only_names_that_resolve():
     path = BOT_DIR / "call_llama.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -116,7 +153,7 @@ def test_the_known_regression_is_pinned_by_name():
     says the one that actually shipped, so a reader who hits it in
     `git log` can see why the check exists.
     """
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
+    src = loop_source()
     assert "isinstance(outcome, Nudge)" in src, (
         "the Nudge branch is gone -- if it was renamed or inlined, confirm "
         "the empty-call budget still nudges before it aborts"
@@ -142,20 +179,27 @@ def test_every_name_in_the_guard_outcome_family_is_imported():
     import llm_loop_guard
 
     exported = {n for n in dir(llm_loop_guard) if not n.startswith("_")}
-    src = (BOT_DIR / "call_llama.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    imported = set()
-    for n in ast.walk(tree):
-        if isinstance(n, ast.ImportFrom) and n.module == "llm_loop_guard":
-            imported.update(a.asname or a.name for a in n.names)
+    family = {"Abort", "Nudge", "LoopGuard"}
 
-    used = {name for name in exported
-            if name in {"Abort", "Nudge", "LoopGuard"} and name in src}
+    # T8.1 split the guard family across two modules: call_llama builds
+    # the LoopGuard and hands it in, the loop consumes the Abort and the
+    # Nudge it gets back. Each module must declare what it uses, so the
+    # check runs per module and names the missing side in the message.
+    call_src = call_source()
+    loop_src = loop_source()
+    call_imports = _imports_from(call_src, "llm_loop_guard")
+    loop_imports = _imports_from(loop_src, "llm_loop_guard")
+    call_used = _referenced_names(call_src) & family
+    loop_used = _referenced_names(loop_src) & family
 
-    assert used, "call_llama no longer uses anything from llm_loop_guard"
-    assert used <= imported, (
-        f"used but not imported: {sorted(used - imported)} -- "
-        f"llm_loop_guard exports {sorted(exported & {'Abort', 'Nudge', 'LoopGuard'})}"
+    assert call_used or loop_used, \
+        "neither call_llama nor the loop uses anything from llm_loop_guard"
+    missing_call = call_used - call_imports
+    missing_loop = loop_used - loop_imports
+    assert not missing_call and not missing_loop, (
+        f"used but not imported -- call_llama: {sorted(missing_call)}; "
+        f"loop: {sorted(missing_loop)}; llm_loop_guard exports "
+        f"{sorted(exported & family)}"
     )
 
 # ---------------------------------------------------------------------------
