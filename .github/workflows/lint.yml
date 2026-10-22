@@ -8,14 +8,20 @@ on:
 
 jobs:
   ruff:
-    # Pre-existing findings (F841, E501, BLE001, F401, ...) total
-    # ~150 against ruff 0.17 (latest, what astral-sh/ruff-action@v1
-    # installs). The bot codebase was written against ruff 0.5/0.6
-    # and predates the stricter rules. Until the codebase is
-    # brought up to ruff-current in v0.11+, the lint job runs
-    # in advisory mode: it reports findings to the Actions log
-    # but does not block merges.
-    continue-on-error: true
+    # Previously: `continue-on-error: true` plus `--exit-zero`, checking one
+    # file (telegram-bot/bot.py) with the W subset. That is not a lint job.
+    # It could not fail, so it never did, so it taught nobody anything --
+    # and the W subset it checked is clean everywhere in the tree.
+    #
+    # Now: the whole package, with the set ruff itself documents as
+    # CI-appropriate for a codebase that is not yet ruff-clean. E9 (syntax),
+    # F63/F7/F82 (comparison, syntax, undefined name) are the rules that
+    # catch code which would not run. The stylistic tail stays off until the
+    # ~150 pre-existing F401/F841/E501 findings are actually dealt with --
+    # blocking on those would mean either committing 150 noqa comments or
+    # silencing the job again, which is the state this job just escaped.
+    #
+    # Verified against ruff 0.17: `All checks passed!` on telegram-bot/.
     runs-on: ubuntu-latest
     # v0.8.2: explicit minimum-privilege permissions. CodeQL
     # flagged 'actions/missing-workflow-permissions' (CWE-275)
@@ -28,27 +34,19 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v1
+      - uses: astral-sh/ruff-action@v3
         with:
-          # The codebase predates ruff 0.6; running the full
-          # default rule set (E + F + B + ...) produces ~150
-          # findings, all pre-existing. The bot's `try: # noqa`
-          # pattern relies on bare noqa, which ruff 0.6+ flags
-          # with RUF100 ("Invalid '# noqa' directive"). Until
-          # the codebase is brought up to ruff-current, we
-          # only run the W (warning) subset, which catches the
-          # noqa-format regression without breaking the build
-          # on unrelated pre-existing findings.
-          args: check --select W --exit-zero telegram-bot/bot.py
-
-          # --exit-zero: the codebase has ~150 pre-existing ruff
-          # findings (F841, E501, BLE001, F401) from before the
-          # ruff 0.6 baseline. Until T29/T30 land in v0.11, we
-          # suppress the non-zero exit so GitHub does not email
-          # the operator on every push (GitHub notifies per-step,
-          # not per-job, so 'continue-on-error: true' on the job
-          # was not enough). Findings are still visible in the
-          # Actions log.
+          # Was: `--select W --exit-zero telegram-bot/bot.py`, on a job
+          # marked continue-on-error. Two independent reasons it could not
+          # fail, so it never reported anything. The W subset it checked is
+          # clean across the whole tree anyway -- verified on ruff 0.17.
+          #
+          # Now: the entire package, on the rules that catch code which
+          # would not run. The stylistic tail (F401, E501, BLE001 -- ~150
+          # pre-existing findings) stays off until someone deals with them;
+          # blocking on those means either 150 noqa comments or silencing
+          # the job again, which is what this just stopped doing.
+          args: check --select E9,F63,F7,F82 telegram-bot/
 
   pytest:
     # T53 #R7: pytest job to catch integration-level bugs that
@@ -85,8 +83,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # httpx is pinned in requirements.txt. The bare `pip install httpx`
+          # that used to sit on the next line silently upgraded it to
+          # whatever was latest (0.28.1), so the version under test was not
+          # the version that ships. Reinstalling it pinned, and the test
+          # tooling installs without touching it.
           pip install -r telegram-bot/requirements.txt
-          pip install pytest pytest-asyncio httpx
+          pip install pytest pytest-asyncio
+          # What the job actually tested, printed. A red job whose versions
+          # are unrecorded costs a rerun before it can be diagnosed.
+          python -c "import sys, httpx, telegram, pytest, pytest_asyncio; \
+            print(sys.version); \
+            print('httpx', httpx.__version__); \
+            print('telegram', telegram.__version__); \
+            print('pytest', pytest.__version__); \
+            print('pytest-asyncio', pytest_asyncio.__version__)"
       - name: Run tests that do not need a live llama-server
         env:
           CONVERSATIONS_DB: /tmp/pytest.db
