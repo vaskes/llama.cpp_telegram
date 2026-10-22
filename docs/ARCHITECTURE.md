@@ -64,7 +64,7 @@ directly by tests, none of which build a full `call_llama`.
   llm_loop_guard.py     143  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py        83  _tag_sender
-  llm_nonstream.py      417  NonStreamResult, non_stream_iteration, tools_less_fallback
+  llm_nonstream.py      437  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         307  StreamOutcome, stream_iteration, _fallback_to_nonstream
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape

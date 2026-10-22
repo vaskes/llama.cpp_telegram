@@ -1116,55 +1116,8 @@ def main():
                                 #      for security, or the bot never
                                 #      responded for some reason), just
                                 #      process the edit.
-                                if "edited_message" in upd_dict and "message" not in upd_dict:
-                                    em = upd_dict["edited_message"]
-                                    em_text = (em.get("text") or "").lstrip()
-                                    if em_text.startswith("/"):
-                                        # Normalise: rewrite the update so
-                                        # the dispatcher's handlers see a
-                                        # regular `message` field. This way
-                                        # every handler continues to read
-                                        # `update.message.text` and friends
-                                        # without per-handler branching.
-                                        upd_dict["message"] = em
-                                        log.info(f"[poll] treating edited_message as new command "
-                                            f"update_id={upd_dict['update_id']} cmd={em_text[:32]!r}")
-                                    else:
-                                        # Non-command edit: delete the
-                                        # bot's previous reply (if any)
-                                        # and reprocess.
-                                        em_chat_id = (em.get("chat") or {}).get("id")
-                                        em_msg_id = em.get("message_id")
-                                        if em_chat_id is not None and em_msg_id is not None:
-                                            key = (em_chat_id, em_msg_id)
-                                            old_bot_msg_id = _bot_replies.pop(key, None)
-                                            if old_bot_msg_id is not None and _dispatcher is not None:
-                                                try:
-                                                    await _dispatcher.bot.delete_message(
-                                                        chat_id=em_chat_id,
-                                                        message_id=old_bot_msg_id,
-                                                    )
-                                                    log.info(f"[poll] edit-replace: deleted old bot reply "
-                                                        f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id} "
-                                                        f"user_msg_id={em_msg_id}")
-                                                except Exception as e:
-                                                    # Most common failure: bot
-                                                    # lacks delete permission,
-                                                    # or the message is too
-                                                    # old. Just log and
-                                                    # continue.
-                                                    log.info(f"[poll] edit-replace: delete failed "
-                                                        f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id}: "
-                                                        f"{type(e).__name__}: {e!r}")
-                                        # Now rewrite the update as a
-                                        # regular `message` so the
-                                        # dispatcher processes it like
-                                        # a new user message. The
-                                        # downstream handlers (handle_text
-                                        # etc.) will see the edited text.
-                                        upd_dict["message"] = em
-                                        log.info(f"[poll] edit-replace: processing edited_message "
-                                            f"update_id={upd_dict['update_id']} text_hash={em_text[:32]!r}")
+                                # (The block itself moved out; see
+                                # _apply_edited_message below.)
                                 # Dispatch as a TASK, not awaited. This is
                                 # the critical change for the Stop button:
                                 # previously, the polling loop was blocked
@@ -1533,6 +1486,92 @@ async def _handle_chat_member_update(upd, bot):
         log.warning(f"[chat_member] PM to user_id={user_id} FAILED: "
             f"{type(e).__name__}: {e!r}")
 
+# === _apply_edited_message ===
+
+async def _apply_edited_message(upd_dict):
+    """Turn an `edited_message` update into a plain `message`, in place.
+
+    Why this exists at all: the bot answers a message, the user fixes a
+    typo, and Telegram redelivers the correction as a separate
+    `edited_message` update. Left alone, the bot keeps showing the answer
+    to the text the user has already replaced on screen. So a non-command
+    edit deletes the bot's stale reply (via the `_bot_replies` map) and is
+    reprocessed as a fresh message; a command edit is idempotent and is
+    simply re-run.
+
+    Why it lives here rather than in the polling loop: it did live there,
+    and the production deployment runs in WEBHOOK mode -- `webhook.py`
+    hands updates straight to `_dispatch_update` and never enters the
+    poll loop. So the whole feature was dead in production, and worse than
+    dead: PTB 21 routes an edited text message into
+    `MessageHandler(filters.TEXT & ~filters.COMMAND)` while
+    `update.message` on that update is None, so `handle_text` raised
+
+    AttributeError("'NoneType' object has no attribute 'message_thread_id'")
+
+    on every edit in a forum. Four times in twenty minutes on
+    2026-10-22. Measured in the shipping image:
+    `MessageHandler(filters.TEXT & ~filters.COMMAND).check_update(
+    Update(edited_message=Message(text="hi")))` -> True.
+
+    `handlers.py` and `state.py` both carried comments saying the
+    edit-replace block was "in _dispatch_update". It was not; they were
+    describing where it belonged.
+
+    Returns True if the update was rewritten. A no-op on every other
+    update, including callback_query, which also carries no `.message`.
+    """
+    if "edited_message" not in upd_dict or "message" in upd_dict:
+        return False
+    em = upd_dict["edited_message"]
+    if not isinstance(em, dict):
+        return False
+    em_text = (em.get("text") or "").lstrip()
+    if em_text.startswith("/"):
+        # Normalise: rewrite the update so the dispatcher's handlers see
+        # a regular `message` field. This way every handler continues to
+        # read `update.message.text` and friends without per-handler
+        # branching.
+        upd_dict["message"] = em
+        upd_dict.pop("edited_message", None)
+        log.info(f"[edit] treating edited_message as new command "
+                 f"update_id={upd_dict.get('update_id')} cmd={em_text[:32]!r}")
+        return True
+    # Non-command edit: delete the bot's previous reply (if any) and
+    # reprocess.
+    em_chat_id = (em.get("chat") or {}).get("id")
+    em_msg_id = em.get("message_id")
+    if em_chat_id is not None and em_msg_id is not None:
+        key = (em_chat_id, em_msg_id)
+        old_bot_msg_id = _bot_replies.pop(key, None)
+        if old_bot_msg_id is not None and _dispatcher is not None:
+            try:
+                await _dispatcher.bot.delete_message(
+                    chat_id=em_chat_id,
+                    message_id=old_bot_msg_id,
+                )
+                log.info(f"[edit] edit-replace: deleted old bot reply "
+                         f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id} "
+                         f"user_msg_id={em_msg_id}")
+            except Exception as e:
+                # Most common failure: the bot lacks delete permission, or
+                # the message is too old. Just log and continue.
+                log.info(f"[edit] edit-replace: delete failed "
+                         f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id}: "
+                         f"{type(e).__name__}: {e!r}")
+    # Now rewrite the update as a regular `message` so the dispatcher
+    # processes it like a new user message. The downstream handlers
+    # (handle_text etc.) will see the edited text.
+    upd_dict["message"] = em
+    # Drop the original key. Leaving it in place makes the update carry
+    # BOTH `message` and `edited_message`, and PTB 21 hands each of those
+    # to a matching MessageHandler -- so the edit is processed twice.
+    upd_dict.pop("edited_message", None)
+    log.info(f"[edit] edit-replace: processing edited_message "
+             f"update_id={upd_dict.get('update_id')} text={em_text[:32]!r}")
+    return True
+
+
 # === _dispatch_update ===
 async def _dispatch_update(upd_dict):
     global _dispatcher
@@ -1577,6 +1616,14 @@ async def _dispatch_update(upd_dict):
         await _dispatcher.initialize()
         _start_reanchor_scheduler()
         _start_summarise_on_boot()
+
+    # The single entry point both delivery modes share: the poll loop
+    # calls _spawn_dispatch -> here, and webhook.py calls here directly.
+    # Anything that decides what an update MEANS has to happen here, or
+    # one of the two modes silently loses it -- which is exactly how the
+    # edit-replace block ended up dead in production for years while two
+    # comments described it as living right here.
+    await _apply_edited_message(upd_dict)
 
     upd = Update.de_json(upd_dict, _dispatcher.bot)
     if upd is None:

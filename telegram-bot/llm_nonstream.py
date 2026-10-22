@@ -97,7 +97,27 @@ async def non_stream_iteration(req_body: dict, *, iteration: int,
             log.info(f"[call_llama] abort_event fired during non-streaming iter={iteration}, aborting")
             return NonStreamResult("final", final_text=None)
         r.raise_for_status()
-        data = r.json()
+        # A JSONDecodeError from .json() carries no response, so
+        # classify_error's `body = response.text if response` reads "" and
+        # the log line says the body was empty -- which is an assertion
+        # about a variable that was never assigned, not about the wire.
+        # It cost a diagnosis on 2026-10-22: production logged
+        #   [non-stream err iter=0] JSONDecodeError: Expecting value:
+        #   line 1 column 1 (char 0); body=''
+        # for 11 of 35 requests, and nothing in that line or in
+        # classify_error could say what the engine had actually sent.
+        # Log it where the response is still in hand. The re-raise keeps
+        # the exception type, so classify_error is untouched.
+        try:
+            data = r.json()
+        except ValueError as exc:
+            log.info(f"[call_llama] non-stream parse failed iter={iteration}: "
+                     f"{type(exc).__name__}: {exc}; status={r.status_code} "
+                     f"bytes={len(r.content)} "
+                     f"content-length={r.headers.get('content-length')!r} "
+                     f"transfer-encoding={r.headers.get('transfer-encoding')!r} "
+                     f"body={r.text[:500]!r}")
+            raise
     # T32 (2026-10-13): guard against empty 'choices'.
     # Heavy prompts that exhaust the context window, or
     # rate-limit / content-filter responses, can return
