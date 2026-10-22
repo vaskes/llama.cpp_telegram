@@ -106,6 +106,8 @@ from config import (
 from prompts import GROUP_CONTEXT, RATING_RULES
 
 # === send_reply ===
+
+
 async def send_reply(update: Update, text: str):
     """Reply to a Telegram message, falling back to a helpful message if the model returned nothing.
 
@@ -144,11 +146,15 @@ async def send_reply(update: Update, text: str):
         log.info(f"[send_reply] tracking failed: {type(e).__name__}: {e!r}")
 
 # === _reply_active ===
+
+
 async def _reply_active(update: Update, user_id: int) -> str:
     """Returns the user's active sub-talk name (resolving to 'main' default)."""
     return await asyncio.to_thread(storage.get_store().get_active_thread, user_id) or 'main'
 
 # === _general_thread_id ===
+
+
 def _general_thread_id() -> str:
     """Sentinel thread id for the General topic of a forum-enabled
     supergroup. The General topic is real (it has messages, history,
@@ -160,6 +166,8 @@ def _general_thread_id() -> str:
     return "general"
 
 # === _route_to_thread ===
+
+
 async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
     """Resolve the (chat_id, thread_id) for the current message.
 
@@ -203,6 +211,8 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
     return user_id, 'main', False
 
 # === _reply ===
+
+
 async def _reply(update, text, **kwargs):
     """Reply to update.message, preserving message_thread_id in group mode.
 
@@ -261,6 +271,8 @@ async def _reply(update, text, **kwargs):
     raise last_err
 
 # === _reject_in_group ===
+
+
 async def _reject_in_group(update) -> bool:
     """Sub-talk commands (/newsub, /sub, /subs, /delsub, /here, /reset, /stats)
     only make sense in private chat mode — they manage the user's own
@@ -283,6 +295,8 @@ async def _reject_in_group(update) -> bool:
     return False
 
 # === _resolve_active ===
+
+
 async def _resolve_active(user_id: int) -> str:
     """Deprecated. Use _route_to_thread() in handlers.
 
@@ -417,6 +431,8 @@ def _sender_display_name(user) -> str | None:
     return None
 
 # === handle_photo ===
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.info(f"[handle_photo] ENTRY chat_id={update.effective_chat.id} thread_id={update.message.message_thread_id} caption={update.message.caption!r}")
     result = await _route_to_thread(update, context)
@@ -710,6 +726,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 # === _download_with_limit ===
+
+
 async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
     """Download a Telegram file with a size guard.
 
@@ -749,6 +767,8 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
     return bytes(buf)
 
 # === handle_voice ===
+
+
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await _route_to_thread(update, context)
     if result is None:
@@ -909,6 +929,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sem.release()
 
 # === handle_document ===
+
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await _route_to_thread(update, context)
     if result is None:
@@ -1119,11 +1141,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await thinking.delete()
                 except Exception:
                     pass
-            # B1: the abort event is only registered when a thinking message
-            # exists, so there is nothing to pop otherwise -- and reaching for
-            # thinking.message_id anyway raised AttributeError, which replaced
-            # the real exception and skipped the release below. That leaked the
-            # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
+            # B1: the abort event is registered only when a thinking message
+            # exists, so there is nothing to pop otherwise. The per-user slot is
+            # released by this handler's outermost finally, not here -- see the
+            # comment on that finally for why the timing matters.
             #
             # Both layers are deliberate. The guard makes the pop correct; the
             # try makes it impossible for any future line added here to cost a
@@ -1134,7 +1155,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-    # === handle_text ===
     finally:
         # 2026-10-22: released at the outermost exit, so the slot is held
         # for the whole handler including the LLM call. Releasing inside
@@ -1142,6 +1162,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # call_llama, which left _PER_USER_SEMAPHORE_LIMIT measuring
         # nothing.
         sem.release()
+
+
+# === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from state import _get_user_semaphore as _user_semaphore
     from state import _check_burst_split, _record_user_message, _user_recent_msg
@@ -1407,11 +1430,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # than clear, in case the dict has been overwritten by
             # a concurrent handler (defensive — the semaphore
             # prevents same-user concurrency, but be safe).
-            # B1: the abort event is only registered when a thinking message
-            # exists, so there is nothing to pop otherwise -- and reaching for
-            # thinking.message_id anyway raised AttributeError, which replaced
-            # the real exception and skipped the release below. That leaked the
-            # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
+            # B1: the abort event is registered only when a thinking message
+            # exists, so there is nothing to pop otherwise. The per-user slot is
+            # released by this handler's outermost finally, not here -- see the
+            # comment on that finally for why the timing matters.
             #
             # Both layers are deliberate. The guard makes the pop correct; the
             # try makes it impossible for any future line added here to cost a
@@ -1424,7 +1446,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    # === Re-exported helpers for tests ===
     finally:
         # 2026-10-22: released at the outermost exit, so the slot is held
         # for the whole handler including the LLM call. Releasing inside
@@ -1432,6 +1453,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # call_llama, which left _PER_USER_SEMAPHORE_LIMIT measuring
         # nothing.
         sem.release()
+
+
+# === Re-exported helpers for tests ===
 async def _persist_message(*args, **kwargs):
     return await persistence.persist(*args, **kwargs)
 
