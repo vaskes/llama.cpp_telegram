@@ -1,12 +1,12 @@
 ---
 tech_debt: 13
-marker: tests/test_handler_skeleton.py
+marker: tests/test_handler_middle.py
 marker_kind: tripwire
-state: open
+state: closed
 issue: null
 ---
 
-## 13. The shared handler wrapper is still duplicated (MEDIUM, open)
+## 13. The shared handler wrapper (MEDIUM, closed)
 
 **Measured 2026-10-22.** Four handlers, 158–291 lines each:
 `handle_photo` 291, `handle_text` 288, `handle_document` 231,
@@ -54,27 +54,33 @@ Only the streaming handlers pass `abort_event`; photo and document do not
 stream and have no await in that window, so their guard was always
 `if bot_response`, and giving them an event would assert a fiction.
 
-**Where this stands.** Five blocks, `handlers.py` 1464 → 1356 lines, 40
-mutations and 40 caught. What is still four times over is the middle:
-`_load_history`, `_is_rating_active`, `_sender_display_name`,
-`_stop_button_markup`, the thinking message, `_get_global_llm_sem` and
-`call_llama`. That part is the remaining half, and it is the more careful
-half, because the parameters genuinely differ there:
+**Block F — `8c09172`.** `_open_thinking(update, label=...)`: the thinking
+message, the None guard, the sender name. `_turn_context(update, chat_id,
+thread_id, label=...)`: history and rating mode together.
+
+`_turn_context` exists for the three handlers that persist a turn first.
+Photo does not persist one — it reads rating mode BEFORE the history and
+appends the image turn afterwards — so a flag parameter exactly one
+caller never uses was worse than leaving it out.
+
+## Closed
+
+Six blocks. `handlers.py` 1464 → 1357 lines, **48 mutations and 48
+caught**, suite 1859 passed. What is left shared across the four handlers
+is the `call_llama` call itself, and that is deliberate:
 
 - `max_tokens` is `MAX_TOKENS_CAPTION` for photo and document,
-  `MAX_TOKENS_DEFAULT` for text, and caption/transcript/user message for
-  the `user_text`;
-- `use_stream` is `False` for photo only, and the other three take the
-  default — a lost branch condition here once cost an afternoon of
+  `MAX_TOKENS_DEFAULT` for text;
+- `user_text` is a caption, a transcript, or a user message;
+- `use_stream` is `False` for photo only, the other three take the
+  default — a lost branch condition there cost an afternoon of
   production `JSONDecodeError`s that read like the engine returning an
   empty body;
 - three of the four have an empty-response retry and voice does not.
 
-Those are arguments, not variations, so a helper for the middle takes
-the same shape as the four it replaces and earns much less. Recommended
-next step is unchanged: extract nothing until the middle has a test of
-its own in the way the other five did, and treat `use_stream` as the one
-line that must keep a visible test on both sides of any change.
+A helper over those arguments has the same shape as the four calls it
+would replace and buys almost nothing. `use_stream` keeps a test on both
+sides of the change in `tests/test_handler_skeleton.py`.
 
 ## Markers
 
@@ -87,3 +93,5 @@ line that must keep a visible test on both sides of any change.
   divergences, and the `use_stream` split.
 - `tests/test_handler_entry.py` — block D: routing and the slot.
 - `tests/test_handler_tail.py` — block E: persist and the abort window.
+- `tests/test_handler_middle.py` — block F: thinking, sender name,
+  history and rating mode.

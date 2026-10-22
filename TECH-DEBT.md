@@ -36,7 +36,7 @@ disagreement again without a test going red.
 | 10 | `dispatch.py` — 1672 lines | **open** | none yet | Every command is a routing change |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **partial** — test exists | `test_prompts.py` | Relocation still to do |
-| 13 | `handlers.py` shared wrapper remains | **open** — blocks A–E done (1464→1356, 40 mutations); the middle left | `test_handler_tail.py` | ~9 duplicated calls per handler |
+| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1357, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
 | 14 | Duplicate top-level definitions in `tests/` | **closed** | `test_no_duplicate_definitions.py` | — |
 
 Four tripwires were found to be measuring something other than their
