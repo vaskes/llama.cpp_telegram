@@ -36,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.tech_debt(item=11)
+
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "telegram-bot"
 EXAMPLE = SRC / ".env.example"

@@ -44,6 +44,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.tech_debt(item=12)
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "telegram-bot"))
 

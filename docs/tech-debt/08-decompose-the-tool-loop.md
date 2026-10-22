@@ -6,7 +6,7 @@ state: partial
 issue: null
 ---
 
-## 8. Decompose `call_llama`'s tool loop (654 lines) — **3 OF 4 CRITERIA MET**
+## 8. Decompose `call_llama`'s tool loop — **FIRST BLOCK LANDED 2026-10-22**
 
 > Last read 2026-10-22. The remaining block has been read and its shape
 > is now specified below; one earlier claim about why it was not cut is
@@ -139,3 +139,34 @@ Found by injecting an orphan into a method body.
 And six tripwires were pinned to a *location* rather than a property, so
 every extraction broke them. The usual response to a test that fails on
 every refactor is to delete it, which takes the real check with it.
+
+---
+
+## Progress, 2026-10-22
+
+One of the three remaining pieces of the loop body is out. Lines
+487-556 -- building the request body, logging its shape, resetting the
+four stream accumulators -- now live in `llm_request.py` (161 lines).
+`call_llama`: 972 lines / 825 in the function -> 917 / 766. The loop:
+500 -> 441.
+
+That block was chosen because it is the only one of the three with no
+return, no await and no I/O. The other two still hold 13 of the 17
+returns in the loop and the two mixed semantics -- "here is the answer,
+exit" versus "here is the engine's response, go to the next stage" --
+which is what criterion 1 actually turns on.
+
+**Still open:** the streaming branch (was 641-770) and the non-streaming
+branch (was 558-640). Neither can move until every return in them is
+made terminal and marked, which is the work the criterion describes.
+
+**Two tripwires had to be rewritten, not just extended.** One counted
+`"model": MODEL` dict literals and asserted >= 2; the extraction turned
+one into a keyword argument and it went red on correct code. Its
+replacement counted MODEL loads in the file, went green, and a mutation
+replacing `model=MODEL` with `model=""` survived it -- because
+`_ensure_model` reads the global twice on its own. It now resolves the
+call site and requires the keyword argument to be the global itself.
+Worth reading before trusting any count-based check on this function.
+
+Marker: `tests/test_llm_request.py`, `tests/test_b2_extraction.py`.

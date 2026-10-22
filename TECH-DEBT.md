@@ -31,12 +31,22 @@ disagreement again without a test going red.
 | 5 | `print()` instead of `logging` | **closed** `83c5092` | `test_logging_stdout_parity.py` | — |
 | 6 | `created_at` from the Python clock | **closed** — decision, see file | `test_t6_db_clock.py` | — |
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
-| 8 | Decompose `call_llama`'s tool loop | **partial** — 3 of 4 criteria | `test_drift_call_llama_names.py`, `test_d2_toolcalls.py` | New turn features still land in one function |
+| 8 | Decompose `call_llama`'s tool loop | **partial** — 1 of 3 blocks, `7bf5999` | `test_drift_call_llama_names.py`, `test_d2_toolcalls.py`, `test_llm_request.py` | New turn features still land in one function |
 | 9 | `selftest._selftest` — 1940-line function | **open** | none yet | Untestable in any unit-sized piece |
 | 10 | `dispatch.py` — 1624 lines | **open** | none yet | Every command is a routing change |
-| 11 | `config.py` — 24 env vars, one validation | **open** | none yet | A typo in a var name is a silent default |
-| 12 | `prompts.py` — 422 lines of module constants | **open** | none yet | A prompt edit cannot be reviewed byte-for-byte |
+| 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
+| 12 | `prompts.py` — 422 lines of module constants | **partial** — test exists | `test_prompts.py` | Relocation still to do |
 | 13 | `handlers.py` shared wrapper remains | **open** — waits on #8 | `test_finally_hosts.py` | ~9 duplicated calls per handler |
+
+Four tripwires were found to be measuring something other than their
+property while this was being fixed, and all four are recorded in the
+commits that rewrote them: a `MODEL` read count that a `model=""`
+mutation survived; a control test pinned to "item 9", which then became
+a real item; a substring check that could not tell "asserting a stale
+number" from "explaining why it was stale"; and a glob that was not
+recursive and hid a whole subpackage. None of them were red when
+written. Four more that I wrote tonight were falsified the same way
+before they shipped.
 
 ---
 
@@ -52,7 +62,7 @@ call_llama.py   972 lines, call_llama = 825 lines, 11 llm_* leaf modules
 handlers.py    1464 lines, 4 handlers at 158-291 lines each
 prompts.py      422 lines, 0 functions (module constants)
 storage.py      725 lines, class Storage encapsulated, get_store() sole entry
-config.py       273 lines, 24 distinct env names, 1 validation
+config.py       273 lines, 24 env names, plus 12 elsewhere in the package
 
 Line counts are splitlines(); the trailing newline is not a line. The
 earlier figures in this file came from split("\n") and were each one
