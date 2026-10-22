@@ -475,9 +475,10 @@ profile default. The old table hardcoded 32768 / 16384 here; those numbers
 moved when the limits module landed, and a doc that still quotes them is
 worse than one that quotes nothing.
 
-`use_stream=False` appears at exactly 2 production call sites --
-`handle_photo` (handlers.py:537) and its retry (handlers.py:587). Every
-other handler streams.
+`use_stream=False` appears at exactly 2 production call sites: the
+primary POST in `handle_photo` and the empty-response retry next to it.
+Every other handler streams. Counted, not listed by line -- line numbers
+here went stale the first time the retry moved.
 
 ---
 

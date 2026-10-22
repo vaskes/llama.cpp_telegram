@@ -420,7 +420,7 @@ async def call_bash_command(
                                  # returns False) and the chat_type
                                  # gate applies normally. The
                                  # caller SHOULD pass chat_id when
-                                 # in scope (call_llama.py:1401 does).
+                                 # in scope (the tool loop does).
                                  # This is preferable to parsing
                                  # chat_id from session_id, which is
                                  # fragile if a future commit changes

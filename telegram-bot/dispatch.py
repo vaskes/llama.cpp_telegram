@@ -949,7 +949,7 @@ def main():
 
     # W6-H2 follow-up. This used to be:
     #     TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
-    # which silently discarded the env-driven value config.py:23
+    # which silently discarded the env-driven API root config builds
     # builds for smoke testing -- the whole point of the v0.10.2
     # override. The module-level import at line 59 already binds
     # TELEGRAM_API correctly; the local assignment only shadowed it.

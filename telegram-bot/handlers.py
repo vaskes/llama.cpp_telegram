@@ -22,6 +22,7 @@ import tempfile
 # retry. llm_result owns it now. `_format_executed_tools` keeps its
 # historical name because tests/test_t44.py and the call sites use it.
 from llm_result import _format_executed_tools, unwrap_llm_result
+from llm_abort import finalize_aborted_turn
 
 from logconf import get_logger
 log = get_logger(__name__)
@@ -65,6 +66,7 @@ import prompts
 import rating
 from config import (
     BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, EMPTY_RESPONSE_PREFIX,
+    EMPTY_RESPONSE_USER_FALLBACK,
     MAX_DOC_BYTES, MAX_PHOTO_BYTES,
     # MAX_VIDEO_NOTE_BYTES is used by handle_voice, and that is not a typo:
     # handlers.AUDIO catches both voice messages and round video notes, so one
@@ -550,21 +552,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response_head = (bot_response if bot_response else "<aborted>")[:200]
         log.info(f"[handle_photo] call_llama returned: {response_chars} chars, head={response_head!r}")
         if bot_response is None or abort_event.is_set():
-            # v0.8.0: also discard if abort_event was set, even when
-            # call_llama returned a non-None response (post won the
-            # race). The user clicked Stop, so the LLM response
-            # should NOT be sent.
-            if bot_response is not None and abort_event.is_set():
-                log.info(f"[handle_photo] ABORTED via Stop; "
-                    f"discarding {len(bot_response)}-char response "
-                    f"(post-won race)")
-            else:
-                log.info(f"[handle_photo] ABORTED by user via Stop button, moving to next")
-            # T67.2: no rollback needed — the image was never written.
-            try:
-                await thinking.edit_text('⏹ Остановлено')
-            except Exception:
-                pass
+            await finalize_aborted_turn(
+                label='handle_photo', response=bot_response,
+                abort_event=abort_event, thinking=thinking)
             return
         # === Empty-response retry ===
         # The LLM sometimes returns no content, no reasoning,
@@ -589,18 +579,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_type=update.effective_chat.type,
             )
             if retry_response is None or abort_event.is_set():
-                # v0.8.0: same discard-on-abort as primary
-                if retry_response is not None and abort_event.is_set():
-                    log.info(f"[handle_photo] ABORTED on retry via Stop; "
-                        f"discarding {len(retry_response)}-char response")
-                else:
-                    log.info(f"[handle_photo] ABORTED on retry, moving to next")
-                try:
-                    await thinking.edit_text('⏹ Остановлено')
-                except Exception:
-                    pass
+                await finalize_aborted_turn(
+                    label='handle_photo', response=retry_response,
+                    abort_event=abort_event, thinking=thinking,
+                    attempt='retry')
                 return
-            # Same unwrap the primary path does (handlers.py:538).
+            # Same unwrap the primary path does -- the property that matters is that
+            # this answer goes through the one formatter, not a copy of it.
             # Added 2026-10-22: the retry did not have it, so every
             # reachable retry -- i.e. every empty-response retry, which is
             # the only reason this code exists -- died on
@@ -616,13 +601,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 log.info(f"[handle_photo] retry also empty, sending fallback")
                 bot_response = (
-                    '🤔 Не удалось получить ответ от модели. '
-                    'Возможные причины: перегруженный длинный контекст, '
-                    'сложный вопрос (предсказания, нишевые факты) или '
-                    'временный сбой llama-server. Попробуй:\n'
-                    '• /reset — очистить историю и начать с нуля\n'
-                    '• Переформулировать вопрос\n'
-                    '• Добавить больше деталей в вопрос'
+                                        EMPTY_RESPONSE_USER_FALLBACK
                 )
         # === Edit-during-LLM detection: removed (was v0.4) ===
         # Earlier versions compared the user's current message
@@ -840,19 +819,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # the race and returned a non-None response, we'd send it
         # even though the user clicked Stop. Add the explicit check.
         if bot_response is None or abort_event.is_set():
-            if bot_response is not None and abort_event.is_set():
-                log.info(f"[handle_voice] ABORTED via Stop; "
-                    f"discarding {len(bot_response)}-char response "
-                    f"(post-won race)")
-            else:
-                log.info(f"[handle_voice] ABORTED by user via Stop button, moving to next")
-            # v0.9.2: roll back the persisted transcript so the next
-            # user message is not answered about the (cancelled) voice.
-            await turn.rollback('aborted')
-            try:
-                await thinking.edit_text('⏹ Остановлено')
-            except Exception:
-                pass
+            await finalize_aborted_turn(
+                label='handle_voice', response=bot_response,
+                abort_event=abort_event, thinking=thinking,
+                turn=turn)
             return
         # === RATING_MODE dispatch (continuation) ===
         # rating_active was computed above (before call_llama).
@@ -981,23 +951,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
                 bot_response = unwrap_llm_result(_result)
             if bot_response is None or abort_event.is_set():
-                # v0.8.0: also discard if abort_event was set, even when
-                # call_llama returned a non-None response (post won the
-                # race). The user clicked Stop, so the LLM response
-                # should NOT be sent.
-                if bot_response is not None and abort_event.is_set():
-                    log.info(f"[handle_document] ABORTED via Stop; "
-                        f"discarding {len(bot_response)}-char response "
-                        f"(post-won race)")
-                else:
-                    log.info(f"[handle_document] ABORTED by user via Stop button, moving to next")
-                # v0.9.2: roll back the persisted document so the next user
-                # message is not answered about the (cancelled) document.
-                await turn.rollback('aborted')
-                try:
-                    await thinking.edit_text('⏹ Остановлено')
-                except Exception:
-                    pass
+                await finalize_aborted_turn(
+                    label='handle_document', response=bot_response,
+                    abort_event=abort_event, thinking=thinking,
+                    turn=turn)
                 return
             # === Empty-response retry (same as handle_photo) ===
             if bot_response.startswith(EMPTY_RESPONSE_PREFIX):
@@ -1014,20 +971,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_type=update.effective_chat.type,
                 )
                 if retry_response is None or abort_event.is_set():
-                    # v0.8.0: same discard-on-abort as primary
-                    if retry_response is not None and abort_event.is_set():
-                        log.info(f"[handle_document] ABORTED on retry via Stop; "
-                            f"discarding {len(retry_response)}-char response")
-                    else:
-                        log.info(f"[handle_document] ABORTED on retry, moving to next")
-                    # v0.9.2: rollback also on retry-abort
-                    await turn.rollback('aborted')
-                    try:
-                        await thinking.edit_text('⏹ Остановлено')
-                    except Exception:
-                        pass
+                    await finalize_aborted_turn(
+                        label='handle_document', response=retry_response,
+                        abort_event=abort_event, thinking=thinking,
+                        attempt='retry',
+                        turn=turn)
                     return
-                # Same unwrap the primary path does (handlers.py:538).
+                # Same unwrap the primary path does -- the property that matters is that
+                # this answer goes through the one formatter, not a copy of it.
                 # Added 2026-10-22: the retry did not have it, so every
                 # reachable retry -- i.e. every empty-response retry, which is
                 # the only reason this code exists -- died on
@@ -1043,13 +994,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     log.info(f"[handle_document] retry also empty, sending fallback")
                     bot_response = (
-                        '🤔 Не удалось получить ответ от модели. '
-                        'Возможные причины: перегруженный длинный контекст, '
-                        'сложный вопрос (предсказания, нишевые факты) или '
-                        'временный сбой llama-server. Попробуй:\n'
-                        '• /reset — очистить историю и начать с нуля\n'
-                        '• Переформулировать вопрос\n'
-                        '• Добавить больше деталей в вопрос'
+                                                EMPTY_RESPONSE_USER_FALLBACK
                     )
             # Edit-during-LLM detection removed: the check is a
             # no-op without a concurrent getUpdates consumer.
@@ -1245,23 +1190,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
                 bot_response = unwrap_llm_result(_result)
             if bot_response is None or abort_event.is_set():
-                # v0.8.0: also discard if abort_event was set, even when
-                # call_llama returned a non-None response (post won the
-                # race). The user clicked Stop, so the LLM response
-                # should NOT be sent.
-                if bot_response is not None and abort_event.is_set():
-                    log.info(f"[handle_text] ABORTED via Stop; "
-                        f"discarding {len(bot_response)}-char response "
-                        f"(post-won race)")
-                else:
-                    log.info(f"[handle_text] ABORTED by user via Stop button, moving to next")
-                # v0.9.2: roll back the persisted user message so the next
-                # message is not answered about the (cancelled) one.
-                await turn.rollback('aborted')
-                try:
-                    await thinking.edit_text('⏹ Остановлено')
-                except Exception:
-                    pass
+                await finalize_aborted_turn(
+                    label='handle_text', response=bot_response,
+                    abort_event=abort_event, thinking=thinking,
+                    turn=turn)
                 return
             # === Empty-response retry (same as handle_photo) ===
             if bot_response.startswith(EMPTY_RESPONSE_PREFIX):
@@ -1278,20 +1210,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_type=update.effective_chat.type,
                 )
                 if retry_response is None or abort_event.is_set():
-                    # v0.8.0: same discard-on-abort as primary
-                    if retry_response is not None and abort_event.is_set():
-                        log.info(f"[handle_text] ABORTED on retry via Stop; "
-                            f"discarding {len(retry_response)}-char response")
-                    else:
-                        log.info(f"[handle_text] ABORTED on retry, moving to next")
-                    # v0.9.2: rollback also on retry-abort
-                    await turn.rollback('aborted')
-                    try:
-                        await thinking.edit_text('⏹ Остановлено')
-                    except Exception:
-                        pass
+                    await finalize_aborted_turn(
+                        label='handle_text', response=retry_response,
+                        abort_event=abort_event, thinking=thinking,
+                        attempt='retry',
+                        turn=turn)
                     return
-                # Same unwrap the primary path does (handlers.py:538).
+                # Same unwrap the primary path does -- the property that matters is that
+                # this answer goes through the one formatter, not a copy of it.
                 # Added 2026-10-22: the retry did not have it, so every
                 # reachable retry -- i.e. every empty-response retry, which is
                 # the only reason this code exists -- died on
@@ -1307,13 +1233,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     log.info(f"[handle_text] retry also empty, sending fallback")
                     bot_response = (
-                        '🤔 Не удалось получить ответ от модели. '
-                        'Возможные причины: перегруженный длинный контекст, '
-                        'сложный вопрос (предсказания, нишевые факты) или '
-                        'временный сбой llama-server. Попробуй:\n'
-                        '• /reset — очистить историю и начать с нуля\n'
-                        '• Переформулировать вопрос\n'
-                        '• Добавить больше деталей в вопрос'
+                                                EMPTY_RESPONSE_USER_FALLBACK
                     )
             # Edit-during-LLM detection removed: the check is a
             # no-op without a concurrent getUpdates consumer.

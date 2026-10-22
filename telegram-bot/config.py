@@ -110,6 +110,21 @@ EMPTY_RESPONSE_FALLBACK = (
     "spent all its tokens on internal reasoning without writing a reply. "
     "Try /reset to clear context, or switch to a less reasoning-heavy model.]"
 )
+# What the user actually reads when the model came back empty twice. A
+# separate string from EMPTY_RESPONSE_FALLBACK on purpose: that one is
+# the internal marker, this one is for a person. They were the same text
+# written out three times in handlers.py, where a fix to the wording only
+# reached two of the three.
+EMPTY_RESPONSE_USER_FALLBACK = (
+    "\U0001F914 Не удалось получить ответ от модели. "
+    "Возможные причины: перегруженный длинный контекст, "
+    "сложный вопрос (предсказания, нишевые факты) или "
+    "временный сбой llama-server. Попробуй:\n"
+    "\u2022 /reset \u2014 очистить историю и начать с нуля\n"
+    "\u2022 Переформулировать вопрос\n"
+    "\u2022 Добавить больше деталей в вопрос"
+)
+
 MAX_DOC_BYTES = int(os.environ.get("MAX_DOC_BYTES", "5000000"))         # 5 MB
 MAX_VOICE_BYTES = int(os.environ.get("MAX_VOICE_BYTES", "20000000"))    # 20 MB
 MAX_VIDEO_NOTE_BYTES = int(os.environ.get("MAX_VIDEO_NOTE_BYTES", "50000000"))  # 50 MB
