@@ -230,6 +230,51 @@ async def _persist_for_reply(context, update, chat_id, thread_id, bot_response,
         return None
     return bot_response
 
+
+
+# === _open_thinking ===
+
+
+async def _open_thinking(update, *, label: str):
+    """The thinking message and the display name. None means it never sent.
+
+    The first thing every handler does with the chat, and the two
+    results are what the abort registration and the persist both need.
+
+    None is not hypothetical: `_reply` gives up after three TimedOuts
+    (T48), and all four handlers read `thinking.message_id` on the next
+    line, which raises AttributeError on None. The guard belongs here,
+    where the message was asked for -- not in a `finally`, which is
+    cleanup and not a guard.
+
+    The sender name comes after the message on purpose. Three handlers
+    computed it first and photo second; nothing reads it between, so both
+    orders are the same turn and this pins one.
+    """
+    thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+    if thinking is None:
+        log.warning(f"[{label}] could not send the thinking message after "
+                    f"three timeouts; giving up on this update")
+        return None
+    return thinking, _sender_display_name(update.message.from_user)
+
+
+# === _turn_context ===
+
+
+async def _turn_context(update, chat_id, thread_id, *, label: str):
+    """Conversation history and whether this turn is in rating mode.
+
+    For the three handlers that persist a turn first. Photo does not,
+    and its order is genuinely different -- it reads rating mode before
+    the history because it has nothing to persist -- so it is not
+    included rather than being given a flag it does not use.
+    """
+    history = await _load_history(chat_id, thread_id)
+    log.info(f"[{label}] user_id={update.effective_user.id} "
+             f"thread_id={thread_id!r} history_len={len(history)}")
+    return history, _is_rating_active(update)
+
 # === _acquire_turn_slot ===
 
 
@@ -575,19 +620,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # a BadRequest on get_file() (wrong file_id, expired) registered
         # no abort_event, and the next text message answered about the
         # (now-orphaned) image that was already persisted to history.
-        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-        # 2026-10-22: _reply returns None after three TimedOuts (T48).
-        # The attribute was read on the next line in all four handlers and
-        # raised AttributeError. Guard at the read, not in the finally --
-        # a fix in cleanup is not a guard.
-        if thinking is None:
-            log.warning(f"[handle_photo] could not send the thinking message after "
-                        f"three timeouts; giving up on this update")
+        opened = await _open_thinking(update, label='handle_photo')
+        if opened is None:
             return
+        thinking, sender_name = opened
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
         thread_id = thread_id  # already resolved by _route_to_thread
-        sender_name = _sender_display_name(update.message.from_user)
         # T67.2: images are NOT persisted.
         #
         # The operator's call (2026-10-20): the image participates in the
@@ -853,27 +892,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # No parse_mode — transcript is user-generated and may contain
         # '*', '_', '[', '`', which would break Markdown rendering.
         await _reply(update, f'🎤 Transcript:\n{transcript}')
-        sender_name = _sender_display_name(update.message.from_user)
         # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
         # click during the LLM call can roll the transcript back. See
         # handle_photo for the same pattern.
-        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-        # 2026-10-22: _reply returns None after three TimedOuts (T48).
-        # The attribute was read on the next line in all four handlers and
-        # raised AttributeError. Guard at the read, not in the finally --
-        # a fix in cleanup is not a guard.
-        if thinking is None:
-            log.warning(f"[handle_voice] could not send the thinking message after "
-                        f"three timeouts; giving up on this update")
+        opened = await _open_thinking(update, label='handle_voice')
+        if opened is None:
             return
+        thinking, sender_name = opened
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
         await turn.persist(transcript, role='user', sender_name=sender_name)
         persisted = turn.persisted
         persisted = True
-        history = await _load_history(chat_id, thread_id)
-        log.info(f"[handle_voice] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
-        rating_active = _is_rating_active(update)
+        history, rating_active = await _turn_context(
+            update, chat_id, thread_id, label='handle_voice')
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
@@ -982,26 +1014,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 doc_text = f.read()[:16000]
             caption = update.message.caption or 'Read the document and answer questions.'
             user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
-            sender_name = _sender_display_name(update.message.from_user)
             # v0.9.2: persist AFTER thinking+abort_event are wired so a
             # Stop click during the LLM call can roll the document back.
-            thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-            # 2026-10-22: _reply returns None after three TimedOuts (T48).
-            # The attribute was read on the next line in all four handlers and
-            # raised AttributeError. Guard at the read, not in the finally --
-            # a fix in cleanup is not a guard.
-            if thinking is None:
-                log.warning(f"[handle_document] could not send the thinking message after "
-                            f"three timeouts; giving up on this update")
+            opened = await _open_thinking(update, label='handle_document')
+            if opened is None:
                 return
+            thinking, sender_name = opened
             abort_event = asyncio.Event()
             _register_abort_event(chat_id, thinking.message_id, abort_event)
             await turn.persist(user_content, role='user', sender_name=sender_name)
             persisted = turn.persisted
             persisted = True
-            history = await _load_history(chat_id, thread_id)
-            log.info(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
-            rating_active = _is_rating_active(update)
+            history, rating_active = await _turn_context(
+                update, chat_id, thread_id, label='handle_document')
             # T1 (P0-1): global LLM concurrency cap.
             async with _get_global_llm_sem():
                 _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
@@ -1181,21 +1206,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.chat.send_action(action='typing')
             except Exception as e:
                 log.warning(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}")
-            sender_name = _sender_display_name(update.message.from_user)
             # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
             # click during the LLM call can roll the message back.
-            thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-            # T34 race fix v2: REUSE the early_event created at ENTRY
-            # time, so a follow-up that arrived between EARLY-RECORD
-            # and this point (and called set() on early_event) is
-            # observable here. If we created a fresh event now, the
-            # burst-set event would be orphaned and the LLM call
-            # would proceed to a half-answer.
-            # 2026-10-22: same None guard as the other three handlers.
-            if thinking is None:
-                log.warning("[handle_text] could not send the thinking message "
-                            "after three timeouts; giving up on this update")
+            opened = await _open_thinking(update, label='handle_text')
+            if opened is None:
                 return
+            thinking, sender_name = opened
             abort_event = early_event
             _register_abort_event(chat_id, thinking.message_id, abort_event)
             await turn.persist(user_message, role='user', sender_name=sender_name)
@@ -1209,23 +1225,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _record_user_message(chat_id, user_id, msg_bytes, abort_event)
             log.info(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]")
             persisted = True
-            history = await _load_history(chat_id, thread_id)
-            log.info(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
-        except BaseException:
-            if persisted:
-                try:
-                    await turn.rollback('aborted')
-                except Exception:
-                    pass
-            if thinking is not None:
-                try:
-                    _abort_events.pop((chat_id, thinking.message_id), None)
-                except Exception:
-                    pass
-            raise
-
-        try:
-            rating_active = _is_rating_active(update)
+            history, rating_active = await _turn_context(
+                update, chat_id, thread_id, label='handle_text')
             # T1 (P0-1): wrap call_llama in the global semaphore so
             # 50 different users in a group can only cause 4
             # concurrent LLM forwards on the same GPU.

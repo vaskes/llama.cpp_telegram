@@ -42,14 +42,34 @@ def _functions(tree):
             yield node
 
 
+def _bound_names(target):
+    """Every plain Name a target assigns, unpacking tuples and lists.
+
+    Added because `a, b = thing` stopped counting as an assignment of
+    `a` when a handler moved to tuple unpacking, and this check went
+    blind to exactly the name it exists to guard: handlers initialise
+    `thinking = None` before the try and assign the real message after
+    it, so dropping the unpacked form left the only assignment looking
+    like the None initialiser, and the check red on correct code while
+    losing the ability to catch the bug.
+    """
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [nm for e in target.elts for nm in _bound_names(e)]
+    return []
+
+
 def _only_bound_to_none(fn, name):
-    """True when every plain assignment of `name` is the literal None."""
+    """True when every assignment of `name` is the literal None."""
     assigns = [n for n in ast.walk(fn)
-               if isinstance(n, ast.Assign) and len(n.targets) == 1
-               and isinstance(n.targets[0], ast.Name)
-               and n.targets[0].id == name]
+               if isinstance(n, ast.Assign)
+               and any(name in _bound_names(t) for t in n.targets)]
     if not assigns:
         return False
+    # an assignment that binds the name among others still counts as a
+    # real binding -- `a, b = (None, x)` binds `a` to None, not to the
+    # tuple, but `a, b = thing` binds it to something computed
     return all(isinstance(a.value, ast.Constant) and a.value.value is None
                for a in assigns)
 
@@ -76,8 +96,8 @@ def test_no_none_only_local_is_dereferenced(module):
 
     offenders = []
     for fn in _functions(tree):
-        assigned = {t.id for n in ast.walk(fn) if isinstance(n, ast.Assign)
-                    for t in n.targets if isinstance(t, ast.Name)}
+        assigned = {nm for n in ast.walk(fn) if isinstance(n, ast.Assign)
+                    for t in n.targets for nm in _bound_names(t)}
         for name in assigned:
             if not _only_bound_to_none(fn, name):
                 continue

@@ -87,11 +87,11 @@ STAGES = [
     # code is one people delete.
     "_acquire_turn_slot",
     "send_action",
-    ("_sender_display_name", "_stop_button_markup"),
+    # The thinking message, the sender name and the stop button, as one
+    # stage: block F moved them into `_open_thinking`. Order inside that
+    # helper is fixed, which is why the tuple is gone.
+    "_open_thinking",
     "_register_abort_event",
-    "_load_history",
-    "_is_rating_active",
-    "_get_global_llm_sem",
     "call_llama",
     # rating dispatch + persist, as one stage: moved into
     # `_persist_for_reply` in block E. The name changed because the
@@ -140,24 +140,30 @@ def test_the_skeleton_runs_in_order(handler):
         )
 
 
-def test_the_two_unordered_names_really_are_unordered():
-    """Guards the `("a", "b")` tuple above.
+def test_the_thinking_and_sender_name_order_is_fixed_now():
+    """Block C recorded that three handlers computed the sender name
+    first and photo posted the thinking message first. Block F moved both
+    into `_open_thinking` and fixed the order, so the tuple stage is gone.
 
-    If one handler ever fixes the order, the tuple can become a plain
-    string and this test should say so rather than silently keep
-    accepting either. If it has not -- which is the case today, and the
-    reason the stage list is a list of tuples -- this stays as the
-    record that it was measured, not assumed.
+    What replaces the old measurement is that the order lives in one
+    place. Both results are needed by the abort registration and the
+    persist, and neither reads the other, so the order is free -- but it
+    is now free in one function rather than four.
     """
-    orders = {}
-    for handler in HANDLERS:
-        lines = (min(_sites(_handler(handler), "_sender_display_name")),
-                 min(_sites(_handler(handler), "_stop_button_markup")))
-        orders[handler] = "name-then-markup" if lines[0] < lines[1] else "markup-then-name"
-    assert len(set(orders.values())) > 1, (
-        f"all four handlers now agree on the order ({orders}). The tuple in "
-        f"STAGES can become a single name and this test can assert the order"
-    )
+    src = (BOT / "handlers.py").read_text(encoding="utf-8")
+    for fn in ast.walk(ast.parse(src)):
+        if isinstance(fn, ast.AsyncFunctionDef) and fn.name == "_open_thinking":
+            ret = next(n for n in fn.body if isinstance(n, ast.Return))
+            assert isinstance(ret.value, ast.Tuple), \
+                "the helper must return both, not one"
+            first, second = ret.value.elts
+            assert ast.unparse(first).startswith("thinking") or \
+                "thinking" in ast.unparse(first), \
+                f"thinking must be computed before the name: {ast.unparse(ret)}"
+            assert "_sender_display_name" in ast.unparse(second), \
+                f"second element must be the sender name: {ast.unparse(ret)}"
+            return
+    raise AssertionError("_open_thinking not found")
 
 
 # --- the three divergences, checked as divergences ------------------------
