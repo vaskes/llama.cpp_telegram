@@ -162,7 +162,10 @@ Noise filter (group mode only):
     LLM to yield to in a 1:1 chat)
 
 Whitelist: in group mode the `ALLOWED_USER_IDS` env var is
-**skipped entirely**. Access control is delegated to Telegram
+**skipped entirely** -- for the conversation path only. Slash
+commands and the inline-keyboard callbacks are still checked against
+`ALLOWED_USER_IDS`, in a group as well as in private (since
+2026-10-22). Access control for the conversation is delegated to Telegram
 (group membership + per-topic permissions). For details, see
 [docs/SECURITY.md](SECURITY.md) §"Group mode security".
 

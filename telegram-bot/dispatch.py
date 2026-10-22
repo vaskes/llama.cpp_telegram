@@ -181,6 +181,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === reset ===
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. The group branch below returned before the
+    # authorization check, so anyone who could write could clear history,
+    # create topics, or delete them outright (cmd_delsub calls
+    # deleteForumTopic, which is not a local record).
+    if await reject_if_unauthorized(update, context):
+        return
     """Clear the messages in the current sub-talk / topic."""
     # === Group mode: clear history in the current topic ===
     if _is_group_chat(update):
@@ -265,6 +272,13 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === stats ===
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. The group branch below returned before the
+    # authorization check, so anyone who could write could clear history,
+    # create topics, or delete them outright (cmd_delsub calls
+    # deleteForumTopic, which is not a local record).
+    if await reject_if_unauthorized(update, context):
+        return
     # T70 observability: the context policy is the one thing a user cannot
     # see from the outside. "Remembers 847 of 4231" is the question that
     # matters — and until /stats answered it, the only way to check was to
@@ -354,6 +368,13 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === cmd_newsub ===
 async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. The group branch below returned before the
+    # authorization check, so anyone who could write could clear history,
+    # create topics, or delete them outright (cmd_delsub calls
+    # deleteForumTopic, which is not a local record).
+    if await reject_if_unauthorized(update, context):
+        return
     # === Group mode: create a forum topic via createForumTopic ===
     if _is_group_chat(update):
         topic_name = _parse_topic_arg(update.message.text)
@@ -417,6 +438,13 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === cmd_sub ===
 async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. The group branch below returned before the
+    # authorization check, so anyone who could write could clear history,
+    # create topics, or delete them outright (cmd_delsub calls
+    # deleteForumTopic, which is not a local record).
+    if await reject_if_unauthorized(update, context):
+        return
     # === Group mode: navigate-by-name is not really a thing in
     # Telegram forum topics (the user just taps the topic in the
     # sidebar). Best we can do is show the current topic. ===
@@ -449,6 +477,13 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === cmd_here ===
 async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. The group branch below returned before the
+    # authorization check, so anyone who could write could clear history,
+    # create topics, or delete them outright (cmd_delsub calls
+    # deleteForumTopic, which is not a local record).
+    if await reject_if_unauthorized(update, context):
+        return
     # === Group mode: show the current topic's name + last snippet ===
     if _is_group_chat(update):
         chat_id = update.effective_chat.id
@@ -514,6 +549,13 @@ async def cmd_here(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === cmd_subs ===
 async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. The group branch below returned before the
+    # authorization check, so anyone who could write could clear history,
+    # create topics, or delete them outright (cmd_delsub calls
+    # deleteForumTopic, which is not a local record).
+    if await reject_if_unauthorized(update, context):
+        return
     # === Group mode: list known topics from local DB ===
     # Telegram Bot API does NOT expose a "list all forum topics"
     # method to bots, so we list from our local known_topics table
@@ -582,6 +624,13 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === cmd_delsub ===
 async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. The group branch below returned before the
+    # authorization check, so anyone who could write could clear history,
+    # create topics, or delete them outright (cmd_delsub calls
+    # deleteForumTopic, which is not a local record).
+    if await reject_if_unauthorized(update, context):
+        return
     # === Group mode: look up the topic in known_topics, then deleteForumTopic ===
     # Telegram Bot API does NOT expose a "list all topics" method to
     # bots, so we look up the topic by name (or numeric id) in our
@@ -1271,6 +1320,13 @@ async def _register_bot_menu():
 
 # === cmd_callback ===
 async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. The group branch below returned before the
+    # authorization check, so anyone who could write could clear history,
+    # create topics, or delete them outright (cmd_delsub calls
+    # deleteForumTopic, which is not a local record).
+    if await reject_if_unauthorized(update, context):
+        return
     """Handle inline-keyboard button presses.
 
     callback_data format:

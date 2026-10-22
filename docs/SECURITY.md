@@ -38,7 +38,22 @@ would confirm the bot is alive.
 
 ## 2. Group mode security
 
-**Group mode skips the whitelist entirely.** Any member of the
+**Conversation is open in a group. Commands are not.** Since
+2026-10-22 every slash command -- `/reset`, `/stats`, `/sub`, `/subs`,
+`/here`, `/newsub`, `/delsub`, `/help` -- and the inline-keyboard callback
+handler check `ALLOWED_USER_IDS` before doing anything, in a group as
+well as in private. Only ids in the allowlist get an answer; strangers
+are rejected silently. Before this, eight handlers branched on the chat
+type first and returned from the group path without ever consulting the
+whitelist, so any member could delete forum topics and clear history.
+
+Telegram cannot be delegated to here. Anyone who can post can be an
+author, but `deleteForumTopic` has no ACL: a public group gave every
+member the ability to destroy its topic tree. That is a local record
+only for `/reset`, and a real API call for `/delsub`.
+
+**The conversation path is what skips the whitelist entirely.** Any
+member of the
 supergroup can use the bot. Access control is delegated to
 Telegram itself:
 
