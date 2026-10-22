@@ -26,12 +26,39 @@ import sys
 
 import pytest
 
+# The ledger names this file as item 9's marker too, and
+# `test_tech_debt_ledger` holds the two to naming each other. The
+# runtime golden pins the sequence; this file pins the property the
+# golden cannot see -- that each extracted block is a module-level
+# coroutine, callable on its own, and awaited by `_selftest`.
+pytestmark = pytest.mark.tech_debt(
+    item=9,
+    reason="Pins TECH-DEBT #9: every selftest leaf block is a "
+           "zero-argument `check_*() -> bool`, runnable in isolation, "
+           "and awaited by `_selftest`.")
+
 BOT = pathlib.Path(__file__).resolve().parent.parent / "telegram-bot"
 if str(BOT) not in sys.path:
     sys.path.insert(0, str(BOT))
 
 MODULES = ("selftest_storage", "selftest_handlers", "selftest_access",
-            "selftest_state", "selftest_media")
+            "selftest_state", "selftest_media", "selftest_llm",
+            "selftest_infra")
+
+
+# `selftest_llm` is driven one block at a time rather than through
+# `run_all`, because the `selftest_handlers` and `selftest_storage`
+# summaries sit between its first three blocks and the golden pins the
+# *sequence*. Folding them into one call would reorder the golden.
+#
+# That arrangement is not something the golden can check, and it is not
+# something `test_run_all_reports_its_own_name` covers either -- for this
+# module `run_all` is never called, so demanding its summary appear would
+# be demanding something the driver deliberately does not do. So the
+# claim that matters is stronger and checked separately below: every
+# `check_*` in the module is awaited from `_selftest`.
+POSITIONAL_MODULES = ("selftest_llm",)
+DRIVEN_BY_RUN_ALL = tuple(m for m in MODULES if m not in POSITIONAL_MODULES)
 
 
 def _blocks(module):
@@ -102,7 +129,7 @@ def test_every_block_passes_when_run_alone(module_name):
             f"get right.\n{err or ''}")
 
 
-@pytest.mark.parametrize("module_name", MODULES)
+@pytest.mark.parametrize("module_name", DRIVEN_BY_RUN_ALL)
 def test_run_all_reports_its_own_name(module_name):
     """The label, not the behaviour.
 
@@ -123,3 +150,46 @@ def test_run_all_reports_its_own_name(module_name):
         f"it, so this failing means the line was built by hand instead -- "
         f"which is how the storage summary ended up claiming to be the "
         f"group-mode tests.\nThe summaries are:\n" + "\n".join(tail))
+
+@pytest.mark.parametrize("module_name", POSITIONAL_MODULES)
+def test_every_block_is_awaited_by_selftest(module_name):
+    """The seam the golden cannot see, for a module with no `run_all` call.
+
+    Removing `.run()` from `call_llama` returned a `ToolLoop` instead of
+    an answer and left 333 tests green, because every test of the new
+    unit drove it directly and none could see whether its caller called
+    it. The same shape is available here: a `check_*` that nothing
+    awaits runs nowhere, reports nothing, and takes its markers out of
+    the golden -- which is a diff, but one a reader has to notice.
+
+    So this reads `_selftest` and checks every block in the module is
+    awaited by name. It is the caller-side direction for a module whose
+    blocks are driven individually.
+    """
+    import ast
+
+    mod = __import__(module_name)
+    src = (BOT / "selftest.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.AsyncFunctionDef) and n.name == "_selftest")
+
+    awaited = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call):
+            f = node.func
+            if (isinstance(f, ast.Attribute)
+                    and isinstance(f.value, ast.Name)
+                    and f.value.id == module_name
+                    and f.attr.startswith("check_")):
+                awaited.add(f.attr)
+
+    missing = sorted(name for name, _fn in _blocks(mod)
+                     if name not in awaited)
+    assert not missing, (
+        f"{module_name} defines {missing} but `_selftest` never awaits "
+        f"{missing}. A block nothing calls runs nowhere -- its markers "
+        f"disappear from the golden, which is a diff rather than a "
+        f"failure. Modules driven by run_all are covered by "
+        f"`test_the_module_exists_and_has_blocks`; this is the "
+        f"caller-side direction for the ones that are not.")

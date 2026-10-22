@@ -32,7 +32,7 @@ disagreement again without a test going red.
 | 6 | `created_at` from the Python clock | **closed** — decision, see file | `test_t6_db_clock.py` | — |
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
 | 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
-| 9 | `selftest._selftest` — was 1940 lines | **in progress** (T1.1) | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `selftest_harness.py`, `selftest_golden.log` | Runtime harness landed first; `mutation_harness_selftest.py` scores the extracts |
+| 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
 | 10 | `dispatch.py` — 1625 lines | **open** | none yet | Every command is a routing change |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **partial** — test exists | `test_prompts.py` | Relocation still to do |
@@ -58,7 +58,7 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
 dispatch.py    1625 lines, 18 top-level defs
-selftest.py    1150 lines, _selftest = 1016 lines   <- still the largest single unit
+selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   972 lines, call_llama = 825 lines, 11 llm_* leaf modules
 handlers.py    1464 lines, 4 handlers at 158-291 lines each
 prompts.py      422 lines, 0 functions (module constants)
@@ -79,10 +79,9 @@ The largest unit of untested code in the repository is not `call_llama`
 absent from item 1's text, which describes moving `_selftest` out of
 `bot.py` as though that had resolved it. The move did not shrink it.
 
-That is the sentence as written on 2026-10-22, and it is the last
-sentence in the file that is still true as written. T1.1 has since cut
-`_selftest` to 1016 lines across five leaf modules, and the 1940-line
-figure below it is the size it *started* from.
+That is the sentence as written on 2026-10-22, and it is no longer true.
+T1.1 cut `_selftest` from 1940 lines to 111 across seven leaf modules, and
+the 1940-line figure below it is the size it *started* from.
 
 ---
 

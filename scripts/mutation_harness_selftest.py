@@ -52,6 +52,13 @@ PER_TEST_TIMEOUT = 300
 A = ROOT / "telegram-bot" / "selftest_access.py"
 H = ROOT / "telegram-bot" / "selftest_handlers.py"
 S = ROOT / "telegram-bot" / "selftest_storage.py"
+L = ROOT / "telegram-bot" / "selftest_llm.py"
+I = ROOT / "telegram-bot" / "selftest_infra.py"
+# `selftest_llm`'s blocks are driven one at a time, not through run_all,
+# because the handlers/storage summaries sit between its first three and
+# the golden pins the sequence. So the seam mutation for it is on
+# selftest.py: drop one positional call.
+ST = ROOT / "telegram-bot" / "selftest.py"
 NL = chr(10)
 
 
@@ -176,11 +183,22 @@ MUTATIONS = [
          (r"(f\"\{'all pass' if all_ok else 'FAILED'\}\"\)\n)( *)return all_ok",
           r"\1\2return True", 1)]),
 
-    # `return all_ok` inside a check becomes a constant. Every marker is
-    # still logged and the summary still says "all pass", so the golden
-    # cannot see this at all -- only a test that reads the verdict can,
-    # which is what `test_every_block_passes_when_run_alone` is for.
-    ("noise filter: the block returns True whatever the cases said", A, [
+    # `return all_ok` inside a check becomes a constant, with a case
+    # inverted so the constant is actually wrong. Every marker is still
+    # logged -- including the `[FAIL]` line for the inverted case -- so
+    # the golden cannot see this at all: only a test that reads the
+    # verdict can, which is what `test_every_block_passes_when_run_alone`
+    # is for.
+    #
+    # The first version of this mutation replaced the return on its own
+    # and SURVIVED, correctly. On a clean tree every case passes, so
+    # `all_ok` is True and `return True` is the same value; the mutation
+    # was vacuous, not the test weak. Breaking an expectation as well is
+    # what makes the question answerable: when a case really fails, does
+    # what the block returns say so?
+    ("noise filter: a case fails and the return ignores it", A, [
+         (r"(_FakeFromUser\(True,\s*'ClaudeBot'\), 'whatever',\s*group_chat,\s*)True\)",
+          r"\1False)", 1),
          (r"(?s)(async def check_noise_filter\(\) -> bool:.*?\n)( *)(return all_ok\n)",
           r"\1\2return True\n", 1)]),
 
@@ -199,6 +217,87 @@ MUTATIONS = [
     ("noise filter: the filter is called on the chat instead of the update",
      A, [
          (r"got = _should_mute_in_group\(upd\)", "got = _should_mute_in_group(chat)", 1)]),
+
+    # The seam a positional driver can lose. Removing `.run()` from
+    # `call_llama` returned a ToolLoop instead of an answer and left 333
+    # tests green; this is the same shape on the other side of an
+    # extraction. Dropping the call means the block runs nowhere, its
+    # markers leave the golden -- which is a diff, not a failure, so
+    # without `test_every_block_is_awaited_by_selftest` it would be read
+    # and accepted.
+    ("a positional selftest_llm block is never awaited", ST, [
+        (r" *await selftest_llm\.check_react_to_message\(\)\n", "", 1)]),
+
+    # NOTE: two mutations that used to live here were removed after the
+    # first run, and the reason is the most useful thing this harness
+    # has to say.
+    #
+    # "a positional block's verdict is discarded" and "the all_ok
+    # initialiser is no longer an assignment" both SURVIVED. The
+    # verdict one did so for the ordinary reason -- on a clean tree every
+    # block returns True, so dropping an `&=` changes nothing.
+    #
+    # But asking why it was vacuous at all is what found the real thing:
+    # `all_ok` in `_selftest` was written twelve times and read zero
+    # times. It had been write-only before T1.1 too -- the smoke test
+    # has no exit code and reports by logging -- but it *looked*
+    # load-bearing, and that is exactly how the storage summary came to
+    # read the aggregate of everything before it and claim to be the
+    # group-mode tests.
+    #
+    # So the flag is gone rather than given a reader. Every leaf now
+    # returns its own verdict AND logs its own summary line, and the
+    # golden pins those lines, so an aggregate would restate what is
+    # already held. `test_every_block_is_awaited_by_selftest` replaces
+    # the direction the flag used to provide.
+
+    # The one that actually shipped during this extraction. A block that
+    # carries two sections -- `check_group_context` runs the F2/NEW-2
+    # global LLM semaphore and then the GROUP_CONTEXT injection -- has
+    # two `all_ok &=` lines, and the builder converted only the last one
+    # into the return value. The earlier assignment was then to a name
+    # that had never been bound inside the function, which is an
+    # UnboundLocalError at the first `all_ok &= sem_ok`.
+    #
+    # It is in this harness because nothing structural can see it: the
+    # name is a local of a function, so no AST check resolves it, and the
+    # golden only notices because the selftest process dies half way
+    # through. A mutation that deletes the initialiser reproduces exactly
+    # that, and the runtime test is what catches it.
+    ("a check_* uses all_ok without initialising it", L, [
+        (r"(async def check_group_context\(\) -> bool:\n)    all_ok = True\n",
+         r"\1", 1)]),
+
+    # Same shape, different block: the per-handler abort_event key
+    # assigns `aek_ok` twice through a try/except and the verdict line
+    # is the only thing that returns it. Deleting it leaves the block
+    # running and reporting every marker, and returning None -- which
+    # reads as "failed" to `all_ok &=` and as "no opinion" to anyone
+    # reading the block.
+    #
+    # The summary line sits between the assignment and the return, which
+    # is the shape the builder produces for every block here. The first
+    # version of this anchor assumed the two were adjacent and was
+    # REFUSED for finding 0 sites -- which is the guard working, not a
+    # broken mutation.
+    ("infra: the abort_event key block returns nothing", I, [
+        (r"( *)(all_ok = aek_ok\n)([^\n]*\n)( *)return all_ok\n",
+         r"\1\2\3", 1)]),
+
+    # NOT SCORED, and recorded here because a mutation that cannot be
+    # made to red is worse than no mutation: it reads as coverage.
+    #
+    # "the donsetch env guard is removed" survived, and correctly. The
+    # harness runs with DONSETCH_URL pointed at a stub, so the guard's
+    # early return never fires and removing it changes nothing here. It
+    # IS reachable -- `test_every_block_passes_when_run_alone` drives
+    # this block in a subprocess with neither DONSETCH_URL nor
+    # LLAMABOT_SELFTEST set, and in that environment removing the guard
+    # turns a skip into a NameError on `donsetch_call`.
+    #
+    # Answering it would mean a second harness run with the variable
+    # unset, and the golden pins the markers this block emits, so the
+    # environments are not interchangeable. Dropped rather than counted.
 ]
 
 

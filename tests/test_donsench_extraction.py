@@ -27,6 +27,30 @@ from pathlib import Path
 import pytest
 
 BOT = Path(__file__).resolve().parent.parent / "telegram-bot"
+
+# TECH-DEBT #9 moved the donsetch integration block out of `selftest.py`
+# and into `selftest_infra.py`. The two tests below used to read
+# `selftest.py` and went red on the move -- the property they check did
+# not change, only which file holds it.
+#
+# That is the tripwire-that-goes-red-on-a-harmless-refactor shape, and
+# the answer is never to weaken the assertion. It is to re-point it at
+# the property: the reset has to exist somewhere in the selftest
+# package, and it has to land on the module that owns the global. Both
+# files are now searched, and neither is privileged.
+SELFTEST_MODULES = ("selftest.py", "selftest_infra.py")
+
+
+def _selftest_sources():
+    """Every module in the selftest package, and their concatenation.
+
+    Concatenation matters for the comment check: a comment and the code
+    it describes are read together, and splitting them across two reads
+    would let a file pass a claim that another file contradicts.
+    """
+    parts = [(name, (BOT / name).read_text(encoding="utf-8"))
+             for name in SELFTEST_MODULES]
+    return parts, "\n".join(src for _n, src in parts)
 sys.path.insert(0, str(BOT))
 
 import call_llama  # noqa: E402
@@ -117,31 +141,34 @@ async def test_patching_the_owner_is_observed_by_donsetch_call(monkeypatch):
 def test_selftest_patches_the_owning_module():
     """Structural half: selftest must name `donsetch`, not `call_llama`,
     for the session reset."""
-    src = (BOT / "selftest.py").read_text(encoding="utf-8")
-    assert "_donsetch_session_id = None" in src, (
-        "selftest no longer resets the MCP session"
+    parts, joined = _selftest_sources()
+    assert "_donsetch_session_id = None" in joined, (
+        f"selftest no longer resets the MCP session. Searched: "
+        f"{[n for n, _ in parts]}"
     )
-    tree = ast.parse(src)
 
-    # Resolve `import donsetch as _ds` before judging the write. Comparing
-    # the alias name to a module name is the same mistake in miniature:
-    # it says a patch is misplaced because of how the patch is spelled.
     aliases = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for a in node.names:
-                aliases[a.asname or a.name.split(".")[0]] = a.name
-
     writes_to = set()
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.Assign)
-                and isinstance(node.targets[0], ast.Attribute)
-                and node.targets[0].attr == "_donsetch_session_id"):
-            base = node.targets[0].value
-            if isinstance(base, ast.Name):
-                writes_to.add(aliases.get(base.id, base.id))
-            elif isinstance(base, ast.Attribute):
-                writes_to.add(aliases.get(base.attr, base.attr))
+    for name, src in parts:
+        tree = ast.parse(src)
+        # Resolve `import donsetch as _ds` before judging the write.
+        # Comparing the alias name to a module name is the same mistake
+        # in miniature: it says a patch is misplaced because of how the
+        # patch is spelled.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    aliases[a.asname or a.name.split(".")[0]] = a.name
+
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Assign)
+                    and isinstance(node.targets[0], ast.Attribute)
+                    and node.targets[0].attr == "_donsetch_session_id"):
+                base = node.targets[0].value
+                if isinstance(base, ast.Name):
+                    writes_to.add(aliases.get(base.id, base.id))
+                elif isinstance(base, ast.Attribute):
+                    writes_to.add(aliases.get(base.attr, base.attr))
 
     assert writes_to, "could not find the session reset assignment"
     assert "donsetch" in writes_to, (
@@ -160,7 +187,7 @@ def test_the_comment_claiming_where_the_patch_must_land_is_true():
     the module that owns the global. Comments asserting a fact are
     undocumented findings until something checks them -- this repo has had
     two that were false."""
-    src = (BOT / "selftest.py").read_text(encoding="utf-8")
+    _parts, src = _selftest_sources()
     assert "has to land on" in src or "write has to land on" in src, (
         "the comment explaining where the patch must land was removed; "
         "restore it, because it is the only warning before the next "

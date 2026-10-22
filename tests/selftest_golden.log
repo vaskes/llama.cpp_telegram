@@ -148,4 +148,5 @@
 [selftest] running webhook boot test...
 [OK] webhook server starts, healthz OK, secret-token enforced
 [selftest] webhook boot: all pass
+[selftest] infra tests: all pass
 [selftest] done

@@ -341,7 +341,14 @@ KNOWN_RUNTIME_CYCLES = [
     # fix is to move `_handle_chat_member_update` to a leaf the way
     # `_stop_button_markup` moved to `llm_markup` under item 8, and that
     # is item 10's work, not this slice's.
-    ["dispatch", "selftest", "selftest_state", "webhook"],
+    #
+    # T1.1 added `selftest_infra` to the same component on the same
+    # grounds: its blocks patch `handlers` module attributes by name,
+    # which is where `handle_text` resolves every one of them, and
+    # handlers is inside the access/handlers pair that dispatch drives.
+    # Nothing about the component changed -- a leaf that calls into the
+    # dispatcher inherits the dispatcher.
+    ["dispatch", "selftest", "selftest_infra", "selftest_state", "webhook"],
 ]
 
 

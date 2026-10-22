@@ -36,6 +36,15 @@ import sys
 
 import pytest
 
+# The ledger (`docs/tech-debt/09-*.md`) names this file as item 9's
+# marker, and `test_tech_debt_ledger` holds the two to naming each
+# other. Declaring it here rather than only there is what makes that
+# check a two-way one instead of a claim in a markdown file.
+pytestmark = pytest.mark.tech_debt(
+    item=9,
+    reason="Pins TECH-DEBT #9: _selftest is cut into leaf modules and "
+           "still reports the same markers, in the same order.")
+
 TESTS = pathlib.Path(__file__).resolve().parent
 REPO = TESTS.parent
 if str(TESTS) not in sys.path:
