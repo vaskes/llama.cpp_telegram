@@ -2,11 +2,11 @@
 tech_debt: 10
 marker: tests/test_dispatch_routing.py
 marker_kind: tripwire
-state: open
+state: closed
 issue: null
 ---
 
-## 10. `dispatch.py` is 1624 lines (HIGH, open)
+## 10. `dispatch.py` is 1624 lines (HIGH, closed)
 
 **Measured 2026-10-22:** 1624 lines, 18 top-level definitions. Two are
 oversized on their own — `main` at 316 lines, `cmd_callback` at 160.
@@ -34,7 +34,8 @@ the extraction:
 
 **How to fix, in order.** (a) Both security items — done, above.
 (b) Commands into `commands/` — done, block A.
-(c) `_safe_sender_label` into `sanitizer.py` — still to do. Naming note: "sanitisation"
+(c) `_safe_sender_label` into `prompt_guard.py` — done, block C,
+    and the ticket's naming note about it was wrong. Naming note: "sanitisation"
 here is display-name normalisation, not a security filter. Do not let a
 future reader assume the latter and bolt filtering onto it.
 
@@ -94,5 +95,50 @@ reject it. Every refactor script here validates with `ast.parse`, which
 means all of them would have shipped a module that cannot be imported.
 `test_every_module_actually_compiles` now calls `compile()`.
 
-**Depends on** item 8 being finished first, so the command handlers do
+**Block C — the ticket's own naming note was wrong, and it was
+written to be obeyed.** It said to put `_safe_sender_label` into
+`sanitizer.py`, and warned that "sanitisation here is display-name
+normalisation, not a security filter -- do not let a future reader
+assume the latter and bolt filtering onto it."
+
+It is the latter. `git show 4eedfa7` -- the commit that introduced the
+function, T55 in the wave-2 security review -- adds `unicodedata` and
+the `system|assistant|user|human|ai|from|instruction` redaction regex
+in the same breath as the function itself. It has been a prompt-injection
+filter since it was written, and never anything else.
+
+Executing that note as written would have caused the harm it meant to
+prevent, just running the other way: a reader told it is cosmetic stops
+reading the body, and a reader who takes "sanitizer" at face value looks
+for the real filter elsewhere and is free to weaken this one. So it went
+to `prompt_guard.py`, and the docstring says why in the first paragraph.
+`handlers.py` 1357 → 1278.
+
+**6 mutations, 6 caught**, and the point of the tripwire is not the
+coverage -- it is that nobody may quietly reduce it. Removing the
+character-category filter, the redaction, the case-insensitivity, the
+length bound, making the redaction eat the rest of the message, and
+widening it until Cyrillic and Latin names are eaten (which is how an
+operator ends up disabling the control entirely): all six go red. The
+old `test_s1_sender_sanitisation.py` catches most of them too; the new
+file pins the payloads as payloads and checks the filter has exactly one
+definition, because two copies drift and that is how the Application
+builders drifted two blocks ago.
+
+## Closed
+
+**1672 → 1278 lines**, three blocks. Routing is pinned in
+`test_dispatch_routing.py`, the startup sequence in
+`test_startup_order.py`, the injection filter in `test_prompt_guard.py`,
+and every module is checked for names it reads but does not bind.
+
+**27 mutations across the three blocks, 27 caught**, plus the one that
+caught the whole approach: seven startup mutations that survived a run
+because nothing in the suite had ever entered `main`.
+
+`dispatch.py` still owns the four things that are genuinely routing --
+`_dispatch_update`, `_apply_edited_message`, `_spawn_dispatch`,
+`_handle_chat_member_update` -- and the wiring between them.
+
+**Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
