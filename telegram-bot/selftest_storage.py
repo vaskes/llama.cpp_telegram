@@ -200,7 +200,12 @@ async def check_rating_roundtrip() -> bool:
         log.warning(f"  [FAIL] lazy-trim test crashed: {type(e).__name__}: {e}")
         all_ok = False
 
-    log.warning(f"[selftest] group-mode tests: {'all pass' if all_ok else 'FAILED'}")
+    # The summary used to say "group-mode tests" here. It is the rating
+    # column, it always said group-mode, and `run_all` now names the
+    # scope it owns -- so the false line is gone rather than sitting
+    # next to a true one.
+    log.warning(f"[selftest] storage rating round-trip: "
+                f"{'all pass' if all_ok else 'FAILED'}")
     return all_ok
 
 

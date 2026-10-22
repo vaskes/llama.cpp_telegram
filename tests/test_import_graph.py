@@ -327,7 +327,21 @@ KNOWN_RUNTIME_CYCLES = [
     # request handler, and selftest imports dispatch to drive updates.
     # It was always a cycle; call_llama just used to sit in the same
     # component, so the pair was never named on its own.
-    ["dispatch", "selftest", "webhook"],
+    #
+    # T1.1 added `selftest_state` to this component, and the honest
+    # reading is the one llm_stream got: this is not a new cycle, it is
+    # an existing one inherited by a module that was cut out of the
+    # middle of it. `check_chat_member` calls
+    # `_handle_chat_member_update`, which dispatch owns, so the leaf
+    # needs dispatch and the lazy import is what keeps the module-level
+    # check green.
+    #
+    # Naming it here without saying that would be a green tick for a
+    # regression, which is what this list exists to prevent. The real
+    # fix is to move `_handle_chat_member_update` to a leaf the way
+    # `_stop_button_markup` moved to `llm_markup` under item 8, and that
+    # is item 10's work, not this slice's.
+    ["dispatch", "selftest", "selftest_state", "webhook"],
 ]
 
 

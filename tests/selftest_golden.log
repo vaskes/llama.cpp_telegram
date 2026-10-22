@@ -32,7 +32,7 @@
 [OK] all 700 rows survived get_messages (no pruning)
 [selftest] running rating round-trip...
 [OK] rating 7 persisted on row 1, None on row 2
-[selftest] group-mode tests: all pass
+[selftest] storage rating round-trip: all pass
 [selftest] storage tests: all pass
 [selftest] running noise-filter test...
 [OK] group: human, no marker: mute=False (expected False)
@@ -64,6 +64,7 @@
 [OK] forum General: top-level: skip=False
 [OK] forum General: reply to human: skip=True
 [selftest] reply-to-other-user tests: all pass
+[selftest] access filters tests: all pass
 [selftest] running per-user semaphore test...
 [OK] semaphore locked at limit
 [OK] semaphore unlocked after release
@@ -78,6 +79,7 @@
 [OK] PM sent to new user_id
 [OK] leave event correctly skipped (0 calls)
 [OK] bot-join correctly skipped (0 calls)
+[selftest] state and rating tests: all pass
 [selftest] running edit-replace test...
 [OK] _bot_replies stores (chat, user_msg) → bot_msg mapping
 [OK] pop removes entry correctly
@@ -96,6 +98,7 @@
 [OK] multimodal: sender tag in first text part, image preserved
 [OK] NULL sender_name falls back to From: user: (no name but still tagged)
 [selftest] sender-name tests: all pass
+[selftest] media and attribution tests: all pass
 [selftest] running malformed tool-call JSON rejection test...
 [OK] case 1: 10x max_chars rejected with malformed-args feedback
 [OK] case 2: well-formed 2-key JSON passes through

@@ -30,7 +30,8 @@ BOT = pathlib.Path(__file__).resolve().parent.parent / "telegram-bot"
 if str(BOT) not in sys.path:
     sys.path.insert(0, str(BOT))
 
-MODULES = ("selftest_storage", "selftest_handlers")
+MODULES = ("selftest_storage", "selftest_handlers", "selftest_access",
+            "selftest_state", "selftest_media")
 
 
 def _blocks(module):
