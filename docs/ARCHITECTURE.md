@@ -13,7 +13,7 @@
 ```
 telegram-bot/
 ├── bot.py                 # main entry, aiohttp webhook + handlers
-├── handlers.py            # handle_text/photo/voice/document
+├── handlers.py            # handle_text/photo/voice/document (1394 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   478 lines file, 324 in the function
 ├── llm_iteration.py      # one tool-loop iteration, as a named unit
@@ -67,6 +67,7 @@ directly by tests, none of which build a full `call_llama`.
   llm_nonstream.py      437  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         307  StreamOutcome, stream_iteration, _fallback_to_nonstream
+  llm_result.py            92  unwrap_llm_result
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape
   llm_thinking.py       128  ThinkingThrottle, push_thinking
   llm_toolargs.py       134  ArgsOk, ArgsRejected, _rejection, parse_tool_args

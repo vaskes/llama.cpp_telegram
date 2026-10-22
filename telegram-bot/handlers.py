@@ -17,39 +17,16 @@ import os
 import re
 import tempfile
 
+# TECH-DEBT #13: this block was hand-copied into all four handlers --
+# four times for the primary result and three for the empty-response
+# retry. llm_result owns it now. `_format_executed_tools` keeps its
+# historical name because tests/test_t44.py and the call sites use it.
+from llm_result import _format_executed_tools, unwrap_llm_result
+
 from logconf import get_logger
 log = get_logger(__name__)
 
 
-def _format_executed_tools(executed_tools):
-    """T44: render a fenced ```` ```bash ... ``` ```` block listing
-    the bash commands the model actually ran this turn.
-
-    Only ``bash_command`` entries are surfaced — the other tools
-    (react_to_message, donsetch web tools) are not user-facing
-    commands so they would just be noise in the history.
-
-    Returns "" if there is nothing to show.
-    """
-    if not executed_tools:
-        return ""
-    bash_cmds = []
-    for t in executed_tools:
-        if t.get("name") != "bash_command":
-            continue
-        _args = t.get("args")
-        if not isinstance(_args, dict):
-            continue
-        cmd = _args.get("command", "")
-        if cmd:
-            bash_cmds.append(cmd)
-    if not bash_cmds:
-        return ""
-    lines = ["```bash"]
-    for cmd in bash_cmds:
-        lines.append(f"$ {cmd}")
-    lines.append("```")
-    return "\n".join(lines)
 
 
 from telegram import Update
@@ -564,15 +541,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-            if isinstance(_result, dict):
-                bot_response = _result.get("text") or ""
-                _exec = _result.get("executed_tools") or []
-                if _exec:
-                    _hist = _format_executed_tools(_exec)
-                    if _hist:
-                        bot_response = _hist + "\n\n" + bot_response
-            else:
-                bot_response = _result
+            bot_response = unwrap_llm_result(_result)
         # None-safe: when user clicks Stop, call_llama returns None.
         # The previous print(f"...len(bot_response)...") crashed with
         # TypeError on None (caught by the outer except and surfaced
@@ -638,14 +607,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # AttributeError: 'dict' object has no attribute 'startswith'.
             # The executed-tools preamble is reproduced too; dropping it
             # would answer without the tool trace, which fails quietly.
-            if isinstance(retry_response, dict):
-                _retry_text = retry_response.get("text") or ""
-                _retry_exec = retry_response.get("executed_tools") or []
-                if _retry_exec:
-                    _retry_hist = _format_executed_tools(_retry_exec)
-                    if _retry_hist:
-                        _retry_text = _retry_hist + "\n\n" + _retry_text
-                retry_response = _retry_text
+            retry_response = unwrap_llm_result(retry_response)
             if not (isinstance(retry_response, str)
                     and retry_response.startswith(
                         EMPTY_RESPONSE_PREFIX)):
@@ -870,15 +832,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-            if isinstance(_result, dict):
-                bot_response = _result.get("text") or ""
-                _exec = _result.get("executed_tools") or []
-                if _exec:
-                    _hist = _format_executed_tools(_exec)
-                    if _hist:
-                        bot_response = _hist + "\n\n" + bot_response
-            else:
-                bot_response = _result
+            bot_response = unwrap_llm_result(_result)
         # v0.8.0: handle_voice had no abort check at all (handle_photo/
         # handle_document/handle_text had `if bot_response is None` but
         # voice didn't). When call_llama returns None on abort,
@@ -1025,15 +979,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # T1 (P0-1): global LLM concurrency cap.
             async with _get_global_llm_sem():
                 _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-                if isinstance(_result, dict):
-                    bot_response = _result.get("text") or ""
-                    _exec = _result.get("executed_tools") or []
-                    if _exec:
-                        _hist = _format_executed_tools(_exec)
-                        if _hist:
-                            bot_response = _hist + "\n\n" + bot_response
-                else:
-                    bot_response = _result
+                bot_response = unwrap_llm_result(_result)
             if bot_response is None or abort_event.is_set():
                 # v0.8.0: also discard if abort_event was set, even when
                 # call_llama returned a non-None response (post won the
@@ -1088,14 +1034,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # AttributeError: 'dict' object has no attribute 'startswith'.
                 # The executed-tools preamble is reproduced too; dropping it
                 # would answer without the tool trace, which fails quietly.
-                if isinstance(retry_response, dict):
-                    _retry_text = retry_response.get("text") or ""
-                    _retry_exec = retry_response.get("executed_tools") or []
-                    if _retry_exec:
-                        _retry_hist = _format_executed_tools(_retry_exec)
-                        if _retry_hist:
-                            _retry_text = _retry_hist + "\n\n" + _retry_text
-                    retry_response = _retry_text
+                retry_response = unwrap_llm_result(retry_response)
                 if not (isinstance(retry_response, str)
                         and retry_response.startswith(
                             EMPTY_RESPONSE_PREFIX)):
@@ -1304,15 +1243,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # concurrent LLM forwards on the same GPU.
             async with _get_global_llm_sem():
                 _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-                if isinstance(_result, dict):
-                    bot_response = _result.get("text") or ""
-                    _exec = _result.get("executed_tools") or []
-                    if _exec:
-                        _hist = _format_executed_tools(_exec)
-                        if _hist:
-                            bot_response = _hist + "\n\n" + bot_response
-                else:
-                    bot_response = _result
+                bot_response = unwrap_llm_result(_result)
             if bot_response is None or abort_event.is_set():
                 # v0.8.0: also discard if abort_event was set, even when
                 # call_llama returned a non-None response (post won the
@@ -1367,14 +1298,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # AttributeError: 'dict' object has no attribute 'startswith'.
                 # The executed-tools preamble is reproduced too; dropping it
                 # would answer without the tool trace, which fails quietly.
-                if isinstance(retry_response, dict):
-                    _retry_text = retry_response.get("text") or ""
-                    _retry_exec = retry_response.get("executed_tools") or []
-                    if _retry_exec:
-                        _retry_hist = _format_executed_tools(_retry_exec)
-                        if _retry_hist:
-                            _retry_text = _retry_hist + "\n\n" + _retry_text
-                    retry_response = _retry_text
+                retry_response = unwrap_llm_result(retry_response)
                 if not (isinstance(retry_response, str)
                         and retry_response.startswith(
                             EMPTY_RESPONSE_PREFIX)):
