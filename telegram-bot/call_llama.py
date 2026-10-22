@@ -74,6 +74,10 @@ from llm_finish import (finish_fallback_empty,
                        finish_without_tool_calls, refuse_hallucinated_tools)
 from llm_toolargs import ArgsRejected, parse_tool_args
 from llm_json import dumps_body
+from llm_request import (
+    build_request_body, log_request_shape,
+    new_stream_accumulators,
+)
 from llm_thinking import ThinkingThrottle, push_thinking
 from llm_tools import _bash_command_tool_enabled, fetch_tools_from_llama  # noqa: F401
 
@@ -484,76 +488,17 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
             return None
         # --- request body ---
         async with httpx.AsyncClient(timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client:
-            req_body = {
-                "model": MODEL,
-                "messages": msgs,
-                "max_tokens": max_tokens,
-                "stream": use_stream,
-            }
-            if req_tools is not None:
-                req_body["tools"] = req_tools
-                req_body["tool_choice"] = "auto"
-                req_body["parallel_tool_calls"] = False
-            # Diagnostic: log request structure only. NEVER dump raw bytes —
-            # for vision requests that includes the base64 image, which is PII
-            # and would land in journald / docker logs.
-            if iteration == 0 and not use_stream:
-                # Count the bytes that would be sent (without ever writing them).
-                try:
-                    raw = dumps_body(req_body)
-                    log.info(f"[LLAMA] iter={iteration} payload_bytes={len(raw)} (image bytes masked)")
-                    if os.environ.get("LLAMABOT_DEBUG_PAYLOAD") == "1":
-                        head = raw[:400].decode('utf-8', errors='replace')
-                        # Find the column where the bad JSON starts by scanning
-                        # for known key patterns. Most useful for diagnosing
-                        # 500 from llama-server: this prints the head so we
-                        # can see what we sent before the parser gave up.
-                        log.info(f"[LLAMA-DEBUG] iter={iteration} first 400 bytes:\n{head}")
-                except Exception as e:
-                    log.info(f"[LLAMA] iter=0 cannot size payload: {e}")
-            # W2.1: the previous version built a deepcopy of req_body
-            # here (mutating it to mask image_url bytes for a log line)
-            # but the actual prints read req_body directly, not the
-            # copy. That meant a 256K-token req_body — possibly with
-            # base64 image payloads — was being deep-copied on every
-            # tool-loop iteration, then thrown away. On a 10-iter run
-            # that is 10x the full request size, with no benefit.
-            # Replaced with a small summary that doesn't need a copy.
-            _msgs = req_body.get("messages", [])
-            _imgs = sum(
-                1 for m in _msgs
-                if isinstance(m.get("content"), list)
-                for it in m["content"]
-                if isinstance(it, dict) and "image_url" in it
+            req_body = build_request_body(
+                model=MODEL, msgs=msgs, max_tokens=max_tokens,
+                use_stream=use_stream, req_tools=req_tools,
             )
-            log.info(f"[LLAMA] iter={iteration} req_body_keys={list(req_body.keys())} "
-                f"tools={'yes ('+str(len(req_tools))+' defs)' if req_tools else 'no'} "
-                f"msgs_count={len(_msgs)} image_msgs={_imgs}")
-            if iteration == 0:
-                # On first iter, also print the first AND last user
-                # message structure (the first to confirm history is
-                # loaded; the last to confirm the current speaker
-                # got tagged with "From: <name>: ").
-                user_msgs = [m for m in req_body.get("messages", []) if m.get("role") == "user"]
-                if user_msgs:
-                    m0 = user_msgs[0]
-                    c0 = m0.get("content")
-                    if isinstance(c0, list):
-                        log.info(f"[LLAMA]   first user msg content types: {[item.get('type') for item in c0 if isinstance(item, dict)]}")
-                    else:
-                        log.info(f"[LLAMA]   first user msg content head: {str(c0)[:150]!r}")
-                    ml = user_msgs[-1]
-                    cl = ml.get("content")
-                    if isinstance(cl, list):
-                        first_part = cl[0] if cl else {}
-                        first_text = first_part.get("text", "") if isinstance(first_part, dict) else ""
-                        log.info(f"[LLAMA]   last user msg first text part head: {first_text[:150]!r}")
-                    else:
-                        log.info(f"[LLAMA]   last user msg content head: {str(cl)[:150]!r}")
-            reasoning_buf = ""
-            content_buf = ""
-            tool_calls_buf = {}
-            finish_reason = None
+            log_request_shape(req_body, iteration=iteration,
+                              req_tools=req_tools, use_stream=use_stream)
+            _acc = new_stream_accumulators()
+            reasoning_buf = _acc.reasoning_buf
+            content_buf = _acc.content_buf
+            tool_calls_buf = _acc.tool_calls_buf
+            finish_reason = _acc.finish_reason
 
             if not use_stream:
                 # --- non-streaming POST (vision tasks, slow-reasoning models) ---

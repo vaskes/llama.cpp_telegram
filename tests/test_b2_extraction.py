@@ -176,25 +176,60 @@ def test_ensure_model_and_discover_stayed_behind():
     )
     assert hasattr(call_llama, "_ensure_model")
 
-    # AST, not a substring count. `"model": MODEL` is a prefix of
-    # `"model": MODEL or None`, so counting it cannot tell a correct read
-    # from a broken one -- and the mutation that proved it changed the
-    # expression without changing the count.
-    src = (BOT / "call_llama.py").read_text(encoding="utf-8")
-    model_reads = 0
-    for node in ast.walk(ast.parse(src)):
-        if not isinstance(node, ast.Dict):
-            continue
-        for k, v in zip(node.keys, node.values):
-            if (isinstance(k, ast.Constant) and k.value == "model"
-                    and isinstance(v, ast.Name) and v.id == "MODEL"):
-                model_reads += 1
-    assert model_reads >= 2, (
-        f"the request body reads the MODEL global {model_reads} time(s) in "
-        f"call_llama. _ensure_model rebinds that global; if the reads stop "
-        f"referring to it directly, every request carries whatever "
-        f"_ensure_model left behind."
+    # The property, not the shape it used to have -- twice over.
+
+    # v1 counted `"model": MODEL` dict literals and asserted >= 2. Moving
+    # the builder into llm_request.py turned one of them into a keyword
+    # argument, the count fell to 1, and the test went red on correct
+    # code.
+    #
+    # v2 counted MODEL loads anywhere in the file. That went green, and
+    # the mutation `model=MODEL` -> `model=""` SURVIVED it, because
+    # _ensure_model reads the global twice on its own. A count is not a
+    # property. This version resolves the call site instead: the keyword
+    # argument handed to build_request_body must be the global itself,
+    # not a literal and not a copy taken earlier.
+    fn_tree = ast.parse((BOT / "call_llama.py").read_text(encoding="utf-8"))
+    call_sites = [n for n in ast.walk(fn_tree)
+                  if isinstance(n, ast.Call)
+                  and getattr(n.func, "id", None) == "build_request_body"]
+    assert call_sites, "build_request_body is never called from call_llama"
+
+    bad = []
+    for call in call_sites:
+        model_arg = next((kw.value for kw in call.keywords
+                          if kw.arg == "model"), None)
+        if not (isinstance(model_arg, ast.Name)
+                and model_arg.id == "MODEL"
+                and isinstance(model_arg.ctx, ast.Load)):
+            bad.append(f"line {call.lineno}: model="
+                       f"{ast.unparse(model_arg) if model_arg else '<absent>'}")
+    assert not bad, (
+        "the model passed to build_request_body must be the rebindable "
+        "MODEL global, read at the call site. Found: " + "; ".join(bad)
+        + ". _ensure_model rebinds the global; a literal or an earlier "
+          "copy leaves every request carrying the old value, silently, in "
+          "production.")
+
+    # The owner must not have captured its own copy. If llm_request
+    # imported MODEL, a rebind would leave it posting the old value and
+    # the read count above would look healthy while the bug is live.
+    req = ast.parse((BOT / "llm_request.py").read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(n, (ast.Import, ast.ImportFrom)) and "MODEL" in ast.unparse(n)
+        for n in req.body), (
+        "llm_request must take `model` as a parameter. Importing MODEL "
+        "there gives _ensure_model's rebind nothing to propagate to."
     )
+    assert not any(
+        isinstance(n, ast.Name) and n.id == "MODEL"
+        for n in ast.walk(req)), "llm_request reads MODEL directly"
+
+    builder = next(n for n in req.body
+                   if isinstance(n, ast.FunctionDef)
+                   and n.name == "build_request_body")
+    assert [a.arg for a in builder.args.args][:1] == ["model"], \
+        "build_request_body must take `model` as its first parameter"
 
 
 @pytest.mark.parametrize("module_name,names",
