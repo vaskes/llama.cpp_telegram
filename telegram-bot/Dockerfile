@@ -40,6 +40,15 @@ COPY *.py ./
 # image must still self-contain the files for cold builds.
 COPY personal_tools/ ./personal_tools/
 
+# prompt_text holds the prompt prose (TECH-DEBT #12). Same reason, same
+# failure: `COPY *.py ./` matches top-level files only, so moving the
+# sentences into a package without this line produces an image whose
+# bot.py dies on `from prompts import` with ModuleNotFoundError at
+# startup. The suite did not catch it -- the suite runs against the host
+# tree, and the host tree has the package. A package that is not in the
+# image is not in the product.
+COPY prompt_text/ ./prompt_text/
+
 # Drop privileges. Anything that needs to write here must be writable
 # by uid 1000, which is fine because we only write to /app/files
 # and /app/data.
