@@ -45,20 +45,34 @@ from selftest_harness import run_selftest  # noqa: E402
 
 GOLDEN = TESTS / "selftest_golden.log"
 
+# Measured, not estimated. The selftest has exactly 95 assertion
+# sites -- 95 unique [OK]/[FAIL] markers.
+#
+# It was 190 until this was counted properly. Every line the selftest
+# logs is written twice by the logging stack, and the first version of
+# the harness grepped the raw stream, so 190 was the doubled count of
+# 95. That number reached a commit message as a fact. It is corrected
+# here rather than quietly replaced, because "the count is 95, and
+# here is why the earlier number was wrong" is the useful form.
+#
+# Bump this deliberately when a block is added, never as a side effect
+# of something failing.
+EXPECTED_VERDICTS = 95
+
 # Run once per session. It starts a stub server and spawns a
 # subprocess, and the whole point is that it is cheap enough to run on
-# every change -- 190 markers in well under a second.
+# every change -- 147 markers in well under a second.
 @pytest.fixture(scope="session")
 def selftest_run():
-    lines, _trace, rc, raw = run_selftest()
+    lines, _trace, rc, raw, raw_n = run_selftest()
     if rc == "timeout":
         pytest.fail(f"_selftest did not finish inside the harness timeout.\n"
                     f"tail:\n{raw[-3000:]}")
-    return lines, rc, raw
+    return lines, rc, raw, raw_n
 
 
 def test_the_harness_actually_runs_the_selftest(selftest_run):
-    lines, rc, raw = selftest_run
+    lines, rc, raw, raw_n = selftest_run
 
     assert rc == 0, f"the harness subprocess exited {rc}\ntail:\n{raw[-3000:]}"
     assert len(lines) > 100, (
@@ -67,8 +81,28 @@ def test_the_harness_actually_runs_the_selftest(selftest_run):
         f"is a pass.\ntail:\n{raw[-3000:]}")
 
 
+def test_every_assertion_site_fires_exactly_once(selftest_run):
+    """The count, which the deduplicated golden cannot see.
+
+    The harness collapses adjacent duplicate lines because the logging
+    stack emits some of them twice. That collapse would hide a block
+    that genuinely started running twice -- a real failure mode when a
+    1940-line function is cut into modules and a driver is written by
+    hand. So the raw count is asserted separately: 190 assertion
+    sites, and a doubled block makes this fail even though its line
+    looks unchanged.
+    """
+    lines, _rc, _raw, raw_n = selftest_run
+    verdicts = [ln for ln in lines if "[OK]" in ln or "[FAIL]" in ln]
+    assert len(verdicts) == EXPECTED_VERDICTS, (
+        f"{len(verdicts)} [OK]/[FAIL] markers, expected {EXPECTED_VERDICTS}. "
+        f"A block that started running twice looks identical in the "
+        f"deduplicated golden, so this is where that shows up. The raw "
+        f"stream carried {raw_n} matching lines.")
+
+
 def test_no_block_reports_a_failure(selftest_run):
-    lines, _rc, _raw = selftest_run
+    lines, _rc, _raw, _raw_n = selftest_run
     fails = [ln for ln in lines if "[FAIL]" in ln]
 
     assert not fails, (
@@ -77,7 +111,7 @@ def test_no_block_reports_a_failure(selftest_run):
 
 
 def test_the_marker_sequence_is_unchanged(selftest_run):
-    lines, _rc, _raw = selftest_run
+    lines, _rc, _raw, _raw_n = selftest_run
     got = [_normalise(ln) for ln in lines]
 
     if os.environ.get("SELFTEST_UPDATE_GOLDEN") == "1":

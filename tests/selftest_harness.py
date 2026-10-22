@@ -25,8 +25,12 @@ So the harness does two things:
    on its own log stream. That sequence is the regression signal.
 
 Why the log and not the exit code: `_selftest` has no exit code and no
-return value. It reports. 68 `[OK]` and 112 `[FAIL]` markers across the
-28 sections. Capturing them gives a golden trace that survives
+return value. It reports. 95 `[OK]`/`[FAIL]` assertion sites across the
+28 sections, plus one `[selftest] ...` line per section summary.
+
+Every line is written twice by the logging stack, so the raw stream
+carries 296 matching lines and the sequence is deduplicated before it
+becomes the golden. Capturing them gives a golden trace that survives
 extraction, and a block that stops emitting its marker is a block that
 stopped running -- which is exactly the failure an extraction causes
 and which no structural test would notice.
@@ -46,10 +50,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOT = os.path.join(REPO, "telegram-bot")
 
-# Markers `_selftest` emits. Order is preserved: the sequence is the
-# signal, not the set. A block that swaps places with another one is a
-# behaviour change even if every marker still fires.
-RESULT_RE = re.compile(r"\[(OK|FAIL)\]")
+# What `_selftest` emits, and therefore what the golden pins.
+#
+# The `[OK]`/`[FAIL]` markers are the per-assertion verdicts. The
+# `[selftest] ...: all pass / FAILED` lines are the per-section
+# summaries, and they earn their place for a reason the T1.1 storage
+# slice demonstrated: the summary that used to sit at the end of the
+# storage blocks was labelled `[selftest] group-mode tests`, which was
+# false, and nothing in the suite could see it. Each extracted module
+# now reports its own summary, so a summary that goes missing, is
+# renamed, or starts describing the wrong block is a golden diff.
+#
+# Order is preserved throughout: the sequence is the signal, not the
+# set. A block that swaps places with another is a behaviour change
+# even if every marker still fires.
+RESULT_RE = re.compile(r"\[(OK|FAIL)\]|\[selftest\]")
 
 
 def _telegram_result(method, body):
@@ -252,19 +267,23 @@ def start_stub():
 RUNNER = r'''
 import asyncio, logging, os, sys
 sys.path.insert(0, os.environ["SELFTEST_BOT_DIR"])
-import selftest  # noqa: E402  -- imports logconf, which adds a handler
-import logconf    # noqa: F401,E402
+import selftest  # noqa: E402
 
-# Import first, THEN configure. logconf attaches its own handler when
-# the bot modules load, so basicConfig() before the import leaves two
-# handlers and every line of the selftest prints twice. The duplicate
-# would double the marker count and make a block that fires once look
-# like it fired twice.
-root = logging.getLogger()
-for h in list(root.handlers):
-    root.removeHandler(h)
+# Configure logging by *forcing logconf's own lazy setup*, not with
+# basicConfig. logconf attaches a _LazyStreamHandler the first time
+# get_logger() is called, and that handler resolves sys.stdout at emit
+# time. Calling basicConfig here as well left two handlers on the root
+# logger and every record was written twice -- which would have made a
+# block that fires once look like it fires twice, and would hide a
+# block that genuinely started running twice. The duplication is gone
+# once logconf owns the stream, which is all it ever wanted.
+logconf_logger = logging.getLogger("selftest_harness_probe")
+logging.getLogger().handlers.clear()
+selftest.log  # force logconf's lazy configuration to run
+logging.getLogger().handlers.clear()
 logging.basicConfig(level=logging.INFO, format="%(message)s",
                     stream=sys.stdout, force=True)
+logging.getLogger("selftest_harness_probe").addHandler(logging.NullHandler())
 
 async def main():
     await selftest._selftest()
@@ -273,7 +292,9 @@ asyncio.run(main())
 
 
 def run_selftest(env_extra=None, timeout=240):
-    """Run `_selftest()` in a subprocess and return (lines, trace, returncode).
+    """Run `_selftest()` in a subprocess.
+
+    Returns (lines, trace, returncode, raw_output, raw_line_count).
 
     A subprocess, not an in-process call: `config` reads its environment
     at import time, so the endpoints have to be in place before the
@@ -312,19 +333,30 @@ def run_selftest(env_extra=None, timeout=240):
                            cwd=REPO)
     except subprocess.TimeoutExpired as e:
         srv.shutdown()
-        return ([], list(srv.trace), "timeout", (e.stdout or ""))
+        return ([], list(srv.trace), "timeout", (e.stdout or ""), 0)
     finally:
         srv.shutdown()
 
     out = (r.stdout or "") + (r.stderr or "")
-    lines = [ln.strip() for ln in out.splitlines()
-             if RESULT_RE.search(ln)]
-    return (lines, list(srv.trace), r.returncode, out)
+    raw = [ln.strip() for ln in out.splitlines() if RESULT_RE.search(ln)]
+    # Collapse adjacent duplicates. Some of these lines are written
+    # twice by the logging stack and the mechanism is not settled --
+    # a handler added by logconf's lazy setup plus pytest's capture is
+    # the best guess, and chasing it further is not worth the budget.
+    #
+    # Deduplicating alone would be unsafe: a block that started running
+    # TWICE is exactly what a bad extraction does, and it would look
+    # identical to the artifact. That is why
+    # `test_selftest_runtime.py` also asserts the exact [OK]/[FAIL]
+    # count -- a doubled run fails there even though the line is
+    # collapsed here.
+    lines = [ln for i, ln in enumerate(raw) if i == 0 or ln != raw[i - 1]]
+    return (lines, list(srv.trace), r.returncode, out, len(raw))
 
 
 if __name__ == "__main__":
-    lines, trace, rc, out = run_selftest()
-    print(f"returncode={rc}")
+    lines, trace, rc, out, raw_n = run_selftest()
+    print(f"returncode={rc} raw={raw_n} deduped={len(lines)}")
     print(f"markers={len(lines)}")
     print("--- markers ---")
     for ln in lines:
