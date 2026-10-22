@@ -7,8 +7,14 @@ whitelisted tool calls. The reframed version must:
 """
 import pathlib
 
+# TECH-DEBT #12 moved the prompt text into telegram-bot/prompt_text/.
+# Reading prompts.py as text found nothing, which is correct: it holds
+# regexes now. The prose is read from the package, which is where the
+# words the bot says actually live.
+_PKG = pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompt_text"
 PROMPTS = pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompts.py"
-src = PROMPTS.read_text()
+src = PROMPTS.read_text() + "".join(
+    q.read_text() for q in sorted(_PKG.glob("*.py")))
 
 
 def test_no_burn_the_turn():

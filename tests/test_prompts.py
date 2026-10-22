@@ -50,6 +50,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "telegram-bot"))
 
 import prompts
+import prompt_text
+
+# Read the pins out of `prompt_text`, not out of the `prompts` facade.
+# The facade re-exports, so pinning through it would still go green if
+# someone pasted a copy of a prompt back into prompts.py -- which is the
+# exact thing TECH-DEBT #12 moved out. The prose belongs to one file and
+# the pin says which one.
 
 # sha256[:16], utf-8. Update with a reason in the commit message.
 CONTENT_PINS = {
@@ -65,7 +72,7 @@ CONTENT_PINS = {
 
 @pytest.mark.parametrize("name,expected", sorted(CONTENT_PINS.items()))
 def test_prompt_content_is_unchanged(name, expected):
-    value = getattr(prompts, name)
+    value = getattr(prompt_text, name)
     raw = value if isinstance(value, str) else repr(value)
     got = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
     assert got == expected, (
@@ -256,29 +263,101 @@ def test_the_regexes_compile_as_written():
 
 # --- structural: the module has no functions, and that is known --------
 
-def test_prompts_still_has_no_functions():
-    """Not an aspiration. It is what makes this file safe to relocate.
+def test_prompt_text_files_still_have_no_functions():
+    """Not an aspiration. It is what makes these files safe to relocate.
 
-    If a helper function appears here, the constants are no longer the
-    whole story and a byte-comparison of the constants stops being a
-    byte-comparison of the prompt.
+    If a helper function appears next to the prose, the constants are no
+    longer the whole story and a byte-comparison of the constants stops
+    being a byte-comparison of the prompt.
+
+    Checked over the whole package rather than one file, because the
+    package is the unit: a function added to any one of them means text
+    has started being computed.
+    """
+    pkg = ROOT / "telegram-bot" / "prompt_text"
+    offenders = []
+    for f in sorted(pkg.glob("*.py")):
+        tree = ast.parse(f.read_text(encoding="utf-8"))
+        funcs = [n.name for n in tree.body
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        if funcs:
+            offenders.append(f"{f.name}: {funcs}")
+    assert not offenders, "prompt_text gained functions -- " + "; ".join(offenders)
+
+
+def test_the_prompts_facade_holds_no_prompt_text():
+    """The split is the fix; a diff that undoes it must not stay green.
+
+    `prompts.py` is 75 lines of regexes and re-exports. If a sentence
+    gets pasted back into it, every content pin above still passes --
+    they read `prompt_text` now -- so this is the only thing standing
+    between a refactor and the 422-line module this ticket removed.
     """
     tree = ast.parse((ROOT / "telegram-bot" / "prompts.py").read_text())
-    funcs = [n.name for n in tree.body
-             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    assert not funcs, f"prompts.py gained functions {funcs}"
+    long_strings = [
+        f"{getattr(n.targets[0], 'id', '?')} ({len(n.value.value)} chars)"
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        and isinstance(n.value, ast.Constant)
+        and isinstance(n.value.value, str)
+        and len(n.value.value) > 200
+    ]
+    assert not long_strings, (
+        "prompt text is back inside prompts.py: " + ", ".join(long_strings))
+
+
+def test_both_dunder_alls_match_the_prompts_that_actually_exist():
+    """`__all__` drifting from the constants is invisible from anywhere else.
+
+    The content pins read `getattr(prompt_text, name)` by name, so they
+    keep passing when a prompt is dropped from `__all__` -- and a name
+    that is defined but no longer declared is exactly what a stale
+    `__all__` looks like. This is where the mutation run earned its
+    keep: dropping `WELCOME_TEXT` from the package list left the whole
+    suite green until this existed.
+    """
+    pkg = ROOT / "telegram-bot" / "prompt_text"
+    defined = sorted(
+        t.id
+        for f in sorted(pkg.glob("*.py"))
+        if f.name != "__init__.py"
+        for n in ast.parse(f.read_text(encoding="utf-8")).body
+        if isinstance(n, ast.Assign)
+        for t in n.targets
+        if isinstance(t, ast.Name) and not t.id.startswith("_"))
+    assert sorted(prompt_text.__all__) == defined, (
+        "prompt_text.__all__ does not match the prompts that exist; "
+        f"declared-but-absent={sorted(set(prompt_text.__all__) - set(defined))}, "
+        f"exists-but-undeclared={sorted(set(defined) - set(prompt_text.__all__))}")
+    # RATING_MODE is the one public name the facade owns: it reads the
+    # environment, so it is a switch and not a sentence, and it is not in
+    # the package. Everything else public in the facade must be one of
+    # the prompts, or the facade has grown a name nobody reads as one.
+    assert sorted(x for x in prompts.__all__ if not x.startswith("_")) == \
+            sorted(defined + ["RATING_MODE"]), (
+        "the prompts facade and the package disagree about what is public")
 
 
 def test_every_public_name_is_imported_somewhere():
     """A constant nothing imports is a prompt nobody sends."""
-    tree = ast.parse((ROOT / "telegram-bot" / "prompts.py").read_text())
-    public = [t.id for n in tree.body if isinstance(n, ast.Assign)
-              for t in n.targets
-              if isinstance(t, ast.Name) and not t.id.startswith("_")]
-    assert public, "no public names found -- the parse above is wrong"
+    # Read the names from the modules that define them, NOT from
+    # `prompt_text.__all__`. `__all__` is part of what is being checked:
+    # dropping a prompt from it removes it from this list too, the test
+    # passes, and the prompt is still defined and still sent -- one edit
+    # and the check disappears. That is how the mutation run found this.
+    pkg = ROOT / "telegram-bot" / "prompt_text"
+    public = sorted(
+        t.id
+        for f in sorted(pkg.glob("*.py"))
+        if f.name != "__init__.py"
+        for n in ast.parse(f.read_text(encoding="utf-8")).body
+        if isinstance(n, ast.Assign)
+        for t in n.targets
+        if isinstance(t, ast.Name) and not t.id.startswith("_"))
+    assert public, "no prompt constants found -- the walk above is wrong"
     imported = set()
     for f in sorted((ROOT / "telegram-bot").rglob("*.py")):
-        if f.name == "prompts.py":
+        if f.name == "prompts.py" or f.parent.name == "prompt_text":
             continue
         for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and node.module == "prompts":

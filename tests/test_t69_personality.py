@@ -268,3 +268,28 @@ def test_update_sh_preserves_the_live_persona_file():
         "update.sh must exclude persona.local.json from the sync, the same way "
         "it preserves .env"
     )
+
+def test_the_never_invent_directive_reaches_the_model():
+    """The rule moved out of a docstring on 2026-10-22 and nothing held it.
+
+    It used to live in `render_persona`'s docstring, which is
+    documentation for whoever edits the file: the model never sees it.
+    The prompt now carries the directive, and this is the only thing that
+    says so. Deleting the `lines.append(_NO_INVENTION)` line leaves every
+    other test in this file green, and the bot quietly starts filling in
+    a biography the operator never wrote.
+    """
+    sys.path.insert(0, str(BOT_DIR))
+    import personality
+
+    full = personality.render_persona({
+        "enabled": True, "name": "Гадя", "sex": "female", "age": 36,
+        "profile": "сварливая", "traits": ["сварливая"],
+    })
+    assert personality._NO_INVENTION in full, (
+        "the rendered persona no longer carries the never-invent "
+        "directive; the model will invent an identity the operator "
+        "never gave it")
+    assert full.rstrip().endswith(personality._NO_INVENTION), (
+        "the directive is not last -- it reads as one rule among many "
+        "instead of the thing that settles any question about identity")

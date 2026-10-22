@@ -2,12 +2,12 @@
 
 Wave-trap pattern (predicted): a future commit adds a
 4th profile (e.g. staging) in limits.py but forgets
-to update bash_command.py or prompts.py.
+to update bash_command.py or the group prompt.
 
 This tripwire extracts the set of valid profile names
 from limits.py (the single source of truth) and asserts
 that the SAME set appears in bash_command.py and
-prompts.py.
+the group prompt.
 
 v3: Skip the bash_command.py check for "public" and
 "personal" (default profiles - mentioned everywhere in
@@ -31,10 +31,15 @@ BASH_COMMAND_PY = (
     / "personal_tools"
     / "bash_command.py"
 )
-PROMPTS_PY = (
-    pathlib.Path(__file__).parent.parent
-    / "telegram-bot"
-    / "prompts.py"
+# TECH-DEBT #12: the sandbox limits are stated in the group prompt, which
+# now lives in telegram-bot/prompt_text/. Reading prompts.py found nothing,
+# because it is a facade holding regexes.
+_PROMPT_PKG = (
+    pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompt_text"
+)
+PROMPTS_PY = pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompts.py"
+PROMPTS_SRC = PROMPTS_PY.read_text(encoding="utf-8") + "".join(
+    q.read_text(encoding="utf-8") for q in sorted(_PROMPT_PKG.glob("*.py"))
 )
 
 
@@ -59,7 +64,7 @@ def _extract_profile_set_from_limits(src: str) -> set:
 
 def test_profile_set_consistent_across_files():
     """T61 #R9: the set of valid profile names in
-    limits.py must match what bash_command.py and prompts.py
+    limits.py must match what bash_command.py and the group prompt
     know about.
     """
     limits_src = LIMITS_PY.read_text()
@@ -97,7 +102,7 @@ def test_profile_set_consistent_across_files():
             f"reference to {profile!r} in personal_tools/bash_command.py."
         )
 
-    prompts_src = PROMPTS_PY.read_text()
+    prompts_src = PROMPTS_SRC
     for profile in canonical:
         if profile in ("public", "personal"):
             # Default profiles - the LLM does not need to know

@@ -15,6 +15,11 @@ import sys
 
 import pytest
 
+# TECH-DEBT #12 moved the prompt text into telegram-bot/prompt_text/.
+# Reading prompts.py as text found nothing, which is correct: it holds
+# regexes now. The prose is read from the package, which is where the
+# words the bot says actually live.
+_PKG = pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompt_text"
 PROMPTS = pathlib.Path(__file__).parent.parent / "telegram-bot" / "prompts.py"
 BASH = pathlib.Path(__file__).parent.parent / "telegram-bot" / "personal_tools" / "bash_command.py"
 CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "call_llama.py"
@@ -52,7 +57,8 @@ def _bash_command_enabled(monkeypatch):
 
 
 def test_c2_safety_rules_in_prompts():
-    src = PROMPTS.read_text()
+    src = PROMPTS.read_text() + "".join(
+    q.read_text() for q in sorted(_PKG.glob("*.py")))
     assert "bash_command safety rules" in src
     assert "MANDATORY" in src
     assert "Refuse to execute" in src or "destructive" in src.lower()

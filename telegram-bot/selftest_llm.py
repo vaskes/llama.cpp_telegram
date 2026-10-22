@@ -80,8 +80,14 @@ def _module_source(name):
     """
     import storage
 
+    # Dotted names are package paths, so `prompt_text.group_context`
+    # reads prompt_text/group_context.py. TECH-DEBT #12 moved the prose
+    # into a package and this would otherwise have built the literal
+    # filename `prompt_text.group_context.py` -- which does not exist,
+    # and a read that raises is not a check that reports anything.
+    rel = pathlib.Path(*name.split(".")).with_suffix(".py")
     return (pathlib.Path(storage.__file__).resolve().parent
-            / f"{name}.py").read_text(encoding="utf-8")
+            / rel).read_text(encoding="utf-8")
 
 
 
@@ -685,13 +691,15 @@ async def check_group_context() -> bool:
         # Inspect the call_llama source to make sure GROUP_CONTEXT
         # is referenced in both the unconditional injection and the
         # rating branch.
-        # GROUP_CONTEXT lives in prompts.py and the injection lives in
-        # call_llama.py. Both used to be in bot.py, so these four checks
-        # read a file that no longer contains the thing they were
-        # asserting -- and they failed against correct code for two
-        # deploys. The constant and the use have to be checked in the
-        # files that actually hold them now.
-        prompts_src = _module_source('prompts')
+        # GROUP_CONTEXT lives in prompt_text/group_context.py and the
+        # injection lives in call_llama.py. Both used to be in bot.py, so
+        # these four checks read a file that no longer contains the thing
+        # they were asserting -- and they failed against correct code for
+        # two deploys. #12 moved the prose one step further, into the
+        # package, so the same trap was waiting again: `prompts` is now a
+        # facade and the sentence is not in it. The constant and the use
+        # have to be checked in the files that actually hold them now.
+        prompts_src = _module_source('prompt_text.group_context')
         src = _module_source('call_llama')
 
         # 1. GROUP_CONTEXT must be defined as a module-level constant.
