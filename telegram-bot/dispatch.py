@@ -82,43 +82,6 @@ from rating import (
     _is_rating_active, _parse_rating_response,
 )
 
-def is_authorized(update: Update) -> bool:
-    """Return True iff the user is on the allowlist.
-
-    Allowlist matching:
-      * user.id in ALLOWED_USER_IDS (numeric Telegram user_id)
-      * user.username.lower() in ALLOWED_USERNAMES (case-insensitive)
-
-    T56 #S13 (Mavis wave-4, by-design):
-    Username comparison uses .lower() without NFKC Unicode
-    normalization. This is the correct fail-closed trade-off:
-
-      * Telegram usernames per the Bot API spec are
-        [A-Za-z0-9_]{5,32}, so .lower() is sufficient for the
-        spec-compliant case.
-      * For non-spec / legacy usernames that Unicode-normalise
-        differently, the bot REJECTS the user (fail-closed)
-        rather than granting access. The wrong direction for
-        a security check is to "fix" a non-match by adding
-        unicodedata.normalize() — that would let an attacker
-        bypass the allowlist with a username that normalises
-        to an allowed value.
-
-    Do NOT "improve" this with unicodedata.normalize without
-    a security review. The lack of normalization is the
-    defence, not a bug.
-    """
-    if LOCKDOWN:
-        return False
-    user = update.effective_user
-    if not user:
-        return False
-    if user.id in ALLOWED_USER_IDS:
-        return True
-    if user.username and user.username.lower() in ALLOWED_USERNAMES:
-        return True
-    return False
-
 
 # === start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,7 +326,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f'\n💡 История хранится целиком (в т.ч. для будущего обучения). '
         f'В контекст уходит только то, что попадает в окно выше.'
     )
-
 
 
 # === cmd_newsub ===
@@ -720,9 +682,6 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-
-
-
 async def _handle_reply_to_other_user(upd, bot) -> None:
     """T65.1 — a human replied to another human in a group.
 
@@ -846,8 +805,6 @@ import time as _time
 #: How many chat_ids we are willing to track at once. Above this we start
 #: dropping idle entries; an active chat re-creates its own deque on the next
 #: send, so the cap costs a re-allocation and never correctness.
-
-
 
 
 # === main ===
@@ -1659,7 +1616,6 @@ async def _dispatch_update(upd_dict):
         return
     await _dispatcher.process_update(upd)
     log.info(f"[dispatch] processed update_id={upd.update_id}")
-
 
 
 # === Module-level state that other modules need ===
