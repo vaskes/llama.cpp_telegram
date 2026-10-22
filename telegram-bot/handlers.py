@@ -312,7 +312,7 @@ async def _resolve_active(user_id: int) -> str:
     await asyncio.to_thread(storage.get_store().set_active_thread, user_id, 'main')
     return 'main'
 
-# === _sender_display_name ===
+# === _safe_sender_label ===
 # Telegram's first_name and last_name are 0-64 chars of arbitrary
 # Unicode (per Bot API spec). That includes newlines, zero-width chars,
 # RTL overrides, and private-use codepoints that some terminals render
@@ -394,6 +394,9 @@ def _safe_sender_label(name: str) -> str:
     if len(cleaned) > _SAFE_SENDER_MAX_LEN:
         cleaned = cleaned[:_SAFE_SENDER_MAX_LEN].rstrip()
     return cleaned
+
+
+# === _sender_display_name ===
 
 
 def _sender_display_name(user) -> str | None:

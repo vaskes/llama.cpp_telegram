@@ -1526,3 +1526,123 @@ async def test_per_user_cap_is_held_across_the_llm_call(monkeypatch, tmp_path,
         f"release is not swallowed by the try/except around it."
     )
     assert not _errors(capsys), f"{handler}: {_errors(capsys)}"
+
+
+# ------------------------------------------- the per-user cap, as a peak --
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler", ["handle_text", "handle_document"])
+async def test_per_user_cap_is_held_across_the_llm_call(monkeypatch, tmp_path,
+                                                        handler, capsys):
+    """_PER_USER_SEMAPHORE_LIMIT has to bound *concurrent work*.
+
+    Regression, 2026-10-22: releasing the slot in the B1 window covered
+    every early return but happened before call_llama, so five messages
+    from one user ran five LLM calls at once against a limit of two. The
+    release count was one per path and _value balanced before and after,
+    which is why every measurement I had said the fix was fine.
+    """
+    import state
+    limit = state._PER_USER_SEMAPHORE_LIMIT
+
+    sem = asyncio.Semaphore(limit)
+    live = 0
+    peak = 0
+
+    async def slot(chat_id, user_id, update):
+        await sem.acquire()
+        return sem
+
+    async def slow_call_llama(*a, **kw):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        try:
+            await asyncio.sleep(0.02)
+        finally:
+            live -= 1
+        return {"text": "ok", "executed_tools": [], "aborted": False}
+
+    handlers, sent, _sem_used, _reg = _common(
+        monkeypatch, tmp_path, slow_call_llama, slot=slot)
+    u = _update()
+    c = _context()
+    if handler == "handle_document":
+        doc = MagicMock()
+        doc.file_size, doc.file_id, doc.file_name = 100, "d1", "a.txt"
+        u.message.document = doc
+        u.message.caption = "cap"
+
+    await asyncio.gather(*[getattr(handlers, handler)(u, c) for _ in range(5)])
+
+    assert peak <= limit, (
+        f"{handler}: {peak} concurrent call_llama for one (chat,user), "
+        f"limit is {limit} -- the slot is not held across the LLM call"
+    )
+    assert sem._value <= limit, (
+        f"semaphore released more than it acquired: _value={sem._value} "
+        f"against a limit of {limit}. asyncio.Semaphore does not raise on "
+        f"over-release; BoundedSemaphore (state.py) does, but only if the "
+        f"release is not swallowed by the try/except around it."
+    )
+    assert not _errors(capsys), f"{handler}: {_errors(capsys)}"
+
+
+# ------------------------------------------- the per-user cap, as a peak --
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler", ["handle_text", "handle_document"])
+async def test_per_user_cap_is_held_across_the_llm_call(monkeypatch, tmp_path,
+                                                        handler, capsys):
+    """_PER_USER_SEMAPHORE_LIMIT has to bound *concurrent work*.
+
+    Regression, 2026-10-22: releasing the slot in the B1 window covered
+    every early return but happened before call_llama, so five messages
+    from one user ran five LLM calls at once against a limit of two. The
+    release count was one per path and _value balanced before and after,
+    which is why every measurement I had said the fix was fine.
+    """
+    import state
+    limit = state._PER_USER_SEMAPHORE_LIMIT
+
+    sem = asyncio.Semaphore(limit)
+    live = 0
+    peak = 0
+
+    async def slot(chat_id, user_id, update):
+        await sem.acquire()
+        return sem
+
+    async def slow_call_llama(*a, **kw):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        try:
+            await asyncio.sleep(0.02)
+        finally:
+            live -= 1
+        return {"text": "ok", "executed_tools": [], "aborted": False}
+
+    handlers, sent, _sem_used, _reg = _common(
+        monkeypatch, tmp_path, slow_call_llama, slot=slot)
+    u = _update()
+    c = _context()
+    if handler == "handle_document":
+        doc = MagicMock()
+        doc.file_size, doc.file_id, doc.file_name = 100, "d1", "a.txt"
+        u.message.document = doc
+        u.message.caption = "cap"
+
+    await asyncio.gather(*[getattr(handlers, handler)(u, c) for _ in range(5)])
+
+    assert peak <= limit, (
+        f"{handler}: {peak} concurrent call_llama for one (chat,user), "
+        f"limit is {limit} -- the slot is not held across the LLM call"
+    )
+    assert sem._value <= limit, (
+        f"semaphore released more than it acquired: _value={sem._value} "
+        f"against a limit of {limit}. asyncio.Semaphore does not raise on "
+        f"over-release; BoundedSemaphore (state.py) does, but only if the "
+        f"release is not swallowed by the try/except around it."
+    )
+    assert not _errors(capsys), f"{handler}: {_errors(capsys)}"
