@@ -86,10 +86,10 @@ def _pop_bot_reply(chat_id: int, user_message_id: int) -> int | None:
 # each get their own slot. The semaphore is created lazily in
 # _get_user_semaphore() to avoid a top-level asyncio.Semaphore
 # before the event loop is running.
-_user_semaphores: "OrderedDict[tuple[int, int], asyncio.Semaphore]" = OrderedDict()
+_user_semaphores: "OrderedDict[tuple[int, int], asyncio.BoundedSemaphore]" = OrderedDict()
 
 
-def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
+def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.BoundedSemaphore:
     """Return the per-(chat, user) semaphore, creating it on first call.
 
     v0.10.0: LRU eviction at _USER_SEMAPHORES_MAXSIZE so a long-running
@@ -104,7 +104,7 @@ def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.Semaphore:
         _user_semaphores.move_to_end(key)
         return _user_semaphores[key]
     from config import _PER_USER_SEMAPHORE_LIMIT
-    sem = asyncio.Semaphore(_PER_USER_SEMAPHORE_LIMIT)
+    sem = asyncio.BoundedSemaphore(_PER_USER_SEMAPHORE_LIMIT)
     _user_semaphores[key] = sem
     while len(_user_semaphores) > _USER_SEMAPHORES_MAXSIZE:
         _user_semaphores.popitem(last=False)

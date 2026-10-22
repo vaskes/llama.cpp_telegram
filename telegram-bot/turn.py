@@ -112,11 +112,25 @@ class Turn:
                 f"{type(rb).__name__}: {rb}. The user message is still in the "
                 f"history with no assistant reply.")
             return False
+        if not deleted:
+            # 2026-10-22: `deleted` was computed and never read, so a
+            # rollback that removed nothing returned True, logged success
+            # and cleared `persisted` -- a silent false success, in the
+            # function whose own except branch says a silent half-rollback
+            # is how you end up debugging "why does the bot think I said
+            # that". Say nothing was deleted and leave the turn marked.
+            log.warning(f"[{self.label}] rollback found nothing to delete "
+                f"for {self.chat_id}/{self.thread_id} ({reason}); "
+                f"rows={self.rows} ids={self._row_ids}")
+            return False
         log.info(f"[{self.label}] rolled back persisted turn for "
             f"{self.chat_id}/{self.thread_id} ({reason})")
-        self.rows -= 1
-        if self.rows <= 0:
-            self.persisted = False
+        # All-or-nothing. With id-based deletion the whole set goes, so a
+        # counter that decrements by one would report a second successful
+        # rollback for a turn that is already gone.
+        self._row_ids.clear()
+        self.rows = 0
+        self.persisted = False
         return True
 
 

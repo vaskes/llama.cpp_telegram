@@ -691,9 +691,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         # B1: the abort event is only registered when a thinking message
         # exists, so there is nothing to pop otherwise -- and reaching for
-        # thinking.message_id anyway raised AttributeError, which replaced
-        # the real exception and skipped the release below. That leaked the
-        # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
+        # thinking.message_id anyway raised AttributeError. 2026-10-22: the
+        # slot release that used to be described here moved out to the
+        # handler's outermost finally, so that it covers the LLM call and
+        # not just the window after it.
         #
         # Both layers are deliberate. The guard makes the pop correct; the
         # try makes it impossible for any future line added here to cost a
@@ -924,218 +925,223 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sem = await _check_user_slot(chat_id, user_id, update)
     if sem is None:
         return
-    # B1: the per-user slot is acquired above. Everything between here and
-    # the try/finally was NOT covered by it, so an exception here -- Telegram
-    # rejecting the typing indicator, a malformed update -- discarded the slot
-    # outright. With _PER_USER_SEMAPHORE_LIMIT=2, two such failures lock the
-    # user out of the bot until the process restarts, and the only thing that
-    # could return the token is a finally that was never entered.
-    #
-    # BaseException rather than Exception: a cancelled handler leaks the same
-    # way and would never appear in a log.
+    # 2026-10-22: built above the try whose except calls turn.rollback().
+    # Inside it, an exception during the download left `turn` unbound and
+    # the rollback turned into an UnboundLocalError that replaced the real
+    # error. tmp_path is here for the same reason: the main finally reads
+    # it, so an early return before its assignment raised inside the
+    # finally and skipped the slot release.
+    tmp_path = None
+    thinking = None
+    # v0.9.2: rollback flag for persisted document content
+    turn = Turn(chat_id, thread_id, "handle_document")
+    persisted = False  # mirrors turn.persisted
     try:
-        await update.message.chat.send_action(action='typing')
-        doc = update.message.document
-        # Reject oversized documents before downloading. We will only ever
-        # read the first 16 KB of text from the file, so anything bigger is
-        # almost certainly a mistake or an attempt to OOM the bot.
-        if doc.file_size and doc.file_size > MAX_DOC_BYTES:
-            await _reply(update, 
-                f'❌ Document too large ({doc.file_size/1e6:.1f} MB > '
-                f'{MAX_DOC_BYTES/1e6:.0f} MB).'
-            )
-            return
-        file = await context.bot.get_file(doc.file_id)
-        doc_bytes = await _download_with_limit(file, MAX_DOC_BYTES, 'Document', update)
-        if doc_bytes is None:
-            return
-        tmp_path = None
-        thinking = None
-        # v0.9.2: rollback flag for persisted document content
-        turn = Turn(chat_id, thread_id, "handle_document")
-        persisted = False  # mirrors turn.persisted
-    except BaseException:
-        raise
-    finally:
-        # 2026-10-22: one release for every way out of this window,
-        # including the early returns that used to skip it (a leaked slot
-        # locks a user out after _PER_USER_SEMAPHORE_LIMIT failures).
-        # The main try below therefore must not release again.
+        # B1: the per-user slot is acquired above. Everything between here and
+        # the try/finally was NOT covered by it, so an exception here -- Telegram
+        # rejecting the typing indicator, a malformed update -- discarded the slot
+        # outright. With _PER_USER_SEMAPHORE_LIMIT=2, two such failures lock the
+        # user out of the bot until the process restarts, and the only thing that
+        # could return the token is a finally that was never entered.
+        #
+        # BaseException rather than Exception: a cancelled handler leaks the same
+        # way and would never appear in a log.
         try:
-            sem.release()
-        except Exception:
-            pass
+            await update.message.chat.send_action(action='typing')
+            doc = update.message.document
+            # Reject oversized documents before downloading. We will only ever
+            # read the first 16 KB of text from the file, so anything bigger is
+            # almost certainly a mistake or an attempt to OOM the bot.
+            if doc.file_size and doc.file_size > MAX_DOC_BYTES:
+                await _reply(update, 
+                    f'❌ Document too large ({doc.file_size/1e6:.1f} MB > '
+                    f'{MAX_DOC_BYTES/1e6:.0f} MB).'
+                )
+                return
+            file = await context.bot.get_file(doc.file_id)
+            doc_bytes = await _download_with_limit(file, MAX_DOC_BYTES, 'Document', update)
+            if doc_bytes is None:
+                return
+        except BaseException:
+            raise
 
-    try:
-        ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
-            tmp.write(doc_bytes)
-            tmp_path = tmp.name
-        with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
-            doc_text = f.read()[:16000]
-        caption = update.message.caption or 'Read the document and answer questions.'
-        user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
-        sender_name = _sender_display_name(update.message.from_user)
-        # v0.9.2: persist AFTER thinking+abort_event are wired so a
-        # Stop click during the LLM call can roll the document back.
-        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-        # 2026-10-22: _reply returns None after three TimedOuts (T48).
-        # The attribute was read on the next line in all four handlers and
-        # raised AttributeError. Guard at the read, not in the finally --
-        # a fix in cleanup is not a guard.
-        if thinking is None:
-            log.warning(f"[handle_document] could not send the thinking message after "
-                        f"three timeouts; giving up on this update")
-            return
-        abort_event = asyncio.Event()
-        _register_abort_event(chat_id, thinking.message_id, abort_event)
-        await turn.persist(user_content, role='user', sender_name=sender_name)
-        persisted = turn.persisted
-        persisted = True
-        history = await _load_history(chat_id, thread_id)
-        log.info(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
-        rating_active = _is_rating_active(update)
-        # T1 (P0-1): global LLM concurrency cap.
-        async with _get_global_llm_sem():
-            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-            if isinstance(_result, dict):
-                bot_response = _result.get("text") or ""
-                _exec = _result.get("executed_tools") or []
-                if _exec:
-                    _hist = _format_executed_tools(_exec)
-                    if _hist:
-                        bot_response = _hist + "\n\n" + bot_response
-            else:
-                bot_response = _result
-        if bot_response is None or abort_event.is_set():
-            # v0.8.0: also discard if abort_event was set, even when
-            # call_llama returned a non-None response (post won the
-            # race). The user clicked Stop, so the LLM response
-            # should NOT be sent.
-            if bot_response is not None and abort_event.is_set():
-                log.info(f"[handle_document] ABORTED via Stop; "
-                    f"discarding {len(bot_response)}-char response "
-                    f"(post-won race)")
-            else:
-                log.info(f"[handle_document] ABORTED by user via Stop button, moving to next")
-            # v0.9.2: roll back the persisted document so the next user
-            # message is not answered about the (cancelled) document.
-            await turn.rollback('aborted')
-            try:
-                await thinking.edit_text('⏹ Остановлено')
-            except Exception:
-                pass
-            return
-        # === Empty-response retry (same as handle_photo) ===
-        if bot_response.startswith('[model returned an empty response.'):
-            log.info(f"[handle_document] empty response, retrying once")
-            try:
-                await thinking.edit_text('🔄 переспрашиваю…')
-            except Exception:
-                pass
-            retry_response = await call_llama(
-                history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption,
-                thinking_msg=thinking, rating_active=rating_active,
-                abort_event=abort_event,
-                bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
-                chat_type=update.effective_chat.type,
-            )
-            if retry_response is None or abort_event.is_set():
-                # v0.8.0: same discard-on-abort as primary
-                if retry_response is not None and abort_event.is_set():
-                    log.info(f"[handle_document] ABORTED on retry via Stop; "
-                        f"discarding {len(retry_response)}-char response")
+        try:
+            ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
+                tmp.write(doc_bytes)
+                tmp_path = tmp.name
+            with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
+                doc_text = f.read()[:16000]
+            caption = update.message.caption or 'Read the document and answer questions.'
+            user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
+            sender_name = _sender_display_name(update.message.from_user)
+            # v0.9.2: persist AFTER thinking+abort_event are wired so a
+            # Stop click during the LLM call can roll the document back.
+            thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+            # 2026-10-22: _reply returns None after three TimedOuts (T48).
+            # The attribute was read on the next line in all four handlers and
+            # raised AttributeError. Guard at the read, not in the finally --
+            # a fix in cleanup is not a guard.
+            if thinking is None:
+                log.warning(f"[handle_document] could not send the thinking message after "
+                            f"three timeouts; giving up on this update")
+                return
+            abort_event = asyncio.Event()
+            _register_abort_event(chat_id, thinking.message_id, abort_event)
+            await turn.persist(user_content, role='user', sender_name=sender_name)
+            persisted = turn.persisted
+            persisted = True
+            history = await _load_history(chat_id, thread_id)
+            log.info(f"[handle_document] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
+            rating_active = _is_rating_active(update)
+            # T1 (P0-1): global LLM concurrency cap.
+            async with _get_global_llm_sem():
+                _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
+                if isinstance(_result, dict):
+                    bot_response = _result.get("text") or ""
+                    _exec = _result.get("executed_tools") or []
+                    if _exec:
+                        _hist = _format_executed_tools(_exec)
+                        if _hist:
+                            bot_response = _hist + "\n\n" + bot_response
                 else:
-                    log.info(f"[handle_document] ABORTED on retry, moving to next")
-                # v0.9.2: rollback also on retry-abort
+                    bot_response = _result
+            if bot_response is None or abort_event.is_set():
+                # v0.8.0: also discard if abort_event was set, even when
+                # call_llama returned a non-None response (post won the
+                # race). The user clicked Stop, so the LLM response
+                # should NOT be sent.
+                if bot_response is not None and abort_event.is_set():
+                    log.info(f"[handle_document] ABORTED via Stop; "
+                        f"discarding {len(bot_response)}-char response "
+                        f"(post-won race)")
+                else:
+                    log.info(f"[handle_document] ABORTED by user via Stop button, moving to next")
+                # v0.9.2: roll back the persisted document so the next user
+                # message is not answered about the (cancelled) document.
                 await turn.rollback('aborted')
                 try:
                     await thinking.edit_text('⏹ Остановлено')
                 except Exception:
                     pass
                 return
-            # Same unwrap the primary path does (handlers.py:538).
-            # Added 2026-10-22: the retry did not have it, so every
-            # reachable retry -- i.e. every empty-response retry, which is
-            # the only reason this code exists -- died on
-            # AttributeError: 'dict' object has no attribute 'startswith'.
-            # The executed-tools preamble is reproduced too; dropping it
-            # would answer without the tool trace, which fails quietly.
-            if isinstance(retry_response, dict):
-                _retry_text = retry_response.get("text") or ""
-                _retry_exec = retry_response.get("executed_tools") or []
-                if _retry_exec:
-                    _retry_hist = _format_executed_tools(_retry_exec)
-                    if _retry_hist:
-                        _retry_text = _retry_hist + "\n\n" + _retry_text
-                retry_response = _retry_text
-            if not (isinstance(retry_response, str)
-                    and retry_response.startswith(
-                        '[model returned an empty response.')):
-                bot_response = retry_response
-                log.info(f"[handle_document] retry succeeded")
-            else:
-                log.info(f"[handle_document] retry also empty, sending fallback")
-                bot_response = (
-                    '🤔 Не удалось получить ответ от модели. '
-                    'Возможные причины: перегруженный длинный контекст, '
-                    'сложный вопрос (предсказания, нишевые факты) или '
-                    'временный сбой llama-server. Попробуй:\n'
-                    '• /reset — очистить историю и начать с нуля\n'
-                    '• Переформулировать вопрос\n'
-                    '• Добавить больше деталей в вопрос'
+            # === Empty-response retry (same as handle_photo) ===
+            if bot_response.startswith('[model returned an empty response.'):
+                log.info(f"[handle_document] empty response, retrying once")
+                try:
+                    await thinking.edit_text('🔄 переспрашиваю…')
+                except Exception:
+                    pass
+                retry_response = await call_llama(
+                    history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption,
+                    thinking_msg=thinking, rating_active=rating_active,
+                    abort_event=abort_event,
+                    bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
+                    chat_type=update.effective_chat.type,
                 )
-        # Edit-during-LLM detection removed: the check is a
-        # no-op without a concurrent getUpdates consumer.
-        # See handle_photo for the full rationale.
-        # === RATING_MODE dispatch ===
-        # In a group with RATING_MODE=1, the LLM prefixes its
-        # response with [[TYPE:...]] [[RATE:N]]. We parse the
-        # type and take one of three actions:
-        #   question / request / confirmation → text reply
-        #   info / statement with rating        → emoji reaction, persist rating
-        #   bloat                               → emoji reaction, no text
-        # Private mode and [llm]-marked messages always get a
-        # plain text reply (rating path is group-only).
-        # rating_active was computed above (before call_llama).
-        # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
-        # single helper call. The helper handles all 4 paths
-        # (rating_active off, info/statement with rating, bloat,
-        # question/request/confirmation) and returns the text
-        # to reply with (possibly empty for rating-only turns).
-        bot_response = await _apply_rating_and_persist(
-            context, update, chat_id, thread_id, bot_response, rating_active,
-        )
-        if bot_response:
-            await send_reply(update, bot_response)
-    except Exception as e:
-        log.info(f"[ERR doc] {type(e).__name__}: {e}")
-        await turn.rollback('aborted')
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        # T46: revert T45. See handle_text for rationale.
-        if thinking is not None:
-            try:
-                await thinking.delete()
-            except Exception:
-                pass
-        # B1: the abort event is only registered when a thinking message
-        # exists, so there is nothing to pop otherwise -- and reaching for
-        # thinking.message_id anyway raised AttributeError, which replaced
-        # the real exception and skipped the release below. That leaked the
-        # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
-        #
-        # Both layers are deliberate. The guard makes the pop correct; the
-        # try makes it impossible for any future line added here to cost a
-        # user their access to the bot.
-        if thinking is not None:
-            try:
-                _abort_events.pop((chat_id, thinking.message_id), None)
-            except Exception:
-                pass
+                if retry_response is None or abort_event.is_set():
+                    # v0.8.0: same discard-on-abort as primary
+                    if retry_response is not None and abort_event.is_set():
+                        log.info(f"[handle_document] ABORTED on retry via Stop; "
+                            f"discarding {len(retry_response)}-char response")
+                    else:
+                        log.info(f"[handle_document] ABORTED on retry, moving to next")
+                    # v0.9.2: rollback also on retry-abort
+                    await turn.rollback('aborted')
+                    try:
+                        await thinking.edit_text('⏹ Остановлено')
+                    except Exception:
+                        pass
+                    return
+                # Same unwrap the primary path does (handlers.py:538).
+                # Added 2026-10-22: the retry did not have it, so every
+                # reachable retry -- i.e. every empty-response retry, which is
+                # the only reason this code exists -- died on
+                # AttributeError: 'dict' object has no attribute 'startswith'.
+                # The executed-tools preamble is reproduced too; dropping it
+                # would answer without the tool trace, which fails quietly.
+                if isinstance(retry_response, dict):
+                    _retry_text = retry_response.get("text") or ""
+                    _retry_exec = retry_response.get("executed_tools") or []
+                    if _retry_exec:
+                        _retry_hist = _format_executed_tools(_retry_exec)
+                        if _retry_hist:
+                            _retry_text = _retry_hist + "\n\n" + _retry_text
+                    retry_response = _retry_text
+                if not (isinstance(retry_response, str)
+                        and retry_response.startswith(
+                            '[model returned an empty response.')):
+                    bot_response = retry_response
+                    log.info(f"[handle_document] retry succeeded")
+                else:
+                    log.info(f"[handle_document] retry also empty, sending fallback")
+                    bot_response = (
+                        '🤔 Не удалось получить ответ от модели. '
+                        'Возможные причины: перегруженный длинный контекст, '
+                        'сложный вопрос (предсказания, нишевые факты) или '
+                        'временный сбой llama-server. Попробуй:\n'
+                        '• /reset — очистить историю и начать с нуля\n'
+                        '• Переформулировать вопрос\n'
+                        '• Добавить больше деталей в вопрос'
+                    )
+            # Edit-during-LLM detection removed: the check is a
+            # no-op without a concurrent getUpdates consumer.
+            # See handle_photo for the full rationale.
+            # === RATING_MODE dispatch ===
+            # In a group with RATING_MODE=1, the LLM prefixes its
+            # response with [[TYPE:...]] [[RATE:N]]. We parse the
+            # type and take one of three actions:
+            #   question / request / confirmation → text reply
+            #   info / statement with rating        → emoji reaction, persist rating
+            #   bloat                               → emoji reaction, no text
+            # Private mode and [llm]-marked messages always get a
+            # plain text reply (rating path is group-only).
+            # rating_active was computed above (before call_llama).
+            # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
+            # single helper call. The helper handles all 4 paths
+            # (rating_active off, info/statement with rating, bloat,
+            # question/request/confirmation) and returns the text
+            # to reply with (possibly empty for rating-only turns).
+            bot_response = await _apply_rating_and_persist(
+                context, update, chat_id, thread_id, bot_response, rating_active,
+            )
+            if bot_response:
+                await send_reply(update, bot_response)
+        except Exception as e:
+            log.info(f"[ERR doc] {type(e).__name__}: {e}")
+            await turn.rollback('aborted')
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            # T46: revert T45. See handle_text for rationale.
+            if thinking is not None:
+                try:
+                    await thinking.delete()
+                except Exception:
+                    pass
+            # B1: the abort event is only registered when a thinking message
+            # exists, so there is nothing to pop otherwise -- and reaching for
+            # thinking.message_id anyway raised AttributeError, which replaced
+            # the real exception and skipped the release below. That leaked the
+            # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
+            #
+            # Both layers are deliberate. The guard makes the pop correct; the
+            # try makes it impossible for any future line added here to cost a
+            # user their access to the bot.
+            if thinking is not None:
+                try:
+                    _abort_events.pop((chat_id, thinking.message_id), None)
+                except Exception:
+                    pass
 
-# === handle_text ===
+    # === handle_text ===
+    finally:
+        # 2026-10-22: released at the outermost exit, so the slot is held
+        # for the whole handler including the LLM call. Releasing inside
+        # the B1 window covered every early return but happened before
+        # call_llama, which left _PER_USER_SEMAPHORE_LIMIT measuring
+        # nothing.
+        sem.release()
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from state import _get_user_semaphore as _user_semaphore
     from state import _check_burst_split, _record_user_message, _user_recent_msg
@@ -1202,231 +1208,230 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     turn = Turn(chat_id, thread_id, "handle_text")
     persisted = False  # mirrors turn.persisted
     thinking = None
-    # B1: the per-user slot is acquired above and everything up to the main
-    # try/finally was NOT covered by it. This window is not just awaits --
-    # it contains turn.persist(), so a failure after that write left a
-    # half-written user message in SQLite AND discarded the slot.
-    # _PER_USER_SEMAPHORE_LIMIT is 2, so two such failures lock the user out
-    # of the bot until the process restarts.
-    #
-    # The except mirrors the main one rather than just releasing: rollback if
-    # we persisted, deregister the abort event, release, re-raise.
-    # BaseException because a cancelled handler leaks the same way and would
-    # never appear in a log.
     try:
+        # B1: the per-user slot is acquired above and everything up to the main
+        # try/finally was NOT covered by it. This window is not just awaits --
+        # it contains turn.persist(), so a failure after that write left a
+        # half-written user message in SQLite AND discarded the slot.
+        # _PER_USER_SEMAPHORE_LIMIT is 2, so two such failures lock the user out
+        # of the bot until the process restarts.
+        #
+        # The except mirrors the main one rather than just releasing: rollback if
+        # we persisted, deregister the abort event, release, re-raise.
+        # BaseException because a cancelled handler leaks the same way and would
+        # never appear in a log.
         try:
-            await update.message.chat.send_action(action='typing')
-        except Exception as e:
-            log.warning(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}")
-        sender_name = _sender_display_name(update.message.from_user)
-        # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
-        # click during the LLM call can roll the message back.
-        thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
-        # T34 race fix v2: REUSE the early_event created at ENTRY
-        # time, so a follow-up that arrived between EARLY-RECORD
-        # and this point (and called set() on early_event) is
-        # observable here. If we created a fresh event now, the
-        # burst-set event would be orphaned and the LLM call
-        # would proceed to a half-answer.
-        # 2026-10-22: same None guard as the other three handlers.
-        if thinking is None:
-            log.warning("[handle_text] could not send the thinking message "
-                        "after three timeouts; giving up on this update")
-            return
-        abort_event = early_event
-        _register_abort_event(chat_id, thinking.message_id, abort_event)
-        await turn.persist(user_message, role='user', sender_name=sender_name)
-        persisted = turn.persisted
-        # Refresh the registry entry so the abort_event and the
-        # recorded size match (the EARLY-RECORD used text_bytes
-        # of the raw message; LATE-RECORD uses the same value but
-        # keeps the registry authoritative in case of a future
-        # refactor).
-        msg_bytes = len(user_message.encode('utf-8'))
-        _record_user_message(chat_id, user_id, msg_bytes, abort_event)
-        log.info(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]")
-        persisted = True
-        history = await _load_history(chat_id, thread_id)
-        log.info(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
-    except BaseException:
-        if persisted:
             try:
-                await turn.rollback('aborted')
-            except Exception:
-                pass
-        if thinking is not None:
-            try:
-                _abort_events.pop((chat_id, thinking.message_id), None)
-            except Exception:
-                pass
-        raise
-    finally:
-        # 2026-10-22: one release for every way out of this window,
-        # including the early returns that used to skip it (a leaked slot
-        # locks a user out after _PER_USER_SEMAPHORE_LIMIT failures).
-        # The main try below therefore must not release again.
-        try:
-            sem.release()
-        except Exception:
-            pass
+                await update.message.chat.send_action(action='typing')
+            except Exception as e:
+                log.warning(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}")
+            sender_name = _sender_display_name(update.message.from_user)
+            # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
+            # click during the LLM call can roll the message back.
+            thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+            # T34 race fix v2: REUSE the early_event created at ENTRY
+            # time, so a follow-up that arrived between EARLY-RECORD
+            # and this point (and called set() on early_event) is
+            # observable here. If we created a fresh event now, the
+            # burst-set event would be orphaned and the LLM call
+            # would proceed to a half-answer.
+            # 2026-10-22: same None guard as the other three handlers.
+            if thinking is None:
+                log.warning("[handle_text] could not send the thinking message "
+                            "after three timeouts; giving up on this update")
+                return
+            abort_event = early_event
+            _register_abort_event(chat_id, thinking.message_id, abort_event)
+            await turn.persist(user_message, role='user', sender_name=sender_name)
+            persisted = turn.persisted
+            # Refresh the registry entry so the abort_event and the
+            # recorded size match (the EARLY-RECORD used text_bytes
+            # of the raw message; LATE-RECORD uses the same value but
+            # keeps the registry authoritative in case of a future
+            # refactor).
+            msg_bytes = len(user_message.encode('utf-8'))
+            _record_user_message(chat_id, user_id, msg_bytes, abort_event)
+            log.info(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]")
+            persisted = True
+            history = await _load_history(chat_id, thread_id)
+            log.info(f"[handle_text] user_id={user_id} thread_id={thread_id!r} history_len={len(history)}")
+        except BaseException:
+            if persisted:
+                try:
+                    await turn.rollback('aborted')
+                except Exception:
+                    pass
+            if thinking is not None:
+                try:
+                    _abort_events.pop((chat_id, thinking.message_id), None)
+                except Exception:
+                    pass
+            raise
 
-    try:
-        rating_active = _is_rating_active(update)
-        # T1 (P0-1): wrap call_llama in the global semaphore so
-        # 50 different users in a group can only cause 4
-        # concurrent LLM forwards on the same GPU.
-        async with _get_global_llm_sem():
-            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-            if isinstance(_result, dict):
-                bot_response = _result.get("text") or ""
-                _exec = _result.get("executed_tools") or []
-                if _exec:
-                    _hist = _format_executed_tools(_exec)
-                    if _hist:
-                        bot_response = _hist + "\n\n" + bot_response
-            else:
-                bot_response = _result
-        if bot_response is None or abort_event.is_set():
-            # v0.8.0: also discard if abort_event was set, even when
-            # call_llama returned a non-None response (post won the
-            # race). The user clicked Stop, so the LLM response
-            # should NOT be sent.
-            if bot_response is not None and abort_event.is_set():
-                log.info(f"[handle_text] ABORTED via Stop; "
-                    f"discarding {len(bot_response)}-char response "
-                    f"(post-won race)")
-            else:
-                log.info(f"[handle_text] ABORTED by user via Stop button, moving to next")
-            # v0.9.2: roll back the persisted user message so the next
-            # message is not answered about the (cancelled) one.
-            await turn.rollback('aborted')
-            try:
-                await thinking.edit_text('⏹ Остановлено')
-            except Exception:
-                pass
-            return
-        # === Empty-response retry (same as handle_photo) ===
-        if bot_response.startswith('[model returned an empty response.'):
-            log.info(f"[handle_text] empty response, retrying once")
-            try:
-                await thinking.edit_text('🔄 переспрашиваю…')
-            except Exception:
-                pass
-            retry_response = await call_llama(
-                history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message,
-                thinking_msg=thinking, rating_active=rating_active,
-                abort_event=abort_event,
-                bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
-                chat_type=update.effective_chat.type,
-            )
-            if retry_response is None or abort_event.is_set():
-                # v0.8.0: same discard-on-abort as primary
-                if retry_response is not None and abort_event.is_set():
-                    log.info(f"[handle_text] ABORTED on retry via Stop; "
-                        f"discarding {len(retry_response)}-char response")
+        try:
+            rating_active = _is_rating_active(update)
+            # T1 (P0-1): wrap call_llama in the global semaphore so
+            # 50 different users in a group can only cause 4
+            # concurrent LLM forwards on the same GPU.
+            async with _get_global_llm_sem():
+                _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
+                if isinstance(_result, dict):
+                    bot_response = _result.get("text") or ""
+                    _exec = _result.get("executed_tools") or []
+                    if _exec:
+                        _hist = _format_executed_tools(_exec)
+                        if _hist:
+                            bot_response = _hist + "\n\n" + bot_response
                 else:
-                    log.info(f"[handle_text] ABORTED on retry, moving to next")
-                # v0.9.2: rollback also on retry-abort
+                    bot_response = _result
+            if bot_response is None or abort_event.is_set():
+                # v0.8.0: also discard if abort_event was set, even when
+                # call_llama returned a non-None response (post won the
+                # race). The user clicked Stop, so the LLM response
+                # should NOT be sent.
+                if bot_response is not None and abort_event.is_set():
+                    log.info(f"[handle_text] ABORTED via Stop; "
+                        f"discarding {len(bot_response)}-char response "
+                        f"(post-won race)")
+                else:
+                    log.info(f"[handle_text] ABORTED by user via Stop button, moving to next")
+                # v0.9.2: roll back the persisted user message so the next
+                # message is not answered about the (cancelled) one.
                 await turn.rollback('aborted')
                 try:
                     await thinking.edit_text('⏹ Остановлено')
                 except Exception:
                     pass
                 return
-            # Same unwrap the primary path does (handlers.py:538).
-            # Added 2026-10-22: the retry did not have it, so every
-            # reachable retry -- i.e. every empty-response retry, which is
-            # the only reason this code exists -- died on
-            # AttributeError: 'dict' object has no attribute 'startswith'.
-            # The executed-tools preamble is reproduced too; dropping it
-            # would answer without the tool trace, which fails quietly.
-            if isinstance(retry_response, dict):
-                _retry_text = retry_response.get("text") or ""
-                _retry_exec = retry_response.get("executed_tools") or []
-                if _retry_exec:
-                    _retry_hist = _format_executed_tools(_retry_exec)
-                    if _retry_hist:
-                        _retry_text = _retry_hist + "\n\n" + _retry_text
-                retry_response = _retry_text
-            if not (isinstance(retry_response, str)
-                    and retry_response.startswith(
-                        '[model returned an empty response.')):
-                bot_response = retry_response
-                log.info(f"[handle_text] retry succeeded")
-            else:
-                log.info(f"[handle_text] retry also empty, sending fallback")
-                bot_response = (
-                    '🤔 Не удалось получить ответ от модели. '
-                    'Возможные причины: перегруженный длинный контекст, '
-                    'сложный вопрос (предсказания, нишевые факты) или '
-                    'временный сбой llama-server. Попробуй:\n'
-                    '• /reset — очистить историю и начать с нуля\n'
-                    '• Переформулировать вопрос\n'
-                    '• Добавить больше деталей в вопрос'
+            # === Empty-response retry (same as handle_photo) ===
+            if bot_response.startswith('[model returned an empty response.'):
+                log.info(f"[handle_text] empty response, retrying once")
+                try:
+                    await thinking.edit_text('🔄 переспрашиваю…')
+                except Exception:
+                    pass
+                retry_response = await call_llama(
+                    history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message,
+                    thinking_msg=thinking, rating_active=rating_active,
+                    abort_event=abort_event,
+                    bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
+                    chat_type=update.effective_chat.type,
                 )
-        # Edit-during-LLM detection removed: the check is a
-        # no-op without a concurrent getUpdates consumer.
-        # See handle_photo for the full rationale.
-        # === RATING_MODE dispatch ===
-        # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
-        # single helper call. The helper handles all 4 paths
-        # (rating_active off, info/statement with rating, bloat,
-        # question/request/confirmation) and returns the text
-        # to reply with (possibly empty for rating-only turns).
-        bot_response = await _apply_rating_and_persist(
-            context, update, chat_id, thread_id, bot_response, rating_active,
-        )
-        # v0.10.1 (Qwen wave-2 review): final abort check before sending.
-        if bot_response and not abort_event.is_set():
-            if len(bot_response) > 4000:
-                for i in range(0, len(bot_response), 4000):
-                    await _reply(update, bot_response[i:i+4000])
-            else:
-                await send_reply(update, bot_response)
-    except Exception as e:
-        import traceback
-        log.info(f"[ERR text] {type(e).__name__}: {e}")
-        traceback.print_exc()
-        await turn.rollback('aborted')
-        await _reply(update, f'❌ Error: {e}')
-    finally:
-        # T46: revert T45 (and original T41) edit_text pattern.
-        # The success path already sends the final response via
-        # send_reply, so editing the thinking message into the
-        # same content produces a duplicate message. The
-        # original "two message" issue (silent delete failure)
-        # is an acceptable trade-off here - the thinking block
-        # may occasionally linger in the chat, but the user
-        # sees the final answer in a single, separate message
-        # which is the desired behaviour.
-        try:
-            await thinking.delete()
-        except Exception:
-            pass
-        # Deregister the per-task abort event so a subsequent
-        # handler call for the same user doesn't accidentally
-        # see a leftover event. We pop the specific key rather
-        # than clear, in case the dict has been overwritten by
-        # a concurrent handler (defensive — the semaphore
-        # prevents same-user concurrency, but be safe).
-        # B1: the abort event is only registered when a thinking message
-        # exists, so there is nothing to pop otherwise -- and reaching for
-        # thinking.message_id anyway raised AttributeError, which replaced
-        # the real exception and skipped the release below. That leaked the
-        # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
-        #
-        # Both layers are deliberate. The guard makes the pop correct; the
-        # try makes it impossible for any future line added here to cost a
-        # user their access to the bot.
-        if thinking is not None:
+                if retry_response is None or abort_event.is_set():
+                    # v0.8.0: same discard-on-abort as primary
+                    if retry_response is not None and abort_event.is_set():
+                        log.info(f"[handle_text] ABORTED on retry via Stop; "
+                            f"discarding {len(retry_response)}-char response")
+                    else:
+                        log.info(f"[handle_text] ABORTED on retry, moving to next")
+                    # v0.9.2: rollback also on retry-abort
+                    await turn.rollback('aborted')
+                    try:
+                        await thinking.edit_text('⏹ Остановлено')
+                    except Exception:
+                        pass
+                    return
+                # Same unwrap the primary path does (handlers.py:538).
+                # Added 2026-10-22: the retry did not have it, so every
+                # reachable retry -- i.e. every empty-response retry, which is
+                # the only reason this code exists -- died on
+                # AttributeError: 'dict' object has no attribute 'startswith'.
+                # The executed-tools preamble is reproduced too; dropping it
+                # would answer without the tool trace, which fails quietly.
+                if isinstance(retry_response, dict):
+                    _retry_text = retry_response.get("text") or ""
+                    _retry_exec = retry_response.get("executed_tools") or []
+                    if _retry_exec:
+                        _retry_hist = _format_executed_tools(_retry_exec)
+                        if _retry_hist:
+                            _retry_text = _retry_hist + "\n\n" + _retry_text
+                    retry_response = _retry_text
+                if not (isinstance(retry_response, str)
+                        and retry_response.startswith(
+                            '[model returned an empty response.')):
+                    bot_response = retry_response
+                    log.info(f"[handle_text] retry succeeded")
+                else:
+                    log.info(f"[handle_text] retry also empty, sending fallback")
+                    bot_response = (
+                        '🤔 Не удалось получить ответ от модели. '
+                        'Возможные причины: перегруженный длинный контекст, '
+                        'сложный вопрос (предсказания, нишевые факты) или '
+                        'временный сбой llama-server. Попробуй:\n'
+                        '• /reset — очистить историю и начать с нуля\n'
+                        '• Переформулировать вопрос\n'
+                        '• Добавить больше деталей в вопрос'
+                    )
+            # Edit-during-LLM detection removed: the check is a
+            # no-op without a concurrent getUpdates consumer.
+            # See handle_photo for the full rationale.
+            # === RATING_MODE dispatch ===
+            # T3 (P1-1): the 30-line RATING_MODE dispatch is now a
+            # single helper call. The helper handles all 4 paths
+            # (rating_active off, info/statement with rating, bloat,
+            # question/request/confirmation) and returns the text
+            # to reply with (possibly empty for rating-only turns).
+            bot_response = await _apply_rating_and_persist(
+                context, update, chat_id, thread_id, bot_response, rating_active,
+            )
+            # v0.10.1 (Qwen wave-2 review): final abort check before sending.
+            if bot_response and not abort_event.is_set():
+                if len(bot_response) > 4000:
+                    for i in range(0, len(bot_response), 4000):
+                        await _reply(update, bot_response[i:i+4000])
+                else:
+                    await send_reply(update, bot_response)
+        except Exception as e:
+            import traceback
+            log.info(f"[ERR text] {type(e).__name__}: {e}")
+            traceback.print_exc()
+            await turn.rollback('aborted')
+            await _reply(update, f'❌ Error: {e}')
+        finally:
+            # T46: revert T45 (and original T41) edit_text pattern.
+            # The success path already sends the final response via
+            # send_reply, so editing the thinking message into the
+            # same content produces a duplicate message. The
+            # original "two message" issue (silent delete failure)
+            # is an acceptable trade-off here - the thinking block
+            # may occasionally linger in the chat, but the user
+            # sees the final answer in a single, separate message
+            # which is the desired behaviour.
             try:
-                _abort_events.pop((chat_id, thinking.message_id), None)
+                await thinking.delete()
             except Exception:
                 pass
+            # Deregister the per-task abort event so a subsequent
+            # handler call for the same user doesn't accidentally
+            # see a leftover event. We pop the specific key rather
+            # than clear, in case the dict has been overwritten by
+            # a concurrent handler (defensive — the semaphore
+            # prevents same-user concurrency, but be safe).
+            # B1: the abort event is only registered when a thinking message
+            # exists, so there is nothing to pop otherwise -- and reaching for
+            # thinking.message_id anyway raised AttributeError, which replaced
+            # the real exception and skipped the release below. That leaked the
+            # per-user semaphore slot, and _PER_USER_SEMAPHORE_LIMIT is 2.
+            #
+            # Both layers are deliberate. The guard makes the pop correct; the
+            # try makes it impossible for any future line added here to cost a
+            # user their access to the bot.
+            if thinking is not None:
+                try:
+                    _abort_events.pop((chat_id, thinking.message_id), None)
+                except Exception:
+                    pass
 
 
 
-# === Re-exported helpers for tests ===
+    # === Re-exported helpers for tests ===
+    finally:
+        # 2026-10-22: released at the outermost exit, so the slot is held
+        # for the whole handler including the LLM call. Releasing inside
+        # the B1 window covered every early return but happened before
+        # call_llama, which left _PER_USER_SEMAPHORE_LIMIT measuring
+        # nothing.
+        sem.release()
 async def _persist_message(*args, **kwargs):
     return await persistence.persist(*args, **kwargs)
 

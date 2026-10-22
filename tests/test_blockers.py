@@ -73,7 +73,7 @@ class _GaveUp:
 
 
 def _common(monkeypatch, tmp_path, call_llama, thinking=None,
-            reply_gives_up=False, caplog=None):
+            reply_gives_up=False, capsys=None, slot=None):
     """Everything handle_* needs, so each test states only its own part."""
     import handlers
     _store_on(monkeypatch, tmp_path)
@@ -103,12 +103,12 @@ def _common(monkeypatch, tmp_path, call_llama, thinking=None,
     # no matter what the handler did. A control whose assertions hold
     # under any behaviour is not a control.
     monkeypatch.setattr("handlers._route_to_thread", fake_route)
-    monkeypatch.setattr("handlers._check_user_slot", fake_slot)
+    monkeypatch.setattr("handlers._check_user_slot", slot or fake_slot)
     monkeypatch.setattr("handlers._is_rating_active", lambda u: False)
     monkeypatch.setattr("handlers._stop_button_markup", lambda: None)
     # Prove the stub is the one in use, so the release check below is
     # about the handler and not about an object nobody touched.
-    assert handlers._check_user_slot is fake_slot
+    assert handlers._check_user_slot is (slot or fake_slot)
 
     sent = thinking if thinking is not None else _Msg()
 
@@ -424,6 +424,12 @@ async def test_rollback_falls_back_when_no_row_id_came_back(monkeypatch,
     from turn import Turn
     store = _store_on(monkeypatch, tmp_path)
 
+    # A row has to exist for the fallback to have something to match.
+    # persist is stubbed to return no id, so it writes nothing; without a
+    # pre-existing row the delete finds nothing and -- correctly, since
+    # 2026-10-22 -- reports False rather than a success that never
+    # happened.
+    store.add_message(1, "main", "user", '{"role":"user","content":"doomed"}')
     real = store.add_message
     store.add_message = lambda *a, **kw: None
     t = Turn(1, "main", "T")
@@ -433,6 +439,58 @@ async def test_rollback_falls_back_when_no_row_id_came_back(monkeypatch,
 
     assert await t.rollback("no id") is True
     assert store.get_messages(1, "main") == []
+
+
+@pytest.mark.asyncio
+async def test_rollback_reports_false_when_there_is_nothing_to_delete(
+        monkeypatch, tmp_path):
+    """The contract the docstring has always claimed.
+
+    rollback() computed `deleted` and returned True regardless. A turn
+    that deleted nothing logged "rolled back persisted turn" and cleared
+    `persisted`, which is the silent half-rollback the except branch
+    warns about -- except quieter, because nothing had failed.
+    """
+    from turn import Turn
+    store = _store_on(monkeypatch, tmp_path)
+
+    t = Turn(1, "main", "T")
+    real = store.add_message
+    store.add_message = lambda *a, **kw: None
+    await t.persist("never landed", sender_name="v")
+    store.add_message = real
+    store.add_message = real
+
+    assert await t.rollback("nothing there") is False
+    assert t.persisted is True, (
+        "a rollback that deleted nothing must not clear persisted -- "
+        "otherwise the turn claims to be undone when it was never written"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_multi_row_turn_is_all_or_nothing(monkeypatch, tmp_path):
+    """rows used to decrement by one while the whole id list was deleted.
+
+    A two-row turn deleted both rows on the first rollback, dropped rows
+    to 1, and the second rollback then reported success while deleting
+    nothing.
+    """
+    from turn import Turn
+    store = _store_on(monkeypatch, tmp_path)
+
+    t = Turn(1, "main", "T")
+    await t.persist("first", sender_name="v")
+    await t.persist("second", sender_name="v")
+    assert t.rows == 2 and len(t._row_ids) == 2
+
+    assert await t.rollback("aborted") is True
+    assert store.get_messages(1, "main") == []
+    assert t.rows == 0 and t._row_ids == [], (
+        "the bookkeeping still claims rows after every id was deleted"
+    )
+
+    assert await t.rollback("again") is False
 
 
 @pytest.mark.asyncio
@@ -508,3 +566,63 @@ async def test_stop_discards_a_response_that_already_has_text(monkeypatch,
     assert "SHOULD BE DISCARDED" not in joined, (
         "a response produced after Stop was delivered to the user"
     )
+
+
+# ------------------------------------------- the per-user cap, as a peak --
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler", ["handle_text", "handle_document"])
+async def test_per_user_cap_is_held_across_the_llm_call(monkeypatch, tmp_path,
+                                                        handler, capsys):
+    """_PER_USER_SEMAPHORE_LIMIT has to bound *concurrent work*.
+
+    Regression, 2026-10-22: releasing the slot in the B1 window covered
+    every early return but happened before call_llama, so five messages
+    from one user ran five LLM calls at once against a limit of two. The
+    release count was one per path and _value balanced before and after,
+    which is why every measurement I had said the fix was fine.
+    """
+    import state
+    limit = state._PER_USER_SEMAPHORE_LIMIT
+
+    sem = asyncio.Semaphore(limit)
+    live = 0
+    peak = 0
+
+    async def slot(chat_id, user_id, update):
+        await sem.acquire()
+        return sem
+
+    async def slow_call_llama(*a, **kw):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        try:
+            await asyncio.sleep(0.02)
+        finally:
+            live -= 1
+        return {"text": "ok", "executed_tools": [], "aborted": False}
+
+    handlers, sent, _sem_used, _reg = _common(
+        monkeypatch, tmp_path, slow_call_llama, slot=slot)
+    u = _update()
+    c = _context()
+    if handler == "handle_document":
+        doc = MagicMock()
+        doc.file_size, doc.file_id, doc.file_name = 100, "d1", "a.txt"
+        u.message.document = doc
+        u.message.caption = "cap"
+
+    await asyncio.gather(*[getattr(handlers, handler)(u, c) for _ in range(5)])
+
+    assert peak <= limit, (
+        f"{handler}: {peak} concurrent call_llama for one (chat,user), "
+        f"limit is {limit} -- the slot is not held across the LLM call"
+    )
+    assert sem._value <= limit, (
+        f"semaphore released more than it acquired: _value={sem._value} "
+        f"against a limit of {limit}. asyncio.Semaphore does not raise on "
+        f"over-release; BoundedSemaphore (state.py) does, but only if the "
+        f"release is not swallowed by the try/except around it."
+    )
+    assert not _errors(capsys), f"{handler}: {_errors(capsys)}"
