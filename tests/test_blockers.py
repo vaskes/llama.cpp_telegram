@@ -1646,3 +1646,38 @@ async def test_per_user_cap_is_held_across_the_llm_call(monkeypatch, tmp_path,
         f"release is not swallowed by the try/except around it."
     )
     assert not _errors(capsys), f"{handler}: {_errors(capsys)}"
+
+
+@pytest.mark.asyncio
+async def test_first_answer_keeps_the_executed_tools_preamble(monkeypatch,
+                                                               tmp_path,
+                                                               capsys):
+    """The no-retry path has the same three lines and needs its own check.
+
+    Found by the mutation harness, 2026-10-22. Removing the preamble at
+    all four `_hist` sites left the whole suite green, because the only
+    end-to-end test of a preamble drives the retry path -- which builds
+    its own from `_retry_exec`. Four sites had no coverage at all.
+
+    The two look identical in a diff and are not the same code, so one
+    test cannot stand in for the other.
+    """
+    calls = []
+
+    async def fake_call(*a, **kw):
+        calls.append(1)
+        return {"text": "done", "aborted": False,
+                "executed_tools": [{"name": "bash_command",
+                                    "args": {"command": "ls -la"},
+                                    "result": "ok"}]}
+
+    handlers, sent, _, _reg = _common(monkeypatch, tmp_path, fake_call)
+    await handlers.handle_text(_update(), _context())
+
+    assert not _errors(capsys), f"took the error path: {_errors(capsys)}"
+    assert calls == [1], (
+        f"this is the no-retry path; got {len(calls)} call_llama calls, "
+        f"so the test exercised the retry block instead")
+    joined = " ".join(sent.replies)
+    assert "```bash" in joined and "$ ls -la" in joined, (
+        f"the tool trace was dropped from the answer: {joined!r}")
