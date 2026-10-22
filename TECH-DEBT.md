@@ -33,7 +33,7 @@ disagreement again without a test going red.
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
 | 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
 | 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
-| 10 | `dispatch.py` — 932 lines | **in progress** — routing tripwire landed | `test_dispatch_routing.py` | Commands into `commands/`; `main` 316 lines |
+| 10 | `dispatch.py` — 974 lines | **in progress** — blocks A+B | `test_dispatch_routing.py` | `_safe_sender_label` → `sanitizer.py` |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
 | 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1357, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
@@ -57,7 +57,7 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    932 lines, 11 top-level defs
+dispatch.py    974 lines, 14 top-level defs
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   972 lines, call_llama = 825 lines, 11 llm_* leaf modules
 handlers.py    1464 lines, 4 handlers at 158-291 lines each

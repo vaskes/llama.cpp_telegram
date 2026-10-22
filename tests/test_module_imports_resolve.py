@@ -140,3 +140,28 @@ def test_the_commands_package_is_importable_as_a_whole():
     for name in commands.__all__:
         assert hasattr(commands, name), (
             f"commands.__all__ promises {name} and does not deliver it")
+
+def test_every_module_actually_compiles():
+    """`ast.parse` is not a syntax check, and that is not a detail.
+
+    Python 3.11's `ast.parse` accepts `await` outside an async function.
+    `compile()` and `py_compile` reject it. So a refactor script that
+    validates its output with `ast.parse` will happily write a module
+    that cannot be imported -- and every one of those scripts looks
+    like it checked.
+
+    It happened here: splitting `main` left three `await` calls inside a
+    plain `def`, the parse said fine, and the module would not load.
+
+    `compile` is what the interpreter itself asks. Use it.
+    """
+    offenders = []
+    for path in _modules():
+        source = path.read_text(encoding="utf-8")
+        try:
+            compile(source, str(path), "exec")
+        except SyntaxError as e:
+            offenders.append(f"{path.relative_to(ROOT)}:{e.lineno} {e.msg}")
+    assert not offenders, (
+        "modules that ast.parse accepted but the interpreter will not:\n  "
+        + "\n  ".join(offenders))

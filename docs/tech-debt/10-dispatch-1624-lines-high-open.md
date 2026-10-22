@@ -33,8 +33,8 @@ the extraction:
   silently effective. Fixed in `c1ec4ad`.
 
 **How to fix, in order.** (a) Both security items — done, above.
-(b) Commands into `commands/`; `dispatch.py` keeps routing.
-(c) `_safe_sender_label` into `sanitizer.py`. Naming note: "sanitisation"
+(b) Commands into `commands/` — done, block A.
+(c) `_safe_sender_label` into `sanitizer.py` — still to do. Naming note: "sanitisation"
 here is display-name normalisation, not a security filter. Do not let a
 future reader assume the latter and bolt filtering onto it.
 
@@ -65,6 +65,34 @@ run changed rather than confirmed:
 - `webhook.py` calls `de_json` to *validate* before handing the dict on,
   which is a decision, not a route. The test allows exactly those two
   modules and says why, so a third one has to argue for itself.
+
+**Block B — `main` is wiring again.** 269 → 78 lines. It decides
+which delivery mode runs and wires shutdown to it; the rest is three
+module-level functions: `_install_signal_handlers` (26),
+`_prepare_runtime` (38), `_poll_loop` (164). `dispatch.py` 932 → 974 —
+this block adds lines, on purpose. Three named functions beat one
+larger one, and the split is what made the next paragraph possible.
+
+**Seven mutations, seven caught — but only after the first run had all
+seven survive.** The split made the code better-shaped and untested at
+the same time, and 1899 passing tests did not notice the difference. A
+green suite was measuring nothing: nothing in it reached the startup
+path. `tests/test_startup_order.py` pins the order (handlers, then
+runtime, then poll), the publication of `SHUTDOWN_EVENT`, both
+signals, and the size of `main`.
+
+**The signal handler was logging the signal and never setting the
+event.** That one survived a run on its own — a bot that reports a
+clean shutdown and then polls until `docker` kills it outright. It is
+checked now, and the test says in its docstring that it is the only
+assertion in that file about something *doing* rather than existing.
+
+**`ast.parse` is not a syntax check.** Splitting `main` left three
+`await` calls inside a plain `def`. `ast.parse` accepted it —
+Python 3.11 parses it happily — while `compile()` and `py_compile`
+reject it. Every refactor script here validates with `ast.parse`, which
+means all of them would have shipped a module that cannot be imported.
+`test_every_module_actually_compiles` now calls `compile()`.
 
 **Depends on** item 8 being finished first, so the command handlers do
 not move against a moving `call_llama` signature.
