@@ -58,7 +58,7 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
 dispatch.py    1625 lines, 18 top-level defs
-selftest.py    1928 lines, _selftest = 1789 lines   <- still the largest single unit
+selftest.py    1773 lines, _selftest = 1634 lines   <- still the largest single unit
 call_llama.py   972 lines, call_llama = 825 lines, 11 llm_* leaf modules
 handlers.py    1464 lines, 4 handlers at 158-291 lines each
 prompts.py      422 lines, 0 functions (module constants)

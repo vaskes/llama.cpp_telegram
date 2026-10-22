@@ -21,6 +21,12 @@ import asyncio
 import storage
 from logconf import get_logger
 
+# The name this section reports itself under. The summary line
+# in `run_all` uses it, so the label cannot drift away from the
+# module that owns it -- which is how the storage summary came
+# to claim it was the group-mode tests.
+SUMMARY_NAME = "storage"
+
 log = get_logger(__name__)
 
 

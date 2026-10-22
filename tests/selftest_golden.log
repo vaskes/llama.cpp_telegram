@@ -18,6 +18,7 @@
 [selftest] running handle_document _stop_button_markup regression test...
 [OK] handle_document does not NameError on _stop_button_markup
 [selftest] handle_document _stop_button_markup regression: all pass
+[selftest] handler regression tests: all pass
 [selftest] running call_llama abort during non-streaming POST test...
 [OK] call_llama returned None in <elapsed> (abort fired correctly)
 [selftest] call_llama abort test: all pass

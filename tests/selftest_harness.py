@@ -354,6 +354,74 @@ def run_selftest(env_extra=None, timeout=240):
     return (lines, list(srv.trace), r.returncode, out, len(raw))
 
 
+
+
+BLOCK_RUNNER = r'''
+import asyncio, os, sys
+sys.path.insert(0, os.environ["SELFTEST_BOT_DIR"])
+import importlib
+mod = importlib.import_module(os.environ["SELFTEST_BLOCK_MODULE"])
+fn = getattr(mod, os.environ["SELFTEST_BLOCK_NAME"])
+result = asyncio.run(fn())
+print("VERDICT", "True" if result is True else repr(result))
+'''
+
+
+def run_block(module, name, env_extra=None, timeout=120):
+    """Run ONE extracted block on its own and return its verdict.
+
+    A subprocess, for the same reason `run_selftest` is one: `config`
+    reads its environment at import time, and in a full-suite run the
+    test module has usually already been imported with someone else's
+    CONVERSATIONS_DB and LLAMA_URL. Setting `os.environ` in-process then
+    changes nothing at all, and the block silently runs against the
+    wrong database.
+
+    That is not hypothetical. The first version of
+    `test_selftest_blocks` did exactly this and passed alone while
+    failing inside the suite -- a green-then-red test is worse than no
+    test, because the isolated run is the one you trust.
+    """
+    import tempfile
+
+    srv, _thread, base = start_stub()
+    env = dict(os.environ)
+    env.update({
+        "BOT_TOKEN": "1:selftest",
+        "TELEGRAM_API": f"{base}/bot",
+        "LLAMA_URL": f"{base}/v1",
+        "DONSETCH_URL": f"{base}/mcp",
+        "CONVERSATIONS_DB": os.path.join(tempfile.gettempdir(),
+                                         f"selftest_block_{name}.db"),
+        "SELFTEST_BOT_DIR": BOT,
+        "SELFTEST_BLOCK_MODULE": module,
+        "SELFTEST_BLOCK_NAME": name,
+    })
+    for k in ("LLAMABOT_ALLOWED_USER_IDS", "ALLOWED_USER_IDS"):
+        env.pop(k, None)
+    if env_extra:
+        env.update(env_extra)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(BLOCK_RUNNER)
+        runner = f.name
+    try:
+        r = subprocess.run([sys.executable, runner], env=env,
+                           capture_output=True, text=True, timeout=timeout,
+                           cwd=REPO)
+    except subprocess.TimeoutExpired:
+        srv.shutdown()
+        return None, "timeout"
+    finally:
+        srv.shutdown()
+
+    for ln in (r.stdout or "").splitlines():
+        if ln.startswith("VERDICT"):
+            val = ln.split(None, 1)[1]
+            return (True if val == "True" else val), None
+    return None, ((r.stdout or "") + (r.stderr or ""))[-1500:]
+
+
 if __name__ == "__main__":
     lines, trace, rc, out, raw_n = run_selftest()
     print(f"returncode={rc} raw={raw_n} deduped={len(lines)}")
