@@ -291,10 +291,6 @@ def main():
     # unhandled exception traceback instead of returning cleanly.
     shutdown_event = asyncio.Event()
 
-    def _on_signal(signame: str) -> None:
-        log.info(f"[main] received {signame}, initiating shutdown...")
-        shutdown_event.set()
-
     try:
         # Passed in rather than imported, so `dispatch_polling` has no edge
         # back into this module and the import graph stays a cycle smaller
