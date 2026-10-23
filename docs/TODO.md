@@ -27,9 +27,9 @@
 
 | | |
 |---|---|
-| HEAD | one commit past the `v0.13.0-stable` tag (the co-author trailers) |
+| HEAD | three commits past the `v0.13.0-stable` tag (co-author trailers, log hygiene, reasoning-only retry) |
 | Production | webhook mode, container `tb-bot`, `/healthz` → 200 |
-| Pytest | `2110 passed, 1 skipped` (132 test files, minus `tests/test_shell_integration.py`) |
+| Pytest | `2139 passed, 20 skipped` (the sandbox-only suite is skipped without a token) |
 | CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 53 `.py` files in `telegram-bot/` |
@@ -46,6 +46,27 @@ Sizes are `splitlines()`-based and are recomputed by
 
 These are not forgotten; they are parked on a question only the operator
 can answer. Each one records the decision that unblocks it.
+
+### The context blocker is not closed — and its list is growing
+
+**Status:** open. The operator restated this after the 2026-10-23 test
+session: T65–T70 shipped and are recorded as closed, but the underlying
+blocker -- *how the bot keeps a coherent context over a long
+conversation* -- was covered by that work, not solved by it. The pieces
+below are all parts of it, and the list is growing rather than shrinking:
+
+| Piece | What it still leaves open |
+|---|---|
+| T70.5 | what happens when the summary itself does not fit the window |
+| T68b | the engine keeps a KV cache for context that already fell out of the window, and the reset command is unreachable |
+| T66.1 | the guaranteed minimum of the last N messages when the window is empty |
+| Live edit-replace | the one user-visible scenario with no automated coverage |
+| T70.6 | the reasoning limit is declared and nobody reads it |
+
+Closing the context-memory tickets closed *a* set of tasks. It did not
+close this. Treat the five rows above as one blocker with five faces,
+and do not read a green board here as "the context problem is done".
+
 
 ### T70.5 — what if the summary itself does not fit in the context window?
 
@@ -106,6 +127,45 @@ and the setting is advertised as the bot's own. But it is an operational
 decision: the bot would restart `llama-server` once a day and stop
 answering for the duration. **Implementation of (a) needs the operator's
 explicit go-ahead.**
+
+### T70.6 — the reasoning limit is declared and nobody reads it
+
+**Status:** open, added 2026-10-23 after the test session.
+**Where:** `telegram-bot/limits.py` (`REASONING_RATIO_HARD_LIMIT`),
+`tests/test_limits.py`, and the engine unit
+(`llama-qwen5090-256k.service`, `--reasoning-budget 65536`).
+
+`REASONING_RATIO_HARD_LIMIT` is read by nobody. The public profile
+declares 0.95 ("a 5% content floor"), the personal profile 1.0 ("still
+off"), `tests/test_limits.py` pins both values and the env override --
+and the constant is enforced nowhere. The limit that actually bites
+lives on the engine side, in `--reasoning-budget`.
+
+That arrangement has a second problem, and it is the one the operator
+ran into: in production the engine's reasoning budget (65536) equals
+the bot's own `max_tokens` for a text turn (65536), and exceeds it for
+a document turn (`MAX_TOKENS_CAPTION` = 16384). A model that thinks
+long can therefore consume the whole answer budget and leave the user
+with no text at all. It did, twice, in production on 2026-10-23 -- once
+as `finish_reason=length` with 65536 generated tokens, and once as a
+reasoning-only answer that the bot had to retry.
+
+Two ways to close this, and they are not equivalent:
+
+- **implement it in the bot**: watch the reasoning as it streams and
+  abort the turn before the budget is gone. The data is there
+  (`finish_reason`, the reasoning buffer), but the ratio would be
+  guessed from characters rather than tokens, because the bot does not
+  parse `usage` out of the stream;
+- **delete it from the bot**: the limit already lives on the engine
+  side, where it is enforced by llama.cpp instead of guessed by us, and
+  one number about one limit beats two numbers in two places.
+
+Either way the engine's budget has to be smaller than the bot's
+`max_tokens`, or the answer has nowhere to go.
+
+**What unblocks it:** the operator picks one of the two, and says what
+the engine budget should be.
 
 ### T66.1 — guaranteed minimum of last N messages when the window is empty
 

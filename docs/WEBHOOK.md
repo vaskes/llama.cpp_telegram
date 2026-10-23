@@ -73,7 +73,8 @@ triggers Telegram's "duplicate long-poll" detection and 409s.
 ### Webhook mode (`WEBHOOK_MODE=1`)
 
 ```
-Telegram servers  →  POST https://<your-domain>/tg-webhook/<secret>
+Telegram servers  →  POST https://<your-domain>/tg-webhook/
+                     (secret in the X-Telegram-Bot-Api-Secret-Token header)
                           ↓
                   <your-public-IP>:443 (edge router)
                           ↓
@@ -297,6 +298,34 @@ Generate a secret token with: `openssl rand -hex 16`
 Generate the secret with `openssl rand -hex 16` (32 hex chars). Keep
 it secret — anyone with this token can forge updates.
 
+### Rotating the bot token kills the webhook until it is re-registered
+
+The webhook is registered **against a token**. When the token is
+revoked (`@BotFather /revoke`, which is what a leak response looks
+like), Telegram drops that webhook: `getWebhookInfo` answers with an
+empty `url`, `pending_update_count` stays 0, and the bot sits there
+answering `/healthz` 200 while no update ever arrives.
+
+Nothing in the bot's logs says so -- the process starts, binds the port,
+and looks healthy. The check that catches it is one call:
+
+```bash
+curl -s "https://api.telegram.org/bot<new-token>/getWebhookInfo" | jq .result.url
+```
+
+An empty string means the webhook is gone.
+
+Two ways to not be caught by it:
+
+- **set `WEBHOOK_URL`** in `.env` (with `WEBHOOK_MODE=1` and
+  `WEBHOOK_SECRET_TOKEN`). The bot then registers the webhook itself on
+  every start, so a rotation is followed by a restart and nothing else;
+- **re-register by hand** after the rotation, with the `setWebhook`
+  call above.
+
+`WEBHOOK_URL` is the one that survives the next incident, so it is the
+one to set.
+
 ### 4.5 Register the webhook with Telegram
 
 ```bash
@@ -304,7 +333,7 @@ curl -s -X POST \
   "https://api.telegram.org/bot<bot-token>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://<your-subdomain>.<your-domain>/tg-webhook/<your-webhook-secret-token>",
+    "url": "https://<your-subdomain>.<your-domain>/tg-webhook/",
     "secret_token": "<your-webhook-secret-token>",
     "allowed_updates": ["message", "edited_message", "callback_query", "chat_member"],
     "drop_pending_updates": false
@@ -329,7 +358,7 @@ SECRET="..."
 curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
   -H "Content-Type: application/json" \
   -d "{
-    \"url\": \"https://<your-subdomain>.<your-domain>/tg-webhook/${SECRET}\",
+    \"url\": \"https://<your-subdomain>.<your-domain>/tg-webhook/\",
     \"secret_token\": \"${SECRET}\",
     \"allowed_updates\": [\"message\", \"edited_message\", \"callback_query\", \"chat_member\"]
   }"
@@ -361,14 +390,14 @@ Send a message to the bot. It should respond in **<1 second**.
 
 ## Security
 
-Webhook mode has one public endpoint, `POST /tg-webhook/<secret>`,
+Webhook mode has one public endpoint, `POST /tg-webhook/`,
 behind a reverse proxy. Threat model and mitigations:
 
 | Threat | Mitigation |
 |---|---|
 | URL leak → attacker forges updates | `X-Telegram-Bot-Api-Secret-Token` header required on every request. URL alone is useless. |
 | L7 DDoS | Reverse proxy `client_max_body_size 100M` + timeouts. Add `limit_req_zone` if you see floods. |
-| Network scanner probing | Only `/tg-webhook/*` and `/healthz` are exposed. Other paths get 404 from the reverse proxy. |
+| Network scanner probing | Only `/tg-webhook/` and `/healthz` are exposed. Other paths get 404 from the reverse proxy. |
 | Compromise of reverse proxy container | The proxy has no business logic. Bot's aiohttp server still validates the secret. Defense in depth. |
 | Home network exposure | Only port 443 is open. Bot binds 127.0.0.1 only. No path from reverse proxy to other local services. |
 | TLS downgrade | `ssl_protocols TLSv1.2 TLSv1.3; ssl_prefer_server_ciphers on;` — only modern protocols. |
@@ -493,7 +522,7 @@ In the repository:
 - `telegram-bot/dispatch.py` — `main()` branches on `WEBHOOK_MODE`.
 - `telegram-bot/bot.py` — `_selftest()` includes a `webhook boot`
   test (aiohttp TestServer + TestClient) that exercises the
-  secret-token check, `GET /healthz`, and `POST /tg-webhook/<x>`.
+  secret-token check, `GET /healthz`, and `POST /tg-webhook/`.
 
 Outside the repo (operator-specific):
 - Reverse proxy server block (e.g. `/etc/nginx/conf.d/`).

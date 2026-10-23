@@ -48,6 +48,22 @@ httpx only ever logs at DEBUG and INFO, so its threshold is now WARNING:
 no diagnostic that existed is lost, and the token stops being written
 out. The lines already in the log were redacted.
 
+### The webhook instructions described a scheme the code never implemented
+
+ put the secret token in the URL path
+(). The bot has never done that: it mounts
+one route and checks the  header, and
+the production webhook was registered that way. An operator following
+the document would have registered a URL the bot does not serve.
+
+The same document now says what a token rotation does: the webhook is
+registered against a token, so revoking the token drops it. The bot
+keeps answering  200 and no update ever arrives, and nothing
+in the log says so.  with an empty  is the check.
+Setting  in  makes the bot register the webhook
+itself on every start, which is what the production deployment now
+does.
+
 ### A document now says which file arrived
 
 `handle_document` had no entry log of its own, so the only trace of a
