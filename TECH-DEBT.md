@@ -33,10 +33,10 @@ disagreement again without a test going red.
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
 | 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
 | 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `scripts/mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
-| 10 | `dispatch.py` — 1672 → 408 | **closed** — blocks A–F, 38 mutations | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
+| 10 | `dispatch.py` — 1672 → 425 | **closed** — blocks A–F, 38 mutations; **ticket target ≤400 not met**, see Deviations | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
-| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1357, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
+| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1316, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
 | 14 | Duplicate top-level definitions in `tests/` | **closed** | `test_no_duplicate_definitions.py` | — |
 
 Four tripwires were found to be measuring something other than their
@@ -57,16 +57,17 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    408 lines, 4 top-level defs  <- was 1612
-dispatch_polling.py   306 lines, startup + getUpdates loop
+dispatch.py    425 lines, 4 top-level defs  <- was 1612
+dispatch_polling.py   336 lines, startup + getUpdates loop
 dispatch_webhook.py   327 lines, PTB assembly + handlers
+webhook.py             208 lines, aiohttp server + secret check
 dispatch_edit.py      108 lines, the edited-message rewrite
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   478 lines, ToolLoop owns the iteration, 11 llm_* leaf modules
-handlers.py    1283 lines
-prompts.py      422 lines, 0 functions (module constants)
+handlers.py    1316 lines
+prompts.py      75 lines, 0 functions (module constants)
 storage.py      725 lines, class Storage encapsulated, get_store() sole entry
-config.py       273 lines, 24 env names, plus 12 elsewhere in the package
+config.py       322 lines, 24 env names, plus 12 elsewhere in the package
 
 Line counts are splitlines(); the trailing newline is not a line. The
 earlier figures in this file came from split("\n") and were each one
@@ -88,16 +89,35 @@ the 1940-line figure below it is the size it *started* from.
 
 ---
 
-## Considered and rejected
+## Deviations and rejected alternatives
 
 Recorded so the question stops resurfacing at every review.
 
 - **Going past 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
-  **Done: `dispatch.py` is 405.** The move was three blocks (D/E/F) plus the
-  routing extraction from block C. The split line was not line count: a
-  function moved if it was Telegram surface or bookkeeping, and stayed if it
-  picks a handler. Everything left is `_dispatch_update`,
-  `_handle_reply_to_other_user`, `main` and the concurrency caps.
+  **Not met. `dispatch.py` is 425 lines.** This entry said "Done: 405"
+  for three waves while the size tripwire reported a different number
+  each time the file moved; the claim was wrong, not the measurement.
+
+  The move was three blocks (D/E/F) plus the routing extraction from
+  block C. The split line was not line count: a function moved if it was
+  Telegram surface or bookkeeping, and stayed if it picks a handler.
+  Everything left is `_dispatch_update`, `_handle_reply_to_other_user`,
+  `main` and the concurrency caps.
+
+  Of the 425 lines, 222 are code, 164 are comments and 39 are blank.
+  The wave-5 fixes added ~40 of the comments: the `asyncio.Lock` that
+  closes a check-then-act race, the reason `offset` advances after
+  dispatch rather than before, and the reason `SHUTDOWN_EVENT` is never
+  rebound. Each one is a bug that shipped green through four review
+  waves precisely because the code looked correct; deleting the
+  explanation to save 25 lines buys a number and loses the reason.
+
+  If the reviewer wants ≤400 as a hard gate rather than a proxy for
+  "this module stopped being everything", the honest next cut is
+  `main()` -- startup wiring is not routing, and moving it to
+  `dispatch_startup.py` would take the file to roughly 340 with no
+  comment deleted. That is a scope call, not a formatting one, so it
+  waits for an explicit go-ahead rather than being done quietly.
 
   Two things are recorded because they cost real time, not because they
   sound cautionary:
@@ -126,6 +146,46 @@ Recorded so the question stops resurfacing at every review.
   to buy throughput nobody needs.
 
 ---
+
+## Wave 5: the class behind three green bugs
+
+`2cebf49` passed 2056 tests and lost 100% of messages in the default
+transport. All three blockers were live in code that had been reviewed
+four times, and the wave-4 discipline -- mutate the fix, prove it works
+-- had been applied to a narrower question than the bug deserved.
+
+**C1** `_spawn_dispatch(upd_dict)` with a keyword-only `dispatch_update`
+that the one call site never passed. TypeError on every update, caught,
+logged at INFO, and `offset` had already moved past the message, so
+Telegram never resends it.
+
+**C2** `global SHUTDOWN_EVENT` inside `dispatch_polling`. It rebinds
+*that module's* binding of a name imported from `config`; `llm_iteration`
+holds its own, still `None`, and that is where the ToolLoop abort guard
+reads. SIGTERM could not reach a running inference. This is TECH-DEBT #1's
+own class -- unwritable globals, stale readers -- and it survived there
+because one instance was cleaned and the pattern was not named.
+
+**H1** `if app is None: app = build(); await app.initialize()` is
+check-then-act across a suspension point. Ten concurrent updates built
+ten Applications and ran the boot jobs twenty times, on a box where
+summarisation is explicitly sequential because the GPU is single.
+
+The common shape is worth keeping: **every one of these is a behaviour
+over time or across a module boundary, and the suite is structural.**
+`_bound_names` asks "will this raise NameError"; C2 was "will the reader
+see this write", which is a different question it cannot answer in
+either direction. `_GLOBAL_MATRIX[3]` is `dispatch_polling.py` line for
+line, with `must_be_flagged=False` -- the matrix pinned the bug as
+correct, which is the failure mode of every check written from the
+previous check's output.
+
+`tests/test_polling_integration.py` drives `_poll_loop` against a fake
+httpx client and asserts the update arrives at the dispatch call; it
+fails 6/6 on `2cebf49`. `tests/test_late_import_policy.py` checks that
+the late-import rule and the modules it covers have both been widened,
+and that error paths are not logged at INFO -- both verified by mutation,
+both red when the fix is reverted.
 
 ## The rule, unchanged
 
