@@ -9,7 +9,7 @@
 > sending a fixed number of messages. Nothing about the user-facing
 > behaviour changed on purpose.
 >
-> **What is verified:** deployed in production in webhook mode; 2105
+> **What is verified:** deployed in production in webhook mode; 2106
 > pytest tests green on Python **3.11** (the production interpreter) and
 > **3.12**; eight review waves closed with an approve; a production smoke
 > after the deploy (`/healthz` → 200, zero fatal lines in the log, webhook

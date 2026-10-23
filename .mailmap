@@ -13,9 +13,26 @@
 #
 # Names are preserved; only the address is redirected.
 
-# Claude Code appended this trailer to 22 commits. It resolves to a real
-# GitHub account, so the repo grew a second contributor who wrote nothing,
-# holds no key and opened no pull request.
+# Claude Code appended a trailer to 21 commits:
+#
+#   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+#
+# Claude Opus 4.8 wrote none of them. They were Mavis's commits, and the
+# trailer was a false attribution: it made the model a second contributor
+# on the repository page, with nothing behind it -- no key, no pull
+# request, no line of code.
+#
+# `.mailmap` could not fix it. Git honours this file for the AUTHOR
+# field, and GitHub honours it for the author field too, but neither
+# applies it to a `Co-Authored-By:` trailer -- that line is parsed as
+# written. The trailers had to leave the history instead: rewritten on
+# 2026-10-23 with filter-branch, with the old history kept as a bundle
+# on the operator's host (backups/pre-claude-trail-rewrite/).
+#
+# The line below is a backstop for the author field only: if a commit
+# ever carries that address as its author, it belongs to vaskes. The
+# trailers themselves are pinned by
+# tests/test_no_model_coauthor_trailers.py.
 <vaskes@kuduza.com> <noreply@anthropic.com>
 
 # 231 commits were recorded against kuduza.ai, a domain that does not exist.

@@ -13,6 +13,55 @@ this file is the human-readable summary.
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
+## [Unreleased]
+
+**After `v0.13.0-stable`.** Small, and about attribution rather than
+behaviour.
+
+### Claude Code is off the contributor list
+
+It had been there since the first wave of review fixes. 21 commits
+carried a
+
+```
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+```
+
+trailer, and GitHub counts a co-author trailer as a contribution. The
+model wrote none of those commits — they were Mavis's — so the
+repository was listing a second contributor with no key, no pull request
+and no line of code behind it.
+
+**The trailers could not be mapped away.** `.mailmap` applies to the
+author field; neither git nor GitHub applies it to a co-author trailer,
+which is parsed as written. So they were removed from the history on
+2026-10-23 with `filter-branch`, and the old history was kept as a
+bundle on the operator's host (`backups/pre-claude-trail-rewrite/`) before
+anything was deleted.
+
+**What this changed:** every commit SHA from `975ab03` onwards — the 194
+commits of `v0.13.0-stable` included. The tags `v0.11.0-stable`,
+`v0.12.0-pre`, `v0.12.0-stable` and `v0.13.0-stable` were moved to
+their rewritten commits. Anyone who cloned `v0.13.0-stable` before this
+has the old SHA and needs `git fetch --tags --force`.
+
+**A tripwire, so it cannot come back.**
+`tests/test_no_model_coauthor_trailers.py` fails on any commit message
+carrying Claude Code's address, with two controls beside it: one that the
+history was actually read, and one that the detector can fire. The
+second control matters — a check that cannot be made to fail is worse
+than no check, and the first version of this one would have passed on a
+repository that still had every trailer it was written to remove.
+
+### Four `git worktree`s in `/tmp`
+
+`git gc` could not drop the pre-rewrite history, because four linked
+worktrees (`/tmp/ci-wt`, `/tmp/wt7`, `/tmp/wt_base`, `/tmp/wt_c3`) still
+pointed into it. Two of them carried uncommitted work — a
+`register_bot_menu=None` mutation in `dispatch.py` and a stray
+`tests/test_polling_integration.py` — and both were saved to the backup
+directory before the worktrees were removed.
+
 ## [v0.13.0-stable] — 2026-10-23 — Context memory, the dispatch split, and review waves 1–8
 
 **Status:** shipped and deployed. 194 commits since `v0.12.0-stable`; 107 of
