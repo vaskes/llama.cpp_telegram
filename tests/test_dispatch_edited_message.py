@@ -109,17 +109,24 @@ class _patched_dispatch:
 
     def __enter__(self):
         import dispatch
+        import dispatch_polling
         from state import _bot_replies
+        # Since TECH-DEBT #10 block D the Application registry lives in
+        # `dispatch_polling`, and `_dispatch_update` reads it through
+        # `get_dispatcher()`. Assigning `dispatch._dispatcher` set a name
+        # nothing read -- the fixture restored it faithfully and the tests
+        # below went on exercising the real dispatcher.
         self._dispatch, self._bot_replies = dispatch, _bot_replies
-        self._saved_dispatcher = dispatch._dispatcher
+        self._polling = dispatch_polling
+        self._saved_dispatcher = dispatch_polling._dispatcher
         self._saved_replies = dict(_bot_replies)
-        dispatch._dispatcher = self.dispatcher
+        dispatch_polling._dispatcher = self.dispatcher
         _bot_replies.clear()
         _bot_replies.update(self.replies)
         return self
 
     def __exit__(self, *exc):
-        self._dispatch._dispatcher = self._saved_dispatcher
+        self._polling._dispatcher = self._saved_dispatcher
         self._bot_replies.clear()
         self._bot_replies.update(self._saved_replies)
         return False
@@ -211,7 +218,13 @@ def test_edited_message_is_still_subscribed():
     """
     import ast
     from pathlib import Path
-    src = Path(__file__).resolve().parent.parent / ROOT_IMPORT / "dispatch.py"
+    # `allowed_updates` moved with the getUpdates loop in TECH-DEBT #10
+    # block D. This test guards the subscription, so it reads wherever that
+    # subscription is sent from -- pointing it back at dispatch.py would have
+    # made it report "no allowed_updates list found", which is a test that
+    # guards nothing, said by the test itself.
+    src = (Path(__file__).resolve().parent.parent / ROOT_IMPORT
+           / "dispatch_polling.py")
     tree = ast.parse(src.read_text(encoding="utf-8"))
     hits = []
     for node in ast.walk(tree):
@@ -227,6 +240,7 @@ def test_edited_message_is_still_subscribed():
     assert hits, "no allowed_updates list found -- this test guards nothing"
     for lineno, value in hits:
         assert "edited_message" in value, (
-            f"dispatch.py:{lineno} stopped subscribing to edited_message; "
+            f"dispatch_polling.py:{lineno} stopped subscribing to "
+            f"edited_message; "
             f"the edit-replace feature is now dead, silently"
         )

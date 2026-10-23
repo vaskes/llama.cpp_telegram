@@ -225,10 +225,14 @@ def test_boot_hook_exists_for_process_modes():
     ever build the summary without an explicit boot hook."""
     src = (BOT_DIR / "reanchor.py").read_text()
     assert "def start_summarise_on_boot" in src
-    dsrc = (BOT_DIR / "dispatch.py").read_text()
-    assert dsrc.count("_start_summarise_on_boot()") >= 2, (
-        "the boot hook must fire from both the polling and webhook entry points"
-    )
+    # One assertion per entry point, not a count in one file: block E put
+    # the webhook entry point in `dispatch_webhook.py`.
+    polling = (BOT_DIR / "dispatch.py").read_text()
+    webhook = (BOT_DIR / "dispatch_webhook.py").read_text()
+    assert "start_summarise_on_boot()" in polling, (
+        "the boot hook no longer fires from the polling entry point")
+    assert "start_summarise_on_boot()" in webhook, (
+        "the boot hook no longer fires from the webhook entry point")
 
 
 def test_summarisation_failure_never_breaks_the_bot():

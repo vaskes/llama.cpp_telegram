@@ -127,7 +127,9 @@ def test_polling_loop_tracks_dispatch_tasks():
     this very finding quotes the old call, so a grep would match its own
     explanation.
     """
-    tree = ast.parse((BOT_DIR / "dispatch.py").read_text())
+    # Block D moved the task factory to `dispatch_polling.py`, where it lives
+    # with the loop that owns the tracking set.
+    tree = ast.parse((BOT_DIR / "dispatch_polling.py").read_text())
     # Scope to the polling loop ONLY. _spawn_dispatch legitimately creates the
     # task -- that is the one call site that keeps a reference, so a global
     # search would flag the fix as the bug.
@@ -152,7 +154,7 @@ def test_polling_loop_tracks_dispatch_tasks():
         "these call sites create a _dispatch_update task without keeping a "
         f"reference: {untracked}"
     )
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = (BOT_DIR / "dispatch_polling.py").read_text()
     assert "_dispatch_tasks" in src, "dispatch tasks must be tracked"
     assert "add_done_callback" in src, (
         "the tracking set needs a done-callback, or it only grows -- a second "
@@ -162,7 +164,7 @@ def test_polling_loop_tracks_dispatch_tasks():
 
 def test_task_failure_is_logged_with_the_update_id():
     """Without the id, a traceback in stderr cannot be tied to a conversation."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = (BOT_DIR / "dispatch_polling.py").read_text()
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.FunctionDef) and n.name == "_spawn_dispatch")
     body = ast.dump(fn)
@@ -182,10 +184,12 @@ async def test_spawn_dispatch_discards_the_task_when_done():
     async def _instant(upd):
         return None
 
-    original = dispatch._dispatch_update
-    dispatch._dispatch_update = _instant
+    # Since TECH-DEBT #10 block D the callee is a keyword argument rather
+    # than a module-level name: `dispatch_polling` imports nothing from
+    # `dispatch`, so there is no global left to rebind here. Passing the
+    # stub in is the supported way to drive it.
     try:
-        task = dispatch._spawn_dispatch({"update_id": 1})
+        task = dispatch._spawn_dispatch({"update_id": 1}, dispatch_update=_instant)
         assert task in dispatch._dispatch_tasks
         await task
         await asyncio.sleep(0)   # let the done-callback run
@@ -193,7 +197,6 @@ async def test_spawn_dispatch_discards_the_task_when_done():
             "finished task was not discarded -- the tracking set leaks"
         )
     finally:
-        dispatch._dispatch_update = original
         dispatch._dispatch_tasks.clear()
 
 
@@ -207,10 +210,8 @@ async def test_failed_task_is_discarded_and_logged(capsys):
     async def _boom(upd):
         raise RuntimeError("kaboom")
 
-    original = dispatch._dispatch_update
-    dispatch._dispatch_update = _boom
     try:
-        task = dispatch._spawn_dispatch({"update_id": 4242})
+        task = dispatch._spawn_dispatch({"update_id": 4242}, dispatch_update=_boom)
         with pytest.raises(RuntimeError):
             await task
         await asyncio.sleep(0)
@@ -220,5 +221,4 @@ async def test_failed_task_is_discarded_and_logged(capsys):
             "a failed dispatch must be logged with its update id and the error"
         )
     finally:
-        dispatch._dispatch_update = original
         dispatch._dispatch_tasks.clear()

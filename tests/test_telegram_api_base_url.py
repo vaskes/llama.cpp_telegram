@@ -91,13 +91,13 @@ def test_every_production_builder_is_counted():
     one, and that every one of them carries the override.
     """
     found = [ln for ln, base_url, token
-             in _builders(BOT_DIR / "dispatch.py") if token]
+             in _builders(BOT_DIR / "dispatch_webhook.py") if token]
     assert found, (
-        "no Application.builder().token() in dispatch.py; the bot is not "
+        "no Application.builder().token() in dispatch_webhook.py; the bot is not "
         "built here any more, so the base_url sweep is passing on an empty "
         "set")
     missing = [ln for ln, base_url, token
-               in _builders(BOT_DIR / "dispatch.py")
+               in _builders(BOT_DIR / "dispatch_webhook.py")
                if token and not base_url]
     assert not missing, (
         f"Application.builder().token() at {missing} has no base_url; "

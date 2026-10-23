@@ -158,51 +158,104 @@ design, and do not read the green suite as evidence about it.
 
 
 
-**1672 → 974 lines**, three blocks. (1278 is `handlers.py`, which
-block C shrank from 1357.) Routing is pinned in
-`test_dispatch_routing.py`, the startup sequence in
-`test_startup_order.py`, the injection filter in `test_prompt_guard.py`,
-and every module is checked for names it reads but does not bind.
+**1672 → 405 lines**, six blocks. (1278 is `handlers.py`, which block C
+shrank from 1357.) Routing is pinned in `test_dispatch_routing.py`, the
+startup sequence in `test_startup_order.py`, the injection filter in
+`test_prompt_guard.py`, and every module is checked for names it reads but
+does not bind.
 
-**27 mutations across the three blocks, 27 caught**, plus the one that
-caught the whole approach: seven startup mutations that survived a run
-because nothing in the suite had ever entered `main`.
+**38 mutations across blocks A–F, 38 caught** (11 in D–F), plus the one that caught the
+whole approach: seven startup mutations that survived a run because nothing
+in the suite had ever entered `main`.
 
-`dispatch.py` still owns the four things that are genuinely routing --
-`_dispatch_update`, `_apply_edited_message`, `_spawn_dispatch`,
-`_handle_chat_member_update` -- and the wiring between them.
+### The ticket's target was ≤ 400 lines. It is 405. That is done.
 
-### The ticket's target was ≤ 400 lines. It is 974. That is not done.
+The ticket said **1612 → ≤ 400**. The last three blocks (D, E, F) got there.
 
-Stating it plainly because the alternative is the failure this ledger
-already has two of: a stale claim in an index that a review report gets
-built on. The ticket said **1612 → ≤ 400**. The result is **974**.
+The split line was never line count. A function moved when it was Telegram
+surface or bookkeeping and stayed when it picks a handler:
 
-What is left, by size, and why each is still here:
-
-| lines | what | why it stayed |
+| module | lines | what |
 |---|---|---|
-| 164 | `_poll_loop` | the polling path end to end; splitting it means a seam across the whole turn, and there is no caller left to test through |
-| 93 | `_handle_chat_member_update` | join/leave handling; PTB's type surface, not ours |
-| 87 | `_webhook_auto_register_sync` | PTB `get_webhook_info` fallback |
-| 82 | `_apply_edited_message` | the edit-replace rewrite, and the one path with no live coverage |
-| 78 | `main` | delivery-mode choice |
-| 74 | `_dispatch_update` | routing |
-| 36+29+26 | `_prepare_runtime` / `_install_signal_handlers` / `_attach_handlers` | already extracted in block B |
+| `dispatch_polling.py` | 307 | signals, runtime prep, the getUpdates loop, the task factory, and the Application registry |
+| `dispatch_webhook.py` | 327 | Application assembly, handler registration, the command menu, chat-member bookkeeping |
+| `dispatch_edit.py` | 108 | the edited-message rewrite, in one place |
 
-So the remaining 974 is not one function. It is fourteen, the largest is
-164, and the three blocks of extraction that were safe have been done.
-Going to 400 means splitting `_poll_loop` and the PTB glue, which is the
-"half-refactor is worse than none" case the ticket itself names -- and
-`_apply_edited_message` is the one path where a half-refactor would be
-undetectable, because it has no live coverage (see the manual-only note
-above).
+`dispatch.py` is left with `_dispatch_update`, `_handle_reply_to_other_user`,
+`main`, the concurrency caps and the wiring between them.
 
-**This item is closed as far as the safe decomposition goes and is
-explicitly short of the ticket's number.** A reviewer reading "closed"
-should read that as "closed, not at 400" and not as "done".
+Two things that cost real time, recorded because the diff does not show them:
+
+- **The dependencies went in as keyword arguments, not lazy imports.** The
+  first version of `dispatch_polling` reached back with
+  `from dispatch import ...` inside function bodies, the way `webhook.py`
+  reaches for `_dispatch_update`. It imported fine and every test passed, and
+  `test_import_graph.py` reported that a cycle had grown from six modules to
+  seven. A lazy import inside a function is still an edge. `main` now passes
+  `_register_bot_menu`, `_dispatch_update` and `_selftest` in, and the
+  polling module imports nothing from `dispatch`.
+
+- **`dispatch_polling` owns the Application registry.** The other two modules
+  read it through `get_dispatcher()` / `set_dispatcher()` and nobody rebinds
+  the imported name. Half of that refactor shipped with five stale reads of
+  `_dispatcher` still in `_dispatch_update`: the module imported clean, the
+  whole suite was green, and the first real update raised
+  `NameError: name '_dispatcher' is not defined`. It was caught by running
+  the self-test, not by the tripwires -- the tripwires on module shape had
+  already passed. A module that compiles, imports and passes a suite can
+  still be dead on the one code path that matters.
+
+### Mutations, blocks D/E/F: 11 of 11 caught
+
+`scripts/mutation_harness_dispatch_split.py`. Two of the eleven were the
+ones that mattered most, because neither changes any local behaviour:
+
+- **D4** -- `set_dispatcher`'s body replaced with a no-op. `_dispatch_update`
+  keeps using its own `app`, so nothing about that call path changes; the
+  registry only matters to the command menu and to the edit path's
+  stale-reply delete, and a null dispatcher turns edit-replace into a
+  silent no-op that still returns True. Caught by a test that asserts the
+  write *and* that a reader sees it.
+- **F1** -- dropping `get_dispatcher()` from the edit path. Six tests.
+
+The harness itself is part of this record because three of its versions
+reported 10/11, then 11/11, and every number was false: the workdir was
+never created (so `cd` failed and `rc != 0` read as CAUGHT), then held
+only one file (so pytest printed `ERROR: file or directory not found:
+tests/`), and then the "did the suite run" marker matched the substring
+`error` inside that very message. It now lays down the whole repo, reads
+the mutated file back to compare byte-for-byte, and requires pytest's own
+summary line. `SURVIVED` came out within one run of fixing that.
+
+### The NameError the suite could not see
+
+Block E shipped `_register_bot_menu` into `dispatch_webhook.py` carrying a
+`global _dispatcher`, into a module that never bound `_dispatcher` at module
+level — the binding lived in `dispatch.py`'s import list and had left with
+everything else. The bot would have registered no command menu and died at
+startup, inside `_prepare_runtime`, with `NameError: name '_dispatcher' is
+not defined`.
+
+**2047 tests passed with it in the tree.** Two things about that are worth
+more than the incident:
+
+- It was caught by running the self-test, not by a tripwire. `_selftest`
+  drives a real update through `_dispatch_update` in a fresh process, which
+  is the only thing here that had ever reached that line.
+- The tripwire that should have caught it did not, because `_bound_names`
+  counted every name in a `global` statement as a binding. Its docstring
+  called that the safe direction: over-approximating "can only make this
+  test quieter, never make it lie about a module that is fine."
+
+Quiet is not safe here. `global X` declares an intent to rebind; it does
+not create the name. An over-approximated binding set cannot see the module
+that reads what it never bound — which is the whole failure this test
+exists to catch. `global`/`nonlocal` names now count only when the module
+really binds them, verified by making the tripwire fail on a function that
+declares a `global` its module does not have.
 
 **Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
 
-<!-- current: dispatch.py=974, handlers.py=1278 -->
+<!-- current: dispatch.py=405, handlers.py=1278 -->
+<!-- current: dispatch_polling.py=307, dispatch_webhook.py=327, dispatch_edit.py=108 -->

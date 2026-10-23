@@ -47,15 +47,37 @@ def _bound_names(tree: ast.Module) -> set:
     Deliberately not scope-aware. A scope-aware checker needs to model
     comprehensions, except-handlers and with-items correctly, and two
     earlier attempts at one were wrong in both directions -- reporting
-    leaks that do not exist and missing the ones that do. Over-approximating
-    the binding set is the safe direction: it can only make this test
-    quieter, never make it lie about a module that is fine.
+    leaks that do not exist and missing the ones that do.
+
+    "Over-approximate, being quiet is safe" was in this docstring and it
+    was wrong. Quiet is not safe: an over-approximated binding set means
+    the test cannot see the code it exists to see. `global` is the case
+    that proved it -- see the note below.
     """
     out: set = set()
+    declared_global: set = set()
+    module_level: set = set()
 
     def names_in(node):
         return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
+    def names_in_targets(node):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        return {n.id for t in targets for n in ast.walk(t)
+                if isinstance(n, ast.Name)}
+
+    for n in tree.body:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            module_level.add(n.name)
+        elif isinstance(n, ast.Assign):
+            module_level |= names_in_targets(n)
+        elif isinstance(n, ast.AnnAssign):
+            module_level |= names_in_targets(n)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for alias in n.names:
+                module_level.add(alias.asname or alias.name.split(".")[0])
+
+    out |= {g for g in declared_global if g in module_level}
     for n in ast.walk(tree):
         if isinstance(n, ast.ClassDef):
             out.add(n.name)
@@ -96,8 +118,21 @@ def _bound_names(tree: ast.Module) -> set:
             a = n.args
             for arg in a.posonlyargs + a.args + a.kwonlyargs:
                 out.add(arg.arg)
-        elif isinstance(n, ast.Global) or isinstance(n, ast.Nonlocal):
-            out |= {x for x in n.names}
+        elif isinstance(n, (ast.Global, ast.Nonlocal)):
+            # `global X` DECLARES an intent to rebind; it does not create
+            # the name. If no module-level binding exists, the first read
+            # raises NameError.
+            #
+            # This used to add every `global` name to the bound set, on the
+            # theory that over-approximating can only make the test quieter.
+            # That theory was wrong, and cost a real one: `dispatch_webhook.py`
+            # declared `global _dispatcher`, never bound it at module level,
+            # and the tripwire was green. The bot would have died with
+            # NameError the first time it registered its command menu.
+            # Quieter is not the same as safe -- an over-approximated binder
+            # turns this test into decoration for exactly the names it exists
+            # to catch. Deferred to `_global_ok`, resolved after the walk.
+            declared_global |= set(n.names)
     return out
 
 

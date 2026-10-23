@@ -47,6 +47,11 @@ _BOT = pathlib.Path(__file__).parent.parent / "telegram-bot"
 # wrong file.
 _SRC = _BOT / "commands" / "start_cmd.py"
 _DISPATCH_SRC = _BOT / "dispatch.py"
+# TECH-DEBT #10 block E moved `_attach_handlers` to `dispatch_webhook.py`.
+# Second constant, not a replacement -- the `start()` tripwires above read
+# `start_cmd.py` and `_DISPATCH_SRC` still covers the Application builder
+# path, and pointing all of them at one file would hide which one moved.
+_WEBHOOK_SRC = _BOT / "dispatch_webhook.py"
 
 # Standard-library / known-builtin names that AST may pick up
 # as Name() references. We subtract these from "undefined"
@@ -244,11 +249,11 @@ def test_start_does_not_reference_dev_mode_badge():
 def test_dispatch_registers_only_imported_handlers():
     """T59 drift protection: the lazy Application builder
     registers MessageHandlers for photo / voice / document / text.
-    Each handler function must be imported at the top of
-    dispatch.py. Otherwise PTB raises NameError when
+    Each handler function must be imported at the top of the
+    module that registers them. Otherwise PTB raises NameError when
     _safe_dispatch is called.
     """
-    src = _DISPATCH_SRC.read_text()
+    src = _WEBHOOK_SRC.read_text()
     tree = ast.parse(src)
     imported = set()
     for node in ast.walk(tree):

@@ -1,6 +1,6 @@
 """Where an update enters the bot, and what happens to an edited one.
 
-TECH-DEBT #10's first tripwire. `dispatch.py` is 1672 lines and this file
+TECH-DEBT #10's first tripwire. `dispatch.py` was 1672 lines and this file
 touches 4 of them, because the feature they guard has already cost
 production twice.
 
@@ -49,6 +49,11 @@ BOT = ROOT / "telegram-bot"
 sys.path.insert(0, str(BOT))
 
 DISPATCH = BOT / "dispatch.py"
+# Blocks D/E/F split dispatch.py; these hold what the edit-path and startup
+# tests need now. Second constants, not replacements -- the `_dispatch_update`
+# tests below still read `dispatch.py` and must keep doing so.
+EDIT = BOT / "dispatch_edit.py"
+POLLING = BOT / "dispatch_polling.py"
 WEBHOOK = BOT / "webhook.py"
 
 
@@ -130,10 +135,22 @@ def test_the_webhook_delivery_path_reaches_dispatch_update():
 
 def test_the_polling_delivery_path_reaches_dispatch_update():
     """Via `_spawn_dispatch`, which is a task factory and nothing else."""
-    spawn = _fn(_tree(DISPATCH), "_spawn_dispatch")
-    assert "_dispatch_update" in _called_names(spawn), (
-        "_spawn_dispatch no longer creates a _dispatch_update task; the "
-        "polling loop would parse updates and drop them")
+    # After block D the callee is a parameter: the polling module imports
+    # nothing from `dispatch`, and `main` passes `_dispatch_update` in. The
+    # property is unchanged -- spawn still wraps the routing call in a task
+    # -- so pin the property and check the parameter is wired, rather than
+    # grepping for a name that moved.
+    spawn = _fn(_tree(POLLING), "_spawn_dispatch")
+    assert "dispatch_update" in _called_names(spawn) or "_dispatch_update" in _called_names(spawn), (
+        f"_spawn_dispatch no longer creates a dispatch task; the polling loop "
+        f"would parse updates and drop them. Called: {sorted(_called_names(spawn))}")
+    assert any(isinstance(n, ast.Name) and n.id.startswith("dispatch_update")
+               for n in ast.walk(spawn)), (
+        "the dispatch callable is accepted but never invoked -- spawn would "
+        "return a task running None")
+    assert "dispatch_update" in [a.arg for a in spawn.args.args + spawn.args.kwonlyargs], (
+        "spawn must take the dispatch callable as a parameter; a module-level "
+        "import here would re-grow the cycle block D removed")
 
 
 def test_no_module_parses_an_update_just_to_route_it():
@@ -165,6 +182,8 @@ def test_no_module_parses_an_update_just_to_route_it():
 # === behaviour: call it, do not read it =============================
 
 import dispatch  # noqa: E402  -- needs the sys.path insert above
+import dispatch_edit  # noqa: E402
+import dispatch_polling  # noqa: E402
 
 
 class _FakeBot:
@@ -198,16 +217,23 @@ def clean(monkeypatch):
     that leaks a key into it makes the next test's delete call fire for
     the wrong reason and pass.
     """
+    # Patch `dispatch_edit`, NOT `dispatch`. After block F the function has
+    # its own module: `_bot_replies` is read from `dispatch_edit`'s globals
+    # and the Application comes from `dispatch_polling`'s registry. Setting
+    # either on `dispatch` rebinds a name nobody reads there -- the test
+    # stays green and stops testing anything.
     bot = _FakeBot()
-    monkeypatch.setattr(dispatch, "_bot_replies", {})
-    monkeypatch.setattr(dispatch, "_dispatcher", _FakeDispatcher(bot))
+    monkeypatch.setattr(dispatch_edit, "_bot_replies", {})
+    fake = _FakeDispatcher(bot)
+    monkeypatch.setattr(dispatch_polling, "_dispatcher", fake)
+    monkeypatch.setattr(dispatch_polling, "get_dispatcher", lambda: fake)
     return bot
 
 
 @pytest.mark.asyncio
 async def test_a_command_edit_becomes_a_message_and_loses_the_edit_key(clean):
     upd = _edited("/help")
-    assert await dispatch._apply_edited_message(upd) is True
+    assert await dispatch_edit._apply_edited_message(upd) is True
     assert "edited_message" not in upd, (
         "the rewritten update still carries edited_message, so PTB routes "
         "the same text to a matching MessageHandler twice")
@@ -217,7 +243,7 @@ async def test_a_command_edit_becomes_a_message_and_loses_the_edit_key(clean):
 @pytest.mark.asyncio
 async def test_a_plain_text_edit_is_reprocessed_as_a_message(clean):
     upd = _edited("исправленный текст")
-    assert await dispatch._apply_edited_message(upd) is True
+    assert await dispatch_edit._apply_edited_message(upd) is True
     assert "edited_message" not in upd
     assert upd["message"]["text"] == "исправленный текст"
 
@@ -233,7 +259,7 @@ async def test_the_rewrite_keeps_the_forum_thread_id(clean):
     flaky rather than like a routing bug.
     """
     upd = _edited("правка", thread_id=88)
-    await dispatch._apply_edited_message(upd)
+    await dispatch_edit._apply_edited_message(upd)
     assert upd["message"]["message_thread_id"] == 88, (
         "the rewrite preserved the message but lost its forum thread; "
         "handle_text reads message_thread_id on the next line")
@@ -241,8 +267,8 @@ async def test_the_rewrite_keeps_the_forum_thread_id(clean):
 
 @pytest.mark.asyncio
 async def test_the_stale_reply_is_deleted_before_the_reprocess(clean):
-    dispatch._bot_replies[(-100, 7)] = 555
-    await dispatch._apply_edited_message(_edited("правка"))
+    dispatch_edit._bot_replies[(-100, 7)] = 555
+    await dispatch_edit._apply_edited_message(_edited("правка"))
     assert clean.deleted == [(-100, 555)], (
         "the bot's previous answer is still on screen after the user "
         "fixed their message")
@@ -251,7 +277,7 @@ async def test_the_stale_reply_is_deleted_before_the_reprocess(clean):
 @pytest.mark.asyncio
 async def test_no_recorded_reply_means_no_delete_call(clean):
     """And the rewrite still happens -- that is the actual feature."""
-    await dispatch._apply_edited_message(_edited("правка"))
+    await dispatch_edit._apply_edited_message(_edited("правка"))
     assert clean.deleted == []
 
 
@@ -262,9 +288,9 @@ async def test_a_failed_delete_does_not_lose_the_reprocess(clean):
         raise Exception("not enough rights")
 
     clean.delete_message = boom
-    dispatch._bot_replies[(-100, 7)] = 555
+    dispatch_edit._bot_replies[(-100, 7)] = 555
     upd = _edited("правка")
-    assert await dispatch._apply_edited_message(upd) is True
+    assert await dispatch_edit._apply_edited_message(upd) is True
     assert "edited_message" not in upd
 
 
@@ -272,7 +298,7 @@ async def test_a_failed_delete_does_not_lose_the_reprocess(clean):
 async def test_an_update_that_already_has_a_message_is_untouched(clean):
     upd = {"update_id": 1, "message": {"message_id": 1, "text": "original"},
            "edited_message": {"message_id": 1, "text": "edited"}}
-    assert await dispatch._apply_edited_message(upd) is False, (
+    assert await dispatch_edit._apply_edited_message(upd) is False, (
         "an update that already carries `message` must be left alone")
     assert upd["message"]["text"] == "original", (
         "an update carrying both keys had its message overwritten")
@@ -286,5 +312,52 @@ async def test_an_update_that_already_has_a_message_is_untouched(clean):
 ])
 async def test_updates_without_a_rewritable_edit_are_no_ops(clean, upd):
     before = dict(upd)
-    await dispatch._apply_edited_message(upd)
+    await dispatch_edit._apply_edited_message(upd)
     assert upd == before, f"a no-op update was modified: {upd}"
+
+
+def test_the_application_is_published_for_everyone_else_to_find():
+    """The registry, and the two readers that break silently without it.
+
+    `_dispatch_update` uses a local `app` for everything it does itself,
+    so a `set_dispatcher` that does nothing changes no local behaviour:
+    mutation D4 -- turning the setter's body into `pass` -- passed the
+    whole 2047-test suite.
+
+    The two readers are what makes the registry load-bearing:
+
+    - `dispatch_webhook._register_bot_menu` finds the already-built
+      Application instead of building a second one at startup;
+    - `dispatch_edit._apply_edited_message` needs it to delete the stale
+      reply. With no dispatcher it skips the delete and returns True, so
+      edit-replace quietly stops replacing anything.
+
+    Assert the write, then assert a reader sees it. Both halves: the
+    first catches a setter that does nothing, the second catches a
+    reader that reads a different name.
+    """
+    import dispatch_polling
+
+    class _App:
+        pass
+
+    app = _App()
+    saved = dispatch_polling.get_dispatcher()
+    try:
+        dispatch_polling.set_dispatcher(app)
+        assert dispatch_polling.get_dispatcher() is app, (
+            "set_dispatcher stored something get_dispatcher does not return"
+        )
+        import dispatch_edit
+        src = Path(dispatch_edit.__file__).read_text(encoding="utf-8")
+        assert "dispatch_polling.get_dispatcher()" in src, (
+            "the edit path no longer reads the registry, so a null "
+            "dispatcher silently turns edit-replace into a no-op"
+        )
+        assert "dispatch_polling.set_dispatcher(" in \
+            (BOT / "dispatch.py").read_text(encoding="utf-8"), (
+            "_dispatch_update no longer publishes the Application; the "
+            "command menu and the edit path would each build their own"
+        )
+    finally:
+        dispatch_polling.set_dispatcher(saved)

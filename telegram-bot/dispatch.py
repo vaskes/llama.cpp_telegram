@@ -1,10 +1,14 @@
-# dispatch.py
-# The orchestration layer: bot lifecycle (main), polling loop,
-# update dispatch, command handlers, auth, group routing,
-# concurrency control. This is the wiring of the bot - all the
-# message handlers and tool calls happen in other modules; this
-# module routes the right update to the right handler and manages
-# the per-user / global concurrency caps.
+# dispatch.py -- routing, and nothing else.
+#
+# TECH-DEBT #10 blocks D/E/F took this from 974 lines to under 400. What
+# is left decides: `_dispatch_update` routes an update,
+# `_handle_reply_to_other_user` is the reply-to-someone-else branch,
+# `main` picks polling over webhook, the caps bound them.
+# The PTB surface moved out -- `dispatch_polling.py` (signals, runtime
+# prep, getUpdates loop, task factory, Application registry),
+# `dispatch_webhook.py` (Application assembly, handler registration, the
+# command menu, chat-member bookkeeping), `dispatch_edit.py` (the
+# edited-message rewrite). None of it could pick a handler.
 
 import asyncio
 import signal
@@ -20,14 +24,31 @@ from telegram.ext import (
     filters, ContextTypes,
 )
 
-from call_llama import fetch_tools_from_llama
 import call_llama
 import storage
+import dispatch_polling
 from context_budget import get_budget
 from reanchor import start_reanchor_scheduler as _start_reanchor_scheduler
 from reanchor import start_summarise_on_boot as _start_summarise_on_boot
 from selftest import _selftest
-from prompts import BOT_COMMANDS
+# TECH-DEBT #10 block D: the polling path moved to `dispatch_polling.py`,
+# which also owns the Application registry.
+# TECH-DEBT #10 block E: PTB construction and chat-member bookkeeping moved
+# to `dispatch_webhook.py`. This module keeps the routing decision.
+# TECH-DEBT #10 block F: the edited-message rewrite is its own module now.
+from dispatch_edit import _apply_edited_message
+from dispatch_webhook import (
+    _attach_handlers,
+    _build_application,
+    _handle_chat_member_update,
+    _register_bot_menu,
+    _webhook_auto_register_sync,
+)
+from dispatch_polling import (
+    _dispatch_tasks,
+    _poll_loop,
+    _spawn_dispatch,
+)
 # TECH-DEBT #2: these ten used to be defined in dispatch.py and imported by
 # handlers.py *inside functions* to dodge a cycle. None of them touch the
 # dispatcher, so they live in leaf modules now and both sides import them at
@@ -51,7 +72,7 @@ from logconf import get_logger
 log = get_logger(__name__)
 
 # === Module-level state (lazy singleton) ===
-_dispatcher = None
+
 import persistence
 import prompts
 import rating
@@ -71,7 +92,6 @@ from prompts import (
 )
 from persistence import persist as _persist_message, load_history as _load_history
 from handlers import (
-    _safe_sender_label,
     handle_document, handle_photo, handle_text, handle_voice,
     send_reply, _download_with_limit, _general_thread_id, _reply,
     _reply_active, _resolve_active, _route_to_thread, _sender_display_name,
@@ -182,26 +202,6 @@ async def _handle_reply_to_other_user(upd, bot) -> None:
 #
 # So: keep a set, drop entries in a done callback, and log the failure WITH the
 # update id. The set is what stops the GC from collecting a running task.
-_dispatch_tasks: set[asyncio.Task] = set()
-
-
-def _spawn_dispatch(upd_dict: dict) -> asyncio.Task:
-    """Create the dispatch task and keep a strong reference until it finishes."""
-    task = asyncio.get_running_loop().create_task(_dispatch_update(upd_dict))
-
-    def _done(t: asyncio.Task) -> None:
-        _dispatch_tasks.discard(t)
-        if t.cancelled():
-            return
-        exc = t.exception()
-        if exc is not None:
-            log.warning(f"[dispatch] update_id={upd_dict.get('update_id')} FAILED "
-                f"unhandled: {type(exc).__name__}: {exc}")
-
-    task.add_done_callback(_done)
-    _dispatch_tasks.add(task)
-    return task
-
 
 # === _rate_limit_send ===
 # v0.7.9: Telegram rate-limits the bot to ~20 messages/minute per chat.
@@ -217,327 +217,6 @@ import time as _time
 
 
 # === main ===
-def _webhook_auto_register_sync(url: str, secret_token: str) -> None:
-    """Register the webhook with Telegram using synchronous HTTP calls.
-
-    Two-step process (v0.9.4):
-
-    1. Call `getWebhookInfo` to see the current webhook. If it
-       matches the desired URL, skip setWebhook (idempotent).
-       If different, print a clear WARNING before overwriting —
-       the operator might have a different WEBHOOK_URL in env
-       than what's actually serving production, and overwriting
-       a working webhook is a destructive action.
-    2. Call `setWebhook` with the desired URL, including
-       `allowed_updates` (callback_query is the Stop button),
-       `drop_pending_updates=False` (don't drop messages that
-       arrived during the bot restart), and the secret_token.
-
-    Both calls use a JSON body via Content-Type: application/json
-    (v0.9.4 switched from form-encoded data). JSON is cleaner
-    (drop_pending_updates is a real Bool, allowed_updates is a
-    real list, not a stringified one) and Telegram parses
-    response bodies the same way regardless of request body
-    format.
-
-    The Bot is lazily initialized inside the webhook event
-    loop. If we used an async set_webhook here in a separate
-    event loop, the Bot httpx client would be closed by the
-    time the webhook loop started, and every bot.send_message()
-    call would fail.
-    """
-    import urllib.request
-    import json as _json
-    bot_api = f"https://api.telegram.org/bot{BOT_TOKEN}"
-    headers = {"Content-Type": "application/json"}
-
-    # Step 1: check the current webhook
-    current_url = None
-    try:
-        req = urllib.request.Request(f"{bot_api}/getWebhookInfo", method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            info = _json.loads(resp.read().decode("utf-8"))
-            current_url = info.get("result", {}).get("url", "")
-    except Exception as e:
-        # If getWebhookInfo fails (network, transient Telegram error),
-        # we proceed with setWebhook anyway. Better to risk a duplicate
-        # register than to fail to start the bot.
-        log.info(f"[main] getWebhookInfo failed (continuing): {type(e).__name__}: {e!r}")
-
-    # Idempotent: same URL, nothing to do
-    if current_url == url:
-        log.info(f"[main] webhook already registered: {url}")
-        return
-    # Different URL: warn before overwriting
-    if current_url:
-        log.warning(f"[main] WARNING: overwriting existing webhook")
-        log.info(f"[main]   current: {current_url}")
-        log.info(f"[main]   new:     {url}")
-
-    # Step 2: register
-    payload = {
-        "url": url,
-        "secret_token": secret_token,
-        "allowed_updates": [
-            "message", "edited_message", "callback_query", "chat_member",
-        ],
-        "drop_pending_updates": False,
-    }
-    data = _json.dumps(payload).encode("utf-8")
-    try:
-        req = urllib.request.Request(
-            f"{bot_api}/setWebhook", data=data, method="POST", headers=headers,
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body_text = resp.read().decode("utf-8", errors="replace")
-            try:
-                body = _json.loads(body_text)
-                if body.get("ok"):
-                    log.info(f"[main] webhook auto-registered: {url}")
-                else:
-                    err = body.get("description", "(no description)")
-                    log.info(f"[main] webhook auto-register REJECTED: {err}")
-            except _json.JSONDecodeError:
-                log.info(f"[main] webhook auto-registered: {url} (status={resp.status}, body not JSON)")
-    except urllib.error.HTTPError as e:
-        body_text = e.read().decode("utf-8", errors="replace")
-        log.warning(f"[main] webhook auto-register FAILED: HTTP {e.code} {body_text[:200]}")
-    except Exception as e:
-        log.warning(f"[main] webhook auto-register FAILED: {type(e).__name__}: {e!r}")
-
-
-
-async def _install_signal_handlers(shutdown_event: asyncio.Event) -> None:
-    """SIGINT/SIGTERM set the shutdown event; publish it as a global.
-
-    `SHUTDOWN_EVENT` is module-level because `call_llama` reads it between
-    iterations and gets no context argument from this hand-rolled loop.
-
-    The handler used to be a closure inside `main`. It belongs here: the
-    signals and the loop they interrupt are the same concern, and a
-    closure named `_on_signal` was one rename away from being invisible.
-    """
-    def _on_signal(signame: str) -> None:
-        log.info(f"[main] received {signame}, initiating shutdown...")
-        shutdown_event.set()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _on_signal, sig.name)
-        except (NotImplementedError, RuntimeError):
-            # Windows or a non-main thread: fall back to the default
-            # behaviour. KeyboardInterrupt still aborts, just less
-            # gracefully -- the in-flight httpx call dies mid-stream
-            # instead of unwinding through shutdown_event.
-            pass
-    global SHUTDOWN_EVENT
-    SHUTDOWN_EVENT = shutdown_event
-
-
-async def _prepare_runtime() -> None:
-    """Once, before the first poll: register the menu, then self-test.
-
-    Menu registration is non-fatal on purpose. If the network is briefly
-    down at boot the user can still type `/command` by hand, and Telegram
-    caches `setMyCommands` across restarts, so re-registering is cheap.
-
-    The NB comment below is a correction of CALL_LLAMA.md section 4, not
-    a leftover: we never poll with offset=-1. In LOCKDOWN the handler
-    rejects everything anyway; outside it, dropping pending messages means
-    the user sent something while the bot was down and gets no answer.
-    """
-    # Register the bot's command menu with Telegram. Without this,
-    # the chat input / menu shows whatever was last setMyCommands'd
-    # for this bot — usually nothing useful. setMyCommands is the
-    # native way to make commands discoverable in the GUI: they
-    # appear in the "Menu" button on the chat input bar with their
-    # descriptions, and typing / shows the list.
-    try:
-        await _register_bot_menu()
-    except Exception as e:
-        log.info(f"[main] setMyCommands failed (non-fatal): {e!r}")
-    # NB: we intentionally do NOT call getUpdates with offset=-1 to
-    # drop pending updates. Reasoning:
-    #   - in LOCKDOWN, the handler rejects everything anyway, so
-    #     backlog gets eaten harmlessly;
-    #   - in non-LOCKDOWN, dropping pending messages is a UX bug
-    #     (user sent a message while bot was down, expects to see
-    #     a reply when bot comes back).
-    # The CALL_LLAMA.md §4 paragraph that claimed otherwise is
-    # corrected by this comment.
-
-    # Self-test: if LLAMABOT_SELFTEST=1, push a fake Update through
-    # the dispatcher so we can verify handlers actually fire even when
-    # we can't easily test with a real user.
-    await _selftest()
-
-
-
-async def _poll_loop(shutdown_event: asyncio.Event) -> None:
-    """Start the runtime, then long-poll getUpdates until shutdown.
-
-    This was `_run`, nested inside `main`, where it was 190 of main's 269
-    lines and could not be exercised without starting a whole bot. It
-    closed over exactly one thing -- the shutdown event -- so that is the
-    only parameter.
-
-    The two startup steps run here rather than in `main` so that there is
-    one place where the ordering "handlers installed, then runtime
-    prepared, then the first poll" is visible. `main` decides *which mode*
-    runs; this decides what running it consists of.
-    """
-    await _install_signal_handlers(shutdown_event)
-    await _prepare_runtime()
-    offset = 0
-    backoff = 1.0
-    n_polls = 0
-    n_updates = 0
-    # Use a single dedicated httpx client. max_keepalive_connections=0
-    # means no keep-alive — every request opens a fresh connection.
-    # This guarantees only one open connection at a time.
-    # try/finally around the whole block ensures the PTB dispatcher
-    # gets shut down on every exit path: normal `break` (graceful
-    # shutdown), CancelledError (asyncio.run() cancel), or any
-    # unexpected exception. Without the finally, the httpx client
-    # held by app.bot leaks and prints "RuntimeWarning: unclosed
-    # client" on interpreter shutdown.
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=35.0, write=10.0, pool=10.0),
-            limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
-        ) as client:
-            while True:
-                if shutdown_event.is_set():
-                    log.info(f"[poll] shutdown_event set, exiting loop (after {n_polls} cycles, {n_updates} updates)")
-                    break
-                try:
-                    r = await client.get(
-                        f"{TELEGRAM_API}/getUpdates",
-                        params={
-                            "offset": offset,
-                            "timeout": 25,            # long-poll
-                            # T1 (P0-1) defense-in-depth: cap the
-                            # per-cycle update batch so a flood
-                            # doesn't queue 100 dispatch tasks at
-                            # once. With limit=10 and
-                            # _GLOBAL_LLM_SEM_LIMIT=4, the worst
-                            # case is 10 in-flight at any moment,
-                            # only 4 inside the LLM call.
-                            "limit": 10,
-                            "allowed_updates": '["message","edited_message","chat_member","callback_query"]',
-                        },
-                    )
-                    data = r.json()
-                    if not data.get("ok"):
-                        raise RuntimeError(f"getUpdates not ok: {data}")
-                    updates_raw = data.get("result", [])
-                    n_polls += 1
-                    if updates_raw:
-                        n_updates += len(updates_raw)
-                        backoff = 1.0
-                        log.info(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})")
-                        for upd_dict in updates_raw:
-                            # PII-safe dump. The previous version
-                            # printed the full JSON including
-                            # first_name, last_name, chat.title, and
-                            # the message text — all of which are
-                            # PII in journald. The new line logs
-                            # only structural fields plus a short
-                            # content hash for cross-correlating
-                            # with later log lines.
-                            upd_id = upd_dict.get("update_id", "?")
-                            upd_msg = upd_dict.get("message") or upd_dict.get("edited_message") or {}
-                            upd_chat = upd_msg.get("chat") or {}
-                            upd_from = upd_msg.get("from") or {}
-                            upd_text = (upd_msg.get("text") or upd_msg.get("caption") or "")[:60]
-                            import hashlib
-                            text_hash = hashlib.sha1(upd_text.encode("utf-8", errors="replace")).hexdigest()[:10] if upd_text else "-"
-                            log.info(f"[poll] update_id={upd_id} "
-                                f"chat_type={upd_chat.get('type', '?')} "
-                                f"chat_id={upd_chat.get('id', '?')} "
-                                f"is_forum={upd_chat.get('is_forum', '?')} "
-                                f"from_id={upd_from.get('id', '?')} "
-                                f"from_is_bot={upd_from.get('is_bot', '?')} "
-                                f"thread_id={upd_msg.get('message_thread_id', '-')} "
-                                f"text_hash={text_hash}")
-                            offset = upd_dict["update_id"] + 1
-                            # edited_message handling:
-                            #
-                            # Telegram re-delivers edited messages as
-                            # `edited_message` updates (separate from
-                            # the original `message`). The bot used to
-                            # skip non-command edits — the original
-                            # was already answered, the edit was just
-                            # a typo fix. But this made the bot
-                            # appear unresponsive to the corrected
-                            # version: the user sees a wrong answer
-                            # for the typo and no new answer for the
-                            # correction.
-                            #
-                            # New behaviour:
-                            #   1. If the new text is a command, keep
-                            #      the old behaviour (commands are
-                            #      idempotent, re-running is fine).
-                            #   2. If the new text is regular text,
-                            #      look up the bot's previous reply
-                            #      to the original message in
-                            #      _bot_replies. If we have one,
-                            #      delete it. Then rewrite the
-                            #      update as a regular `message` and
-                            #      let the dispatcher process it
-                            #      like a fresh user message.
-                            #   3. If we have no previous reply
-                            #      (e.g., the original was rejected
-                            #      for security, or the bot never
-                            #      responded for some reason), just
-                            #      process the edit.
-                            # (The block itself moved out; see
-                            # _apply_edited_message below.)
-                            # Dispatch as a TASK, not awaited. This is
-                            # the critical change for the Stop button:
-                            # previously, the polling loop was blocked
-                            # on `await _dispatch_update(...)` for the
-                            # entire duration of a handler's LLM call
-                            # (3-30 seconds). Any callback_query
-                            # updates (e.g., the Stop button click)
-                            # would queue up and only be processed
-                            # AFTER the handler finished — by which
-                            # time the abort_event had been popped and
-                            # the Stop click was useless.
-                            #
-                            # With task dispatch, the for loop returns
-                            # immediately and the while loop is free to
-                            # call getUpdates again. The handler runs
-                            # concurrently in its own task. When the
-                            # user clicks Stop, the callback reaches
-                            # the polling loop, gets dispatched as
-                            # another task, sets the abort_event, and
-                            # the original handler's between-chunk
-                            # check picks it up.
-                            try:
-                                _spawn_dispatch(upd_dict)
-                            except Exception as e:
-                                log.info(f"[poll] task-create error: {type(e).__name__}: {e!r}")
-                    elif n_polls <= 5 or n_polls % 20 == 0:
-                        log.info(f"[poll] cycle={n_polls} no updates")
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    log.info(f"[poll] error: {type(e).__name__}: {e!r} (backoff {backoff}s)")
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, 30.0)
-    finally:
-        # Cleanly close the PTB Application if it was ever built.
-        # Runs on every exit path: normal `break` (graceful
-        # shutdown), CancelledError, or any exception. Without
-        # this, the httpx client held by app.bot leaks and prints
-        # "RuntimeWarning: unclosed client" on interpreter shutdown.
-        if _dispatcher is not None:
-            try:
-                await _dispatcher.shutdown()
-            except Exception as e:
-                log.info(f"[main] dispatcher shutdown error: {e!r}")
 
 def main():
     # === Pure-httpx polling loop, no PTB Updater, no app.start() ===
@@ -614,287 +293,31 @@ def main():
         shutdown_event.set()
 
     try:
-        asyncio.run(_poll_loop(shutdown_event))
+        # Passed in rather than imported, so `dispatch_polling` has no edge
+        # back into this module and the import graph stays a cycle smaller
+        # than it was before the split.
+        asyncio.run(_poll_loop(
+            shutdown_event,
+            register_bot_menu=_register_bot_menu,
+            dispatch_update=_dispatch_update,
+            run_selftest=_selftest,
+        ))
     except KeyboardInterrupt:
         log.info('[main] KeyboardInterrupt')
 
 # === application assembly ===
-def _attach_handlers(app: Application) -> None:
-    """Register every handler, in one place, once.
-
-    This list existed twice -- here and in `main` -- and the two copies
-    had drifted: one registered `/help` twice and put it before
-    `/reset`, the other put it last. Neither copy was wrong on its own
-    terms, which is what made it survive: reading one site tells you
-    nothing about the other, and a command added to one of them is
-    present in the source, absent from the running bot, and green in
-    every test.
-
-    Order is the PTB handler order: commands, then callbacks, then the
-    media and text handlers, which must stay last so a caption arrives
-    at `handle_photo` rather than `handle_text`.
-    """
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("newsub", cmd_newsub))
-    app.add_handler(CommandHandler("sub", cmd_sub))
-    app.add_handler(CommandHandler("subs", cmd_subs))
-    app.add_handler(CommandHandler("delsub", cmd_delsub))
-    app.add_handler(CommandHandler("here", cmd_here))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CallbackQueryHandler(cmd_callback))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-
-def _build_application() -> Application:
-    """The Application every code path must end up with.
-
-    `main` and `_register_bot_menu` each built one, and both had to
-    remember `base_url(TELEGRAM_API)` -- W2-H2, without it the PTB Bot
-    talks to api.telegram.org no matter what the env override says, so
-    a smoke test against a mock server sends half its traffic to the
-    real Telegram. One builder means the override cannot be forgotten.
-    """
-    app = Application.builder() \
-           .token(BOT_TOKEN) \
-           .base_url(TELEGRAM_API) \
-           .build()
-    _attach_handlers(app)
-    return app
-
 
 # === _register_bot_menu ===
-async def _register_bot_menu():
-    # Late import: BOT_COMMANDS lives in bot.py; bot.py imports this
-    # module, so we resolve at call time to break the cycle.
-    """Register the bot's command menu with Telegram via setMyCommands.
-
-    Called once at startup. Failures are non-fatal — if the network
-    is briefly down at boot, the user can still type /command
-    manually; the menu just won't show until next restart. Once
-    set, the menu persists in Telegram's cache across restarts
-    (re-registering is idempotent and cheap).
-    """
-    from telegram import BotCommand
-    global _dispatcher
-    if _dispatcher is None:
-        # Build the dispatcher eagerly so we can call setMyCommands.
-        # Same construction as _dispatch_update; both call sites
-        # end up at the same Application instance.
-        # W2-H2. Without base_url the PTB Bot talks to api.telegram.org
-        # no matter what TELEGRAM_API says, so sendMessage, editMessageText,
-        # getMe, setMyCommands, set_message_reaction and every file
-        # download all bypass the override. The v0.10.2 env override only
-        # ever covered the raw-httpx getUpdates loop. Without this line a
-        # smoke test against a mock server sends half its traffic to the
-        # real Telegram.
-        app = _build_application()
-        _dispatcher = app
-        # PTB 21 requires Application.initialize() before process_update.
-        # We do not run app.start() — the hand-rolled polling loop drives
-        # everything — but initialize() sets up the application context.
-        await _dispatcher.initialize()
-        # T68: in `soft` mode the re-anchor scheduler lives in this process.
-        # In the other modes this is a no-op log line. Started after
-        # initialize() because it needs the running loop and a live app.
-        _start_reanchor_scheduler()
-        _start_summarise_on_boot()
-    await _dispatcher.bot.set_my_commands(
-        [BotCommand(c, d) for c, d in BOT_COMMANDS],
-        scope=None,  # default scope covers all private chats
-        language_code=None,
-    )
-    log.info(f"[main] setMyCommands: registered {len(BOT_COMMANDS)} commands")
 
 # === _handle_chat_member_update ===
-async def _handle_chat_member_update(upd, bot):
-    """Welcome a new group member.
-
-    Triggered by a Telegram chat_member update. We detect a "new
-    join" as: old_chat_member.status in {left, kicked} and
-    new_chat_member.status in {member, administrator, creator}.
-
-    Actions:
-      1. Post WELCOME_TEXT in the General topic of the group,
-         as a reply to the service "User X joined" message.
-      2. PM the new member with the same text. PMs may fail
-         if the user has not started a chat with the bot or
-         has strict privacy; we log and continue.
-      3. Also handles my_chat_member (the bot itself being
-         added/removed) — we just log it for ops visibility.
-
-    No persistence: welcome is one-shot. The user can re-read
-    the pinned message in the group.
-    """
-    cm = upd.chat_member
-    chat = cm.chat
-    new_user = cm.new_chat_member.user if cm.new_chat_member else None
-    old_status = cm.old_chat_member.status if cm.old_chat_member else None
-    new_status = cm.new_chat_member.status if cm.new_chat_member else None
-    user_id = new_user.id if new_user else None
-    username = getattr(new_user, 'username', None) if new_user else None
-    first = getattr(new_user, 'first_name', None) if new_user else None
-    is_bot_user = getattr(new_user, 'is_bot', False) if new_user else False
-    is_forum = getattr(chat, 'is_forum', False)
-    log.info(f"[chat_member] chat_id={chat.id} is_forum={is_forum} "
-        f"user_id={user_id} username={username!r} is_bot={is_bot_user} "
-        f"old_status={old_status!r} new_status={new_status!r}")
-    # Only act on "new join" (left/kicked → member/admin/creator).
-    # Skip leaves, promotes, demotes, bans — those are operator
-    # actions, not new users.
-    is_new_join = (
-        old_status in ("left", "kicked")
-        and new_status in ("member", "administrator", "creator")
-        and user_id is not None
-    )
-    if not is_new_join:
-        return
-    # Skip other bots joining. Their operator is responsible for
-    # the bot's behaviour, and PMing another bot is wasted work.
-    if is_bot_user:
-        log.info(f"[chat_member] skip bot user_id={user_id}")
-        return
-    # Build a mention. Telegram allows @username for users with a
-    # public username; fall back to a first_name or just "you".
-    #
-    # T54 #D2: sanitise first_name before rendering. A user can
-    # join with a crafted first_name containing newlines, RTL
-    # overrides, or system-prompt-style text ("SYSTEM: ...")
-    # which would be visible to every existing group member in
-    # the welcome message. _safe_sender_label() (T53 S1) strips
-    # Cc/Cf/Cs/Co categories and redacts LLM-control keywords.
-    if username:
-        mention = f"@{_safe_sender_label(username)}"
-    elif first:
-        sanitized = _safe_sender_label(first)
-        mention = sanitized if sanitized else "there"
-    else:
-        mention = "there"
-    group_msg = f"👋 {mention}, welcome!\n\n{WELCOME_TEXT}"
-    # 1) Post in the group. In a forum supergroup, the General
-    # topic has message_thread_id=None. We do NOT use
-    # _reply() here because that helper is wired to a specific
-    # message_id in a specific topic; we want a fresh message
-    # in General, not a reply in some specific topic.
-    try:
-        await bot.send_message(
-            chat_id=chat.id,
-            text=group_msg,
-            message_thread_id=None,  # explicit: General topic
-        )
-        log.info(f"[chat_member] posted welcome in chat_id={chat.id} "
-            f"for user_id={user_id}")
-    except Exception as e:
-        log.warning(f"[chat_member] FAILED to post welcome in chat_id={chat.id}: "
-            f"{type(e).__name__}: {e!r}")
-    # 2) PM the new member. Telegram allows this because the
-    # user is now in a common group with the bot. If their
-    # privacy settings block PMs from non-contacts, this will
-    # fail with Forbidden; we just log and continue.
-    try:
-        await bot.send_message(
-            chat_id=user_id,
-            text=WELCOME_TEXT,
-        )
-        log.info(f"[chat_member] PM'd welcome to user_id={user_id}")
-    except Exception as e:
-        log.warning(f"[chat_member] PM to user_id={user_id} FAILED: "
-            f"{type(e).__name__}: {e!r}")
 
 # === _apply_edited_message ===
-
-async def _apply_edited_message(upd_dict):
-    """Turn an `edited_message` update into a plain `message`, in place.
-
-    Why this exists at all: the bot answers a message, the user fixes a
-    typo, and Telegram redelivers the correction as a separate
-    `edited_message` update. Left alone, the bot keeps showing the answer
-    to the text the user has already replaced on screen. So a non-command
-    edit deletes the bot's stale reply (via the `_bot_replies` map) and is
-    reprocessed as a fresh message; a command edit is idempotent and is
-    simply re-run.
-
-    Why it lives here rather than in the polling loop: it did live there,
-    and the production deployment runs in WEBHOOK mode -- `webhook.py`
-    hands updates straight to `_dispatch_update` and never enters the
-    poll loop. So the whole feature was dead in production, and worse than
-    dead: PTB 21 routes an edited text message into
-    `MessageHandler(filters.TEXT & ~filters.COMMAND)` while
-    `update.message` on that update is None, so `handle_text` raised
-
-    AttributeError("'NoneType' object has no attribute 'message_thread_id'")
-
-    on every edit in a forum. Four times in twenty minutes on
-    2026-10-22. Measured in the shipping image:
-    `MessageHandler(filters.TEXT & ~filters.COMMAND).check_update(
-    Update(edited_message=Message(text="hi")))` -> True.
-
-    `handlers.py` and `state.py` both carried comments saying the
-    edit-replace block was "in _dispatch_update". It was not; they were
-    describing where it belonged.
-
-    Returns True if the update was rewritten. A no-op on every other
-    update, including callback_query, which also carries no `.message`.
-    """
-    if "edited_message" not in upd_dict or "message" in upd_dict:
-        return False
-    em = upd_dict["edited_message"]
-    if not isinstance(em, dict):
-        return False
-    em_text = (em.get("text") or "").lstrip()
-    if em_text.startswith("/"):
-        # Normalise: rewrite the update so the dispatcher's handlers see
-        # a regular `message` field. This way every handler continues to
-        # read `update.message.text` and friends without per-handler
-        # branching.
-        upd_dict["message"] = em
-        upd_dict.pop("edited_message", None)
-        log.info(f"[edit] treating edited_message as new command "
-                 f"update_id={upd_dict.get('update_id')} cmd={em_text[:32]!r}")
-        return True
-    # Non-command edit: delete the bot's previous reply (if any) and
-    # reprocess.
-    em_chat_id = (em.get("chat") or {}).get("id")
-    em_msg_id = em.get("message_id")
-    if em_chat_id is not None and em_msg_id is not None:
-        key = (em_chat_id, em_msg_id)
-        old_bot_msg_id = _bot_replies.pop(key, None)
-        if old_bot_msg_id is not None and _dispatcher is not None:
-            try:
-                await _dispatcher.bot.delete_message(
-                    chat_id=em_chat_id,
-                    message_id=old_bot_msg_id,
-                )
-                log.info(f"[edit] edit-replace: deleted old bot reply "
-                         f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id} "
-                         f"user_msg_id={em_msg_id}")
-            except Exception as e:
-                # Most common failure: the bot lacks delete permission, or
-                # the message is too old. Just log and continue.
-                log.info(f"[edit] edit-replace: delete failed "
-                         f"chat_id={em_chat_id} bot_msg_id={old_bot_msg_id}: "
-                         f"{type(e).__name__}: {e!r}")
-    # Now rewrite the update as a regular `message` so the dispatcher
-    # processes it like a new user message. The downstream handlers
-    # (handle_text etc.) will see the edited text.
-    upd_dict["message"] = em
-    # Drop the original key. Leaving it in place makes the update carry
-    # BOTH `message` and `edited_message`, and PTB 21 hands each of those
-    # to a matching MessageHandler -- so the edit is processed twice.
-    upd_dict.pop("edited_message", None)
-    log.info(f"[edit] edit-replace: processing edited_message "
-             f"update_id={upd_dict.get('update_id')} text={em_text[:32]!r}")
-    return True
 
 
 # === _dispatch_update ===
 async def _dispatch_update(upd_dict):
-    global _dispatcher
-    if _dispatcher is None:
+    app = dispatch_polling.get_dispatcher()
+    if app is None:
         # W2-H2. Without base_url the PTB Bot talks to api.telegram.org
         # no matter what TELEGRAM_API says, so sendMessage, editMessageText,
         # getMe, setMyCommands, set_message_reaction and every file
@@ -910,15 +333,23 @@ async def _dispatch_update(upd_dict):
 
         app.add_error_handler(log_error)
         await app.initialize()
-        _dispatcher = app
+        # Written through the polling module's setter, not by rebinding an
+        # imported name: it owns the registry, and a rebind here would only
+        # touch this module's copy of the binding.
+        dispatch_polling.set_dispatcher(app)
         log.info("[dispatch] Application initialized (lazy)")
         # PTB 21 requires Application.initialize() before process_update.
         # We do not call app.start() — the hand-rolled polling loop drives
         # dispatch. initialize() sets up the application context.
-        await _dispatcher.initialize()
+        await app.initialize()
         _start_reanchor_scheduler()
         _start_summarise_on_boot()
 
+    # `app` is live from here on: either it came from the registry, or the
+    # branch above built and published it. Every read below goes through
+    # this local, not through the registry, because re-reading a global
+    # five times is how a module ends up with two copies of one truth.
+    #
     # The single entry point both delivery modes share: the poll loop
     # calls _spawn_dispatch -> here, and webhook.py calls here directly.
     # Anything that decides what an update MEANS has to happen here, or
@@ -927,7 +358,7 @@ async def _dispatch_update(upd_dict):
     # comments described it as living right here.
     await _apply_edited_message(upd_dict)
 
-    upd = Update.de_json(upd_dict, _dispatcher.bot)
+    upd = Update.de_json(upd_dict, app.bot)
     if upd is None:
         log.info(f"[dispatch] de_json returned None for {upd_dict}")
         return
@@ -941,7 +372,7 @@ async def _dispatch_update(upd_dict):
     # information the new member (especially an LLM-claimed
     # account) receives after joining.
     if getattr(upd, 'chat_member', None) is not None:
-        await _handle_chat_member_update(upd, _dispatcher.bot)
+        await _handle_chat_member_update(upd, app.bot)
         return
     txt = upd.message.text if (upd.message and upd.message.text) else None
     log.info(f"[dispatch] update_id={upd.update_id} msg={txt!r}")
@@ -961,10 +392,10 @@ async def _dispatch_update(upd_dict):
         return
     # T65.1: reply-to-other-user is ABSORBED, not skipped.
     # Persist + react silently; do not answer, do not show reasoning.
-    if upd.message is not None and _is_reply_to_other_user(upd, _dispatcher.bot.id):
-        await _handle_reply_to_other_user(upd, _dispatcher.bot)
+    if upd.message is not None and _is_reply_to_other_user(upd, app.bot.id):
+        await _handle_reply_to_other_user(upd, app.bot)
         return
-    await _dispatcher.process_update(upd)
+    await app.process_update(upd)
     log.info(f"[dispatch] processed update_id={upd.update_id}")
 
 

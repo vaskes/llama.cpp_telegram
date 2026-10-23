@@ -32,10 +32,15 @@ pytestmark = pytest.mark.tech_debt(item=10)
 
 ROOT = Path(__file__).resolve().parent.parent
 DISPATCH = ROOT / "telegram-bot" / "dispatch.py"
+# TECH-DEBT #10 block D moved the startup sequence into `dispatch_polling.py`.
+# A second constant, not a replacement: `main` stayed in `dispatch.py`, so the
+# "main no longer decides what starting the bot means" assertion and the two
+# `main` tests read a DIFFERENT file on purpose.
+POLLING = ROOT / "telegram-bot" / "dispatch_polling.py"
 
 
-def _fn(name: str):
-    tree = ast.parse(DISPATCH.read_text(encoding="utf-8"))
+def _fn(name: str, src: Path = POLLING):
+    tree = ast.parse(src.read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
                 and node.name == name:
@@ -65,9 +70,9 @@ def test_the_startup_sequence_runs_signals_then_prepare_then_poll():
         "the poll loop must install signal handlers before it prepares the "
         f"runtime, and both before it polls; got {names}")
 
-    src = DISPATCH.read_text(encoding="utf-8")
+    src = POLLING.read_text(encoding="utf-8")
     # and the poll loop is what runs them, not main
-    main = _fn("main")
+    main = _fn("main", DISPATCH)
     main_calls = {name for name, _ in
                   _calls_in_order(main, {"_install_signal_handlers",
                                          "_prepare_runtime"})}
@@ -140,7 +145,7 @@ def test_main_runs_the_loop_and_nothing_else_long():
     growing back, not a style rule. It caught nothing by itself; the
     order assertions above are what caught the mutations.
     """
-    fn = _fn("main")
+    fn = _fn("main", DISPATCH)
     size = fn.end_lineno - fn.lineno + 1
     assert size <= 120, (
         f"main is {size} lines again. It decides which delivery mode runs "
@@ -150,7 +155,7 @@ def test_main_runs_the_loop_and_nothing_else_long():
 
 def test_the_webhook_branch_returns_before_the_poll_loop():
     """The whole reason the poll loop used to be dead in production."""
-    fn = _fn("main")
+    fn = _fn("main", DISPATCH)
     returns = [n.lineno for n in ast.walk(fn)
                if isinstance(n, ast.Return)]
     poll_call = next((ln for name, ln in _calls_in_order(fn, {"_poll_loop"})),
@@ -165,7 +170,7 @@ def test_the_poll_loop_still_carries_the_allowed_updates():
     """The comment above it explains why: Telegram defaults to
     `["message", "edited_message"]` and silently drops the Stop button
     and the new-member join."""
-    lines = DISPATCH.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = POLLING.read_text(encoding="utf-8").splitlines(keepends=True)
     loop = _fn("_poll_loop")
     # slice LINES. `src[a:b]` would slice characters and hand back the
     # head of the file, which is the other way this assertion silently

@@ -84,8 +84,15 @@ def test_prompt_content_is_unchanged(name, expected):
 # --- the advertised commands must exist -------------------------------
 
 def _registered_commands():
-    """Command names dispatch.py hands to CommandHandler."""
-    src = (ROOT / "telegram-bot" / "dispatch.py").read_text(encoding="utf-8")
+    """Command names handed to CommandHandler.
+
+    TECH-DEBT #10 block E moved `_attach_handlers` to `dispatch_webhook.py`.
+    Following the symbol is the point of this test -- it exists to catch an
+    advertised command with no handler behind it -- so it reads whatever
+    module owns the registration now. Reading `dispatch.py` would find no
+    CommandHandler at all and report every command as missing.
+    """
+    src = (ROOT / "telegram-bot" / "dispatch_webhook.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     out = set()
     for node in ast.walk(tree):
@@ -101,7 +108,7 @@ def test_every_advertised_command_is_registered():
     registered = _registered_commands()
     missing = sorted(advertised - registered)
     assert not missing, (
-        f"BOT_COMMANDS advertises {missing} but dispatch.py registers no "
+        f"BOT_COMMANDS advertises {missing} but no module registers an "
         f"handler for them. Telegram will show the button and the bot "
         f"will ignore it.")
 
@@ -111,7 +118,7 @@ def test_every_registered_command_is_advertised():
     advertised = {c for c, _ in prompts.BOT_COMMANDS}
     missing = sorted(registered - advertised)
     assert not missing, (
-        f"dispatch.py registers {missing} that BOT_COMMANDS does not "
+        f"a handler registers {missing} that BOT_COMMANDS does not "
         f"advertise -- reachable but undiscoverable")
 
 

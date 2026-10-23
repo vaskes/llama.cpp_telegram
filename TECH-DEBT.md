@@ -33,7 +33,7 @@ disagreement again without a test going red.
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
 | 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
 | 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `scripts/mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
-| 10 | `dispatch.py` — 1672 → 1278 | **closed** — blocks A+B+C, 27 mutations | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
+| 10 | `dispatch.py` — 1672 → 405 | **closed** — blocks A–F, 38 mutations | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
 | 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1357, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
@@ -57,7 +57,10 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    974 lines, 14 top-level defs
+dispatch.py    405 lines, 4 top-level defs  <- was 1612
+dispatch_polling.py   307 lines, startup + getUpdates loop
+dispatch_webhook.py   327 lines, PTB assembly + handlers
+dispatch_edit.py      108 lines, the edited-message rewrite
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   972 lines, call_llama = 825 lines, 11 llm_* leaf modules
 handlers.py    1464 lines, 4 handlers at 158-291 lines each
@@ -89,11 +92,23 @@ the 1940-line figure below it is the size it *started* from.
 
 Recorded so the question stops resurfacing at every review.
 
-- **`dispatch.py` below 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
-  It is 974. The safe decomposition is done (three blocks, 27 mutations); what
-  is left is `_poll_loop` at 164 and the PTB glue, and splitting those is the
-  half-refactor case the ticket itself warns about. Closed as far as safe
-  decomposition goes, explicitly short of the number — not "done".
+- **Going past 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
+  **Done: `dispatch.py` is 405.** The move was three blocks (D/E/F) plus the
+  routing extraction from block C. The split line was not line count: a
+  function moved if it was Telegram surface or bookkeeping, and stayed if it
+  picks a handler. Everything left is `_dispatch_update`,
+  `_handle_reply_to_other_user`, `main` and the concurrency caps.
+
+  Two things are recorded because they cost real time, not because they
+  sound cautionary:
+  - The dependencies went in as **keyword arguments**, not lazy imports. A
+    lazy `from dispatch import ...` works and is exactly what
+    `test_import_graph.py` flags: it grew the cycle from six modules to
+    seven. A passing import test and a growing cycle are not the same fact.
+  - `dispatch_polling` **owns** the Application registry, and the other two
+    modules read it through `get_dispatcher()` / `set_dispatcher()`. Three
+    writers rebinding an imported name is how you get two copies of one
+    truth and a half-refactor that imports fine and reads `None`.
 - **ORM / `pypika` for `storage.py`.** `Storage` is already an
   encapsulating class, `get_store()` is the sole entry point, and the 41
   statements are plain SQL. A query builder would not have prevented any

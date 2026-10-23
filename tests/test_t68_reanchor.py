@@ -199,14 +199,18 @@ def test_zero_remember_days_disables_the_age_filter(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_dispatch_starts_the_scheduler():
-    src = (BOT_DIR / "dispatch.py").read_text()
-    assert "start_reanchor_scheduler" in src
     # Both entry points: polling and webhook. Starting it in only one would
     # mean the scheduler silently never runs in the other mode.
-    assert src.count("_start_reanchor_scheduler()") >= 2, (
-        "the scheduler must be started in both the polling and the webhook "
-        "entry points"
-    )
+    #
+    # Since block E those entry points are different files, so this reads
+    # both and asserts one call in each. A count in a single file would be
+    # the easy fix and a dead one: it cannot see an entry point that moved.
+    polling = (BOT_DIR / "dispatch.py").read_text()
+    webhook = (BOT_DIR / "dispatch_webhook.py").read_text()
+    assert "start_reanchor_scheduler()" in polling, (
+        "the polling entry point no longer starts the reanchor scheduler")
+    assert "start_reanchor_scheduler()" in webhook, (
+        "the webhook entry point no longer starts the reanchor scheduler")
 
 
 def test_scheduler_does_not_use_ptb_create_task():

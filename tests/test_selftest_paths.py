@@ -62,6 +62,11 @@ if str(BOT_DIR) not in sys.path:
 
 SELFTEST = BOT_DIR / "selftest.py"
 DISPATCH = BOT_DIR / "dispatch.py"
+# TECH-DEBT #10 block D moved the startup path -- including the call to
+# the self-test -- into `dispatch_polling.py`, where it arrives as
+# `run_selftest` (a keyword argument passed by `main`, so the polling
+# module has no import edge back). Second constant, not a replacement.
+POLLING = BOT_DIR / "dispatch_polling.py"
 
 
 def test_selftest_contains_no_container_paths():
@@ -131,7 +136,7 @@ def test_dispatch_calls_selftest_unconditionally():
     deliberate for now (W5-L1) and is on the list if dispatch.py is
     ever refactored around the startup path.
     """
-    source = DISPATCH.read_text(encoding="utf-8")
+    source = POLLING.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     callers = []
@@ -146,15 +151,15 @@ def test_dispatch_calls_selftest_unconditionally():
             continue
         call = node.value
         if not (isinstance(call, ast.Call)
-                and getattr(call.func, "id", "") == "_selftest"):
+                and getattr(call.func, "id", "") in ("_selftest", "run_selftest")):
             continue
         conditional = any(lo <= node.lineno <= hi for lo, hi in if_ranges)
         callers.append((node.lineno, conditional))
 
-    assert callers, "dispatch.py no longer calls _selftest() at all"
+    assert callers, "the startup path no longer calls the self-test at all"
     conditional = [(ln, c) for ln, c in callers if c]
     assert not conditional, (
-        f"dispatch.py calls _selftest() conditionally at {conditional}; "
+        f"the startup path calls the self-test conditionally at {conditional}; "
         f"the gate inside _selftest is the only guard then, and the tripwire "
         f"above exists to protect exactly that"
     )
