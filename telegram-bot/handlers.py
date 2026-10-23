@@ -562,7 +562,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         thinking, sender_name = opened
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
-        thread_id = thread_id  # already resolved by _route_to_thread
         # T67.2: images are NOT persisted.
         #
         # The operator's call (2026-10-20): the image participates in the
@@ -793,7 +792,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # constructed inside the try is unbound for any exception raised before
         # that line -- which is the window the rollback exists to cover.
         turn = Turn(chat_id, thread_id, "handle_voice")
-        persisted = False  # mirrors turn.persisted
     except BaseException:
         try:
             sem.release()
@@ -842,8 +840,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
         await turn.persist(transcript, role='user', sender_name=sender_name)
-        persisted = turn.persisted
-        persisted = True
         history, rating_active = await _turn_context(
             update, chat_id, thread_id, label='handle_voice')
         # T1 (P0-1): global LLM concurrency cap.
@@ -904,6 +900,16 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await thinking.delete()
             except Exception:
                 pass
+        # Same LRU cleanup the other three handlers do. Voice was the
+        # one that skipped it, so a stream of voice notes spent up to a
+        # quarter of the _ABORT_EVENTS_MAXSIZE budget on entries nothing
+        # would ever read. The asymmetry was never documented, which is
+        # what let it survive as if it were deliberate.
+        if thinking is not None:
+            try:
+                _abort_events.pop((chat_id, thinking.message_id), None)
+            except Exception:
+                pass
         sem.release()
 
 # === handle_document ===
@@ -922,9 +928,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # finally and skipped the slot release.
     tmp_path = None
     thinking = None
-    # v0.9.2: rollback flag for persisted document content
     turn = Turn(chat_id, thread_id, "handle_document")
-    persisted = False  # mirrors turn.persisted
     try:
         # B1: the per-user slot is acquired above. Everything between here and
         # the try/finally was NOT covered by it, so an exception here -- Telegram
@@ -972,8 +976,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             abort_event = asyncio.Event()
             _register_abort_event(chat_id, thinking.message_id, abort_event)
             await turn.persist(user_content, role='user', sender_name=sender_name)
-            persisted = turn.persisted
-            persisted = True
             history, rating_active = await _turn_context(
                 update, chat_id, thread_id, label='handle_document')
             # T1 (P0-1): global LLM concurrency cap.
@@ -1146,9 +1148,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     sem, chat_id, thread_id, user_id = slot
     user_message = update.message.text
-    # v0.9.2: rollback flag for persisted user message
     turn = Turn(chat_id, thread_id, "handle_text")
-    persisted = False  # mirrors turn.persisted
     thinking = None
     try:
         # B1: the per-user slot is acquired above and everything up to the main
@@ -1176,7 +1176,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             abort_event = early_event
             _register_abort_event(chat_id, thinking.message_id, abort_event)
             await turn.persist(user_message, role='user', sender_name=sender_name)
-            persisted = turn.persisted
             # Refresh the registry entry so the abort_event and the
             # recorded size match (the EARLY-RECORD used text_bytes
             # of the raw message; LATE-RECORD uses the same value but
@@ -1185,7 +1184,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg_bytes = len(user_message.encode('utf-8'))
             _record_user_message(chat_id, user_id, msg_bytes, abort_event)
             log.info(f"[handle_text] LATE-RECORD t={time.monotonic():.3f} (chat={chat_id}, user={user_id}, size_bytes={msg_bytes}, event_id={id(abort_event)}) [reused early_event, registered in _abort_events]")
-            persisted = True
             history, rating_active = await _turn_context(
                 update, chat_id, thread_id, label='handle_text')
             # T1 (P0-1): wrap call_llama in the global semaphore so
