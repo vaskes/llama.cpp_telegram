@@ -4,9 +4,10 @@
 
 `https://github.com/vaskes/llama.cpp_telegram` @ `eab99ba` (HEAD at the time).
 ~2 600 lines total; `bot.py` — 1 409 lines (monolith).
-The full review with priorities P0–P3 is in
-[`54b7b32c836892a5/pasted-text.txt`](../attachments/54b7b32c836892a5/pasted-text.txt)
-in this workspace (kept for the record).
+The full review with priorities P0–P3 was in
+`54b7b32c836892a5/pasted-text.txt` in the authoring workspace — a scratch
+file that was never committed. This document is the record that survives;
+the link did not follow the move out of that workspace.
 
 ## What was already fixed at `eab99ba` (do not re-do)
 

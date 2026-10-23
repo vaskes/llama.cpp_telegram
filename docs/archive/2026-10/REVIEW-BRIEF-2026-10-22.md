@@ -34,7 +34,7 @@ on 2026-10-22:
   lines of glue
 
 The remaining block is `call_llama.py:486..761`, 276 lines, specified in
-[tech-debt/08](tech-debt/08-decompose-the-tool-loop.md). Read that before
+[tech-debt/08](../../tech-debt/08-decompose-the-tool-loop.md). Read that before
 proposing the last cut — it has nine terminal returns across four types,
 and the reason it is still there is written down.
 

@@ -3,7 +3,7 @@
 Two fixes, two tripwires. Both are written so that the mutation which
 reverts the fix makes them red, which is the only thing that distinguishes
 a tripwire from a decoration -- see the four survivors recorded in
-docs/REVIEW-BRIEF-2026-10-22.md.
+docs/archive/2026-10/REVIEW-BRIEF-2026-10-22.md.
 """
 import ast
 import sys

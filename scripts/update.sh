@@ -9,7 +9,7 @@
 # $BOT_DIR. Given T53/T60 made `chat_type` a required keyword-only
 # argument and T62 made dispatch.py import `from handlers import (...)`,
 # a mixed build dies with ImportError/TypeError on the first message.
-# docs/DEPLOY-NOTES.md even documented a manual 10-file `cp` as the
+# docs/archive/2026-10/DEPLOY-NOTES-v0.10.2.md even documented a manual 10-file `cp` as the
 # workaround, which is the tell: the script was known-broken and
 # nobody fixed the script.
 #
