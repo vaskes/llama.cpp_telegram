@@ -223,24 +223,18 @@ def test_edited_message_is_still_subscribed():
     # subscription is sent from -- pointing it back at dispatch.py would have
     # made it report "no allowed_updates list found", which is a test that
     # guards nothing, said by the test itself.
-    src = (Path(__file__).resolve().parent.parent / ROOT_IMPORT
-           / "dispatch_polling.py")
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-    hits = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-            values = [e.value for e in node.elts
-                      if isinstance(e, ast.Constant) and isinstance(e.value, str)]
-            if "message" in values and any(
-                    v in values for v in ("callback_query", "chat_member")):
-                hits.append((node.lineno, values))
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if node.value.startswith("[") and '"message"' in node.value:
-                hits.append((node.lineno, node.value))
-    assert hits, "no allowed_updates list found -- this test guards nothing"
-    for lineno, value in hits:
-        assert "edited_message" in value, (
-            f"dispatch_polling.py:{lineno} stopped subscribing to "
-            f"edited_message; "
-            f"the edit-replace feature is now dead, silently"
-        )
+    # Since wave 6 the list lives in config.ALLOWED_UPDATES and both
+    # transports read it. This test used to walk dispatch_polling.py
+    # looking for a literal list, which is exactly the search that has
+    # to keep finding nothing: a literal list in a transport is a second
+    # declaration, and the two of them drifted apart once already.
+    config_py = Path(__file__).resolve().parent.parent / ROOT_IMPORT / "config.py"
+    ns = {"__file__": str(config_py), "__name__": "cfg_probe"}
+    exec(compile(config_py.read_text(encoding="utf-8"), str(config_py),
+                 "exec"), ns)
+    assert "edited_message" in ns["ALLOWED_UPDATES"], (
+        "config.ALLOWED_UPDATES no longer contains edited_message; "
+        "the edit-replace feature is dead in BOTH transports, silently. "
+        "If the subscription must differ per transport, the shared "
+        "constant is the wrong design -- say so here rather than "
+        "restoring a literal list next to the reader.")

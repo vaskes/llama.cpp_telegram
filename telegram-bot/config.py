@@ -5,6 +5,7 @@
 # project modules to avoid circular deps.
 import asyncio
 import ast
+import json as _json
 import os
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,33 @@ TELEGRAM_API = os.environ.get(
     "TELEGRAM_API",
     "https://api.telegram.org/bot" if BOT_TOKEN else "",
 )
+
+# Which update types this bot subscribes to. ONE declaration, read by
+# both transports.
+#
+# It used to be written twice, in two formats and in two orders:
+#
+#   dispatch_polling  "allowed_updates": '["message","edited_message","chat_member","callback_query"]'
+#   dispatch_webhook  "allowed_updates": ["message","edited_message","callback_query","chat_member"]
+#
+# Same four types, different serialisation, two elements swapped. A
+# tuple plus the two encodings below means the two transports cannot
+# disagree about the SET even if they must disagree about the wire
+# format -- polling passes a JSON string in the query, webhook passes a
+# real list in the JSON body.
+#
+# Why it matters: the edit-replace feature was dead in production for
+# years because its handler lived in the polling branch and production
+# ran webhook. `edited_message` is in this list, and nothing but this
+# constant keeps the subscription honest.
+ALLOWED_UPDATES = ("message", "edited_message", "callback_query",
+                   "chat_member")
+
+# Query-parameter form: getUpdates wants JSON-in-a-string.
+ALLOWED_UPDATES_JSON = _json.dumps(list(ALLOWED_UPDATES))
+
+# Body form: setWebhook wants a real JSON array.
+ALLOWED_UPDATES_LIST = list(ALLOWED_UPDATES)
 
 # === LLM endpoints ===
 LLAMA_URL = os.environ.get("LLAMA_URL", "http://localhost:8080/v1")
@@ -158,14 +186,13 @@ SHUTDOWN_EVENT: asyncio.Event = asyncio.Event()
 _TOOLS_CACHE = None
 
 # === Concurrency caps (v0.5.1 T1 / P0-1) ===
-# Re-exports for backward compat. The actual values live in
-# state.py (created in F3 stage 6 cleanup). Modules that
-# need them: `from config import _GLOBAL_LLM_SEM_LIMIT` still
-# works, but new code should import from state.py.
-from state import (
-    _GLOBAL_LLM_SEM_LIMIT, _PER_USER_SEMAPHORE_LIMIT,
-    _abort_events, _bot_replies, _get_global_llm_sem,
-)
+# The values live in state.py and are imported from THERE.
+#
+# They used to be re-exported here "for backward compat", which made
+# config a dependent of state -- and config is the leaf that fifteen
+# modules read from, so the one module that must know nothing now
+# imported the module that knows the most. The re-export had exactly one
+# consumer (dispatch.py); it now imports from state directly.
 
 # === Conversation store ===
 DB_PATH = os.environ.get("CONVERSATIONS_DB", "/app/data/conversations.db")

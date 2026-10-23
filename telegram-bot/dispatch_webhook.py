@@ -40,7 +40,7 @@ from commands import (
     start,
     stats,
 )
-from config import BOT_TOKEN, TELEGRAM_API
+from config import ALLOWED_UPDATES_LIST, BOT_TOKEN, TELEGRAM_API
 from handlers import (
     _safe_sender_label,
     handle_document,
@@ -116,9 +116,7 @@ def _webhook_auto_register_sync(url: str, secret_token: str) -> None:
     payload = {
         "url": url,
         "secret_token": secret_token,
-        "allowed_updates": [
-            "message", "edited_message", "callback_query", "chat_member",
-        ],
+        "allowed_updates": ALLOWED_UPDATES_LIST,
         "drop_pending_updates": False,
     }
     data = _json.dumps(payload).encode("utf-8")
