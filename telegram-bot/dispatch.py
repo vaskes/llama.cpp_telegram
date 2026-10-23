@@ -315,38 +315,55 @@ def main():
 
 
 # === _dispatch_update ===
+# Guards the lazy Application build. Two updates arriving together (a
+# Telegram retry burst after a restart, with `_MAX_PENDING_DISPATCH=50`
+# ready to run them) both read None, both build an Application, and both
+# start the boot jobs. Measured on wave 5: 10 gathered updates produced
+# 10 Applications and 20 scheduler runs -- and `_summarise_on_boot`
+# walks every thread on a single-GPU box, so that is a self-inflicted
+# OOM rather than just a leaked httpx pool.
+_app_init_lock = asyncio.Lock()
+
+
 async def _dispatch_update(upd_dict):
     app = dispatch_polling.get_dispatcher()
     if app is None:
-        # W2-H2. Without base_url the PTB Bot talks to api.telegram.org
-        # no matter what TELEGRAM_API says, so sendMessage, editMessageText,
-        # getMe, setMyCommands, set_message_reaction and every file
-        # download all bypass the override. The v0.10.2 env override only
-        # ever covered the raw-httpx getUpdates loop. Without this line a
-        # smoke test against a mock server sends half its traffic to the
-        # real Telegram.
-        app = _build_application()
+        # Double-checked locking: inside the lock another coroutine may
+        # already have published an Application, and then that one --
+        # the instance that ran initialize() -- is the one to use.
+        async with _app_init_lock:
+            app = dispatch_polling.get_dispatcher()
+            if app is None:
+                # W2-H2. Without base_url the PTB Bot talks to api.telegram.org
+                # no matter what TELEGRAM_API says, so sendMessage, editMessageText,
+                # getMe, setMyCommands, set_message_reaction and every file
+                # download all bypass the override. The v0.10.2 env override only
+                # ever covered the raw-httpx getUpdates loop. Without this line a
+                # smoke test against a mock server sends half its traffic to the
+                # real Telegram.
+                app = _build_application()
 
-        async def log_error(update, context):
-            err = context.error
-            log.info(f"[handler error] {type(err).__name__}: {err!r}")
+                async def log_error(update, context):
+                    err = context.error
+                    log.exception(
+                        f"[handler error] {type(err).__name__}: {err!r}")
 
-        app.add_error_handler(log_error)
-        # PTB 21 requires Application.initialize() before process_update.
-        # We do not call app.start() — the hand-rolled polling loop drives
-        # dispatch. initialize() sets up the application context.
-        #
-        # Exactly once. Twice here for two waves was harmless -- PTB opens
-        # with `if self._initialized: return` -- but a duplicate makes
-        # "removed" and "added a redundant one" identical in the diff.
-        await app.initialize()
-        # Written through the polling module's setter, not by rebinding an
-        # imported name: it owns the registry, and a rebind here would only
-        # touch this module's copy of the binding.
-        dispatch_polling.set_dispatcher(app)
-        log.info("[dispatch] Application initialized (lazy)")
-        _start_reanchor_scheduler()
-        _start_summarise_on_boot()
+                app.add_error_handler(log_error)
+                # PTB 21 requires Application.initialize() before process_update.
+                # We do not call app.start() — the hand-rolled polling loop drives
+                # dispatch. initialize() sets up the application context.
+                #
+                # Exactly once. Twice here for two waves was harmless -- PTB opens
+                # with `if self._initialized: return` -- but a duplicate makes
+                # "removed" and "added a redundant one" identical in the diff.
+                await app.initialize()
+                # Written through the polling module's setter, not by rebinding an
+                # imported name: it owns the registry, and a rebind here would only
+                # touch this module's copy of the binding.
+                dispatch_polling.set_dispatcher(app)
+                log.info("[dispatch] Application initialized (lazy)")
+                _start_reanchor_scheduler()
+                _start_summarise_on_boot()
 
     # `app` is live from here on: either it came from the registry, or the
     # branch above built and published it. Every read below goes through
