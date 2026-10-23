@@ -20,6 +20,8 @@ literal list in the test.
 """
 import asyncio
 import sys
+
+import pytest
 from pathlib import Path
 
 BOT = Path(__file__).resolve().parent.parent / "telegram-bot"
@@ -170,3 +172,70 @@ def test_both_transports_would_deliver_an_edited_message():
 
     assert "edited_message" in json.loads(ALLOWED_UPDATES_JSON)
     assert "edited_message" in ALLOWED_UPDATES_LIST
+
+def test_the_server_refuses_to_start_without_a_secret(monkeypatch):
+    """N7, with a check.
+
+    `_check_secret` is fail-closed, so a missing
+    `WEBHOOK_SECRET_TOKEN` never opens the endpoint -- it makes the bot
+    reject 100% of traffic while `/healthz` keeps answering
+    `webhook-ok`. A health check that cannot fail on the one
+    misconfiguration that stops the bot working is worse than none: it
+    tells the operator green while every message goes nowhere.
+
+    `run()` now raises before binding the socket. Note the distinction
+    from the BOT_TOKEN check, which fires at import of `config` and is
+    a different failure entirely -- seeing that message does not mean
+    this one was tested.
+    """
+    import config
+    import webhook
+
+    monkeypatch.setattr(config, "WEBHOOK_SECRET_TOKEN", "")
+
+    async def go():
+        await webhook.run()
+
+    loop = asyncio.new_event_loop()
+    try:
+        # The timeout matters. With the startup check removed, `run()`
+        # binds the socket and waits on the shutdown event forever --
+        # the mutation HANGS the suite instead of failing it, and a hang
+        # reads as infrastructure trouble rather than as a caught
+        # regression.
+        with pytest.raises(RuntimeError) as exc:
+            loop.run_until_complete(asyncio.wait_for(go(), 5))
+    except asyncio.TimeoutError:
+        pytest.fail(
+            "webhook.run() did not refuse to start: it bound the socket "
+            "and waited. The container now serves a healthy /healthz while "
+            "rejecting every update.")
+    finally:
+        loop.close()
+
+    assert "WEBHOOK_SECRET_TOKEN" in str(exc.value), (
+        f"the failure does not name the variable that is missing: {exc}")
+
+
+def test_the_health_endpoint_answers_even_while_traffic_is_refused(monkeypatch):
+    """Why N7 needed a check: this is the state it used to hide."""
+    import config
+    import webhook
+
+    class _Request:
+        headers = {}
+
+    assert webhook._check_secret(_Request()) is False, (
+        "precondition: an unset secret is fail-closed at the door")
+
+    monkeypatch.setattr(config, "WEBHOOK_SECRET_TOKEN", "")
+    try:
+        response = asyncio.new_event_loop().run_until_complete(
+            webhook._healthz(_Request()))
+        body = response.text if hasattr(response, "text") else b""
+        assert b"ok" in (body if isinstance(body, bytes) else body.encode()), (
+            "healthz no longer answers ok -- if this changed, N7's "
+            "motivation changed too and the startup check should be "
+            "re-examined rather than kept")
+    finally:
+        config.WEBHOOK_SECRET_TOKEN = ""
