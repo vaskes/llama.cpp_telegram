@@ -772,6 +772,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_polling_integration.py` | 9 | Cross-transport integration |
 | `test_edit_replace_live_path.py` | 7 | The live edit-replace path, in-process |
 | `test_size_budget.py` | 10 | S-1, S-6 — function and module size budgets |
+| `test_changelog_structure.py` | 7 | One `[Unreleased]` section; sections and tags agree |
 | `test_no_duplicate_definitions.py` | 4 | T-4 — repeated top-level definitions |
 | `test_no_model_coauthor_trailers.py` | 4 | No false attribution in the history |
 | `test_dispatch_group_seam.py` | 4 | The seam a group-absorb extraction needs |
@@ -849,6 +850,46 @@ tripwire*.
 with a mechanical claim is written down, the claim is measured against the
 tree, and the tripwire is made to go red by taking the protection away.
 If it cannot go red, it is `JUDGEMENT`, and it says so.
+
+**And a second thing, found while fixing the first.** While checking the
+claims above, the check turned up a live defect nobody had been looking
+for: `CHANGELOG.md` had two sections headed `## [Unreleased]`, the live one
+at the top and one written on 2026-10-10 that kept the name through
+fourteen releases. Both read as current; the older one was longer.
+
+The debt register has a tripwire. The tech-debt documents have one. The
+sizes have one. The changelog — the document a user actually reads when
+deciding what to run — had none, and had been carrying a second live
+section since before most of these rules were written.
+
+That is the shape of the whole problem this document is about: the
+monoliths did not grow because someone decided to write them. They grew
+because each commit added a branch, and nothing was watching. The same
+is true of an ambiguous changelog, and the fix for both is the same
+thing: **a check that runs without a human remembering to look.**
+
+**H-14 — Two sections with the same name means the reader cannot tell
+which one is current.** `AUTO`
+`tests/test_changelog_structure.py`.
+
+`CHANGELOG.md` carried two `## [Unreleased]` sections for fourteen
+releases: the live one at the top, and one written on 2026-10-10 that
+kept the name while everything moved under it. Both were complete, both
+read as current, and the older one was the longer of the two.
+
+Nothing caught it, because nothing looked. The debt register has a
+tripwire, the tech-debt documents have one, the sizes have one — and the
+document a user actually reads when deciding what to run had none.
+
+> **A document is not a deliverable until something checks it.** The
+> tripwire has to exist for the case where the document is *ambiguous*,
+> not only where it is *wrong*: two sections of the same name are both
+> correct, and only the count catches them.
+
+The test also checks the other direction of the same drift — a release
+section with no tag, and a tag with no section. The two mismatches that
+exist today are listed in the test with the reason, so that a new one
+is a red test rather than a debt nobody is tracking.
 
 ### 8.1 The history is part of the deliverable
 

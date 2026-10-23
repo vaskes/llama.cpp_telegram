@@ -53,8 +53,53 @@ second control matters — a check that cannot be made to fail is worse
 than no check, and the first version of this one would have passed on a
 repository that still had every trailer it was written to remove.
 
-The suite is 2110 in `main` after this commit; the release itself
+The suite is 2128 in `main` after this commit; the release itself
 shipped 2105.
+
+### The codebook, and a budget that can catch a monolith
+
+A review agent wrote a codebook for this repository — 599 lines, every
+rule backed by an incident that actually happened here. It went in, but
+not as it was: four of its mechanical claims turned out to be false when
+they were checked against the tree, and the document now says so in §8
+rather than quietly dropping them.
+
+The two proposed markers were measured before anything was written for
+them, which is the whole point of measuring. A `try:` whose handler only
+re-raises fires on two places in the tree, and both are correct code — a
+bare re-raise is how cancellation and rollback are propagated. A run of
+ten statements with no `await` fires on thirteen, and most of them are
+uniform sequences (`__init__` assigning fields, `_attach_handlers`
+registering handlers). Neither became a tripwire; both stayed as
+`JUDGEMENT`, which is what they are good for.
+
+What replaced them is a budget, because a budget has a number, and an
+exception to a budget has to be written down:
+
+- `tests/test_size_budget.py` — a function over 200 lines, or a module
+  over 1000 lines that is not in the debt register, fails the suite.
+  Four functions are registered, each with a date, a reason and a
+  trigger. `handle_text` is one of them, at 209 lines, because it
+  crossed the limit while nobody was looking.
+
+### Two `[Unreleased]` sections, and nobody looking
+
+`CHANGELOG.md` had two sections headed `## [Unreleased]`: the live one
+at the top, and one written on 2026-10-10 that kept the name through
+fourteen releases. A reader who wants to know what changed since the
+last tag got two answers, and the older one was longer.
+
+The debt register has a tripwire. The tech-debt documents have one. The
+sizes have one. The changelog — the document a user actually reads when
+deciding what to run — had none.
+
+`tests/test_changelog_structure.py` now checks that there is exactly one
+`[Unreleased]` section and that it is first, that release sections are
+unique, and that a release section and a tag do not drift apart in
+either direction. The two mismatches that exist today (`v0.7.0`, which
+was tagged `v0.7`, and `v0.12.1-pre`, absorbed into v0.13.0-stable) are
+listed in the test with the reason, so that a *new* one is a red test
+rather than a debt nobody is tracking.
 
 ### Four `git worktree`s in `/tmp`
 
@@ -2543,7 +2588,15 @@ assertion messages) and the new shorter comment (6 lines
 vs 14 lines removed). The net is +21 lines, which is
 expected for comment + test additions.
 
-## [Unreleased] — group-mode migration
+## [Group-mode migration — written 2026-10-10, not yet released then]
+
+> This was the repository's `[Unreleased]` section on 2026-10-10, and it
+> stayed in that name for the fourteen releases that followed it. Two
+> sections called `[Unreleased]` in one file is a section nobody can
+> point at, so it is renamed here and left where it is, with its
+> original text. The live `[Unreleased]` section is at the top of this
+> file, and `tests/test_changelog_structure.py` now fails if a second
+> one ever appears.
 
 The bot now runs in **dual mode**: a 1:1 private chat (the
 original use case) OR a Telegram supergroup with Topics
