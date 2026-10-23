@@ -22,6 +22,10 @@ import collections
 import sys
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.tech_debt(item=14)
+
 TESTS = Path(__file__).resolve().parent
 BOT_DIR = TESTS.parent / "telegram-bot"
 

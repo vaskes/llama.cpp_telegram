@@ -8,12 +8,153 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.11.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.13.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
-## [Unreleased] — T70/T67 — Context memory
+## [v0.13.0-stable] — 2026-10-23 — Context memory, the dispatch split, and review waves 1–8
+
+**Status:** shipped and deployed. 191 commits since `v0.12.0-stable`; 107 of
+them touch production code. Tag `v0.13.0-stable` → `12d9a4e`.
+
+**This is a refactor release.** Nothing about the user-facing behaviour
+changed on purpose. What changed is where the code lives, who owns what,
+and how much of it is covered by a test that can actually fail.
+
+**Verified before the tag:** 2105 pytest tests green on Python **3.11**
+(the production interpreter) and **3.12**; eight review waves closed with
+an approve; deployed to production in webhook mode with a backup taken
+first; `/healthz` → 200, zero fatal lines in the log, webhook auth
+rejecting both a missing and a wrong secret, and the container's files
+byte-identical to the repository.
+
+**Not verified:** the live edit-replace flow — a user edits a message
+while the bot is answering it, and the bot must rewrite its answer. It
+needs two people, a slow model and a real Telegram chat, so it is
+manual-only by nature. It has no automated coverage and is not labelled
+as if it did. The last release with a full human end-to-end pass on both
+private and group-with-Topics modes is `v0.10.2-stable`.
+
+### The headline: the monolith is gone
+
+| Unit | Before | After | Ledger | Tripwire |
+|---|---|---|---|---|
+| `dispatch.py` | 1612 | **345** | #10 | `test_dispatch_routing.py` |
+| `call_llama` | 1616 | **478** | #3, #8 | `test_llm_iteration.py`, `test_drift_call_llama_names.py` |
+| `_selftest` | 1940 | **111** | #9 | `test_selftest_runtime.py`, `test_selftest_blocks.py` |
+| `bot.py` | god module | **124-line facade** | #1 | `test_facade_ownership.py` |
+| `handlers.py` shared wrapper | 8 copies of persist/rollback | `turn.py`, one ledger | #4, #13 | `test_turn_ledger.py`, `test_turn_scope.py` |
+| `prompts.py` | 422 lines of prose + constants | **75-line facade**, prose in `prompt_text/` | #12 | `test_prompts.py` |
+
+`dispatch.py` was split by **ownership**, not by size: a function moved if
+it was Telegram surface or bookkeeping, and stayed if it picks a handler.
+
+```
+dispatch.py         345   routing, lifecycle, concurrency caps
+dispatch_group.py   108   human-to-human reply absorb
+dispatch_polling.py 352   startup + the getUpdates loop
+dispatch_webhook.py 325   PTB assembly + handler registration
+dispatch_edit.py    108   the edited-message rewrite
+webhook.py          224   the aiohttp server + secret check
+```
+
+The dependencies between them went in as **keyword arguments**, not lazy
+imports. A lazy `from dispatch import ...` works and is exactly what the
+import-graph test flags: it grew the cycle from six modules to seven. A
+passing import test and a growing cycle are not the same fact.
+
+`dispatch_polling` owns the Application registry; the other two modules
+read it through `get_dispatcher()` / `set_dispatcher()`. Three writers
+rebinding an imported name is how you get two copies of one truth and a
+half-refactor that imports fine and reads `None`.
+
+`call_llama` went the same way: 17 leaf modules, each owning one
+decision, and the tool loop became a named unit (`ToolLoop.run_one`).
+
+### Three blockers that shipped behind a green suite
+
+`2cebf49` passed 2056 tests and **lost 100% of messages** in the default
+transport. All three blockers were live in code that had been reviewed
+four times.
+
+**C1 — a required keyword argument that was never passed.**
+`_spawn_dispatch(upd_dict)` with a keyword-only `dispatch_update` that
+the one call site never passed. `TypeError` on every update, caught,
+logged at INFO, and the poll `offset` had already moved past the message,
+so Telegram never resends it. The unit tests were green because they
+called `_spawn_dispatch` *with* the argument. The uncovered surface was
+the seam between the unit and its only caller.
+
+**C2 — `global` on top of `from X import Y`.** `global SHUTDOWN_EVENT`
+inside `dispatch_polling` rebinds *that module's* binding of a name
+imported from `config`; `llm_iteration` holds its own, still `None`, and
+that is where the tool-loop abort guard reads. SIGTERM could not reach a
+running inference. This is TECH-DEBT #1's own class — unwritable globals,
+stale readers — and it survived there because one instance was cleaned
+and the pattern was never named.
+
+**H1 — check-then-act across an `await`.** `if app is None: app = build();
+await app.initialize()` is a race: ten concurrent updates built ten
+Applications and ran the boot jobs twenty times, on a box where
+summarisation is explicitly sequential because the GPU is single.
+
+The fix that shipped for H1 is a lock with double-checked locking. The
+offset now advances **only after** a successful hand-off.
+
+### A fix that made the bug worse
+
+Wave 6 found that my own repair of C2 was worse than the original defect:
+the repair set the shutdown event unconditionally when installing the
+handlers, so the abort guard fired on *every* iteration and the bot
+answered `[bot: shutdown requested]` instead of working.
+
+It was not caught by reading the diff, and the test I wrote to "cover"
+it **baked the bug in as the expected behaviour** — it asserted the
+event *was* set after installing the handlers, which is a different
+event from the signal arriving.
+
+The rule that came out of it: **a fix that changes *when* something
+happens needs a test for the invariant *before* the event**, not only
+after it. "After" can be identical in a broken and a working tree.
+
+### Review waves 1–8
+
+Eight waves against the tree, not against diffs — wave 5 reviewed three
+commits, wrote "no blockers", and wave 6 found blockers that had been
+there for four waves.
+
+| Wave | What it found |
+|---|---|
+| 1–4 | The T51–T57 security reviews (profile gate, tool isolation, sender-label filter, group-mode access) and the first extraction blocks |
+| 5 | C1, C2, H1 above; the `getUpdates` subscription left at the old value; the `offset` advancing before the hand-off |
+| 6 | The unconditional `SHUTDOWN_EVENT.set()`; `webhook.run()` starting with an empty secret; the half-updated `allowed_updates` |
+| 7 | C3 (publish the Application **after** `initialize()` — the proposed fix was a regression), H4 (a phantom hybrid mode, and a dead signal-handler closure inside it), M10–M14 |
+| 8 | Correction to the C3 note; M13 turned out to be a real hole, M14 was not a defect at all |
+
+Two of those verdicts are worth recording because they went the other
+way:
+
+- **C3 was rejected as a proposed fix.** The premise was right and the
+  fix was wrong: publishing the Application *above* `await app.initialize()`
+  leaves the registry holding an uninitialised Application whose
+  `process_update` raises `This Application is not initialized!`, and the
+  next update cannot rebuild it because the build sits behind
+  `if app is None`. Twenty consecutive failed `initialize()` calls were
+  measured: file-descriptor delta 0, retained `Application`/`ExtBot`
+  after gc 0, open httpx clients 0. A retry is a retry, not a leak.
+- **H4 was a phantom mode.** There is no hybrid transport: the webhook
+  branch returns before the poll loop is reachable, and
+  `loop.add_signal_handler` *replaces* a handler rather than adding to it.
+  Checking it anyway found a real defect — a signal-handler closure
+  inside `main()` with zero callers, one of two copies of the same
+  policy, of which one was dead.
+
+Also measured rather than argued: `register_bot_menu=None` passes the
+argument, so a tripwire that asked "is the argument there?" was green.
+It had to ask whether the *value* was the callable.
+
+### Context memory — the bot owns its context
 
 The bot now assembles its context itself instead of taking a fixed number of
 messages. Engine-agnostic by construction: the context policy is ours, the
@@ -84,6 +225,175 @@ favour of one stale message. That is exactly what happens right after a
 restart, so it would have shipped. Fixed and covered by
 `test_out_of_order_arrival_does_not_wipe_the_window`.
 
+### The rest of the context-memory block
+
+- **T65.1 — reply-to-human.** When a user replies to another human, the bot
+  records the message and does not answer it. The path moved out of
+  `dispatch.py` into `dispatch_group.py` during the split, with a
+  caller-side seam test: deleting the call, and deleting the `return`,
+  are both caught.
+- **T68 — the daily re-anchor.** `soft` / `process` / `process+engine`
+  through `BOT_REANCHOR_MODE`. The reasoning is in
+  `docs/adr/ADR-0003-context-reanchoring.md`. Installing the timer is the
+  operator's job; the repo ships the example and deliberately does not
+  install it, because the deployment topology is the operator's.
+- **T69 — an optional persona**, from a gitignored `persona.local.json`.
+  The repo ships `personality.json.example` with `enabled=false`, so a
+  fork never inherits somebody else's character.
+- **T70.3 — summarise.** `telegram-bot/summarize.py` plus
+  `ContextBudget.apply_summarize`. Off by default
+  (`CONTEXT_STRATEGY=window`); the same model that talks with the user
+  does the summarising.
+- **T70.5 is still open** — what to do when the summary alone does not fit
+  the context window. Deferred by the operator 2026-10-21; it needs a
+  decision, not code. See `docs/TODO.md`.
+
+Two bugs the context-memory block's own review found, both before the
+review was handed out:
+
+- `reanchor()` updated the module global `CONTEXT_ANCHOR`, but `apply()`
+  filters on the shared budget instance's own anchor. The anchor advanced,
+  the generation counter ticked, the log said "reanchored" — and the window
+  did not move by a second. `BOT_REANCHOR_MODE=soft` was a silent no-op,
+  which is the one mode that exists specifically to re-anchor without a
+  restart.
+- `seconds_until_next` built its target as `midnight + hour*3600` and added
+  a flat `86400` when that was already past. A DST day is 23 or 25 hours.
+  Measured in `America/New_York`, the day before a spring-forward
+  transition it computed `06:00` instead of `05:00`, then pushed the
+  target out another `86400` — skipping a full day. The docstring already
+  claimed "the loop must survive a DST shift". It did not. Moscow has had
+  no DST since 2014; a third of this repo's forks do.
+
+### Deploy and CI
+
+- **`update.sh` deployed 4 files out of 17** — a Frankenstein build in
+  production, mixing the deployed tree with a stale one. The deployment is
+  now reproducible from git, with a `DRY_RUN` that does not report a false
+  failure when the deploy adds a module.
+- **CI had never passed.** The pytest job excluded
+  `tests/test_shell_integration.py` with a comment placed *between* the
+  backslash continuation and the flag. A comment inside a backslash
+  continuation is not a comment: the backslash binds only the next line,
+  so `pytest` ran as `pytest tests/` and `--ignore=...` was executed as a
+  command of its own. The job failed with exit 127 — after printing a
+  green test count — 100 runs in a row.
+- **CI ran a bare `pip install httpx`**, which silently upgraded the
+  version under test to whatever was latest. httpx is pinned now, and the
+  job prints the versions it tested.
+- **The suite now runs on Python 3.11 and 3.12.** Production pins
+  `python:3.11-slim`, and nine PEP 701 f-strings lived through several
+  review waves because they parse on 3.12 and are a `SyntaxError` on 3.11.
+  A suite that only ran on 3.12 had never tested what it ships.
+- **The ruff job checks the whole package** with the rules that catch code
+  that would not run, instead of one file with `--exit-zero`. It stays
+  advisory on purpose: the remaining findings are stylistic, and a blocked
+  push costs more than a W605.
+- **The rate-limiter test no longer needs the network.** It is a
+  deterministic token bucket now.
+
+### Sandbox dependency: v2.3.0 → v2.4.5
+
+The submodule pointer moved from `a3fa2f2` (v2.3.0) to `04be1d8` (v2.4.5).
+
+**Compatibility verified:**
+  *  wire format: UNCHANGED
+  *  endpoint: UNCHANGED (auth still works the
+    same way; only the rate-limit keying is hashed)
+  * Response shape (, , ,
+    , , ):
+    UNCHANGED
+  * Body size limit (2 MB) is well above our bot's
+    8 KB command cap
+  * Security headers (,
+    ) are additive; we
+    ignore them
+  *  now returns minimal
+    (no longer leaks workspace path or session
+    count) - we don't call this endpoint from
+    the bot
+
+**What is in v2.4.0 - v2.4.5:**
+  * v2.4.0 (3 of 5 sandbox-recommendations items
+    closed): #C1 command content logging, #C7 SSH
+    identity symlink rejection, #M3 WebSocket idle
+    timeout. 103 -> 108 tests.
+  * v2.4.1 (release prep): closed 3 CRITICAL + 7
+    HIGH doc drift items. 108 -> 115 tests.
+  * v2.4.2 (release prep wave 1): 4 more doc drift
+    items (README badge stale, etc.). 115 tests.
+  * v2.4.3 (release prep wave 2): /healthz no longer
+    leaks workspace path, security headers on every
+    response, request body size cap (2 MB), credit
+    Mavis in CREDITS. 125 tests.
+  * v2.4.4 (release prep wave 3): rate-limit keys
+    now SHA-256 hashed, copyright -> Kuduza Ai Lab,
+    CODE_OF_CONDUCT contact, pyproject target-version
+    py311 -> py312. 129 tests.
+  * v2.4.5 (CodeQL follow-up): explicit
+     at workflow level.
+    131 tests.
+
+**No bot-side code changes.** The bump is a dependency change, not a code
+change, and the AST tripwires still cover the 17 historical/predicted
+wave-trap classes on the bot side.
+
+### Repository hygiene
+
+- Six stale branches are gone; `main` is the only branch left. Five were
+  fully merged (`ahead=0`, ancestor of `main`) and needed no thought.
+  The sixth, `rescue/f3-module-split`, had **no common ancestor** with
+  `main` — a separate history with its own root, 113 commits that `main`
+  had already implemented differently. Merging it would have duplicated
+  113 commits. Its seven hotfixes were compared against `main` code by
+  code and were all already present; its one unique file was a stale
+  operator checklist pinned to `v0.6.3` with paths and a container name
+  that are wrong today. Before deleting it, the branch was preserved as a
+  `git bundle` and its unique files were saved.
+
+  The lesson, recorded because it nearly went the other way: **`merged`
+  by `is-ancestor` or `ahead == 0` is silent on histories with no common
+  ancestor.** Ask `git merge-base` first.
+
+- The CHANGELOG is now reconciled against `git tag`. A section existed for
+  `v0.12.1-pre`, a tag that was never pushed and does not exist locally
+  either. That content was the sandbox bump above, and the bump is
+  shipping here — so the section was **absorbed into this release**
+  rather than left as an orphan heading for a tag that does not exist.
+
+### Documentation
+
+The documentation tree was reorganised, because it had drifted into the
+state this repo keeps hitting: several copies of the truth, all of them
+hand-maintained, all of them stale.
+
+- **Stale reviews are archived.** `REVIEW-MINIMAX-v3/v6/v8/v9/v10`,
+  the 2026-10-22 review brief, the wave-6 close-out and the
+  context-memory review moved to `docs/archive/` with `git mv`, so their
+  history follows them. `docs/archive/README.md` states the rule: a
+  review document lives in `docs/` only while its cycle is open.
+- **`docs/README.md` is new** — the map of the documentation tree.
+- **`docs/TODO.md` was rewritten.** It had not been touched since
+  2026-10-13 and had accumulated a status snapshot from before the
+  context-memory rewrite, a checklist pointing at a file that no longer
+  existed, a "code freeze" from a pre-`v0.10.2` cycle, and eleven
+  entries marked open that had been closed for months.
+- **`docs/ROADMAP.md` was rewritten.** The 2026-10 sprint's four tracks:
+  three shipped, one (multi-LLM arbitration) is still a research spike and
+  is still deliberately last.
+- **`TECH-DEBT.md` had a wrong claim in it.** It described
+  `_safe_sender_label` as a display-name normaliser and warned future
+  readers not to treat it as a filter. It is a prompt-injection filter and
+  has been since the day it existed — `git show 4eedfa7` adds the
+  `unicodedata` import and the control-keyword regex together with the
+  function. It also said the function lived in `dispatch.py`; it lives in
+  `prompt_guard.py` since the dispatch split. The ticket that carried the
+  wrong note has been recorded on its own, because following it literally
+  would have weakened the filter.
+- **`docs/ARCHITECTURE.md` was corrected** against the tree: the module
+  tree, the line counts, the location of the sender-label filter, the CI
+  section, and a link to a `PERSISTENCE.md` that does not exist.
+
 ## [v0.10.2-stable] — 2026-10-11 — Initial human-tested release
 
 **Status:** `v0.10.2-stable` is the first release that has been
@@ -131,7 +441,7 @@ warning).
   P0-3 prompts drift correction, editForumTopic hot path).
 - `TELEGRAM_API` now env-driven (was hard-coded in dispatch).
 
-See `DEPLOY-NOTES.md` for the v0.10.2 deployment bundle
+See `docs/archive/2026-10/DEPLOY-NOTES-v0.10.2.md` for the v0.10.2 deployment bundle
 (v0.9.6 + v0.9.7 + v0.10.0 + v0.10.1 + v0.10.2 = the single
 recommended bundle).
 
@@ -756,64 +1066,19 @@ env var, **also add a tripwire test for it**. Pre-commit
 hook is the gate. The bot protects itself now.
 
 
-## [v0.12.1-pre] - unreleased - sandbox submodule bump to v2.4.5
+## [v0.12.1-pre] — absorbed into [v0.13.0-stable](#v0130-stable--2026-10-23--context-memory-the-dispatch-split-and-review-waves-18)
 
-**Status:** Code complete. Bot live, all tripwires green.
-Pending Mavis review.
+**This section describes work that shipped in `v0.13.0-stable`.** It was
+written for a `v0.12.1-pre` tag that was never pushed and does not exist
+locally either — the submodule bump it describes (v2.3.0 → v2.4.5) is in
+`main` and ships with `v0.13.0-stable`, where the full text now lives.
 
-### Sandbox dependency bump: a3fa2f2 (v2.3.0) -> 04be1d8 (v2.4.5)
+Nothing was lost in the move, and the content was not rewritten: the
+compatibility matrix, the per-release breakdown and the tripwire scoreboard
+are the same text, under the release that actually contains the code.
 
-vaskes/OpenWebUI-bash-sandbox v2.4.0-v2.4.5 was released
-on 2026-10-14 by sandbox-mavis after a 3-wave self-audit
-(103 -> 131 tests). This bot-side commit bumps the
-submodule pointer to v2.4.5.
+---
 
-**Compatibility verified:**
-  *  wire format: UNCHANGED
-  *  endpoint: UNCHANGED (auth still works the
-    same way; only the rate-limit keying is hashed)
-  * Response shape (, , ,
-    , , ):
-    UNCHANGED
-  * Body size limit (2 MB) is well above our bot's
-    8 KB command cap
-  * Security headers (,
-    ) are additive; we
-    ignore them
-  *  now returns minimal 
-    (no longer leaks workspace path or session
-    count) - we don't call this endpoint from
-    the bot
-
-**What is in v2.4.0 - v2.4.5:**
-  * v2.4.0 (3 of 5 sandbox-recommendations items
-    closed): #C1 command content logging, #C7 SSH
-    identity symlink rejection, #M3 WebSocket idle
-    timeout. 103 -> 108 tests.
-  * v2.4.1 (release prep): closed 3 CRITICAL + 7
-    HIGH doc drift items. 108 -> 115 tests.
-  * v2.4.2 (release prep wave 1): 4 more doc drift
-    items (README badge stale, etc.). 115 tests.
-  * v2.4.3 (release prep wave 2): /healthz no longer
-    leaks workspace path, security headers on every
-    response, request body size cap (2 MB), credit
-    Mavis in CREDITS. 125 tests.
-  * v2.4.4 (release prep wave 3): rate-limit keys
-    now SHA-256 hashed, copyright -> Kuduza Ai Lab,
-    CODE_OF_CONDUCT contact, pyproject target-version
-    py311 -> py312. 129 tests.
-  * v2.4.5 (CodeQL follow-up): explicit
-     at workflow level.
-    131 tests.
-
-**No bot-side code changes.** Tests: 283/283 pass.
-
-### Tripwire scoreboard (12 historical + 5 predicted = 17)
-
-Unchanged. Sandbox bump is a dependency change, not
-a code change. AST tripwires still cover the 17
-historical/predicted wave-trap classes on the bot
-side.
 ## [v0.6.0] — 2026-10-10 — F3 module split, F4 LRU eviction, cross-module cleanup
 
 Big refactor + 7 hotfix commits. The 5 518-line `bot.py` is
@@ -1540,7 +1805,7 @@ enabled.
 
 ### Documentation added
 
-- `docs/REVIEW-MINIMAX-v8.md` — the post-v0.9.2 review wave
+- `docs/archive/v0.5-v0.12/REVIEW-MINIMAX-v8.md` — the post-v0.9.2 review wave
   that surfaced the 2 new P0s. 8 KB.
 
 ### Operator action required
@@ -1605,7 +1870,7 @@ Total pytest count: 12 -> 32+ tests, all in 0.3-0.4s.
 
 ### Documentation added
 
-- `docs/REVIEW-MINIMAX-v9.md` - the final pre-tests review
+- `docs/archive/v0.5-v0.12/REVIEW-MINIMAX-v9.md` - the final pre-tests review
   wave that surfaced the P1 + 2 P3 issues.
 
 ### Operator action required
@@ -1656,7 +1921,7 @@ Total pytest count: 36 -> 43 tests, all in 0.48s.
 
 ### Documentation added
 
-- `docs/REVIEW-MINIMAX-v10.md` (T7) — the v0.9.4 test suite
+- `docs/archive/v0.5-v0.12/REVIEW-MINIMAX-v10.md` (T7) — the v0.9.4 test suite
   review wave that surfaced the 7 P3 items.
 
 ### Deferred to a future release

@@ -2,7 +2,7 @@
 
 > **For the operator:** copy this into the pinned message of the
 > group. If you change it, also keep `docs/RATING_RULES.md` and
-> the `RATING_RULES` constant in `bot.py` in sync.
+> the `RATING_RULES` constant in `telegram-bot/prompts.py` in sync.
 
 ---
 

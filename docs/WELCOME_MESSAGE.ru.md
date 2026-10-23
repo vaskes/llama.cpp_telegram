@@ -2,7 +2,7 @@
 
 > **Для оператора:** скопируй в pinned message группы. Если
 > правишь — синхронизируй с `docs/RATING_RULES.md` и константой
-> `RATING_RULES` в `bot.py`.
+> `RATING_RULES` в `telegram-bot/prompts.py`.
 
 ---
 

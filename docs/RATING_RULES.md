@@ -146,6 +146,8 @@ features (deferred — see TODOS).
 
 ## Updating the rules
 
-Edit both `RATING_RULES` in `bot.py` AND this file together.
+Edit both `RATING_RULES` in `telegram-bot/prompts.py` AND this file
+together (`bot.py` re-exports the constant, but `prompts.py` is where it
+lives).
 Diff the two if you want to be sure. The group welcome
 message should also be updated to match.

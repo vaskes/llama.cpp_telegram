@@ -1,6 +1,6 @@
 # `call_llama` and friends — design notes for code review
 
-This document explains **what** is in `bot.py`, **why** each piece is
+This document explains **what** is in the `call_llama` path, **why** each piece is
 the way it is, and **what** failure modes we hit that led to the
 current shape. It is intentionally opinionated: where a design choice
 was forced by a specific incident, the incident is named.

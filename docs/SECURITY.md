@@ -230,9 +230,14 @@ and [docs/TOOL-ISOLATION.md](TOOL-ISOLATION.md). The key rules:
     (10/min) or lower. Higher values weaken the rate-limit
     defence.
 
-The bot's per-chat guard in `personal_tools/bash_command.py:177-188`
-refuses non-private chats regardless of the deployment profile. This
-is defence in depth on top of the env gate.
+The bot's per-chat guard — `call_bash_command()` in
+`personal_tools/bash_command.py`, which checks `chat_type` before
+anything else — refuses non-private chats regardless of the deployment
+profile. This is defence in depth on top of the env gate.
+
+(The guard used to be cited here by line number. Line numbers are a
+statement about one moment; the function name moves with its code and a
+line number does not.)
 
 ### 3.5.1 — T52 #R2: data/ and files/ bind-mount trust model
 

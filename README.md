@@ -1,34 +1,72 @@
 # llama.cpp_telegram
 
-> **Current: `v0.11.0-pre` (unreleased).** Adds the
-> `bash_command` killer feature (sandboxed shell, personal
-> mode only). Code complete; code review in progress; human
-> pilot testing PENDING. Do not deploy to a public chat.
+> **Current stable: `v0.13.0-stable`** (2026-10-23, commit `12d9a4e`).
+> Pin to a tag — see the clone command below.
 >
-> Last stable: `v0.10.2-stable` (Oct 2026, commit `7efab9b`).
-> First release that was manually tested end-to-end by humans
-> on both private and group-with-Topics modes.
+> `v0.13.0` is a **refactor release**: the 1612-line `dispatch.py` is now
+> 345 lines across five owner modules, `call_llama` is 478 lines across
+> 17 leaf modules, and the bot now assembles its own context instead of
+> sending a fixed number of messages. Nothing about the user-facing
+> behaviour changed on purpose.
+>
+> **What is verified:** deployed in production in webhook mode; 2105
+> pytest tests green on Python **3.11** (the production interpreter) and
+> **3.12**; eight review waves closed with an approve; a production smoke
+> after the deploy (`/healthz` → 200, zero fatal lines in the log, webhook
+> auth rejecting both a missing and a wrong secret, container contents
+> byte-identical to the repository).
+>
+> **What is not:** one path has never been exercised by a human end-to-end
+> — the live edit-replace flow (a user edits a message while the bot is
+> answering; the bot must rewrite its answer). It needs two people, a slow
+> model and a real Telegram chat, so it is manual-only by nature and is
+> **not** covered by any automated test. Everything else that was
+> operator-pilot-tested was done on `v0.10.2-stable`, which remains the
+> release with a full human end-to-end pass on both private and
+> group-with-Topics modes.
 >
 > ⚠️ **Do NOT `git clone <url>` without `--branch`.** The default
 > branch is bleeding-edge and may include unreleased refactors
 > that have not been human-tested. Pin to a tag:
 > ```bash
-> git clone --branch v0.10.2-stable https://github.com/vaskes/llama.cpp_telegram.git
+> git clone --branch v0.13.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 > ```
 > Bleeding edge is for contributors only. See [Releases](../../releases)
 > for the full stable-tag history.
 >
 
-**What `v0.10.2-stable` had:** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
+**What `v0.13.0-stable` adds over `v0.12.0-stable`** (191 commits):
+
+- **The bot owns its context.** `ContextBudget` decides which persisted
+  messages reach the engine — protect the recent window, summarise what
+  falls out of it, assemble within a budget. The engine stays stateless,
+  so swapping llama for vLLM or Strata is a URL change and nothing else.
+  SQLite is the source of truth and the history is never pruned on read.
+- **The monolith is gone.** `dispatch.py` 1612 → 345, `call_llama` 1616 →
+  478, `_selftest` 1940 → 111, `bot.py` down to a 124-line facade. Each
+  of those is a ledger item in [TECH-DEBT.md](TECH-DEBT.md) with a
+  tripwire pinning it, so it cannot silently grow back.
+- **The context window is anchored, not sliding.** A week back from bot
+  start, per sub-talk, re-anchored on a schedule. The reasoning, and the
+  thing that would make us revisit it, is in
+  [docs/adr/ADR-0003](docs/adr/ADR-0003-context-reanchoring.md).
+- **An optional persona**, from a gitignored `persona.local.json`. The
+  repo ships `personality.json.example` with `enabled=false`, so a fork
+  never inherits somebody else's character.
+- **The review cycle is closed.** Eight waves; the last three found
+  three blockers that had been shipping behind a green suite — a required
+  keyword argument that was never passed, a `global` that rebound a
+  different module's name, and a check-then-act across an `await`.
+
+**What `v0.10.2-stable` had, and still has:** Qwen3.8-27B-Ultra-Heretic-MTP-256k on
 any OpenAI-compatible endpoint, Whisper on any faster-whisper
 server, donsetch MCP for web tools. Private + group-with-Topics
 modes. GROUP_CONTEXT system prompt locked. react_to_message tool
 available in non-rating mode. Per-handler Stop button race fixed.
 **Webhook transport** supported (v0.9.0) alongside long-polling.
-Image abort rollback (v0.9.1). 19/19 selftest groups + 5/5 pytest
-in CI. Plus: `scripts/verify.py` for production health checks,
-Qwen wave-3 fixes, env-driven `TELEGRAM_API`.
-**What `v0.11.0-pre` adds:** the `bash_command` killer feature
+Image abort rollback (v0.9.1). Plus: `scripts/verify.py` for production
+health checks, Qwen wave-3 fixes, env-driven `TELEGRAM_API`.
+**What `v0.11.0` added:** the `bash_command` killer feature
 (sandboxed shell, gated to `LLAMABOT_DEPLOYMENT_PROFILE=personal`).
 See [docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md).
 
@@ -42,8 +80,8 @@ to set up webhook mode.
 
 ## 🐚 Killer feature: `bash_command` (personal mode only)
 
-> **The unique selling point of this bot.** As of `v0.11.0-pre`
-> (current bleeding edge), the model can call a `bash_command`
+> **The unique selling point of this bot.** As of `v0.11.0`
+> (and every release since), the model can call a `bash_command`
 > tool that runs shell commands in a hardened sandbox container.
 > No other public Telegram bot offers a comparable capability
 > with this threat model: read files, run scripts, manage
@@ -201,7 +239,7 @@ See [docs/SETUP.md](docs/SETUP.md) for step-by-step.
 Short version:
 
 ```bash
-git clone https://github.com/vaskes/llama.cpp_telegram.git
+git clone --branch v0.13.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 cd llama.cpp_telegram
 sudo ./scripts/install.sh
 sudo $EDITOR /opt/telegram-bot/.env   # BOT_TOKEN, ALLOWED_USER_IDS
@@ -219,9 +257,12 @@ sudo systemctl start telegram-bot-compose
 - **[docs/SECURITY.md](docs/SECURITY.md)** — whitelist (private mode), group-mode security, env vars, what NOT to commit
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common issues, including group-mode gotchas
 - **[CHANGELOG.md](CHANGELOG.md)** — release notes for humans
-- **[docs/ROADMAP.md](docs/ROADMAP.md)** — multi-sprint plan (current cycle: cleanup + limits + shell tools + multi-LLM)
-- **[docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md)** — `bash_command` killer feature: setup, threat model, repository dependency, compatibility matrix, operator runbook (v0.11.0-pre+)
+- **[docs/ROADMAP.md](docs/ROADMAP.md)** — where the project goes next: the three open operator decisions, the one manual test, and the research spike that is deliberately last
+- **[docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md)** — `bash_command` killer feature: setup, threat model, repository dependency, compatibility matrix, operator runbook (v0.11.0+)
 - **[docs/TOOL-ISOLATION.md](docs/TOOL-ISOLATION.md)** — defence in depth: bot-side tool whitelist against llama-server's native `--agent` / MCP-loaded tools; the security boundary that lets `bash_command` stay safe
+- **[docs/README.md](docs/README.md)** — the map of the documentation tree: what is live, what is archived, and what each document answers
+- **[docs/TODO.md](docs/TODO.md)** — the active backlog (the only live task list in the repo)
+- **[TECH-DEBT.md](TECH-DEBT.md)** — what was measured, deliberately left alone, and what would change that answer
 
 ## Requirements
 

@@ -7,7 +7,10 @@ asked you to do something with the bot, start from this file.
 
 ```
 /opt/telegram-bot/          ← live copy (created by install.sh)
-├── bot.py                  ← all bot code
+├── bot.py                  ← public facade: re-exports the module surface
+├── dispatch*.py            ← routing, polling, webhook, group, edit paths
+├── handlers.py             ← handle_text/photo/voice/document
+├── call_llama.py + llm_*.py ← the turn and its leaf modules
 ├── Dockerfile              ← python:3.11-slim + pip install
 ├── docker-compose.yml      ← network_mode: host
 ├── .env                    ← credentials (DO NOT commit)
@@ -22,6 +25,15 @@ asked you to do something with the bot, start from this file.
 ├── telegram-bot-compose.service
 └── whisper-api-compose.service
 ```
+
+`bot.py` is a **facade**, not the implementation — it re-exports the
+module surface so that `from bot import call_llama` keeps working for
+forks and downstream scripts. The code lives in the 53 modules beside it;
+`TECH-DEBT.md` item 1 records what that cost and why it was done.
+
+The live deployment on the operator's host uses a different layout
+(`/opt/telegrambot/`); `scripts/install.sh` is the source of truth for a
+fresh install, and `BOT_DIR` overrides it.
 
 ## Common operations
 
@@ -84,7 +96,7 @@ cd /path/to/llama.cpp_telegram
 2. ❌ Change `network_mode: "host"` without understanding the implications — it punches through to the host network.
 3. ❌ Enable `parallel_tool_calls: true` without testing — the current implementation assumes sequential calls.
 4. ❌ Hardcode real credentials in `docker-compose.yml` — only env vars.
-5. ❌ Remove `DISABLED_TOOLS` from `bot.py` without a re-audit. `read_file`,
+5. ❌ Remove `DISABLED_TOOLS` from `config.py` without a re-audit. `read_file`,
    `write_file`, `exec_shell_command` are disabled for a reason — it means
    **any** whitelisted user could run arbitrary shell on the host via tool-calling.
    Do NOT enable them.

@@ -1,215 +1,135 @@
-# docs/ROADMAP.md — strategic roadmap for the next sprint
+# docs/ROADMAP.md — where this project is going
 
-> Multi-cycle plan. Updated 2026-10-13. Read this before
-> the tactical backlog in `TODO.md` — the two documents
-> complement each other (this one is "what and why", TODO
-> is "how and when").
-
----
-
-## Sprint scope (next 7-10 working days)
-
-The operator estimates the full sprint at roughly one week
-of focused work. Three tracks run mostly in sequence with
-one critical dependency (track 2 must complete before track 3
-can land). All four tracks share the same baseline: v0.10.2-
-stable is released, v0.10.3 is the next tagged release.
-
-### Track 1 — Tactical cleanup (T28-T32 + T33)
-- T33: Telegram 4096-char split heuristic. When a user sends a message of 4060-4096 bytes (Telegram's auto-split zone near the 4096-cap), the bot marks the (chat, user) as split-pending for 30 s and drops both the suspicious first message and any subsequent consecutive one with an explanatory error. See `state._split_pending` and `docs/KNOWN-LIMITATIONS.md`.
-
-Low-risk items already in the backlog. Can be picked up in
-any order, batched into a single PR, or split per-item.
-
-- **T28:** Fix 2 pre-existing rating-parser subtest failures
-  ("plain answer", "[[TYPE:unknown]]"). ~30 min.
-- **T29:** ~~Remove `get_weather` (wttr.in) tool~~ **DONE 2026-10-13.**
-- **T30:** Remove sender-name tagging. Bloats context,
-  rarely useful in practice. ~45 min.
-- **T31:** ~~Archive `REVIEW-MINIMAX.md` and `-v2.md`~~ **DONE 2026-10-13.** Moved to `docs/archive/v0.0-v0.4/`. ~15 min.
-- **T32:** ~~Guard `data["choices"][0]` in `call_llama.py`~~ **DONE 2026-10-13.** Three call sites guarded.
-
-Total: ~2.5 hours. Land as `v0.10.3-stable`.
-
-### Track 2 — Limit tuning for shell-tools (blocker for Track 3)
-
-Shell-tools (Track 3) require the model to consume longer
-contexts (multi-step shell output) and produce longer
-replies (shell commands + their stdout). The current limits
-were tuned for plain chat. Pre-flight work:
-
-- Audit current context-window usage per handler
-  (`handle_text`, `handle_photo`, `handle_voice`, `handle_document`)
-  in `call_llama.py`.
-- Profile max_tokens ceiling: current default is 2048; shell
-  tools will need 4-8K for `cat /etc/passwd`-class output
-  without truncation.
-- Re-evaluate `top_p`, `temperature`, `repeat_penalty` for
-  tool-calling reliability (shell commands are deterministic
-  but argparse-style parsing needs stable outputs).
-- Stress-test on Qwen3.8-27B-Ultra-Heretic-MTP-256k: how
-  much of the 256k context does a 20-step shell session
-  actually use? The model is supposed to handle it, but
-  real-world RAG / shell output may blow the budget faster
-  than the spec suggests.
-- Decide on per-user context history depth. Current is
-  20 messages. Shell sessions may need 50-100.
-
-Total: ~1.5 days. Output: a documented limits policy in
-`docs/CALL_LLAMA.md` and tuned `config.py` defaults.
-
-### Track 3 — Shell tools (the main feature)
-
-The headline feature of the next sprint. The bot grows the
-ability to **execute shell commands inside a per-user
-sandbox container**, scoped and short-lived.
-
-- **Container lifecycle**: a **single shared sandbox**
-  for the whole bot process, created at bot start, destroyed
-  at bot restart. Per-sub-talk model context stays
-  isolated (this is the existing design: each /sub has its
-  own context window, /reset in one sub does not touch the
-  others — operator wants to keep that property), but the
-  shell workspace is shared. Path-jail in the dispatcher
-  scopes each tool call to a per-sub working directory
-  under `/workspace/<user>/<sub>`, so two concurrent
-  contexts writing to the shell cannot collide. This
-  keeps resource cost flat (1 container, not N) at the
-  price of accepting that two LLM turns may race on the
-  filesystem if both touch the same path. The race window
-  is small and the consequences are recoverable (re-run
-  the affected /sub).
-- **Tool surface**: `shell_exec(cmd)`, `shell_read(path)`,
-  `shell_write(path, content)`, `shell_list(dir)`, plus a
-  sandboxed Python eval for numeric work.
-- **Security model**:
-  - Per-user UID mapping (no cross-user filesystem access)
-  - No network by default (`network_mode: none`); explicit
-    `--allow-net` flag for opt-in
-  - Resource limits: 256 MB RAM, 50% CPU, 30 s wall clock
-  - Drop all capabilities, no root, no `/proc` or `/sys`
-  - Read-only rootfs except for `/workspace` bind-mount
-  - Path jail: commands may only touch `/workspace/**`
-    unless operator pre-authorises a path via env var
-  - Audit log: every command, exit code, duration, timestamp
-- **Tool dispatcher** mirrors the existing `web_search` /
-  `web_fetch` donsetch pattern: tool definitions in
-  `_TOOLS_CACHE`, system prompt exposes them, dispatcher
-  routes by name.
-- **Tests**: at least 10 selftest cases covering happy path,
-  every error class, container-escape attempt, resource
-  exhaustion, path-jail violation. Plus pytest covering the
-  dispatcher and the audit log.
-- **Operational**: systemd unit or compose profile for
-  the single sandbox container; resource cleanup on bot
-  restart; container health-check + auto-restart on
-  failure (single bot == single sandbox == single
-  failure domain — if the sandbox dies, the bot dies
-  with it; respawn handled by systemd).
-
-Total: ~3-4 days. This is the largest single piece of work
-in the sprint. Land as `v0.11.0` (minor version bump
-because the public tool surface changes).
-
-### Track 4 — Multi-LLM arbitration in groups
-
-The hardest item on the board, deliberately scheduled last.
-In groups with multiple active LLMs (e.g., one per user, or
-multiple tool personas), the bot needs to:
-
-- Decide **which** LLM responds to a given user message
-  (round-robin? topic-aware? user-scoped? explicit @-mention?)
-- **Tune** per-LLM: each model has different strengths; the
-  arbiter needs a per-message quality score or a hard
-  routing rule.
-- **Arbitrate conflicts** when two LLMs both want to reply
-  (first-write-wins, score-merge, user-as-king, etc.)
-- Surface the choice transparently: a header in the reply
-  block (`[Qwen-3.8] [Ornith] ...`) so users can see who
-  answered.
-- Avoid N*N message amplification in busy groups.
-
-This is more of a research spike than a feature ticket. The
-operator expects 2-3 days of experimentation before settling
-on a workable design. Land as `v0.12.0` or later, possibly
-split into multiple smaller releases.
+> Strategic view: **what and why**. The tactical backlog — the actual open
+> items — is [`TODO.md`](TODO.md). The two complement each other and only
+> one of them is a task list.
+>
+> **Updated 2026-10-23**, against `v0.13.0-stable` (`12d9a4e`).
 
 ---
 
-## Sequencing and dependencies
+## Where we are
 
-```
-Track 1 (T28-T33)  ------>  v0.10.3-stable  (any order, batch ok)
-                                 |
-Track 2 (limits)    ------>  v0.10.4-rc (no tag)  --+
-                                                     |
-Track 3 (shell)    ------>  v0.11.0  <-------------+
-                                                     |
-Track 4 (multi-LLM) ----->  v0.12.0  (research spike, may slip)
-```
+`v0.13.0-stable` is the first release since `v0.12.0-stable` that carries a
+refactor rather than a feature — 191 commits, 107 of them touching
+production code. What changed structurally:
 
-Track 1 unblocks Track 2 by clearing the v0.10.x debt. Track 2
-unblocks Track 3 by making the model ready for the longer
-contexts shell tools require. Track 3 is the headline; Track 4
-runs mostly in parallel but its design is informed by what
-we learn from 3.
+- **The monolith is gone.** `dispatch.py` is 345 lines (was 1612),
+  `call_llama.py` is 478 (was 1616), `_selftest` is 111 (was 1940),
+  `bot.py` is a 124-line facade. Each of those is a ledger item in
+  [`TECH-DEBT.md`](../TECH-DEBT.md) with a tripwire pinning it.
+- **The context policy is ours, not the engine's.** `ContextBudget`
+  assembles the history client-side, so swapping llama for vLLM or Strata
+  requires changing a URL and nothing else. See
+  [`docs/tickets/`](tickets/) and
+  [`docs/adr/ADR-0003`](adr/ADR-0003-context-reanchoring.md).
+- **The review cycle is closed.** Waves 1–8, ended at `12d9a4e`
+  ("production-ready"). The durable artefacts are in
+  [`docs/archive/2026-10/`](archive/2026-10/).
+- **The history is no longer destroyed on read.** The lazy trim is gone;
+  SQLite is the source of truth and every derived context is recomputable.
 
-## Risks and unknowns
+The bot runs in production in webhook mode and is deployed from the tagged
+tree, not from `main`.
 
-- **Track 2 / Qwen256k**: the spec says 256k context but we
-  have not tested it with realistic shell output. If the
-  model degrades above 32-64k, Track 3 needs a context
-  summarisation layer (additional ~1 day of work).
-- **Track 3 / container escape**: even with all the
-  hardening above, a determined attacker may find a kernel
-  CVE. Plan for a kernel-audit cycle on the sandbox host
-  image before exposing shell tools to non-whitelisted users.
-- **Track 4 / UX**: arbitration may feel inconsistent or
-  "uncanny" to users. Plan for at least one user-test
-  round before tagging a release.
+---
 
-## Out of scope this sprint
+## What comes next, in order
 
-- Web-based UI for the bot (Telegram WebApp). Deferred to
-  v0.13+.
-- Voice cloning / TTS output. Currently text-only replies.
-- Multi-tenant operator accounts (one operator can manage
-  many bot instances). Deferred until commercial need.
+### 1 — Three decisions that only the operator can make
 
-## Tracking
+Nothing is blocked on engineering here. Each of these is parked on a
+question, and the question is written down in
+[`TODO.md`](TODO.md#open--waiting-on-a-decision-from-the-operator):
 
-The tactical backlog (T28-T32 + Track 3 subtasks) lives in
-`docs/TODO.md`. The strategic view (this file) is updated
-when a track completes or a direction changes.
-- T34: Replaced T33 size-window split heuristic with rate-based burst detection. After observing Telegram split a 6K prompt at 3910 bytes (paragraph boundary, not the 4096 cap), the operator and I agreed that any size window is either too narrow (false negative) or too wide (false positive on legitimate long messages). The new logic detects the burst PATTERN: two messages from the same (chat, user) within 2 s, with the first > 3000 bytes. The follow-up is dropped and the in-flight LLM call for the first message is aborted via the existing abort_event. State per-(chat, user), not per chat. State file: state._user_recent_msg, _check_burst_split, _record_user_message. Handler: handle_text().
-- T35: Extracted all hardcoded LLM-gateway limits (max_tokens, timeouts, loop budget) into a dedicated `telegram-bot/limits.py` module. Every value is env-overridable (LLAMABOT_MAX_TOKENS, LLAMABOT_LOOP_BUDGET_SEC, etc.). Defaults match the current llama-server (Qwen3.8-27B-Ultra-Heretic-MTP at 256k context). Documented in `docs/CALL_LLAMA.md`. 12 unit tests in `tests/test_limits.py`. Total 84 pytest pass.
-
-## Context memory (2026-10-20) — design stage
-
-The operator commissioned a redesign of how the bot remembers conversation
-history. Seven tickets, all in `docs/tickets/`:
-
-| | |
+| | The question |
 |---|---|
-| 🔴 **T70** | `ContextBudget` — universal context assembly (main ticket) |
-| 🟡 **T67** | Remove `TRIM_HIGH`, stop storing images — ready to build |
-| T65 | Reply-to-human: record without generating |
-| T66 | Time-based context window (7 days from bot start, per-sub) |
-| T68 | Daily 05:00 restart |
-| ⏸ T69 | Bot personality in system prompt — waiting on operator |
+| **T70.5** | The summarise strategy builds one summary from all out-of-window history. What if that summary alone does not fit the context window? |
+| **T68b** | `BOT_ENGINE_RESET_CMD` is unreachable in every mode. Should the bot own the daily engine restart, or should it be the operator's cron? |
+| **T66.1** | Should there be a guaranteed minimum of recent messages when the anchored window is empty? |
 
-**The constraint that decided the architecture:** the bot ships to a public
-repo with 200+ forks, and the engine is not ours — it may be llama, Strata,
-vLLM, or anything else that speaks `/v1/chat/completions`. The engine must stay
-**stateless**, and swapping it must not require changing bot code.
+**T68b has an implementation ready to go** — the boundary arithmetic is
+already DST-correct — but it means the bot restarts `llama-server` once a
+day, so it waits for an explicit go-ahead.
 
-An earlier draft of T70 proposed engine-side sessions (`previous_response_id`).
-That was rejected for exactly this reason. `vllm-project/agentic-api` was
-evaluated as the ready-made alternative and rejected as a Rust gateway with the
-Responses API — correct principle, wrong weight class.
+### 2 — The live edit-replace test
 
-The replacement is the pattern the industry converged on in 2026 —
-**protect recent N · summarize older · budget-assemble** — implemented
-client-side as a `ContextBudget` that knows nothing about engines.
+The one behaviour that cannot be automated: a human edits a message while
+the bot is answering, and the bot must rewrite its answer. It needs two
+people, a slow model, and someone watching real Telegram. It has been
+deferred since 2026-10-12 and it is the last unverified path in the
+dispatch split.
 
-**Safe to build now (independent of T70):** T67.1, T65.1, T69.
+### 3 — Automation that replaces the operator's checklist
+
+`scripts/smoke_test.py`: a real Telegram `getUpdates` round-trip covering
+most of the old 23-point checklist with no mocking. The checklist itself
+was retired when it was retired from `TODO.md`; the script is what should
+replace it.
+
+### 4 — Multi-LLM arbitration in groups
+
+**Still a research spike, still deliberately last.** It was Track 4 of the
+2026-10 sprint and it did not move, because everything in front of it was
+more valuable. The design questions are unchanged:
+
+- **Which** LLM responds to a given user message — round-robin? topic-aware?
+  user-scoped? explicit mention?
+- **Per-LLM tuning** — different models have different strengths, so the
+  arbiter needs either a per-message quality score or a hard routing rule.
+- **Conflict resolution** — when two LLMs both want to reply:
+  first-write-wins, score-merge, user-as-king?
+- **Transparency** — a header in the reply block (`[Qwen-3.8] [Ornith] …`)
+  so users can see who answered.
+- **Amplification control** — avoid N×N message growth in a busy group.
+
+The operator's estimate when this was last scoped: 2–3 days of
+experimentation before a design is worth writing down. It is a spike, not
+a feature ticket — expect it to produce a document, not a release.
+
+---
+
+## Deliberately not planned
+
+- **A web UI** (Telegram WebApp). Deferred to `v0.13+`, and `v0.13.0` is
+  now the current release without one.
+- **Voice output / TTS.** The bot is text-only on the way out.
+- **Multi-tenant operator accounts.** One operator, many bot instances.
+  Deferred until there is a commercial reason.
+- **Engine-side state.** Rejected on the record: the engine is not ours,
+  and 200+ forks run whatever their operator runs. See
+  [`docs/tickets/README.md`](tickets/README.md).
+- **A second summarising model.** The bot summarises with the same model it
+  talks with. Resolved 2026-10-21; no change.
+
+---
+
+## The rules the last cycle established
+
+They are not stylistic preferences — each of them exists because breaking
+it cost a bug that reached production behind a green test suite.
+
+1. **Review the tree, not the diff.** Wave 5 reviewed three commits, wrote
+   "no blockers", and wave 6 found blockers that had been sitting there
+   for four waves.
+2. **Ground truth is a real run and a mutation.** Not an AST comment, not a
+   green pytest.
+3. **A tripwire that cannot be made to fail is worse than none** — and so
+   is one that fails on a harmless refactor.
+4. **The premise of a finding and its proposed fix are two independent
+   claims.** A correct premise makes a bad fix sound right.
+5. **A fix that changes *when* something happens needs a test for the
+   invariant before the event**, not only after it.
+6. **Test on the interpreter you ship.** The repo pins `python:3.11-slim`;
+   CI runs 3.11 and 3.12.
+7. **A claim nobody checks is a defect in the same class as a bug** — and
+   it gets committed as one, usually by the person who wrote the fix.
+
+---
+
+## See also
+
+- [`TODO.md`](TODO.md) — the active backlog.
+- [`../TECH-DEBT.md`](../TECH-DEBT.md) — the measured-and-deferred ledger.
+- [`docs/README.md`](README.md) — the map of this directory.
+- [`../CHANGELOG.md`](../CHANGELOG.md) — what shipped.

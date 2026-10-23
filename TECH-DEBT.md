@@ -64,7 +64,7 @@ dispatch_webhook.py   325 lines, PTB assembly + handlers
 webhook.py             224 lines, aiohttp server + secret check
 dispatch_edit.py      108 lines, the edited-message rewrite
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
-call_llama.py   478 lines, ToolLoop owns the iteration, 11 llm_* leaf modules
+call_llama.py   478 lines, ToolLoop owns the iteration, 17 llm_* leaf modules
 handlers.py    1316 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      725 lines, class Storage encapsulated, get_store() sole entry
@@ -75,8 +75,15 @@ earlier figures in this file came from split("\n") and were each one
 high -- which is exactly the class of off-by-one that makes a reader
 stop trusting the whole block.
 print() calls in telegram-bot/*.py: 0
-modules calling get_logger(__name__): 20
+modules calling get_logger(__name__): 35
+env names read in telegram-bot/*.py: 36
 ```
+
+The three sizes the ledger makes promises about (`dispatch.py`,
+`selftest.py`, `bot.py`) are recomputed by
+`tests/test_tech_debt_index.py`, which fails when they drift. The rest
+are transcribed; when a number moves, it moves in the same commit that
+moved the code.
 
 The largest unit of untested code in the repository is not `call_llama`
 — item 3, the one that was flagged for months. It was `_selftest`, at
@@ -138,11 +145,30 @@ Recorded so the question stops resurfacing at every review.
 - **Structuring `config.py` into `DatabaseConfig` / `LLMConfig` classes.**
   Cosmetic. The one part with real value is name validation, and that is
   item 11, standing alone.
-- **Hypothesis for sender-name sanitisation.** `_safe_sender_label` lives
-  inside `dispatch.py`; there is no module to test. It becomes testable
-  when item 10 moves it out. Naming note: "sanitisation" here means
-  normalising a display name, not a security filter — do not conflate the
-  two when that extraction happens.
+- **Hypothesis for sender-name sanitisation.** A test needs a module, and
+  `_safe_sender_label` was a function inside `dispatch.py` with no module
+  of its own. Item 10 block C moved it to
+  `telegram-bot/prompt_guard.py`, and it now has a tripwire of its own
+  (six mutations on the security filter, all caught).
+
+  **Naming note, and it is the opposite of what the ticket said.** The
+  TECH-DEBT #10 block C ticket prescribed moving this function to
+  `sanitizer.py` and warned that "sanitisation here is normalising a
+  display name, not a security filter — do not attach filtering to it".
+
+  That warning was wrong, and following it literally would have done
+  damage in both directions: a reader told it is cosmetic stops reading
+  the body, and a reader who takes `sanitizer` at face value looks for
+  the real filter elsewhere and gets permission to weaken this one.
+
+  `git show 4eedfa7` (T55, wave-2 security review) adds `unicodedata`
+  and the `system|assistant|user|human|ai|from|instruction` regex
+  *together with the function*. It was a prompt-injection filter from the
+  day it existed and never was cosmetic. It therefore went to
+  `prompt_guard.py`, and the docstring says why.
+
+  **Rule: a naming note in a ticket is a claim. Check the commit that
+  introduced the function, not the ticket.**
 - **Batching INSERTs.** See item 7. WAL is on, writes are a handful of
   rows per message, and batching would add a crash-recovery state machine
   to buy throughput nobody needs.

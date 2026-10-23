@@ -82,9 +82,9 @@ sudo docker logs whisper-api --tail 20
 
 - Model is still downloading — first start pulls 1.5 GB, ~5-10 min
 - Voice is too quiet / noisy — faster-whisper handles it poorly
-- Language — if `language: 'ru'` is hardcoded in `bot.py` and the voice
-  is in English, recognition will be off. Change to `language: 'auto'`
-  (if upstream supports) or remove `language` entirely
+- Language — `WHISPER_LANGUAGE` defaults to `ru` (in
+  `telegram-bot/config.py`). If the voice is in English, recognition will
+  be off. Set the env var to empty for autodetect, or to the right code
 - Bot is on `lan_macvlan` but whisper is on the host network — the
   macvlan sub-interface cannot ARP its parent host, so the bot
   never reaches whisper. See "Networking between containers does

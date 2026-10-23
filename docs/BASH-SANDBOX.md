@@ -1,6 +1,6 @@
 # BASH-SANDBOX — running shell commands from the bot
 
-> **Available since:** `v0.11.0-pre` (unreleased; see commit log)
+> **Available since:** `v0.11.0` (shipped in `v0.11.0-stable`)
 > **Status:** Code complete. Awaiting operator code-review and
 > human pilot testing.
 > **Scope:** `LLAMABOT_DEPLOYMENT_PROFILE=personal` ONLY.

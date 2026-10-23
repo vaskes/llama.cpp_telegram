@@ -59,20 +59,17 @@ be built first.
 
 ## Known tech debt — acknowledged, scheduled, not ignored
 
-`TECH-DEBT.md` at the repo root. Seven entries, each with the reason it was not
-fixed now, what it costs while it stands, and the trigger that would change
-that answer.
+`TECH-DEBT.md` at the repo root, with the detail in `docs/tech-debt/`.
+Fourteen items, **all closed** as of 2026-10-23 — the monolith refactor
+this index was waiting on (`bot.py` as a re-export god-module, late imports
+inside functions, the 1600-line `call_llama`, duplicated handler
+boilerplate) was one problem and got one focused refactor, sequenced after
+this blocker closed and before the next feature.
 
-The largest ones — `bot.py` as a re-export god-module, late imports inside
-functions, and the 1600-line `call_llama` — are all the *same* problem: the
-dependency graph was never untangled when the monolith was split. Fixing one
-without the others is wasted work.
-
-**Operator's sequencing decision, 2026-10-21:** the monolith refactor happens
-*after* this blocker and its pending tickets are closed, and *before* taking on
-a new feature. Not before. The bot is in production and working; a large
-refactor stacked on top of an open review round is how working code gets
-broken.
+One item keeps a standing caveat: **live edit-replace is manual-only**
+(`TECH-DEBT.md` #10). It needs two people, a slow model, and a human
+watching real Telegram; it is not covered by any automated test and is not
+labelled as if it were.
 
 ---
 
@@ -88,7 +85,9 @@ broken.
 | **T69** | Bot personality in system prompt | ✅ **shipped** (file-based, configurable) | — |
 
 Shipped in `main`: T70.1, T70.2, T70.4a (overflow), T70.4b (`/stats`),
-T67.1–67.3, T68 (`soft`/`process`/`process+engine` + ADR-0003). 377 tests.
+T67.1–67.3, T68 (`soft`/`process`/`process+engine` + ADR-0003),
+T70.3 (summarise), T65.1 (reply-to-human absorb), T69 (persona).
+The suite was at 377 tests when this block landed; it is 2103 today.
 
 ## Sub-tasks of T70
 
@@ -197,3 +196,8 @@ gets rebuilt from SQLite, so SQLite must be complete.
 | `TICKET-T65-context-memory.md` | Reply-to-human + history loading |
 | `TICKET-T66-time-based-context-limit.md` | 7-day anchored window |
 | `TICKET-T68-daily-restart.md` | Daily 05:00 restart |
+
+**T69** (bot personality) shipped as a file-based, configurable feature and
+has no ticket file of its own: `telegram-bot/personality.py`, the
+gitignored `persona.local.json`, and `personality.json.example` with
+`enabled=false` so a fork never inherits somebody else's character.

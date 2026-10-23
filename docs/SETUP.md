@@ -319,4 +319,4 @@ peer LLMs do not endlessly react to each other.
 To embed the LLM rules in the group welcome message, copy
 the policy summary from [RATING_RULES.md](RATING_RULES.md).
 Keep the welcome message in sync with the `RATING_RULES`
-constant in `bot.py`.
+constant in `telegram-bot/prompts.py`.
