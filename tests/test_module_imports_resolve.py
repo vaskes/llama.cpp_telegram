@@ -52,10 +52,17 @@ def _bound_names(tree: ast.Module) -> set:
     "Over-approximate, being quiet is safe" was in this docstring and it
     was wrong. Quiet is not safe: an over-approximated binding set means
     the test cannot see the code it exists to see. `global` is the case
-    that proved it -- see the note below.
+    that proved it -- see the note at the end of the function.
+
+    What this file does NOT catch, stated so a green run is not read as
+    more than it is: a module where one function binds a name locally and
+    a different function reads it without declaring `global`. Every name
+    a local function assigns looks bound from the outside here. That class
+    needs a real scope model; two wrong attempts at one are on record.
     """
     out: set = set()
     declared_global: set = set()
+    declared_nonlocal: set = set()
     module_level: set = set()
 
     def names_in(node):
@@ -77,7 +84,6 @@ def _bound_names(tree: ast.Module) -> set:
             for alias in n.names:
                 module_level.add(alias.asname or alias.name.split(".")[0])
 
-    out |= {g for g in declared_global if g in module_level}
     for n in ast.walk(tree):
         if isinstance(n, ast.ClassDef):
             out.add(n.name)
@@ -119,20 +125,32 @@ def _bound_names(tree: ast.Module) -> set:
             for arg in a.posonlyargs + a.args + a.kwonlyargs:
                 out.add(arg.arg)
         elif isinstance(n, (ast.Global, ast.Nonlocal)):
-            # `global X` DECLARES an intent to rebind; it does not create
-            # the name. If no module-level binding exists, the first read
-            # raises NameError.
-            #
-            # This used to add every `global` name to the bound set, on the
-            # theory that over-approximating can only make the test quieter.
-            # That theory was wrong, and cost a real one: `dispatch_webhook.py`
-            # declared `global _dispatcher`, never bound it at module level,
-            # and the tripwire was green. The bot would have died with
-            # NameError the first time it registered its command menu.
-            # Quieter is not the same as safe -- an over-approximated binder
-            # turns this test into decoration for exactly the names it exists
-            # to catch. Deferred to `_global_ok`, resolved after the walk.
-            declared_global |= set(n.names)
+            # `nonlocal` points at an ENCLOSING function scope, not at the
+            # module. Nothing here models enclosing scopes, so treating it
+            # like `global` would subtract a name that is legitimately
+            # bound one level up -- a false positive on correct code.
+            if isinstance(n, ast.Nonlocal):
+                declared_nonlocal |= set(n.names)
+            else:
+                # `global X` DECLARES an intent to rebind; it does not
+                # create the name. If no module-level binding exists, the
+                # first read raises NameError. Resolved after the walk --
+                # see the note there.
+                declared_global |= set(n.names)
+
+    # Resolve the declarations AFTER the walk: subtract, then re-add --
+    # not union.
+    #
+    # The walk cannot see scopes, so `_dispatcher = app` inside a function
+    # already put the name in `out` before this point. A union left it
+    # there, which made this filter dead on exactly the shape it was
+    # written for. The real bug -- a module declaring `global _dispatcher`
+    # and also assigning it inside a function -- has that assignment by
+    # construction, so it was always going to pass, and always would have.
+    # The filter assumed no assignment; the code always has one.
+    out -= declared_global
+    out |= {g for g in declared_global if g in module_level}
+    out |= declared_nonlocal
     return out
 
 
@@ -200,3 +218,107 @@ def test_every_module_actually_compiles():
     assert not offenders, (
         "modules that ast.parse accepted but the interpreter will not:\n  "
         + "\n  ".join(offenders))
+
+
+# --- the `global` matrix -------------------------------------------------
+#
+# Wave 4 review, finding #1. The fix for the `global`-filter bug shipped
+# in 2ae2c37 and was verified with a mutation that the *unfixed* checker
+# also caught: `_probe` declared a `global` and read it without ever
+# assigning it, so the name was bound nowhere and the old checker saw it
+# too. That proved nothing about the fix.
+#
+# The real bug had a different shape, and the original checker missed it:
+#
+#     def set_dispatcher(app):
+#         global _dispatcher
+#         _dispatcher = app        # assignment INSIDE the function
+#
+#     def _register_bot_menu():
+#         global _dispatcher
+#         return _dispatcher       # read, no module-level binding
+#
+# The walk cannot see scopes, so the assignment put the name in the bound
+# set, and a union-based `global`-filter cannot subtract it. A module that
+# declares a `global` almost always assigns it somewhere -- that is what
+# `global` is for -- so the filter was silent on precisely the case it was
+# written for.
+#
+# Each case below is asserted, including the ones that must stay quiet.
+# A checker that only has the positive cases is a checker nobody can tell
+# apart from a broken one.
+_GLOBAL_MATRIX = [
+    # (name, source, must_be_flagged)
+    ("global + assignment inside a function, no module-level",
+     "def s(app):\n"
+     "    global _d\n"
+     "    _d = app\n"
+     "def r():\n"
+     "    global _d\n"
+     "    return _d\n", True),
+    ("global read, bound nowhere",
+     "def p():\n"
+     "    global _never_bound\n"
+     "    return _never_bound\n", True),
+    ("global + module-level assignment",
+     "_d = None\n"
+     "def s(app):\n"
+     "    global _d\n"
+     "    _d = app\n"
+     "def g():\n"
+     "    return _d\n", False),
+    ("global + module-level import",
+     "from config import SHUTDOWN_EVENT\n"
+     "def p():\n"
+     "    global SHUTDOWN_EVENT\n"
+     "    SHUTDOWN_EVENT = None\n", False),
+    ("global + module-level annotated assignment",
+     "_tasks: set = set()\n"
+     "def a(t):\n"
+     "    global _tasks\n"
+     "    _tasks.add(t)\n", False),
+    ("plain read of an unbound name",
+     "def g():\n"
+     "    return _nothing_here\n", True),
+    ("nonlocal is an enclosing scope, not the module",
+     "def outer():\n"
+     "    v = 1\n"
+     "    def inner():\n"
+     "        nonlocal v\n"
+     "        return v\n"
+     "    return inner\n", False),
+]
+
+
+@pytest.mark.parametrize("name,source,must_flag", _GLOBAL_MATRIX,
+                         ids=[c[0] for c in _GLOBAL_MATRIX])
+def test_the_global_filter_flags_exactly_the_right_cases(name, source,
+                                                          must_flag):
+    """The `global` declaration binds nothing; only the module level does."""
+    tree = ast.parse(source)
+    bound = _bound_names(tree)
+    known = set(dir(builtins)) | {"__name__", "__file__", "__doc__"}
+    read = {n.id for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    missing = read - bound - known
+    assert bool(missing) == must_flag, (
+        f"{name}: expected "
+        f"{'a flag' if must_flag else 'no flag'}, got {sorted(missing)}")
+
+
+def test_the_global_matrix_would_have_caught_the_original_bug():
+    """The reviewer's point, as an executable claim.
+
+    Reconstructs the exact shape that shipped in block E and asserts the
+    checker flags it. Without this, a future "simplification" back to a
+    union-based filter is indistinguishable from the current code by any
+    other test in this file.
+    """
+    tree = ast.parse(_GLOBAL_MATRIX[0][1])
+    bound = _bound_names(tree)
+    known = set(dir(builtins)) | {"__name__", "__file__"}
+    read = {n.id for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    assert read - bound - known == {"_d"}, (
+        "the module-level global case regressed to a pass; this is the "
+        "bug that would have shipped a NameError at bot startup")
