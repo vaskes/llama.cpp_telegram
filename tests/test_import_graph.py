@@ -321,7 +321,12 @@ KNOWN_RUNTIME_CYCLES = [
     # already there, and adding it to this list would have been a green
     # tick for a regression.
     ["access", "handlers"],
-    ["config", "state"],
+    # `["config", "state"]` was here for the whole time and TECH-DEBT #2
+    # is listed closed. `state._get_user_semaphore` imported
+    # `_PER_USER_SEMAPHORE_LIMIT` from `config`, which re-exports it
+    # from `state` -- a constant `state.py` defines itself, reached by a
+    # round trip. Removed in wave 5; the edge was legal only because it
+    # was deferred, and the item said the cycle was gone.
     # Was hidden inside the seven-module component above. `dispatch`
     # imports `webhook` at /main, `webhook` imports `dispatch` in its
     # request handler, and selftest imports dispatch to drive updates.

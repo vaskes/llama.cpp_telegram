@@ -64,7 +64,7 @@ webhook.py             208 lines, aiohttp server + secret check
 dispatch_edit.py      108 lines, the edited-message rewrite
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   478 lines, ToolLoop owns the iteration, 11 llm_* leaf modules
-handlers.py    1316 lines
+handlers.py    1318 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      725 lines, class Storage encapsulated, get_store() sole entry
 config.py       322 lines, 24 env names, plus 12 elsewhere in the package

@@ -13,11 +13,9 @@ check looks at. Each test is a claim, and every claim here has a
 mutation that must turn it red.
 """
 import ast
-from collections import defaultdict
 from pathlib import Path
 
 BOT = Path(__file__).resolve().parent.parent / "telegram-bot"
-graph_files = {p.stem for p in BOT.glob("*.py")}
 
 # Which module's imports may NOT be resolved lazily inside a function.
 #
@@ -209,109 +207,3 @@ def test_the_global_matrix_has_a_declared_size_and_polarity_split():
     assert flags.count(True) >= 2, (
         f"only {flags.count(True)} cases that must be flagged; the "
         "checker is not being asked to catch much.")
-
-# Cycles whose every edge is a late import. This is NOT an empty list and
-# it was not meant to be: the module-level graph is a DAG, and the
-# indirection is deliberate in most of these -- `webhook` imports
-# `dispatch` inside a handler so the server can start without the
-# dispatcher initialising the Application at import time, and the
-# `selftest_*` leaves reach back into `dispatch` for the same reason.
-#
-# What is forbidden is a NEW one. TECH-DEBT #2 removed the cycle it knew
-# about and closed the item; `config -> state -> config` sat underneath
-# it the whole time, built from the technique the item was about, and no
-# check could see it because every cycle check here walked `tree.body`.
-#
-# Format: unordered edge sets, so direction does not matter -- these are
-# reported from both ends and both spellings are the same finding.
-KNOWN_LATE_ONLY_CYCLES = {
-    frozenset({"access", "handlers"}),
-    frozenset({"dispatch", "selftest"}),
-    frozenset({"dispatch", "selftest", "selftest_infra", "webhook"}),
-    frozenset({"dispatch", "selftest", "selftest_state"}),
-    frozenset({"dispatch", "webhook"}),
-}
-
-
-def test_no_cycle_whose_every_edge_is_a_late_import():
-    """M1: `config -> state -> config`, alive the whole time.
-
-    `state._get_user_semaphore` did `from config import
-    _PER_USER_SEMAPHORE_LIMIT` -- a constant `state.py` defines itself,
-    eighty lines up -- and `config` re-exports it from `state`. So the
-    cycle TECH-DEBT #2 declared eliminated was still there, held open by
-    exactly the technique the item said it removed.
-
-    Scope, deliberately narrow: a cycle counts only when EVERY edge in
-    it is a late import. Cycles that have at least one module-level edge
-    are the normal shape here -- `webhook` imports `dispatch` inside a
-    handler precisely so the module-level graph stays a DAG -- and
-    banning them would be a rewrite of the whole package, not a check.
-    A cycle with no module-level edge has no reason to exist at all: it
-    was built by accident and is held together by a technique the
-    codebase declares itself against.
-
-    `test_refactor_graph.py::test_module_import_graph_has_no_cycles`
-    stayed green on the `state` cycle because it walks `tree.body` only.
-
-    Mutation: put `from config import _PER_USER_SEMAPHORE_LIMIT` back
-    inside `_get_user_semaphore`.
-    """
-    module_edges = defaultdict(set)
-    late_edges = defaultdict(set)
-    for path in sorted(BOT.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-
-        def names_of(node):
-            if isinstance(node, ast.Import):
-                return [a.name.split(".")[0] for a in node.names]
-            if isinstance(node, ast.ImportFrom) and node.level == 0 \
-                    and node.module:
-                return [node.module.split(".")[0]]
-            return []
-
-        for node in tree.body:
-            module_edges[path.stem].update(
-                n for n in names_of(node) if n in graph_files)
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for sub in ast.walk(node):
-                    late_edges[path.stem].update(
-                        n for n in names_of(sub) if n in graph_files)
-
-    all_edges = defaultdict(set)
-    for stem in graph_files:
-        all_edges[stem] = module_edges[stem] | late_edges[stem]
-
-    cycles = []
-
-    def walk(node, path):
-        if node in path:
-            cycles.append(path[path.index(node):] + [node])
-            return
-        for nxt in sorted(all_edges.get(node, ())):
-            walk(nxt, path + [node])
-
-    for stem in sorted(graph_files):
-        walk(stem, [])
-
-    late_only = []
-    for cycle in cycles:
-        if all((a, b) not in module_edges[a] for a, b in zip(cycle, cycle[1:])):
-            late_only.append(tuple(cycle))
-
-    found = {frozenset(cycle) for cycle in late_only}
-    new_ones = found - KNOWN_LATE_ONLY_CYCLES
-    gone = KNOWN_LATE_ONLY_CYCLES - found
-    def show(nodes):
-        return "{" + ", ".join(sorted(nodes)) + "}"
-    assert not new_ones, (
-        "new late-import-only cycle(s): "
-        f"{sorted(show(c) for c in new_ones)}. Every cycle check in this "
-        "repo walks `tree.body`, so a cycle built entirely out of late "
-        "imports is invisible to all of them.")
-    assert not gone, (
-        "these late-import-only cycles are gone -- delete them from "
-        f"KNOWN_LATE_ONLY_CYCLES: {sorted(show(c) for c in gone)}. A "
-        "baseline that is never pruned becomes a list of things nobody "
-        "re-reads.")
