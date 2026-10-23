@@ -15,8 +15,50 @@ this file is the human-readable summary.
 
 ## [Unreleased]
 
-**After `v0.13.0-stable`.** Small, and about attribution rather than
-behaviour.
+**After `v0.13.0-stable`.** Small: one attribution cleanup, one answer
+that came back empty, and one token that was in the log.
+
+### A model that thinks and writes nothing now gets a second attempt
+
+The empty-response retry keys off a marker the producers put at the front
+of the response. A reasoning-only answer -- the model wrote a long
+thought and no text -- did not carry that marker, so it never matched:
+the model got one attempt, and the user got the diagnostic instead of a
+reply.
+
+The wording made it worse. The diagnostic said the model had spent all
+its tokens on reasoning, and it said that for every finish reason. In
+production the user was told exactly that after 18 generated tokens out
+of a 65536-token budget, with `finish_reason=stop` -- the model stopped
+on its own and chose not to write an answer, which is a different
+failure from a budget that ran out mid-thought.
+
+Both are fixed. The reasoning-only answer now carries the same marker
+the handlers retry on, and its wording follows the finish reason: the
+budget is only claimed when `finish_reason=length`.
+
+### The bot token was in the operator log
+
+httpx logs every Telegram API call at INFO, and the URL it logs carries
+the bot token in the path. The root logger sits at INFO, so that line
+reached stdout, which the container tees into `/var/log/bot/bot.log` --
+694 occurrences of the token in one operator-readable file.
+
+httpx only ever logs at DEBUG and INFO, so its threshold is now WARNING:
+no diagnostic that existed is lost, and the token stops being written
+out. The lines already in the log were redacted.
+
+### A document now says which file arrived
+
+`handle_document` had no entry log of its own, so the only trace of a
+document was the shared route line, which is indistinguishable from a
+photo run. The first document this bot ever received in production
+raised exactly that question -- the file had failed to upload on the
+user's side, and the only reason we could tell was that no download
+call followed. The entry now names the file, its size, its mime type
+and the caption, and it is written before the per-user slot is taken, so
+a document dropped by the cap is visible too.
+
 
 ### Claude Code is off the contributor list
 
