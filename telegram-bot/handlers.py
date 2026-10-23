@@ -2,13 +2,23 @@
 # The 4 Telegram message handlers (text/photo/voice/document)
 # plus their helpers.
 #
-# Cross-module state (_is_group_chat, _should_mute_in_group,
-# _user_semaphore, _check_user_slot, _stop_button_markup,
-# _abort_events, _bot_replies, _persist_message, _load_history)
-# is imported from bot.py INSIDE each function (late import)
-# to avoid circular dependencies at module load time. This is
-# the standard Python pattern for cross-module function refs
-# in a project still in mid-refactor.
+# Cross-module state comes from module-level imports, not late ones:
+# `_is_group_chat` from chat_utils, `_should_mute_in_group` and
+# `_check_user_slot` from access, `_stop_button_markup` from llm_markup,
+# `_abort_events` and `_bot_replies` from state. There is no `from bot
+# import` here, at module level or inside a function -- the header used
+# to say there was, and to name `_user_semaphore` and `_persist_message`
+# as bot.py symbols, none of which exist in that shape: the semaphore
+# accessor is `state._get_user_semaphore`, and the persist/load helpers
+# here are thin re-export wrappers kept for tests.
+#
+# The trap this file fell into before: a comment that described a
+# dependency structure the code did not have, which then read as
+# justification for introducing it. The late-import tripwire below is
+# scoped to `dispatch` only -- that was all wave 4 needed -- so a header
+# claim about anything else is not checked by anything. `test_late_import_policy.py`
+# is the one to extend when the policy grows; do not widen the header
+# into a claim the tripwire cannot back.
 
 import asyncio
 import base64
@@ -679,9 +689,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bot_response:
             await send_reply(update, bot_response)
     except Exception as e:
-        log.info(f"[ERR photo] {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
+        # `log.exception`, not `log.info`: every real failure in this file
+        # was logged at INFO, which left `journalctl -p warning` empty
+        # while the bot silently dropped work. It also carries the
+        # traceback, so `traceback.print_exc()` -- which printed to
+        # stderr, outside the log formatter, and therefore outside the
+        # container log entirely -- is redundant.
+        log.exception(f"[ERR photo] {type(e).__name__}: {e}")
         # T67.2: no rollback needed — the image was never written.
         try:
             await _reply(update, f'❌ Error: {e}')
@@ -871,9 +885,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await send_reply(update, bot_response)
     except Exception as e:
-        log.info(f"[ERR voice] {type(e).__name__}: {e}")
-        await turn.rollback('aborted')
-        await _reply(update, f'❌ Error: {e}')
+        log.exception(f"[ERR voice] {type(e).__name__}: {e}")
+        # Rollback is best-effort here. Unguarded, a rollback failure
+        # skipped the reply below and the user got silence instead of an
+        # error -- the exact thing this handler is failing to do already.
+        try:
+            await turn.rollback('aborted')
+        except Exception:
+            log.exception("[ERR voice] rollback failed")
+        try:
+            await _reply(update, f'❌ Error: {e}')
+        except Exception:
+            log.exception("[ERR voice] error reply failed")
     finally:
         # T46: revert T41. See handle_text for rationale.
         if thinking is not None:
@@ -1026,8 +1049,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if bot_response:
                 await send_reply(update, bot_response)
         except Exception as e:
-            log.info(f"[ERR doc] {type(e).__name__}: {e}")
-            await turn.rollback('aborted')
+            log.exception(f"[ERR doc] {type(e).__name__}: {e}")
+            # The user sent a document and is waiting. text/photo/voice
+            # all answer with the error; this one used to roll back and
+            # say nothing, which is indistinguishable from a hung bot.
+            try:
+                await turn.rollback('aborted')
+            except Exception:
+                log.exception("[ERR doc] rollback failed")
+            try:
+                await _reply(update, f'❌ Error: {e}')
+            except Exception:
+                log.exception("[ERR doc] error reply failed")
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
@@ -1062,7 +1095,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === handle_text ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from state import _get_user_semaphore as _user_semaphore
+    # No `_get_user_semaphore as _user_semaphore`: it was imported here
+    # and never read (AST: zero `Name` uses), left over from when the
+    # slot was taken here rather than inside `call_llama`.
     from state import _check_burst_split, _record_user_message, _user_recent_msg
     log.info(f"[handle_text] ENTRY t={time.monotonic():.3f} user_id={update.effective_user.id} chat_type={update.effective_chat.type} is_forum={getattr(update.effective_chat, 'is_forum', None)} thread_id={update.message.message_thread_id} text_len={len(update.message.text or '')} text_preview={update.message.text[:80]!r}")
     # T34 burst detection (race fix v2, 2026-10-13). Record the
@@ -1225,7 +1260,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await send_reply(update, bot_response)
         except Exception as e:
             import traceback
-            log.info(f"[ERR text] {type(e).__name__}: {e}")
+            log.exception(f"[ERR text] {type(e).__name__}: {e}")
             traceback.print_exc()
             await turn.rollback('aborted')
             await _reply(update, f'❌ Error: {e}')
