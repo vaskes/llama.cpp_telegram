@@ -33,7 +33,7 @@ import signal
 
 import httpx
 
-from config import SHUTDOWN_EVENT, TELEGRAM_API
+from config import TELEGRAM_API
 from logconf import get_logger
 
 log = get_logger(__name__)
@@ -77,11 +77,11 @@ def _spawn_dispatch(upd_dict: dict, *, dispatch_update) -> asyncio.Task:
 async def _install_signal_handlers(shutdown_event: asyncio.Event) -> None:
     """SIGINT/SIGTERM set the shutdown event.
 
-    `SHUTDOWN_EVENT` is module-level because `call_llama` reads it between
-    iterations and gets no context argument from this hand-rolled loop.
-    It is a single object owned by `config`, set here and read from
-    several modules; nobody rebinds the name (see the note in
-    `config.SHUTDOWN_EVENT`).
+    `shutdown_event` is `config.SHUTDOWN_EVENT` -- `main` passes that one
+    object in -- because `call_llama` reads it between iterations and gets
+    no context argument from this hand-rolled loop. It arrives as a
+    parameter and is not imported here, so nothing in this module can
+    rebind or set the name by accident.
 
     The handler used to be a closure inside `main`. It belongs here: the
     signals and the loop they interrupt are the same concern, and a
@@ -101,12 +101,20 @@ async def _install_signal_handlers(shutdown_event: asyncio.Event) -> None:
             # gracefully -- the in-flight httpx call dies mid-stream
             # instead of unwinding through shutdown_event.
             pass
-    # No `global SHUTDOWN_EVENT` here any more. It used to publish the
-    # event into `config` by rebinding *this module's* alias -- which
-    # left every other reader on the stale None. `config.SHUTDOWN_EVENT`
-    # is now the one object, created at import, and this function sets it.
-    SHUTDOWN_EVENT.set()
-
+    # No `global SHUTDOWN_EVENT`, and nothing else here either.
+    #
+    # It used to be `global SHUTDOWN_EVENT; SHUTDOWN_EVENT = shutdown_event`,
+    # which rebound *this module's* alias and left every other reader on
+    # the stale None. Fixing that by putting a bare `SHUTDOWN_EVENT.set()`
+    # at the end of this function was worse: the event was then set the
+    # moment the handlers were installed, before any signal arrived, and
+    # `llm_iteration`'s abort guard -- whose fallback reads exactly this
+    # object -- aborted every tool loop at iteration zero. The bot
+    # answered `[bot: shutdown requested...]` to everything.
+    #
+    # `shutdown_event` IS `config.SHUTDOWN_EVENT`: `main` passes it in.
+    # `_on_signal` above sets it, on a signal, which is the only thing
+    # that should ever set it.
 async def _prepare_runtime(*, register_bot_menu, run_selftest) -> None:
     """Once, before the first poll: register the menu, then self-test.
 

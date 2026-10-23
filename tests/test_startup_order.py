@@ -119,12 +119,18 @@ def test_the_shutdown_event_call_llama_reads_is_the_one_being_set():
     wiring cannot be moved somewhere the runtime test cannot reach.
     """
     fn = _fn("_install_signal_handlers")
-    touches = [n for n in ast.walk(fn)
-               if isinstance(n, ast.Name)
-               and n.id == "SHUTDOWN_EVENT"]
-    assert touches, (
-        "_install_signal_handlers no longer touches SHUTDOWN_EVENT at all; "
-        "the signal sets something nobody reads")
+    # The event arrives as the `shutdown_event` PARAMETER -- `main` passes
+    # `config.SHUTDOWN_EVENT` -- and `_on_signal` sets that parameter.
+    # Nothing here may read the global: a bare `SHUTDOWN_EVENT.set()` at
+    # the end of this function sets it before any signal arrives, which is
+    # wave 6's blocker, because the ToolLoop guard's fallback reads
+    # exactly that object and aborted every loop at iteration zero.
+    assert not any(isinstance(n, ast.Name)
+                   and isinstance(n.ctx, ast.Load)
+                   and n.id == "SHUTDOWN_EVENT"
+                   for n in ast.walk(fn)), (
+        "_install_signal_handlers reads the SHUTDOWN_EVENT global again. "
+        "It should only have the parameter it was handed.")
     assert not any(isinstance(n, ast.Global)
                    and any(x in ("SHUTDOWN_EVENT", "SHUTDOWN")
                            for x in n.names)

@@ -255,48 +255,98 @@ def test_every_call_of_a_keyword_only_callee_passes_its_required_arguments():
         "the caller's own except.")
 
 
-def test_the_shutdown_event_is_one_object_every_reader_can_see():
-    """C2. A rebind of a `from X import Y` alias writes one module.
+def test_installing_the_handlers_does_not_set_the_event():
+    """The one wave 6 was about.
 
-    `_install_signal_handlers` did `global SHUTDOWN_EVENT` in
-    `dispatch_polling`, rebinding that module's alias of a name imported
-    from `config`. `llm_iteration` holds its own alias, still None, and
-    that is the one the ToolLoop abort guard reads -- so SIGTERM never
-    reached the in-flight inference, which is the P1 this was supposed
-    to fix.
+    Fixing C2 by replacing `global SHUTDOWN_EVENT` with a bare
+    `SHUTDOWN_EVENT.set()` at the end of `_install_signal_handlers` set
+    the event the moment the handlers were installed -- before any signal
+    arrived. `llm_iteration`'s abort guard falls back to exactly that
+    object, so in polling mode every tool loop aborted at iteration zero
+    and the bot answered `[bot: shutdown requested...]` to everything.
+
+    The test that should have caught it asserted the opposite, and named
+    the wrong state `precondition`:
+
+        assert ev.is_set(), "precondition: the signal handler set the event"
+
+    Installing handlers and receiving a signal are different events.
+    Only the second one may set the event.
     """
-    import config
+    import config as cfg
+    import dispatch_polling
+
+    async def go():
+        cfg.SHUTDOWN_EVENT.clear()
+        before = cfg.SHUTDOWN_EVENT.is_set()
+        await dispatch_polling._install_signal_handlers(cfg.SHUTDOWN_EVENT)
+        return before, cfg.SHUTDOWN_EVENT.is_set()
+
+    before, after = asyncio.new_event_loop().run_until_complete(go())
+    try:
+        assert not before, "precondition: the event starts clear"
+        assert not after, (
+            "SHUTDOWN_EVENT is set merely by installing the signal "
+            "handlers, before any signal was delivered. The ToolLoop "
+            "abort guard reads this object as its fallback, so the whole "
+            "polling transport answers "
+            "'[bot: shutdown requested, aborting tool loop]' instead of "
+            "replying. Setting it belongs in `_on_signal`.")
+    finally:
+        cfg.SHUTDOWN_EVENT.clear()
+
+
+def test_a_real_signal_sets_the_event_every_reader_can_see():
+    """C2, in the direction that was missing: a delivered signal.
+
+    `_install_signal_handlers` used to do `global SHUTDOWN_EVENT`, which
+    rebound `dispatch_polling`'s alias of a name imported from `config`
+    and left every other holder on the stale None. `llm_iteration` holds
+    its own alias and that is the one the abort guard reads.
+
+    This sends SIGTERM to this process and waits for the loop to deliver
+    it. The previous version of this test never sent a signal at all: it
+    read the event *after* installing the handlers, which is also set on
+    the broken tree, so it could not tell the two bugs apart.
+    """
+    import os
+    import signal
+
+    import config as cfg
     import dispatch_polling
     import llm_iteration
 
-    import config as cfg
-
     async def go():
-        ev = cfg.SHUTDOWN_EVENT
-        ev.clear()
-        await dispatch_polling._install_signal_handlers(ev)
-        return ev
+        cfg.SHUTDOWN_EVENT.clear()
+        await dispatch_polling._install_signal_handlers(cfg.SHUTDOWN_EVENT)
+        os.kill(os.getpid(), signal.SIGTERM)
+        for _ in range(100):
+            await asyncio.sleep(0.005)
+            if cfg.SHUTDOWN_EVENT.is_set():
+                break
+        return cfg.SHUTDOWN_EVENT
 
     ev = asyncio.new_event_loop().run_until_complete(go())
     try:
-        assert ev.is_set(), "precondition: the signal handler set the event"
+        assert ev.is_set(), (
+            "SIGTERM was delivered to a handler that did not set the "
+            "event. `docker stop` then leaves the in-flight inference to "
+            "be SIGKILLed ten seconds later.")
         readers = {
-            "config": getattr(config, "SHUTDOWN_EVENT", "<missing>"),
+            "config": getattr(cfg, "SHUTDOWN_EVENT", "<missing>"),
             "llm_iteration": getattr(llm_iteration, "SHUTDOWN_EVENT",
                                      "<missing>"),
-            "dispatch_polling": getattr(dispatch_polling, "SHUTDOWN_EVENT",
-                                        "<missing>"),
         }
         stale = [n for n, v in readers.items() if v is not ev]
         assert not stale, (
-            f"{stale} do not see the shutdown event that was set "
+            f"{stale} do not see the event that SIGTERM set "
             f"(config={readers['config']!r}, "
             f"llm_iteration={readers['llm_iteration']!r}). Rebinding a "
             "`from X import Y` alias writes one module's binding; the "
-            "abort guard in llm_iteration reads its own, which is why the "
-            "guard never fires.")
+            "abort guard in llm_iteration reads its own.")
     finally:
-        ev.clear()
+        cfg.SHUTDOWN_EVENT.clear()
+
 
 def test_concurrent_updates_build_exactly_one_application(monkeypatch):
     """H1: the lazy init was a check-then-act across an `await`.
@@ -332,10 +382,6 @@ def test_concurrent_updates_build_exactly_one_application(monkeypatch):
 
     async def go():
         dispatch_polling.set_dispatcher(None)
-        # `return_exceptions=True`: this test is about how many
-        # Applications get built, not about what happens to the fake one
-        # afterwards. A raise past the registry read must not hide the
-        # count.
         await asyncio.gather(*[
             dispatch._dispatch_update({"update_id": i}) for i in range(10)],
             return_exceptions=True)
