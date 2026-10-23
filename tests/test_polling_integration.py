@@ -196,47 +196,63 @@ def test_the_polling_loop_subscribes_to_the_types_it_handles(monkeypatch):
             f"{needed} is missing from allowed_updates: {subscription}")
 
 
-def test_every_call_of_spawn_passes_the_dispatch_callable():
+def test_every_call_of_a_keyword_only_callee_passes_its_required_arguments():
     """Structural half, so a future edit cannot reintroduce C1.
 
-    A keyword-only parameter with no default is a required contract.
-    Every call site of such a callee in this module must pass it. This
-    is the check the unit tests could not give: they call the function
-    directly, so they are green whether or not the loop can call it.
+    A keyword-only parameter with no default is a required contract. Wave
+    5 found `_spawn_dispatch(upd_dict)` missing its `dispatch_update`, and
+    before that, `register_bot_menu=None` where the callable was meant to
+    go -- which survives the whole suite because `main()` is not called
+    end-to-end and `test_startup_order` checks the order of names, not
+    the arguments.
+
+    Scoped to `dispatch_polling.py` first, and that scope was itself the
+    bug: the second mutation lives in `dispatch.py`. The rule is
+    package-wide, so this walks every module. Signature information is
+    built from the whole package's AST, because a callee's contract is
+    not knowable from the caller's file alone.
     """
-    tree = ast.parse(POLLING.read_text(encoding="utf-8"))
+    signatures = {}
+    for path in sorted(BOT.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            required = [a.arg for a, d
+                        in zip(node.args.kwonlyargs, node.args.kw_defaults)
+                        if d is None]
+            if required:
+                signatures.setdefault(node.name, set()).update(required)
 
-    required = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # keyword-only defaults live in `kw_defaults`, aligned
-            # with `kwonlyargs` -- `ast.arg` itself has no `.default`.
-            kwonly = [a.arg for a, d
-                      in zip(node.args.kwonlyargs, node.args.kw_defaults)
-                      if d is None]
-            if kwonly:
-                required[node.name] = kwonly
-
-    assert "_spawn_dispatch" in required, (
+    assert "_spawn_dispatch" in signatures, (
         "_spawn_dispatch lost its required dispatch_update parameter; if "
         "that was deliberate, this test is the thing to update")
 
     offenders = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        name = getattr(node.func, "id", None)
-        if name not in required:
-            continue
-        passed = {kw.arg for kw in node.keywords if kw.arg}
-        for need in required[name]:
-            if need not in passed:
-                offenders.append(f"{name}() at line {node.lineno} omits "
-                                 f"{need}=")
+    for path in sorted(BOT.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None)
+            if name not in signatures:
+                continue
+            if any(kw.arg is None for kw in node.keywords):
+                # `**kwargs` can carry the required name; a static check
+                # cannot prove otherwise, and the two compat shims in
+                # this package are exactly that shape.
+                continue
+            passed = {kw.arg for kw in node.keywords if kw.arg}
+            missing = signatures[name] - passed
+            if missing:
+                offenders.append(
+                    f"{path.name}:{node.lineno} {name}() omits "
+                    f"{sorted(missing)}")
+
     assert not offenders, (
         f"call sites omit a required keyword-only argument: {offenders}. "
-        "Each is a runtime TypeError on the update path, swallowed by the "
-        "loop's own except.")
+        "Each is a runtime TypeError at the point of use, swallowed by "
+        "the caller's own except.")
 
 
 def test_the_shutdown_event_is_one_object_every_reader_can_see():
@@ -343,3 +359,51 @@ def test_concurrent_updates_build_exactly_one_application(monkeypatch):
             "on that function says sequential on purpose.")
     finally:
         dispatch_polling.set_dispatcher(None)
+
+
+def test_startup_wiring_passes_the_callables_and_not_placeholders():
+    """The coverage hole wave 4 reported, closed.
+
+    Three mutations survive the whole suite when these three arguments are
+    replaced by `None`:
+
+        register_bot_menu=None -> TypeError inside _prepare_runtime
+        dispatch_update=None   -> TypeError inside _spawn_dispatch
+        run_selftest=None      -> TypeError on the boot self-test
+
+    None of them raise at the call site, because passing None IS passing
+    the argument -- a checker that asks "was the keyword supplied" is
+    satisfied by all three. The defect is that the *value* is a
+    placeholder where a callable belongs, and the bot dies on boot
+    instead of answering.
+
+    `main()` is not called end-to-end by anything, and `test_startup_order`
+    checks the order of call names rather than their arguments, which is
+    why `register_bot_menu=None` has been live this long.
+
+    Mutation: any of the three to None. All three are red.
+    """
+    dispatch = ast.parse((BOT / "dispatch.py").read_text(encoding="utf-8"))
+    main_fn = next(n for n in ast.walk(dispatch)
+                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and n.name == "main")
+    wiring = {}
+    for node in ast.walk(main_fn):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) \
+                == "_poll_loop":
+            for kw in node.keywords:
+                if kw.arg:
+                    wiring[kw.arg] = ast.unparse(kw.value)
+
+    assert wiring, "main no longer calls _poll_loop; this test is stale"
+
+    expected = {"register_bot_menu": "_register_bot_menu",
+                "dispatch_update": "_dispatch_update",
+                "run_selftest": "_selftest"}
+    wrong = {k: (wiring.get(k), v) for k, v in expected.items()
+             if wiring.get(k) != v}
+    assert not wrong, (
+        f"main passes the wrong value for {sorted(wrong)}: "
+        f"{ {k: got for k, (got, _) in wrong.items()} }, expected the "
+        "callables themselves. A placeholder here raises TypeError at "
+        "boot, inside a hand-rolled startup path that no test calls.")

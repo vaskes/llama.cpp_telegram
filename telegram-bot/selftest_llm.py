@@ -238,7 +238,7 @@ async def check_call_llama_abort() -> bool:
                 thinking_msg=None, use_stream=False,
                 rating_active=False, abort_event=ev,
                 bot=type('B', (), {'id': 1})(), chat_id=-999999,
-                current_message_id=0,
+                current_message_id=0, chat_type='private',
             )
         except Exception as e:
             # Some exceptions are OK (e.g. abort raises during the
