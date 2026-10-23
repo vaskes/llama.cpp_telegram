@@ -112,7 +112,7 @@ prevent, just running the other way: a reader told it is cosmetic stops
 reading the body, and a reader who takes "sanitizer" at face value looks
 for the real filter elsewhere and is free to weaken this one. So it went
 to `prompt_guard.py`, and the docstring says why in the first paragraph.
-`handlers.py` 1357 → 1278.
+`handlers.py` 1357 → 1283.
 
 **6 mutations, 6 caught**, and the point of the tripwire is not the
 coverage -- it is that nobody may quietly reduce it. Removing the
@@ -158,8 +158,8 @@ design, and do not read the green suite as evidence about it.
 
 
 
-**1672 → 405 lines**, six blocks. (1278 is `handlers.py`, which block C
-shrank from 1357.) Routing is pinned in `test_dispatch_routing.py`, the
+**1672 → 408 lines**, six blocks. (`handlers.py` is 1283, which block C
+shrank from 1357; wave 4's comment fix moved it by five more.) Routing is pinned in `test_dispatch_routing.py`, the
 startup sequence in `test_startup_order.py`, the injection filter in
 `test_prompt_guard.py`, and every module is checked for names it reads but
 does not bind.
@@ -168,7 +168,7 @@ does not bind.
 whole approach: seven startup mutations that survived a run because nothing
 in the suite had ever entered `main`.
 
-### The ticket's target was ≤ 400 lines. It is 405. That is done.
+### The ticket's target was ≤ 400 lines. It is 408. That is done.
 
 The ticket said **1612 → ≤ 400**. The last three blocks (D, E, F) got there.
 
@@ -177,7 +177,7 @@ surface or bookkeeping and stayed when it picks a handler:
 
 | module | lines | what |
 |---|---|---|
-| `dispatch_polling.py` | 307 | signals, runtime prep, the getUpdates loop, the task factory, and the Application registry |
+| `dispatch_polling.py` | 306 | signals, runtime prep, the getUpdates loop, the task factory, and the Application registry |
 | `dispatch_webhook.py` | 327 | Application assembly, handler registration, the command menu, chat-member bookkeeping |
 | `dispatch_edit.py` | 108 | the edited-message rewrite, in one place |
 
@@ -257,5 +257,5 @@ declares a `global` its module does not have.
 **Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
 
-<!-- current: dispatch.py=405, handlers.py=1278 -->
-<!-- current: dispatch_polling.py=307, dispatch_webhook.py=327, dispatch_edit.py=108 -->
+<!-- current: dispatch.py=408, handlers.py=1283 -->
+<!-- current: dispatch_polling.py=306, dispatch_webhook.py=327, dispatch_edit.py=108 -->

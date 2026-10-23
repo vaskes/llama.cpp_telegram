@@ -62,10 +62,15 @@ from llm_markup import _stop_button_markup
 import storage
 from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event, _register_bot_reply
 from rating import _is_rating_active, _apply_rating_and_persist
-# Per-function late imports from dispatch (see below). The state
-# lives in state.py to break the circular dep between handlers.py
-# and dispatch.py. Each handler does `from dispatch import X`
-# inside the function, importing only what it actually uses.
+# `handlers` does not import `dispatch`, at module level or inside a
+# function. Shared state lives in `state.py` precisely so that this stays
+# true, and `test_handlers_has_no_late_imports_of_dispatch` holds it there.
+#
+# The previous version of this comment described per-function late imports
+# "see below". There were none -- the only occurrence of the phrase it
+# quoted was the comment itself, which is why reading it kept being enough
+# to make it look true. Do not add a route back to `dispatch` without a
+# reason that survives the tripwire.
 import persistence
 import prompts
 import rating
