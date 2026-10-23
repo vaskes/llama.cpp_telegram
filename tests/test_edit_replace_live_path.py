@@ -143,14 +143,25 @@ def test_the_dispatcher_calls_the_rewrite_before_it_routes():
             owner = node.value
             if isinstance(owner, ast.Name) and owner.id == "Update":
                 order.append(("route", node.lineno))
-    assert order, "_dispatch_update no longer calls _apply_edited_message"
-    assert order[0][0] == "rewrite", (
+    # Presence of each call, then order. Checking only `order[0]` cannot
+    # tell "rewrite happens late" from "rewrite does not happen at all",
+    # and it reported the second as the first: deleting the rewrite call
+    # produced "routes before rewriting: [('route', 300)]", which sends
+    # the next reader looking for an ordering bug that is not there.
+    rewrites = [ln for kind, ln in order if kind == "rewrite"]
+    routes = [ln for kind, ln in order if kind == "route"]
+    assert rewrites, (
+        "_dispatch_update does not call _apply_edited_message at all. The "
+        f"calls it does have are {order}. This is the first death of this "
+        "feature: the function is perfect and called from nowhere.")
+    assert routes, (
+        f"the rewrite is in place ({rewrites}) but no dispatcher step is "
+        "visible in the same function; this assertion no longer knows "
+        "what it is comparing against")
+    assert min(rewrites) < min(routes), (
         f"_dispatch_update routes before rewriting: {order}. The rewrite "
         "has to happen first, or the dispatcher answers the original text "
         "the user already replaced.")
-    assert len(order) >= 2, (
-        f"only {order} found; the rewrite is in place but the dispatcher "
-        "step is not visible from the same function")
 
 
 def test_both_transports_would_deliver_an_edited_message():
@@ -238,3 +249,31 @@ def test_the_health_endpoint_answers_even_while_traffic_is_refused(monkeypatch):
             "re-examined rather than kept")
     finally:
         config.WEBHOOK_SECRET_TOKEN = ""
+
+
+def test_the_health_endpoint_is_actually_registered():
+    """M13. `_healthz` answering is not the endpoint existing.
+
+    The test above calls `webhook._healthz` directly, which means it
+    proves the handler works and says nothing about whether anything
+    routes to it. Deleting `app.router.add_get("/healthz", _healthz)`
+    from `make_app()` leaves the whole suite green -- verified by
+    mutation, 25 passed.
+
+    That matters because of what N7 is for. The whole reason the server
+    now refuses to start without a secret is that a health check which
+    cannot fail on the one misconfiguration that stops the bot working
+    is worse than none: green, while every message goes nowhere. Keep
+    the handler AND the registration, or the reasoning behind the
+    startup check stops applying to the thing an operator watches.
+    """
+    import webhook
+
+    app = webhook.make_app()
+    paths = {getattr(r.resource, "canonical", None)
+             for r in app.router.routes()}
+    assert "/healthz" in paths, (
+        f"/healthz is not registered; make_app() serves {sorted(p for p in paths if p)}. "
+        "webhook.run() refuses to start without a secret on the grounds "
+        "that a health endpoint which cannot fail is worse than none -- "
+        "that reasoning no longer describes the deployed service.")
