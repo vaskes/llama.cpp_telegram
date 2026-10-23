@@ -65,7 +65,11 @@ from chat_utils import (
     _rate_limit_send, _send_window, _SUBTALK_NAME_RE, _TOPIC_NAME_RE,
 )
 import state
-from state import _abort_events, _bot_replies, _global_llm_sem, _user_semaphores, _get_user_semaphore
+from state import (
+    _GLOBAL_LLM_SEM_LIMIT, _PER_USER_SEMAPHORE_LIMIT,
+    _abort_events, _bot_replies, _global_llm_sem,
+    _get_user_semaphore, _user_semaphores,
+)
 import handlers
 
 from logconf import get_logger
@@ -83,7 +87,6 @@ from config import (
     LLAMA_URL, LOCKDOWN, MAX_PHOTO_BYTES, MAX_DOC_BYTES, MAX_VOICE_BYTES,
     MAX_VIDEO_NOTE_BYTES, MODEL, SHUTDOWN_EVENT, TELEGRAM_API,
     WHISPER_URL, _TOOLS_CACHE, LLAMABOT_SELFTEST,
-    _GLOBAL_LLM_SEM_LIMIT, _PER_USER_SEMAPHORE_LIMIT,
 )
 from prompts import (
     BLOAT_EMOJI, GROUP_CONTEXT, RATING_EMOJI, RATING_MODE,

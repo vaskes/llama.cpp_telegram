@@ -169,12 +169,28 @@ def make_app() -> web.Application:
 async def run() -> None:
     """Start the aiohttp server. Returns when the server stops.
 
+    Refuses to start without `WEBHOOK_SECRET_TOKEN`. `_check_secret` is
+    already fail-closed -- an empty expected token matches nothing -- so
+    a missing secret does not open the endpoint; it makes the bot refuse
+    100% of traffic while `/healthz` keeps answering 200. A health check
+    that cannot fail on the one misconfiguration that stops the bot from
+    working is worse than no health check: it tells the operator green
+    while every message goes nowhere. Fail here instead, loudly, before
+    the socket is bound.
+
     v0.10.2 (Qwen wave-3): add signal handlers for graceful shutdown
     in webhook mode. Without this, `docker stop` (SIGTERM) kills the
     aiohttp server abruptly and in-flight requests are dropped
     mid-stream. With the shutdown_event, SIGTERM triggers
     runner.cleanup() so active dispatches can finish.
     """
+    if not (config.WEBHOOK_SECRET_TOKEN or "").strip():
+        raise RuntimeError(
+            "WEBHOOK_SECRET_TOKEN is empty or unset; refusing to start. "
+            "Set it in the environment -- with no secret, _check_secret "
+            "rejects every request, so the bot would appear healthy and "
+            "answer nothing.")
+
     app = make_app()
     runner = web.AppRunner(app)
     await runner.setup()
