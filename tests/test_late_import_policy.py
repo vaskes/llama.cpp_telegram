@@ -303,7 +303,8 @@ def test_no_cycle_whose_every_edge_is_a_late_import():
     found = {frozenset(cycle) for cycle in late_only}
     new_ones = found - KNOWN_LATE_ONLY_CYCLES
     gone = KNOWN_LATE_ONLY_CYCLES - found
-    show = lambda s_: "{" + ", ".join(sorted(s_)) + "}"
+    def show(nodes):
+        return "{" + ", ".join(sorted(nodes)) + "}"
     assert not new_ones, (
         "new late-import-only cycle(s): "
         f"{sorted(show(c) for c in new_ones)}. Every cycle check in this "
