@@ -25,7 +25,6 @@ _USER_SEMAPHORES_MAXSIZE = 500
 _BOT_REPLIES_MAXSIZE = 500
 
 _abort_events: "OrderedDict[tuple[int, int], asyncio.Event]" = OrderedDict()
-_bot_replies: "dict[tuple[int, int], int]" = {}
 _global_llm_sem: "asyncio.Semaphore | None" = None
 
 
@@ -152,7 +151,6 @@ def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.BoundedSemaphore:
 # processes it normally. This is a known limitation; users
 # who hit the cap should send via Bot API directly.
 
-import asyncio
 _BURST_WINDOW_SEC = 2.0
 _BURST_MIN_FIRST_BYTES = 3000
 _user_recent_msg: "dict[tuple[int, int], tuple[float, int, asyncio.Event | None]]" = {}
