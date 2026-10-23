@@ -23,7 +23,6 @@ the property. Each step is a real failure with a real symptom:
   is not.
 """
 import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -70,7 +69,6 @@ def test_the_startup_sequence_runs_signals_then_prepare_then_poll():
         "the poll loop must install signal handlers before it prepares the "
         f"runtime, and both before it polls; got {names}")
 
-    src = POLLING.read_text(encoding="utf-8")
     # and the poll loop is what runs them, not main
     main = _fn("main", DISPATCH)
     main_calls = {name for name, _ in
@@ -104,18 +102,38 @@ def test_the_signal_handler_actually_sets_the_event():
         "poll loop runs until docker kills the container outright")
 
 
-def test_the_shutdown_event_is_published_for_call_llama():
-    """It is a module global read between iterations, with no context arg."""
+def test_the_shutdown_event_call_llama_reads_is_the_one_being_set():
+    """`call_llama` reads a module global between iterations, no context arg.
+
+    This test used to assert that `_install_signal_handlers` *assigns*
+    `SHUTDOWN_EVENT`, and it passed for years -- on code where the guard
+    could never fire. `global SHUTDOWN_EVENT` inside `dispatch_polling`
+    rebinds that module's binding of a name imported from `config`;
+    `llm_iteration` holds its own binding, still `None`, and that is the
+    one the abort guard reads. Run it: SIGTERM, `event.is_set()` True,
+    `llm_iteration.SHUTDOWN_EVENT` None.
+
+    So the assertion is the property, not the shape: after the handler
+    runs, every reader sees a set event. `test_polling_integration.py`
+    runs it for real; this one keeps the cheap structural guard so the
+    wiring cannot be moved somewhere the runtime test cannot reach.
+    """
     fn = _fn("_install_signal_handlers")
-    assigns = [
-        n for n in ast.walk(fn)
-        if isinstance(n, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "SHUTDOWN_EVENT"
-                for t in n.targets)
-    ]
-    assert assigns, (
-        "SHUTDOWN_EVENT is never assigned here; call_llama reads it between "
-        "iterations to bail out and would keep seeing the old value")
+    touches = [n for n in ast.walk(fn)
+               if isinstance(n, ast.Name)
+               and n.id == "SHUTDOWN_EVENT"]
+    assert touches, (
+        "_install_signal_handlers no longer touches SHUTDOWN_EVENT at all; "
+        "the signal sets something nobody reads")
+    assert not any(isinstance(n, ast.Global)
+                   and any(x in ("SHUTDOWN_EVENT", "SHUTDOWN")
+                           for x in n.names)
+                   for n in ast.walk(fn)), (
+        "reintroduced `global SHUTDOWN_EVENT`. It rebinds this module's "
+        "alias of a `from config import` name and leaves every other "
+        "reader -- including llm_iteration, where the abort guard lives -- "
+        "on the stale object. `config.SHUTDOWN_EVENT` is the single object "
+        "and nobody rebinds it.")
 
 
 def test_both_signals_are_handled():

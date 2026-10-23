@@ -136,7 +136,23 @@ DISABLED_TOOLS = {
 }
 
 # === Async primitives (singletons, populated on bot startup) ===
-SHUTDOWN_EVENT: Optional[asyncio.Event] = None
+# ONE event object for the whole process. It is created here, at import,
+# and never reassigned.
+#
+# It used to be `Optional[asyncio.Event] = None`, and
+# `dispatch_polling._install_signal_handlers` did `global SHUTDOWN_EVENT`
+# to publish the real one. That rebinds only *that module's* binding of a
+# `from config import SHUTDOWN_EVENT` name -- every other holder keeps
+# None. `llm_iteration`, which is where the ToolLoop abort guard reads
+# it, therefore never saw the shutdown at all: SIGTERM was dead for the
+# in-flight inference, which is the exact failure this event exists to
+# prevent. This is the "unwritable globals" class from TECH-DEBT #1, in
+# its purest form: every name is bound, and the reader still sees None.
+#
+# A module-level `asyncio.Event()` is safe on 3.11 (`python:3.11-slim`):
+# it does not bind a loop in `__init__`, the loop is resolved lazily on
+# first await. So it can exist before `asyncio.run()`.
+SHUTDOWN_EVENT: asyncio.Event = asyncio.Event()
 
 # === Tool cache (lazy-init) ===
 _TOOLS_CACHE = None

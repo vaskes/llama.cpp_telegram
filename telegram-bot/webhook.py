@@ -20,6 +20,7 @@ import asyncio
 import hmac
 import json
 import logging
+import signal
 
 import aiohttp
 from aiohttp import web
@@ -174,7 +175,6 @@ async def run() -> None:
     mid-stream. With the shutdown_event, SIGTERM triggers
     runner.cleanup() so active dispatches can finish.
     """
-    import signal
     app = make_app()
     runner = web.AppRunner(app)
     await runner.setup()
@@ -186,11 +186,14 @@ async def run() -> None:
         config.WEBHOOK_HOST, config.WEBHOOK_PORT, config.WEBHOOK_PATH,
         _MAX_BODY_BYTES // 1024,
     )
-    # v0.10.2: shutdown event triggered by SIGTERM/SIGINT
-    shutdown_event = asyncio.Event()
+    # SIGTERM/SIGINT set `config.SHUTDOWN_EVENT` -- the SAME object the
+    # ToolLoop abort guard reads in `llm_iteration`. This used to build a
+    # private `asyncio.Event()` here, so in webhook mode (i.e.
+    # production) the loop exited gracefully while the in-flight
+    # inference never saw the shutdown at all.
     def _on_signal(signame):
         log.info("[webhook] received %s, initiating shutdown", signame)
-        shutdown_event.set()
+        config.SHUTDOWN_EVENT.set()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -198,7 +201,7 @@ async def run() -> None:
         except (NotImplementedError, RuntimeError):
             pass  # Windows or non-main thread, fall through
     try:
-        await shutdown_event.wait()
+        await config.SHUTDOWN_EVENT.wait()
     finally:
         # Give in-flight tasks a chance to finish, then stop the runner
         log.info("[webhook] stopping runner, %d tasks still pending", len(_pending_dispatch_tasks))
