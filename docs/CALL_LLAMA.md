@@ -652,6 +652,17 @@ budget. When the two were equal (65536 vs 65536 on a text turn), the
 thinking consumed the whole budget and the user got no text at all —
 observed 2026-10-23, twice.
 
+**The other wall is `--ctx-size`, and the bot stays far from it.** The dev
+box runs llama-server with `--ctx-size 262144` and one slot, so the
+budget for the whole turn is 262144 tokens: prompt + thinking + answer.
+Measured 2026-10-23: a request with a 140016-token prompt and
+`max_tokens=131072` (271K together) is *accepted* -- the engine does not
+reject it and does not clamp the request; the generation is what runs
+into the wall. The bot's prompt is 20 messages plus at most one 16 KB
+document, so it is nowhere near that; but if you raise
+`MAX_TOKENS_DEFAULT` further, check prompt + 65536 + answer against
+262144.
+
 There is deliberately **no bot-side reasoning-ratio knob**: it was
 declared, validated, documented and enforced nowhere (T70.6), so it
 was removed instead of left looking like a live guard. `tests/test_limits.py`
