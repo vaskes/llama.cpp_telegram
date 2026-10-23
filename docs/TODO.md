@@ -61,11 +61,13 @@ below are all parts of it, and the list is growing rather than shrinking:
 | T68b | the engine keeps a KV cache for context that already fell out of the window, and the reset command is unreachable |
 | T66.1 | the guaranteed minimum of the last N messages when the window is empty |
 | Live edit-replace | the one user-visible scenario with no automated coverage |
-| T70.6 | the reasoning limit is declared and nobody reads it |
 
 Closing the context-memory tickets closed *a* set of tasks. It did not
-close this. Treat the five rows above as one blocker with five faces,
+close this. Treat the four rows above as one blocker with four faces,
 and do not read a green board here as "the context problem is done".
+(T70.6 left this table on 2026-10-23: the operator's decision was that
+the thinking cap belongs to llama-server, so the bot-side knob was
+deleted rather than implemented -- see that entry.)
 
 
 ### T70.5 — what if the summary itself does not fit in the context window?
@@ -183,6 +185,52 @@ same code is **not** live coverage and is not labelled as such anywhere.
 the detail doc for the scenario: `docs/tech-debt/10-dispatch-1624-lines-high-open.md`.
 
 ---
+
+### RETHINK — the wording of `--reasoning-budget-message`
+
+**Status:** open, **assigned to the operator** (vaskes), 2026-10-23.
+**Where:** the engine unit on the host,
+`/etc/systemd/system/llama-qwen5090-256k.service`. The repo's
+`systemd/` holds only the compose units, so this file is host-only and
+is not versioned here.
+
+Added to the unit, with a `RETHINK` marker in the comment above the flag:
+
+    --reasoning-budget-message "Reasoning budget exhausted. Stop thinking and give the user the final answer now."
+
+**What it does, measured** on the build this box runs (llama.cpp
+0.4.1-dev, commit b49650a). The reasoning-budget sampler counts the
+tokens inside the thinking block; when the budget runs out it forces a
+token sequence, and the sequence is the message followed by the first
+end-of-thinking tag (`tools/server/server-schema.cpp`: the message is
+*prepended* to the tag, so the tag must NOT be written into the message
+yourself). Measured here with a per-request budget of 64 tokens:
+
+| | what the model did after the cut |
+|---|---|
+| without the message | continued the interrupted sentence (`17 × 23 = 17 × (20 + 3`) and only then answered |
+| with the message | wrote the final answer immediately (`**17 × 23 = 391**` plus the full calculation) |
+
+Both the budget and the message can be set per request
+(`thinking_budget_tokens`, `reasoning_budget_message` in the request
+body), and the per-request budget overrides the CLI one -- so the
+behaviour was verified **without restarting the engine**.
+
+**Why it is flagged RETHINK and not "done":** the operator asked for the
+flag to be added and the call handed back to them, to be revisited after
+the current test run. Two things are still open:
+
+1. the wording is English, and it is forced *inside* the model's own
+   reasoning -- it is an instruction to the model, not a user-visible
+   message, and it will show up in the reasoning trace if the model
+   echoes it;
+2. it only fires when the 64K thinking budget is actually exhausted. The
+   2026-10-23 Newton's-cradle run reached ~57-58K reasoning tokens and
+   then moved to the tool loop on its own, so the cut never fired there.
+
+**What it needs:** the operator's call after the test run -- keep the
+wording, change it, or drop the flag again.
+
 
 ## Open — code, not blocked on anyone
 
