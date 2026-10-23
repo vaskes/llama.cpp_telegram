@@ -16,12 +16,30 @@ PTB 21.0:
   * the fix is a regression. Moving `set_dispatcher` above the await
     makes `test_a_failed_initialize_publishes_nothing` red: the registry
     then holds an Application whose `process_update` raises
-    "This Application is not initialized!", and every later update reads
-    that same broken object. The proposed rationale -- PTB 21's
-    `initialize()` is idempotent, so a retry finishes the job -- only
-    holds when the first call set `_initialized` before raising; PTB
-    returns early on that flag, so the retry silently accepts a
-    half-built app instead of retrying.
+    "This Application is not initialized!".
+
+An earlier draft of this note explained the harm as "PTB returns early on
+`_initialized`, so a retry silently accepts a half-built app". That was
+written without reading PTB and it is wrong. In 21.0 the body is:
+
+    16| if self._initialized:
+    17|     _LOGGER.debug("This Application is already initialized.")
+    18|     return
+    20| await self.bot.initialize()
+    21| await self._update_processor.initialize()
+    23| if self.updater: ... self._initialized = True; return
+       ... await self._initialize_persistence() ... self._initialized = True
+
+The flag is set last, or in a branch that returns immediately after. A
+raise therefore leaves it False and a retry re-runs from the top --
+a real retry, not a half-built app.
+
+The actual harm is simpler and worse, and it does not need PTB's
+internals at all: publishing early means the NEXT update sees a
+non-None registry, skips the build, and hands that uninitialized
+object to `process_update`, which raises. Nothing ever rebuilds it,
+because the build is behind the `if app is None` guard. The retry stops
+being a retry.
 
 Publishing after success is the discipline. Keep the order; keep these
 two tests, which is what makes the order a decision rather than an
