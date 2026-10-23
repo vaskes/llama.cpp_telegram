@@ -28,7 +28,6 @@ BOT = Path(__file__).resolve().parent.parent / "telegram-bot"
 if str(BOT) not in sys.path:
     sys.path.insert(0, str(BOT))
 
-import dispatch  # noqa: E402
 import dispatch_edit  # noqa: E402
 import dispatch_polling  # noqa: E402
 import state  # noqa: E402
