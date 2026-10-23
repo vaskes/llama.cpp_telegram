@@ -195,10 +195,13 @@ def test_the_global_matrix_has_a_declared_size_and_polarity_split():
     matrix = ns.get("_GLOBAL_MATRIX")
     assert matrix, "_GLOBAL_MATRIX is gone or renamed"
     flags = [bool(row[-1]) for row in matrix]
-    assert len(matrix) >= 7, (
-        f"_GLOBAL_MATRIX has {len(matrix)} cases; the commit that "
-        "introduced it described eight. Either a case was lost or the "
-        "description was wrong, and nothing here can tell you which.")
+    from test_module_imports_resolve import EXPECTED_MATRIX_SIZE
+    assert len(matrix) == EXPECTED_MATRIX_SIZE, (
+        f"_GLOBAL_MATRIX has {len(matrix)} cases, expected "
+        f"{EXPECTED_MATRIX_SIZE}. This used to be `>= 7`, which could not "
+        "distinguish a lost case from an unchanged one -- and the commit "
+        "that introduced the matrix described eight while shipping seven. "
+        "If you added a case, raise EXPECTED_MATRIX_SIZE with it.")
     # A matrix of only positive cases is indistinguishable from a broken
     # checker -- every input red, no matter what the code is.
     assert flags.count(False) >= 3, (

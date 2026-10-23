@@ -287,7 +287,37 @@ _GLOBAL_MATRIX = [
      "        nonlocal v\n"
      "        return v\n"
      "    return inner\n", False),
+    # `import a.b` binds `a`. This was the one false positive the old
+    # checker produced, and "we removed the false positive" is exactly
+    # the kind of edit that also removes the real detection, so the
+    # quiet case is pinned here rather than left to memory.
+    ("import x.y binds x, not x.y",
+     "import urllib.request\n"
+     "def p():\n"
+     "    return urllib.request.urlopen\n", False),
+    # Order independence. A module-level binding that appears AFTER the
+    # function that reads it is still a binding; a checker that walks
+    # top-to-bottom and stops early would flag this one, and "fixing"
+    # that would be a regression dressed as a cleanup.
+    ("module-level binding appears after the reader",
+     "def r():\n"
+     "    return _later\n"
+     "_later = 1\n", False),
+    ("global + module-level binding after the function",
+     "def s(a):\n"
+     "    global _after\n"
+     "    _after = a\n"
+     "def g():\n"
+     "    return _after\n"
+     "_after = None\n", False),
 ]
+
+#: Exact, not `>=`. The commit that introduced this matrix described eight
+#: cases and shipped seven; nothing in the suite could tell the difference,
+#: so the count stayed a floor and the description stayed wrong. Pinning it
+#: makes a lost case loud, which is the only way "was a case lost or was
+#: the description wrong" stops resurfacing at every review.
+EXPECTED_MATRIX_SIZE = 10
 
 
 @pytest.mark.parametrize("name,source,must_flag", _GLOBAL_MATRIX,

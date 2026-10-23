@@ -439,20 +439,60 @@ def test_startup_wiring_passes_the_callables_and_not_placeholders():
                 == "_poll_loop":
             for kw in node.keywords:
                 if kw.arg:
-                    wiring[kw.arg] = ast.unparse(kw.value)
+                    wiring[kw.arg] = kw.value
 
     assert wiring, "main no longer calls _poll_loop; this test is stale"
 
-    expected = {"register_bot_menu": "_register_bot_menu",
-                "dispatch_update": "_dispatch_update",
-                "run_selftest": "_selftest"}
-    wrong = {k: (wiring.get(k), v) for k, v in expected.items()
-             if wiring.get(k) != v}
+    # What each keyword is bound to, as an AST node rather than as text.
+    # Comparing `ast.unparse(...)` against "_register_bot_menu" pins a
+    # spelling: rename the helper and this test goes red with "main passes
+    # the wrong value", which is a misleading message for a rename. Asking
+    # "is it a Name that resolves to something callable in this module" is
+    # the question that actually matters, and it also catches a typo that
+    # resolves to nothing at all.
+    #
+    # "Callable in this module" has to include imported names. An earlier
+    # draft looked only at module-level `def`s and went red on
+    # `_register_bot_menu` and `_selftest` -- both of which are imported,
+    # and both of which were perfectly correct. A tripwire that fails on
+    # working code is worse than no tripwire: it gets deleted, and the
+    # real check goes with it.
+    defined = {n.name for n in dispatch.body
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef))}
+    imported = set()
+    for node in dispatch.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                imported.add(alias.asname or alias.name.split(".")[0])
+
+    wrong = {}
+    for name, node in wiring.items():
+        if not isinstance(node, ast.Name):
+            wrong[name] = (ast.unparse(node), "not a bare name")
+            continue
+        if node.id in defined:
+            continue
+        if node.id in imported:
+            continue
+        wrong[name] = (
+            node.id,
+            "neither defined nor imported at module level")
+
     assert not wrong, (
-        f"main passes the wrong value for {sorted(wrong)}: "
-        f"{ {k: got for k, (got, _) in wrong.items()} }, expected the "
-        "callables themselves. A placeholder here raises TypeError at "
-        "boot, inside a hand-rolled startup path that no test calls.")
+        f"main passes something that is not this module's own function for "
+        f"{sorted(wrong)}: { {k: v for k, v in wrong.items()} }. A "
+        "placeholder here raises TypeError at boot, inside a hand-rolled "
+        "startup path that no test calls; an unresolvable name raises "
+        "NameError instead, which is a different bug with the same "
+        "symptom.")
+
+    # The three the ticket is about, named so the failure message says
+    # which wiring broke rather than "something".
+    for required in ("register_bot_menu", "dispatch_update", "run_selftest"):
+        assert required in wiring, (
+            f"main no longer passes {required} to _poll_loop; the poll loop "
+            "requires it as a keyword argument")
 
 
 def test_backoff_resets_after_a_recovery_even_when_the_chat_is_quiet():
