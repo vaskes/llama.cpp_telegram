@@ -103,7 +103,11 @@ def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.BoundedSemaphore:
         # Touch: move to end so an active user's sem isn't evicted
         _user_semaphores.move_to_end(key)
         return _user_semaphores[key]
-    from config import _PER_USER_SEMAPHORE_LIMIT
+    # No `from config import _PER_USER_SEMAPHORE_LIMIT` here. The
+    # constant is defined 80 lines up in THIS module; `config` re-exports
+    # it, so importing it back closed the cycle
+    # `config -> state -> config` that TECH-DEBT #2 declared eliminated.
+    # The cycle check walked module-level imports only, so it stayed green.
     sem = asyncio.BoundedSemaphore(_PER_USER_SEMAPHORE_LIMIT)
     _user_semaphores[key] = sem
     while len(_user_semaphores) > _USER_SEMAPHORES_MAXSIZE:
