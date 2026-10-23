@@ -75,10 +75,13 @@ def _spawn_dispatch(upd_dict: dict, *, dispatch_update) -> asyncio.Task:
     return task
 
 async def _install_signal_handlers(shutdown_event: asyncio.Event) -> None:
-    """SIGINT/SIGTERM set the shutdown event; publish it as a global.
+    """SIGINT/SIGTERM set the shutdown event.
 
     `SHUTDOWN_EVENT` is module-level because `call_llama` reads it between
     iterations and gets no context argument from this hand-rolled loop.
+    It is a single object owned by `config`, set here and read from
+    several modules; nobody rebinds the name (see the note in
+    `config.SHUTDOWN_EVENT`).
 
     The handler used to be a closure inside `main`. It belongs here: the
     signals and the loop they interrupt are the same concern, and a
@@ -98,8 +101,11 @@ async def _install_signal_handlers(shutdown_event: asyncio.Event) -> None:
             # gracefully -- the in-flight httpx call dies mid-stream
             # instead of unwinding through shutdown_event.
             pass
-    global SHUTDOWN_EVENT
-    SHUTDOWN_EVENT = shutdown_event
+    # No `global SHUTDOWN_EVENT` here any more. It used to publish the
+    # event into `config` by rebinding *this module's* alias -- which
+    # left every other reader on the stale None. `config.SHUTDOWN_EVENT`
+    # is now the one object, created at import, and this function sets it.
+    SHUTDOWN_EVENT.set()
 
 async def _prepare_runtime(*, register_bot_menu, run_selftest) -> None:
     """Once, before the first poll: register the menu, then self-test.
@@ -227,7 +233,17 @@ async def _poll_loop(shutdown_event: asyncio.Event, *, register_bot_menu,
                                 f"from_is_bot={upd_from.get('is_bot', '?')} "
                                 f"thread_id={upd_msg.get('message_thread_id', '-')} "
                                 f"text_hash={text_hash}")
-                            offset = upd_dict["update_id"] + 1
+                            # `offset` is advanced AFTER dispatch succeeds,
+                            # not here. Advancing first means Telegram
+                            # considers the update delivered even when
+                            # dispatch raises, and the message is then
+                            # gone -- not queued, not retried, not logged
+                            # as lost. That is exactly what a
+                            # keyword-argument slip in `_spawn_dispatch`
+                            # did: TypeError on every update, and the
+                            # default transport silently answering
+                            # nothing at all.
+                            next_offset = upd_dict["update_id"] + 1
                             # edited_message handling:
                             #
                             # Telegram re-delivers edited messages as
@@ -282,15 +298,29 @@ async def _poll_loop(shutdown_event: asyncio.Event, *, register_bot_menu,
                             # the original handler's between-chunk
                             # check picks it up.
                             try:
-                                _spawn_dispatch(upd_dict)
-                            except Exception as e:
-                                log.info(f"[poll] task-create error: {type(e).__name__}: {e!r}")
+                                _spawn_dispatch(
+                                    upd_dict, dispatch_update=dispatch_update)
+                            except Exception:
+                                # `log.exception`, not `log.info`: this is a
+                                # dispatch failure, and the whole point of
+                                # the call is that the bot answers. At INFO
+                                # `journalctl -p warning` is empty while
+                                # messages go nowhere.
+                                log.exception(
+                                    "[poll] task-create failed for "
+                                    f"update_id={upd_id}")
+                            else:
+                                # Dispatch handed off. Only now is this
+                                # update safe to consider delivered.
+                                offset = next_offset
                     elif n_polls <= 5 or n_polls % 20 == 0:
                         log.info(f"[poll] cycle={n_polls} no updates")
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    log.info(f"[poll] error: {type(e).__name__}: {e!r} (backoff {backoff}s)")
+                    log.exception(
+                        f"[poll] error: {type(e).__name__}: {e!r} "
+                        f"(backoff {backoff}s)")
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 30.0)
     finally:
@@ -303,4 +333,4 @@ async def _poll_loop(shutdown_event: asyncio.Event, *, register_bot_menu,
             try:
                 await _dispatcher.shutdown()
             except Exception as e:
-                log.info(f"[main] dispatcher shutdown error: {e!r}")
+                log.exception(f"[main] dispatcher shutdown error: {e!r}")
