@@ -33,7 +33,7 @@ disagreement again without a test going red.
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
 | 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
 | 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `scripts/mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
-| 10 | `dispatch.py` — 1672 → 425 | **closed** — blocks A–F, 38 mutations; **ticket target ≤400 not met**, see Deviations | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
+| 10 | `dispatch.py` — 1672 → 428 | **closed** — blocks A–F, 38 mutations; **ticket target ≤400 not met**, see Deviations | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
 | 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1316, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
@@ -57,17 +57,17 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    425 lines, 4 top-level defs  <- was 1612
-dispatch_polling.py   336 lines, startup + getUpdates loop
-dispatch_webhook.py   327 lines, PTB assembly + handlers
-webhook.py             208 lines, aiohttp server + secret check
+dispatch.py    428 lines, 4 top-level defs  <- was 1612
+dispatch_polling.py   352 lines, startup + getUpdates loop
+dispatch_webhook.py   325 lines, PTB assembly + handlers
+webhook.py             224 lines, aiohttp server + secret check
 dispatch_edit.py      108 lines, the edited-message rewrite
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   478 lines, ToolLoop owns the iteration, 11 llm_* leaf modules
-handlers.py    1318 lines
+handlers.py    1316 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      725 lines, class Storage encapsulated, get_store() sole entry
-config.py       322 lines, 24 env names, plus 12 elsewhere in the package
+config.py       349 lines, 24 env names, plus 12 elsewhere in the package
 
 Line counts are splitlines(); the trailing newline is not a line. The
 earlier figures in this file came from split("\n") and were each one
@@ -94,7 +94,7 @@ the 1940-line figure below it is the size it *started* from.
 Recorded so the question stops resurfacing at every review.
 
 - **Going past 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
-  **Not met. `dispatch.py` is 425 lines.** This entry said "Done: 405"
+  **Not met. `dispatch.py` is 428 lines.** This entry said "Done: 405"
   for three waves while the size tripwire reported a different number
   each time the file moved; the claim was wrong, not the measurement.
 
@@ -104,8 +104,8 @@ Recorded so the question stops resurfacing at every review.
   Everything left is `_dispatch_update`, `_handle_reply_to_other_user`,
   `main` and the concurrency caps.
 
-  Of the 425 lines, 222 are code, 164 are comments and 39 are blank.
-  The wave-5 fixes added ~40 of the comments: the `asyncio.Lock` that
+  Of the 428 lines, 225 are code, 164 are comments and 39 are blank.
+  The wave-5 and wave-6 fixes added ~45 of the comments: the `asyncio.Lock` that
   closes a check-then-act race, the reason `offset` advances after
   dispatch rather than before, and the reason `SHUTDOWN_EVENT` is never
   rebound. Each one is a bug that shipped green through four review

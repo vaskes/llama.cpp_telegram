@@ -207,3 +207,71 @@ def test_the_global_matrix_has_a_declared_size_and_polarity_split():
     assert flags.count(True) >= 2, (
         f"only {flags.count(True)} cases that must be flagged; the "
         "checker is not being asked to catch much.")
+
+
+def test_both_transports_subscribe_to_the_same_update_types():
+    """M7: one declaration, two encodings, two consumers.
+
+    `allowed_updates` was written twice -- a JSON string in
+    `dispatch_polling._poll_loop`, a real list in
+    `dispatch_webhook._webhook_auto_register_sync` -- with the same four
+    types in a different order and a different wire format. Nothing
+    compared them, so `edited_message` could vanish from one side
+    unnoticed, which is precisely how the edit-replace feature stayed
+    dead in production while a test said it worked.
+
+    The check is on the SET, not on the text: the two transports must
+    serialise differently because the Telegram API requires it, but they
+    cannot disagree about which types they want.
+    """
+    import json as _json
+
+    import config
+
+    expected = {"message", "edited_message", "callback_query", "chat_member"}
+
+    assert set(config.ALLOWED_UPDATES) == expected, (
+        f"ALLOWED_UPDATES is {set(config.ALLOWED_UPDATES)}, expected "
+        f"{expected}. Every update type the bot handles has to be here or "
+        "the handler for it is dead in whichever transport omits it.")
+
+    # The two serialisations must decode to the same set.
+    assert set(_json.loads(config.ALLOWED_UPDATES_JSON)) == expected, (
+        "ALLOWED_UPDATES_JSON does not round-trip to ALLOWED_UPDATES")
+    assert set(config.ALLOWED_UPDATES_LIST) == expected, (
+        "ALLOWED_UPDATES_LIST does not match ALLOWED_UPDATES")
+
+    # And neither transport may carry a literal list of its own again.
+    for name, const in (("dispatch_polling.py", "ALLOWED_UPDATES_JSON"),
+                        ("dispatch_webhook.py", "ALLOWED_UPDATES_LIST")):
+        src = (BOT / name).read_text(encoding="utf-8")
+        assert f'"allowed_updates": {const}' in src, (
+            f"{name} no longer sends {const} for allowed_updates. If the "
+            "subscription really has to differ per transport, say so "
+            "here -- otherwise this is a second declaration by another "
+            "route.")
+        # Scoped to the subscription field, not the whole file: the
+        # loop legitimately reads `upd_dict.get("message")` at runtime
+        # and the comments discuss edited_message at length, so a
+        # file-wide literal scan reports a mention as a declaration.
+        # What must not come back is a literal list bound to the
+        # `allowed_updates` key.
+        tree = ast.parse(src)
+        found_key = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if not (isinstance(key, ast.Constant)
+                        and key.value == "allowed_updates"):
+                    continue
+                found_key = True
+                ok = isinstance(value, ast.Name) and value.id == const
+                assert ok, (
+                    f"{name} binds something other than {const} to "
+                    f"allowed_updates: {ast.unparse(value)}. Two literal "
+                    "lists in two transports is exactly how they drifted.")
+        assert found_key, (
+            f"{name} sends no allowed_updates field at all. That is a "
+            "behaviour change, not a refactor, and it stays invisible "
+            "until a handler stops firing.")
