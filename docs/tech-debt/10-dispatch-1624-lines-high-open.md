@@ -303,5 +303,5 @@ declares a `global` its module does not have.
 **Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
 
-<!-- current: dispatch.py=345, handlers.py=1316 -->
+<!-- current: dispatch.py=345, handlers.py=1328 -->
 <!-- current: dispatch_polling.py=352, dispatch_webhook.py=325, dispatch_edit.py=108 -->

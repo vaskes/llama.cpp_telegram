@@ -916,6 +916,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 2026-10-23: the first document this bot ever received in production
+    # raised a question the log could not answer. _acquire_turn_slot logs
+    # the route, but nothing said WHICH file arrived, so a document that
+    # never showed up looked exactly like a photo run. Logged before the
+    # slot is taken, so a document dropped by the per-user cap is visible.
+    _doc = getattr(update.message, 'document', None)
+    log.info(f"[handle_document] ENTRY chat_id={update.effective_chat.id} "
+             f"thread_id={update.message.message_thread_id} "
+             f"file_name={getattr(_doc, 'file_name', None)!r} "
+             f"file_size={getattr(_doc, 'file_size', None)} "
+             f"mime={getattr(_doc, 'mime_type', None)!r} "
+             f"caption={update.message.caption!r}")
     slot = await _acquire_turn_slot(update, context, label='handle_document')
     if slot is None:
         return

@@ -96,6 +96,19 @@ def configure() -> logging.Handler:
         root.addHandler(handler)
     if root.level == logging.NOTSET or root.level > logging.INFO:
         root.setLevel(logging.INFO)
+    # httpx logs every Telegram API call at INFO, and the URL it logs
+    # carries the bot token in the path: 'HTTP Request: POST
+    # https://api.telegram.org/bot<TOKEN>/sendMessage'. With the root at
+    # INFO that line reaches stdout, which the container tees into
+    # /var/log/bot/bot.log -- 694 occurrences of the token in one
+    # operator-readable file, on top of the fact that anyone who can
+    # read that file can act as the bot.
+    #
+    # httpx only ever logs at DEBUG and INFO -- _client.py logs the
+    # request line at INFO, _config.py at DEBUG, and httpcore only at
+    # DEBUG -- so raising the threshold to WARNING drops no diagnostic
+    # that existed in the first place.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     return handler
 
 
