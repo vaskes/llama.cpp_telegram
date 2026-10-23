@@ -627,18 +627,35 @@ bigger or smaller to fix this behaviour".
 
 ### Defaults
 
-All defaults match the current production llama-server
-(Qwen3.8-27B-Ultra-Heretic-MTP at 256k context):
+The defaults are per **deployment profile** (`LLAMABOT_DEPLOYMENT_PROFILE`).
+The table shows the `dev` profile — the operator's own box, and the one
+this deployment runs. `public` (the shipped default) is deliberately
+conservative; `personal` is the private-assistant variant. All three
+live in [`telegram-bot/limits.py`](../telegram-bot/limits.py), and the
+env var always wins over the profile.
 
-| constant | default | env var | meaning |
+| constant | dev default | env var | meaning |
 |---|---|---|---|
-| `MAX_TOKENS_DEFAULT` | 32768 | `LLAMABOT_MAX_TOKENS` | max_tokens for plain text (handle_text) |
-| `MAX_TOKENS_CAPTION` | 16384 | `LLAMABOT_MAX_TOKENS_CAPTION` | max_tokens for photo/voice/document captions |
-| `LOOP_BUDGET_SEC` | 600 | `LLAMABOT_LOOP_BUDGET_SEC` | tool-loop wall clock, 10 min |
-| `LLAMA_HTTP_TIMEOUT_SEC` | 600.0 | `LLAMABOT_LLAMA_HTTP_TIMEOUT` | httpx timeout to llama-server |
-| `LLAMA_MODELS_TIMEOUT_SEC` | 10.0 | `LLAMABOT_LLAMA_MODELS_TIMEOUT` | httpx timeout for /v1/models discovery |
-| `TRANSCRIBE_TIMEOUT_SEC` | 120.0 | `LLAMABOT_TRANSCRIBE_TIMEOUT` | httpx timeout for whisper |
-| `REASONING_RATIO_HARD_LIMIT` | 0.5 | `LLAMABOT_REASONING_RATIO_LIMIT` | if reasoning > 50% of max_tokens AND no content, surface a clear error |
+| `MAX_TOKENS_DEFAULT` | 131072 | `LLAMABOT_MAX_TOKENS` | max_tokens for plain text (handle_text) |
+| `MAX_TOKENS_CAPTION` | 98304 | `LLAMABOT_MAX_TOKENS_CAPTION` | max_tokens for photo/voice/document captions |
+| `LOOP_BUDGET_SEC` | 3600 | `LLAMABOT_LOOP_BUDGET_SEC` | tool-loop wall clock, 60 min |
+| `LLAMA_HTTP_TIMEOUT_SEC` | 3960.0 | `LLAMABOT_LLAMA_HTTP_TIMEOUT` | httpx timeout to llama-server |
+| `LLAMA_MODELS_TIMEOUT_SEC` | 30.0 | `LLAMABOT_LLAMA_MODELS_TIMEOUT` | httpx timeout for /v1/models discovery |
+| `TRANSCRIBE_TIMEOUT_SEC` | 300.0 | `LLAMABOT_TRANSCRIBE_TIMEOUT` | httpx timeout for whisper |
+
+**The engine owns the thinking budget, the bot owns the answer room.**
+`llama-server --reasoning-budget 65536` caps the reasoning block on
+the engine side, where llama.cpp actually enforces it. The answer is
+generated *after* that cap and draws from the same `max_tokens`, so
+every per-path cap above must stay above the engine's thinking
+budget. When the two were equal (65536 vs 65536 on a text turn), the
+thinking consumed the whole budget and the user got no text at all —
+observed 2026-10-23, twice.
+
+There is deliberately **no bot-side reasoning-ratio knob**: it was
+declared, validated, documented and enforced nowhere (T70.6), so it
+was removed instead of left looking like a live guard. `tests/test_limits.py`
+keeps it from coming back.
 
 ### Operational policy
 

@@ -15,8 +15,43 @@ this file is the human-readable summary.
 
 ## [Unreleased]
 
-**After `v0.13.0-stable`.** Small: one attribution cleanup, one answer
-that came back empty, and one token that was in the log.
+**After `v0.13.0-stable`.** The post-release cycle: the empty-answer
+retry, the leaked token, the attribution cleanup, the codebook, and the
+deployment profile that finally has its own numbers.
+
+### The `dev` profile was a phantom, and the thinking cap had two homes
+
+`LLAMABOT_DEPLOYMENT_PROFILE=dev` was accepted by the validation and
+then fell through to the **public** defaults. The operator's production
+has been running the conservative numbers (65536 / 16384 / 900 s) while
+believing it ran the aggressive ones. It has its own table now:
+
+| | public | personal | dev |
+|---|---|---|---|
+| `MAX_TOKENS_DEFAULT` | 65536 | 131072 | **131072** |
+| `MAX_TOKENS_CAPTION` | 16384 | 65536 | **98304** |
+| `LOOP_BUDGET_SEC` | 900 | 1200 | **3600** |
+| `LLAMA_HTTP_TIMEOUT_SEC` | 990.0 | 1320.0 | **3960.0** |
+
+**The engine owns the thinking budget; the bot owns the answer room.**
+`llama-server --reasoning-budget 65536` caps the reasoning block where
+llama.cpp actually enforces it. The answer is generated *after* that
+cap and draws from the same `max_tokens`, so a per-path cap that is not
+comfortably above the engine's budget gives the answer nowhere to go —
+observed 2026-10-23 twice: a text turn with 65536 thinking and 65536
+total (finish_reason=length, no text) and a document turn with 16384
+total (reasoning 77977 chars, content 0). Every `dev` cap now clears
+65536, and `tests/test_limits.py` pins that invariant.
+
+**`REASONING_RATIO_HARD_LIMIT` is removed from the bot.** It was
+declared, validated, documented and enforced nowhere — a knob that
+looked like a live guard. The operator's rule: "управление лимитами
+если возможно в лама должно происходить в лама", and the bot "по
+возможности не является контекстным или лимитным ограничителем". The
+env var goes with it; setting it now draws an explicit "no code reads
+this" warning. Two tripwires in `tests/test_limits.py` keep it from
+coming back: no module under `telegram-bot/` may reference a
+reasoning-cap knob, and none may name the removed env var.
 
 ### A model that thinks and writes nothing now gets a second attempt
 

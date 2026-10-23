@@ -343,8 +343,13 @@ Three profiles, picked at container start via
     history. bash_command is available in private chats. For
     single-operator private assistant where the operator IS
     the only chat participant.
-  * `dev` (T58). Same as `personal` for token caps and
-    timeouts, PLUS bash_command is available in the chat_ids
+  * `dev` (T58). The operator's own box: a single GPU, one chat, and
+    llama-server next door with `--reasoning-budget 65536`. The
+    thinking cap lives on the engine, so this profile needs no
+    bot-side reasoning cap at all; it only has to leave room for the
+    answer that comes after the engine's cut — 128K for a text turn,
+    96K for a caption turn, 60 min of wall clock. PLUS bash_command
+    is available in the chat_ids
     listed in `LLAMABOT_DEV_ALLOWED_CHAT_IDS`, even when
     the chat is a supergroup or channel. Operator opt-in.
     The ONLY safe guard dev mode relaxes is the

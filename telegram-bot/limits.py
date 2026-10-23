@@ -10,7 +10,7 @@
 # DEPLOYMENT PROFILES — READ THIS BEFORE TUNING
 # ============================================================================
 #
-# The bot has *two* canonical deployment profiles. They differ
+# The bot has *three* canonical deployment profiles. They differ
 # dramatically in defaults, and the right one depends on the
 # operator's threat model, not on the underlying llama-server.
 #
@@ -37,6 +37,38 @@
 #   LLAMABOT_DEPLOYMENT_PROFILE=personal. The env vars below
 #   then resolve to the personal defaults. Per-env overrides
 #   still win.
+#
+# Dev / single-operator box, single-user group (opt-in):
+#   The operator's own machine, one chat, one GPU, and the
+#   llama-server next door running with --reasoning-budget 65536.
+#   The thinking cap lives THERE, not here: llama-server cuts the
+#   reasoning block and the model moves on to the answer. This
+#   profile therefore has no bot-side thinking cap at all (T70.6:
+#   the knob was removed, because a limit nobody enforces is a
+#   trap) and gives every path enough token room to finish an
+#   answer AFTER llama has spent up to 64K on thinking.
+#
+#   Before 2026-10-23 this profile was a PHANTOM: the name was
+#   accepted by the validation below, but the selection fell
+#   through to the public defaults, so "dev" silently meant
+#   "conservative public". The operator thought he was running the
+#   aggressive numbers and was getting the public ones. That is
+#   what the _DEV_DEFAULTS table fixes.
+#
+# ============================================================================
+# THE INVARIANT: every per-path cap must exceed llama's reasoning budget
+# ============================================================================
+#
+# llama-server's --reasoning-budget N caps the THINKING block at N
+# tokens. The answer is generated after that, and it draws from the
+# SAME max_tokens. So if a path's max_tokens is not comfortably
+# above the thinking budget, the thinking can eat the entire cap and
+# the answer is lost -- observed 2026-10-23 20:45 on the document
+# path: reasoning 77977 chars, content 0, finish_reason=length.
+#
+# On the dev box the budget is 65536, so every per-path cap here is
+# above that. If you raise llama's --reasoning-budget, raise these
+# with it.
 #
 # ============================================================================
 # WHY NOT "MAX BY DEFAULT"
@@ -85,14 +117,18 @@
 #    LLAMABOT_MAX_TOKENS up first, then LLAMABOT_LOOP_BUDGET_SEC
 #    to match.
 #
-# 4) The reasoning budget cap (REASONING_RATIO_HARD_LIMIT) is
-#    the most dangerous one to tune. Qwen 3.8-27B-Ultra-Heretic
+# 4) The THINKING budget is not a bot-side knob -- it is
+#    llama-server's --reasoning-budget (65536 on the dev box; see
+#    llama-qwen5090-256k.service). Qwen 3.8-27B-Ultra-Heretic
 #    MTP can spend its ENTIRE token budget on the
 #    reasoning_content field (observed 2026-10-13: 94K reasoning
 #    chars, 0 content, finish_reason=length on a 4K-char prompt).
-#    If you raise this, you are trusting the model to leave room
-#    for the actual answer. Don't raise it past 0.7 without
-#    a stress test on real prompts.
+#    The bot's job is to leave room for the answer that comes
+#    AFTER that cap: every per-path max_tokens here must exceed
+#    the engine's thinking budget, or the answer has nowhere to go
+#    (observed 2026-10-23 20:45 on the document path: reasoning
+#    77977 chars, content 0). If you raise the engine's budget,
+#    raise these with it.
 #
 # ============================================================================
 # HOW TO TUNE — future maintainers
@@ -173,12 +209,6 @@ _PUBLIC_DEFAULTS = {
     "LLAMA_HTTP_TIMEOUT_SEC": 990.0,  # LOOP_BUDGET_SEC * 1.1
     "LLAMA_MODELS_TIMEOUT_SEC": 10.0, # unchanged
     "TRANSCRIBE_TIMEOUT_SEC":  120.0, # unchanged
-    "REASONING_RATIO_HARD_LIMIT": 0.95, # 5% content floor. Qwen 3.8 MTP
-                                       #   routinely hits 0.94+ reasoning
-                                       #   on long tool-using prompts;
-                                       #   0.5 was too aggressive (would
-                                       #   abort valid runs that hadn't
-                                       #   reached the answer phase yet)
 }
 
 _PERSONAL_DEFAULTS = {
@@ -201,21 +231,41 @@ _PERSONAL_DEFAULTS = {
     "LLAMA_HTTP_TIMEOUT_SEC": 1320.0, # LOOP_BUDGET_SEC * 1.1
     "LLAMA_MODELS_TIMEOUT_SEC": 30.0, # unchanged
     "TRANSCRIBE_TIMEOUT_SEC":  300.0, # unchanged
-    "REASONING_RATIO_HARD_LIMIT": 1.0, # still OFF. The 4K-prompt test
-                                       #   had 100% reasoning on iter=0
-                                       #   before the model emitted the
-                                       #   first tool call; a cap of
-                                       #   0.95 would have aborted the
-                                       #   run before it could produce
-                                       #   the answer. Cap stays off
-                                       #   for personal; public gets
-                                       #   0.95 (5% content floor).
 }
 
-_PROFILE_DEFAULTS = (
-    _PERSONAL_DEFAULTS if _DEPLOYMENT_PROFILE == "personal"
-    else _PUBLIC_DEFAULTS
-)
+_DEV_DEFAULTS = {
+    # The operator's own box (2026-10-23). Single user, single GPU,
+    # llama-server on the same host running:
+    #   --ctx-size 262144 --reasoning-budget 65536
+    # so the thinking block is capped at 65536 tokens BY LLAMA, and
+    # the answer is generated after that from the same max_tokens.
+    # That is why every cap here sits above 64K: the cap has to
+    # cover the thinking budget AND the answer that follows it.
+    #
+    # Measured 2026-10-23 on the 4K-char Newton's-cradle prompt:
+    # the model reached ~57-58K reasoning tokens, wrote the result to
+    # a file and continued with the agentic tool loop. At 121 tok/s
+    # a 128K budget is ~18 min of generation, hence the 60 min loop
+    # budget.
+    "MAX_TOKENS_DEFAULT":    131072,  # 128K: 64K thinking + 64K answer
+    "MAX_TOKENS_CAPTION":     98304,  # 64K thinking + 32K answer. The
+                                       #   photo/voice/document paths are
+                                       #   one-shot, so their answers are
+                                       #   short -- but they still have to
+                                       #   clear the thinking budget, or
+                                       #   the model returns content=0.
+    "LOOP_BUDGET_SEC":        3600,  # 60 min
+    "LLAMA_HTTP_TIMEOUT_SEC": 3960.0, # LOOP_BUDGET_SEC * 1.1
+    "LLAMA_MODELS_TIMEOUT_SEC": 30.0,
+    "TRANSCRIBE_TIMEOUT_SEC":  300.0,
+}
+
+
+_PROFILE_DEFAULTS = {
+    "public": _PUBLIC_DEFAULTS,
+    "personal": _PERSONAL_DEFAULTS,
+    "dev": _DEV_DEFAULTS,
+}[_DEPLOYMENT_PROFILE]
 
 
 def _env_or(env_name, profile_value):
@@ -261,8 +311,6 @@ LOOP_BUDGET_SEC            = _env_or("LLAMABOT_LOOP_BUDGET_SEC",    _PROFILE_DEF
 LLAMA_HTTP_TIMEOUT_SEC     = _env_or("LLAMABOT_LLAMA_HTTP_TIMEOUT",  _PROFILE_DEFAULTS["LLAMA_HTTP_TIMEOUT_SEC"])
 LLAMA_MODELS_TIMEOUT_SEC   = _env_or("LLAMABOT_LLAMA_MODELS_TIMEOUT", _PROFILE_DEFAULTS["LLAMA_MODELS_TIMEOUT_SEC"])
 TRANSCRIBE_TIMEOUT_SEC     = _env_or("LLAMABOT_TRANSCRIBE_TIMEOUT", _PROFILE_DEFAULTS["TRANSCRIBE_TIMEOUT_SEC"])
-REASONING_RATIO_HARD_LIMIT = _env_or("LLAMABOT_REASONING_RATIO_LIMIT", _PROFILE_DEFAULTS["REASONING_RATIO_HARD_LIMIT"])
-
 # T65.1 — silent reaction turn. A reply addressed to another human produces a
 # reaction and nothing else: no answer, no visible reasoning. A reaction is one
 # emoji plus a short reasoning trace, so this is far below the normal budget.
@@ -303,10 +351,4 @@ if LLAMA_HTTP_TIMEOUT_SEC <= LOOP_BUDGET_SEC:
     raise ValueError(
         f"LLAMA_HTTP_TIMEOUT_SEC ({LLAMA_HTTP_TIMEOUT_SEC}) must be "
         f"strictly greater than LOOP_BUDGET_SEC ({LOOP_BUDGET_SEC})"
-    )
-if not 0 <= REASONING_RATIO_HARD_LIMIT <= 1:
-    raise ValueError(
-        f"REASONING_RATIO_HARD_LIMIT ({REASONING_RATIO_HARD_LIMIT}) "
-        f"must be in the closed interval [0, 1]; 0 = no answer at all, "
-        f"1 = no cap (model can spend the whole budget on reasoning)"
     )

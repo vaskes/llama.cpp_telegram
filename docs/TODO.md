@@ -130,42 +130,36 @@ explicit go-ahead.**
 
 ### T70.6 — the reasoning limit is declared and nobody reads it
 
-**Status:** open, added 2026-10-23 after the test session.
-**Where:** `telegram-bot/limits.py` (`REASONING_RATIO_HARD_LIMIT`),
-`tests/test_limits.py`, and the engine unit
-(`llama-qwen5090-256k.service`, `--reasoning-budget 65536`).
+**Status:** CLOSED 2026-10-23 — the operator picked option (b) and named
+the engine budget. The knob is gone from the bot; the limit lives on
+the engine, where llama.cpp enforces it.
+**Where:** `telegram-bot/limits.py` (the constant is removed),
+`tests/test_limits.py` (two tripwires keep it from coming back), and the
+engine unit (`llama-qwen5090-256k.service`, `--reasoning-budget 65536`).
 
-`REASONING_RATIO_HARD_LIMIT` is read by nobody. The public profile
-declares 0.95 ("a 5% content floor"), the personal profile 1.0 ("still
-off"), `tests/test_limits.py` pins both values and the env override --
-and the constant is enforced nowhere. The limit that actually bites
-lives on the engine side, in `--reasoning-budget`.
+**The operator's decision**, verbatim: "управление лимитами если
+возможно в ллама должно происходить в лама", "бот по возможности не
+является контекстным или лимитным ограничителем", engine budget 64K,
+`MAX_TOKENS_DEFAULT` 128K. So: option (b) — the bot-side
+`REASONING_RATIO_HARD_LIMIT` (and its env var) is **deleted**, not
+implemented. A knob that is declared, validated, documented and enforced
+nowhere is a trap, and the operator's rule is that the bot is not the
+limiter.
 
-That arrangement has a second problem, and it is the one the operator
-ran into: in production the engine's reasoning budget (65536) equals
-the bot's own `max_tokens` for a text turn (65536), and exceeds it for
-a document turn (`MAX_TOKENS_CAPTION` = 16384). A model that thinks
-long can therefore consume the whole answer budget and leave the user
-with no text at all. It did, twice, in production on 2026-10-23 -- once
-as `finish_reason=length` with 65536 generated tokens, and once as a
-reasoning-only answer that the bot had to retry.
+**The second half of the problem is fixed by the numbers.** The engine's
+budget has to be smaller than the bot's `max_tokens`, or the answer has
+nowhere to go: the engine's 65536 equals the bot's old text cap (65536)
+and exceeds the old document cap (`MAX_TOKENS_CAPTION` = 16384), which
+is how a reasoning-only answer reached the user twice on 2026-10-23. The
+`dev` profile now sets 131072 / 98304 / 3600s — every per-path cap
+above the engine's thinking budget, with room for the answer after it.
+`tests/test_limits.py` pins that invariant.
 
-Two ways to close this, and they are not equivalent:
-
-- **implement it in the bot**: watch the reasoning as it streams and
-  abort the turn before the budget is gone. The data is there
-  (`finish_reason`, the reasoning buffer), but the ratio would be
-  guessed from characters rather than tokens, because the bot does not
-  parse `usage` out of the stream;
-- **delete it from the bot**: the limit already lives on the engine
-  side, where it is enforced by llama.cpp instead of guessed by us, and
-  one number about one limit beats two numbers in two places.
-
-Either way the engine's budget has to be smaller than the bot's
-`max_tokens`, or the answer has nowhere to go.
-
-**What unblocks it:** the operator picks one of the two, and says what
-the engine budget should be.
+**Also fixed on the way:** the `dev` profile was a phantom. The name was
+accepted by the validation and then fell through to the PUBLIC defaults,
+so the operator's production ran the conservative numbers while
+believing it ran the aggressive ones. It has its own table now, and a
+test asserts it is not the public profile.
 
 ### T66.1 — guaranteed minimum of last N messages when the window is empty
 
