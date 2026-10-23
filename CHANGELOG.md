@@ -53,8 +53,9 @@ second control matters — a check that cannot be made to fail is worse
 than no check, and the first version of this one would have passed on a
 repository that still had every trailer it was written to remove.
 
-The suite is 2128 in `main` after this commit; the release itself
-shipped 2105.
+The suite is 2129 green in `main` at this commit; the release itself
+shipped 2105. (The count is of the commit it is written in, not a
+standing claim -- 2110 was right two commits ago.)
 
 ### The codebook, and a budget that can catch a monolith
 
