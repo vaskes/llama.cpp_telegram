@@ -19,6 +19,38 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The Stop button only worked for the ids on the allowlist
+
+The Stop button on the bot's "💭 думаю…" message was gated by the
+allowlist, so for anyone outside it the press was dropped before the
+handler ever saw it — `[SECURITY] rejected id=... msg=''` — and the
+button did nothing, with no error in the chat, while the model kept
+generating the answer. In production this hit a group member who is not
+on the allowlist: the bot answers group members by design ("Group mode:
+No whitelist check. Any member of the group can use the bot"), and it
+puts a Stop button on the thinking message it sends them, so it offered
+a button it would then ignore. Eighteen presses, no effect.
+
+The two gates answer different questions, and the handler now asks the
+right one: the allowlist answers "may this id use the bot at all", and
+maker-taker — already implemented, `clicker_id != original_user_id` —
+answers "may this id stop THIS turn". The Stop branch is handled before
+the allowlist check; the sub-talk branches keep theirs (they create and
+delete topics, and Telegram has no ACL for `deleteForumTopic`), and it
+now runs before the chat-type branch, as the 2026-10-22 decision
+required.
+
+Two smaller things fell out of the same fix:
+
+- the callback is now always acknowledged with `answer()`. A rejected
+  press used to leave the button spinning in the client until Telegram's
+  own timeout, so there was no feedback at all that the press was seen;
+- the structural guard that pins "every command checks the allowlist
+  before the chat type" was reading `telegram-bot/dispatch.py`, where
+  since the TECH-DEBT #10 extraction there are no command handlers left.
+  It had been checking an empty set. It scans the real modules now, and
+  fails if it ever finds fewer than ten handlers.
+
 ### The `dev` profile was a phantom, and the thinking cap had two homes
 
 `LLAMABOT_DEPLOYMENT_PROFILE=dev` was accepted by the validation and

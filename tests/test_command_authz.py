@@ -198,27 +198,45 @@ def test_every_command_checks_the_whitelist_before_the_chat_type():
 
     A handler added without the guard is the regression this whole file
     exists to prevent, and nothing else in the suite would notice.
+
+    2026-10-23: this scanned only telegram-bot/dispatch.py. Since the
+    TECH-DEBT #10 extraction the command handlers live in
+    telegram-bot/commands/, and dispatch.py has exactly ONE function
+    definition left (_dispatch_update) -- so the guard had been checking
+    an empty set for a while. It was reading a file the handlers had
+    already left. Same class as the 2026-10-22 failure: the property was
+    pinned, the code moved, and the pin kept passing because it no longer
+    looked at anything.
     """
     import ast
-    tree = ast.parse((ROOT / "telegram-bot" / "dispatch.py").read_text())
+    modules = [ROOT / "telegram-bot" / "dispatch.py"]
+    modules += sorted((ROOT / "telegram-bot" / "commands").glob("*.py"))
     bad = []
-    for fn in tree.body:
-        if not isinstance(fn, ast.AsyncFunctionDef):
-            continue
-        if not (fn.name.startswith("cmd_")
-                or fn.name in ("start", "reset", "stats", "help")):
-            continue
-        auth = grp = None
-        for n in ast.walk(fn):
-            if isinstance(n, ast.Call):
-                f = getattr(n.func, "id", "") or getattr(n.func, "attr", "")
-                if f == "reject_if_unauthorized" and auth is None:
-                    auth = n.lineno
-                if f == "_is_group_chat" and grp is None:
-                    grp = n.lineno
-        if auth is None:
-            bad.append(f"{fn.name}: no reject_if_unauthorized at all")
-        elif grp is not None and grp < auth:
-            bad.append(f"{fn.name}: _is_group_chat@{grp} before "
-                       f"reject_if_unauthorized@{auth}")
+    seen = 0
+    for path in modules:
+        tree = ast.parse(path.read_text())
+        for fn in tree.body:
+            if not isinstance(fn, ast.AsyncFunctionDef):
+                continue
+            if not (fn.name.startswith("cmd_")
+                    or fn.name in ("start", "reset", "stats", "help")):
+                continue
+            seen += 1
+            auth = grp = None
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Call):
+                    f = getattr(n.func, "id", "") or getattr(n.func, "attr", "")
+                    if f == "reject_if_unauthorized" and auth is None:
+                        auth = n.lineno
+                    if f == "_is_group_chat" and grp is None:
+                        grp = n.lineno
+            if auth is None:
+                bad.append(f"{fn.name}: no reject_if_unauthorized at all")
+            elif grp is not None and grp < auth:
+                bad.append(f"{fn.name}: _is_group_chat@{grp} before "
+                           f"reject_if_unauthorized@{auth}")
+    assert seen >= 10, (
+        f"the guard only found {seen} command handlers -- the command "
+        f"modules moved again and this test is checking almost nothing"
+    )
     assert not bad, "\n".join(bad)

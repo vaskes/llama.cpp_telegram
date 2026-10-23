@@ -28,13 +28,6 @@ log = get_logger(__name__)
 
 # === cmd_callback ===
 async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 2026-10-22: slash commands are for trusted ids only -- in a group
-    # as well as in private. The group branch below returned before the
-    # authorization check, so anyone who could write could clear history,
-    # create topics, or delete them outright (cmd_delsub calls
-    # deleteForumTopic, which is not a local record).
-    if await reject_if_unauthorized(update, context):
-        return
     """Handle inline-keyboard button presses.
 
     callback_data format:
@@ -62,6 +55,29 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.info(f"[cmd_callback] answer() failed (non-fatal): {type(e).__name__}: {e!r}")
     data = update.callback_query.data or ""
     # === Stop button (works in private AND group) ===
+    # NOT gated by the allowlist, and that is the whole point of the
+    # branch being first.
+    #
+    # 2026-10-23, production: the allowlist check used to sit at the top
+    # of this function, so a Stop press from a group member who is NOT on
+    # the allowlist was dropped before the handler looked at it --
+    # "[SECURITY] rejected id=... msg=''", and the button did nothing at
+    # all, silently, while the bot kept generating the answer. The
+    # operator pressed it 18 times.
+    #
+    # The two gates are not the same question:
+    #   * the allowlist answers "may this id use the bot at all";
+    #   * maker-taker (below) answers "may this id stop THIS turn".
+    # In group mode the first question is deliberately "yes, anyone" --
+    # see _route_to_thread: "Group mode: No whitelist check. Any member
+    # of the group can use the bot." A member whose message the bot
+    # answers gets a thinking message with a Stop button on it, and that
+    # button has to work for them. Gating it by the allowlist meant the
+    # bot offered a button it would then ignore.
+    #
+    # The sub-talk branches below keep the allowlist check: they create
+    # and delete topics, and Telegram has no ACL for deleteForumTopic
+    # (operator decision 2026-10-22).
     if data == "stop:thinking":
         # Identify the original user from the thinking message.
         # The thinking message was sent as a reply to the user's
@@ -150,12 +166,18 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 log.info(f"[callback stop] edit fallback also failed: {type(e2).__name__}: {e2!r}")
         return
 
+    # 2026-10-22: slash commands are for trusted ids only -- in a group
+    # as well as in private. These branches create and delete topics, and
+    # Telegram has no ACL for deleteForumTopic, so the allowlist check
+    # stays here -- BEFORE the chat-type branch, so the order the
+    # structural guard in tests/test_command_authz.py pins is kept.
+    if await reject_if_unauthorized(update, context):
+        return
+
     # The remaining branches (sub:, newsub:prompt, delsub:) are
     # only emitted by the private-mode /subs inline keyboard.
     # Group mode: no inline buttons exist there.
     if _is_group_chat(update):
-        return
-    if await reject_if_unauthorized(update, context):
         return
     user_id = update.effective_user.id
     if data.startswith("sub:"):
