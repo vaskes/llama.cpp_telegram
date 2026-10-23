@@ -213,9 +213,17 @@ async def _poll_loop(shutdown_event: asyncio.Event, *, register_bot_menu,
                         raise RuntimeError(f"getUpdates not ok: {data}")
                     updates_raw = data.get("result", [])
                     n_polls += 1
+                    # Reset on any SUCCESSFUL getUpdates, before
+                    # branching on whether it returned anything. It used
+                    # to reset only inside `if updates_raw`, so two
+                    # transient failures followed by a quiet chat left
+                    # backoff at 4 and it kept doubling to the 30s cap
+                    # and stayed there -- with `timeout=25` on the
+                    # long-poll, that is a 55-second delay to answer
+                    # every message on a bot that is working perfectly.
+                    backoff = 1.0
                     if updates_raw:
                         n_updates += len(updates_raw)
-                        backoff = 1.0
                         log.info(f"[poll] cycle={n_polls} got {len(updates_raw)} updates (total={n_updates})")
                         for upd_dict in updates_raw:
                             # PII-safe dump. The previous version

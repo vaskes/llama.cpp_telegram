@@ -453,3 +453,88 @@ def test_startup_wiring_passes_the_callables_and_not_placeholders():
         f"{ {k: got for k, (got, _) in wrong.items()} }, expected the "
         "callables themselves. A placeholder here raises TypeError at "
         "boot, inside a hand-rolled startup path that no test calls.")
+
+
+def test_backoff_resets_after_a_recovery_even_when_the_chat_is_quiet():
+    """M6: the poll backoff only ever grew.
+
+    It was reset inside `if updates_raw`, so a quiet chat could never
+    clear it. Two transient failures put it at 4; from there it doubled
+    to the 30s cap and stayed -- on a long-poll with `timeout=25`, that
+    is up to 55 seconds before each message is picked up, on a bot with
+    nothing at all wrong with it.
+
+    The script below fails twice (backoff 1, 2), recovers twice with an
+    empty result, then fails once more. The last failure is the probe:
+    after two successes the backoff must be back at 1, so that sleep is
+    1.0. Without the reset it is 4.0 -- and two failures are not enough
+    on their own, because the growth only becomes visible once a
+    recovery has had a chance to clear it.
+    """
+    import dispatch_polling
+
+    n = {"i": 0}
+    sleeps = []
+    # fail, fail, ok, ok, fail, then stop
+    fail_on = {1, 2, 5}
+
+    class _FlakyClient:
+        def __init__(self, shutdown):
+            self._shutdown = shutdown
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, params=None):
+            n["i"] += 1
+            if n["i"] in fail_on:
+                raise RuntimeError("simulated transient failure")
+            if n["i"] > 6:
+                self._shutdown.set()
+            return _FakeResponse({"ok": True, "result": []})
+
+    real_sleep = asyncio.sleep
+
+    async def counting_sleep(delay, *a, **k):
+        if delay >= 0.5:          # the loop's backoff, not a poll delay
+            sleeps.append(delay)
+            await real_sleep(0)
+            return
+        return await real_sleep(delay, *a, **k)
+
+    async def drive():
+        shutdown = asyncio.Event()
+        client = _FlakyClient(shutdown)
+        original = dispatch_polling.httpx.AsyncClient
+        dispatch_polling.httpx.AsyncClient = lambda *a, **k: client
+        asyncio.sleep = counting_sleep
+        try:
+            await asyncio.wait_for(dispatch_polling._poll_loop(
+                shutdown,
+                register_bot_menu=_no_op_menu,
+                dispatch_update=_no_op_menu,
+                run_selftest=_no_op_selftest,
+            ), 20)
+        finally:
+            dispatch_polling.httpx.AsyncClient = original
+            asyncio.sleep = real_sleep
+
+    try:
+        asyncio.new_event_loop().run_until_complete(drive())
+    finally:
+        asyncio.sleep = real_sleep
+
+    assert len(sleeps) >= 3, (
+        f"precondition: expected at least three backoff sleeps, got "
+        f"{sleeps}. The script has to reach the post-recovery failure "
+        "for this test to mean anything.")
+    assert sleeps[-1] == 1.0, (
+        f"backoff sleeps were {sleeps}. The last one is the probe: two "
+        "failures (1, 2), two successful-but-empty polls, then a failure "
+        "again. It must sleep 1.0, because the reset happens on any "
+        "successful getUpdates -- not only on one that returns updates. "
+        "Otherwise a quiet chat pins the backoff at the 30s cap for the "
+        "life of the process.")
