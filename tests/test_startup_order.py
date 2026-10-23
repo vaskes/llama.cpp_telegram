@@ -36,6 +36,7 @@ DISPATCH = ROOT / "telegram-bot" / "dispatch.py"
 # "main no longer decides what starting the bot means" assertion and the two
 # `main` tests read a DIFFERENT file on purpose.
 POLLING = ROOT / "telegram-bot" / "dispatch_polling.py"
+CONFIG = ROOT / "telegram-bot" / "config.py"
 
 
 def _fn(name: str, src: Path = POLLING):
@@ -200,7 +201,17 @@ def test_the_poll_loop_still_carries_the_allowed_updates():
     # head of the file, which is the other way this assertion silently
     # stops meaning anything.
     body = "".join(lines[loop.lineno - 1:loop.end_lineno])
+    # Since wave 6 the list lives in `config.ALLOWED_UPDATES` and both
+    # transports read it. Asserting the tokens appear in this function
+    # would push the list back here, which is how the two sides drifted
+    # apart the first time.
+    assert "ALLOWED_UPDATES_JSON" in body, (
+        "the poll loop no longer sends config.ALLOWED_UPDATES_JSON. That "
+        "is where the subscription moved; a literal list here would be a "
+        "second declaration.")
+    ns = {"__file__": str(CONFIG), "__name__": "cfg_probe"}
+    exec(compile(CONFIG.read_text(encoding="utf-8"), str(CONFIG), "exec"), ns)
     for token in ("callback_query", "chat_member", "edited_message"):
-        assert token in body, (
-            f"{token} is missing from the poll loop's allowed_updates; "
-            f"without it Telegram drops those updates silently")
+        assert token in ns["ALLOWED_UPDATES"], (
+            f"{token} is missing from config.ALLOWED_UPDATES; without it "
+            "Telegram drops those updates silently in BOTH transports")
