@@ -66,9 +66,14 @@
 # the answer is lost -- observed 2026-10-23 20:45 on the document
 # path: reasoning 77977 chars, content 0, finish_reason=length.
 #
-# On the dev box the budget is 65536, so every per-path cap here is
-# above that. If you raise llama's --reasoning-budget, raise these
-# with it.
+# The invariant is per DEPLOYMENT, not per file: it compares a path's
+# cap against the thinking budget of the llama-server that profile
+# runs against. The dev table below is sized for the dev box, whose
+# llama-server runs --reasoning-budget 65536, so every cap in that
+# table is above 65536. The public table is sized for a llama-server
+# with a much smaller thinking budget and is deliberately strict --
+# if you point a profile at a llama-server with a 64K thinking
+# budget, raise that profile's caps with it.
 #
 # ============================================================================
 # WHY NOT "MAX BY DEFAULT"
