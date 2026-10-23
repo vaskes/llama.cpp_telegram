@@ -53,6 +53,9 @@ second control matters — a check that cannot be made to fail is worse
 than no check, and the first version of this one would have passed on a
 repository that still had every trailer it was written to remove.
 
+The suite is 2110 in `main` after this commit; the release itself
+shipped 2105.
+
 ### Four `git worktree`s in `/tmp`
 
 `git gc` could not drop the pre-rewrite history, because four linked

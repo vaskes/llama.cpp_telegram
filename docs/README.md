@@ -46,7 +46,7 @@ root first, then this file, then the document your question points at.
 
 | Directory | What it holds | State |
 |---|---|---|
-| [review/](review/) | Notes for the **currently open** review cycle | empty — the last cycle closed at `12d9a4e` |
+| [review/](review/) | Notes for the **currently open** review cycle | empty — the last cycle closed just before the `v0.13.0-stable` tag |
 | [archive/](archive/) | Closed review cycles and dated artefacts | see [archive/README.md](archive/README.md) |
 
 ## The three documents that were allowed to drift, and how they stopped

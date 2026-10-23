@@ -1,6 +1,6 @@
 # llama.cpp_telegram
 
-> **Current stable: `v0.13.0-stable`** (2026-10-23, commit `12d9a4e`).
+> **Current stable: `v0.13.0-stable`** (2026-10-23, commit `ba71325`).
 > Pin to a tag — see the clone command below.
 >
 > `v0.13.0` is a **refactor release**: the 1612-line `dispatch.py` is now
@@ -9,8 +9,8 @@
 > sending a fixed number of messages. Nothing about the user-facing
 > behaviour changed on purpose.
 >
-> **What is verified:** deployed in production in webhook mode; 2106
-> pytest tests green on Python **3.11** (the production interpreter) and
+> **What is verified:** deployed in production in webhook mode; the whole
+> pytest suite green on Python **3.11** (the production interpreter) and
 > **3.12**; eight review waves closed with an approve; a production smoke
 > after the deploy (`/healthz` → 200, zero fatal lines in the log, webhook
 > auth rejecting both a missing and a wrong secret, and the deployed tree

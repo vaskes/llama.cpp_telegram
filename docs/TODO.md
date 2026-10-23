@@ -11,7 +11,7 @@
 > - `docs/archive/` — dated records, kept for the "how did we get here",
 >   not for instructions.
 >
-> **Updated 2026-10-23** against `12d9a4e` / `v0.13.0-stable`.
+> **Updated 2026-10-23**, against the `v0.13.0-stable` tag.
 >
 > The previous version of this file was last touched 2026-10-13 and had
 > accumulated four kinds of rot: a status snapshot from before the
@@ -27,14 +27,14 @@
 
 | | |
 |---|---|
-| HEAD | `12d9a4e`, tagged `v0.13.0-stable` |
+| HEAD | one commit past the `v0.13.0-stable` tag (the co-author trailers) |
 | Production | webhook mode, container `tb-bot`, `/healthz` → 200 |
-| Pytest | `2105 passed, 1 skipped` (131 test files, minus `tests/test_shell_integration.py`) |
+| Pytest | `2110 passed, 1 skipped` (132 test files, minus `tests/test_shell_integration.py`) |
 | CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 53 `.py` files in `telegram-bot/` |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
-| Open review cycle | none — waves 1–8 closed at `12d9a4e` ("production-ready") |
+| Open review cycle | none — waves 1–8 closed just before the `v0.13.0-stable` tag ("production-ready") |
 
 Sizes are `splitlines()`-based and are recomputed by
 `tests/test_tech_debt_index.py`, which fails if the numbers in

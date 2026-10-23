@@ -4,7 +4,7 @@
 > items — is [`TODO.md`](TODO.md). The two complement each other and only
 > one of them is a task list.
 >
-> **Updated 2026-10-23**, against `v0.13.0-stable` (`12d9a4e`).
+> **Updated 2026-10-23**, against the `v0.13.0-stable` tag.
 
 ---
 
@@ -23,8 +23,8 @@ production code. What changed structurally:
   requires changing a URL and nothing else. See
   [`docs/tickets/`](tickets/) and
   [`docs/adr/ADR-0003`](adr/ADR-0003-context-reanchoring.md).
-- **The review cycle is closed.** Waves 1–8, ended at `12d9a4e`
-  ("production-ready"). The durable artefacts are in
+- **The review cycle is closed.** Waves 1–8, ended just before the
+  `v0.13.0-stable` tag ("production-ready"). The durable artefacts are in
   [`docs/archive/2026-10/`](archive/2026-10/).
 - **The history is no longer destroyed on read.** The lazy trim is gone;
   SQLite is the source of truth and every derived context is recomputable.

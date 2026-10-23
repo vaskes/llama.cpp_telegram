@@ -49,7 +49,7 @@ telegram-bot/
     └── bash_command.py    # T38: bash execution via sandbox side-car
 ```
 
-53 top-level modules, 131 test files, 2105 tests.
+53 top-level modules, 132 test files, 2110 tests.
 
 ### The leaf modules of `call_llama`
 
