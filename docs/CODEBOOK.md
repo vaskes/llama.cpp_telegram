@@ -891,6 +891,19 @@ section with no tag, and a tag with no section. The two mismatches that
 exist today are listed in the test with the reason, so that a new one
 is a red test rather than a debt nobody is tracking.
 
+**A tripwire that skips in CI is not a tripwire.** The first version of
+this test read the tag list out of the checkout. `actions/checkout`
+fetches a depth-1 history and **no tags**, so in CI the list was empty,
+both tag checks skipped, and the test was green while checking nothing
+— the failure mode this document warns about in T-1, wearing a green
+tick.
+
+The fix is to ask the remote as well: `git ls-remote --tags origin`
+works in CI, where the checkout has already been authenticated. Both
+paths are exercised here: a checkout with tags, and a depth-1 clone
+without them, with the remote URL as origin. The second one is the
+shape CI has, and it is the one that matters.
+
 ### 8.1 The history is part of the deliverable
 
 **R-1 — A co-author trailer is a contribution, and GitHub counts it.**

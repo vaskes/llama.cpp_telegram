@@ -78,23 +78,45 @@ RELEASES = [s for s in SECTIONS if RELEASE_NAME.match(s)]
 
 
 def _tags():
-    """Tags in this checkout. Falls back to an empty list when there is
-    no git -- a shallow CI checkout still has them, but a tarball does
-    not, and a test that cannot run is not a test."""
+    """Tags in this checkout.
+
+    `actions/checkout` fetches a depth-1 history and no tags, so in CI
+    the local tag list is empty and a check that reads it would skip --
+    which is how a tripwire quietly stops being one. The remote is
+    asked as well: `git ls-remote --tags origin` works in CI, where
+    the checkout has already been authenticated.
+
+    Falls back to an empty list when neither works -- a tarball has no
+    git at all, and a test that cannot run is not a test.
+    """
+    local = _run_git(["git", "-c", "safe.directory=*", "tag", "--list"])
+    if local is not None and local.strip():
+        return [t for t in local.split() if t]
+    remote = _run_git(["git", "-c", "safe.directory=*", "ls-remote",
+                       "--tags", "origin"])
+    if remote is None:
+        return []
+    names = set()
+    for line in remote.splitlines():
+        ref = line.split()[-1] if line.split() else ""
+        if not ref.startswith("refs/tags/"):
+            continue
+        name = ref[len("refs/tags/"):]
+        if name.endswith("^{}"):
+            name = name[:-3]
+        names.add(name)
+    return sorted(names)
+
+
+def _run_git(cmd):
     try:
-        out = subprocess.run(
-            # `safe.directory` because the checkout is owned by the
-            # operator's uid and this test runs as root inside a
-            # container. Without it git refuses the repository outright
-            # and the checks below skip -- which is how a test quietly
-            # stops testing.
-            ["git", "-c", "safe.directory=*", "tag", "--list"],
-            cwd=ROOT, capture_output=True, text=True, timeout=30)
+        out = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                             timeout=60)
     except (OSError, subprocess.SubprocessError):
-        return []
+        return None
     if out.returncode != 0:
-        return []
-    return [t for t in out.stdout.split() if t]
+        return None
+    return out.stdout
 
 
 TAGS = set(_tags())
