@@ -33,7 +33,7 @@ import signal
 
 import httpx
 
-from config import TELEGRAM_API
+from config import ALLOWED_UPDATES_JSON, TELEGRAM_API
 from logconf import get_logger
 
 log = get_logger(__name__)
@@ -205,7 +205,7 @@ async def _poll_loop(shutdown_event: asyncio.Event, *, register_bot_menu,
                             # case is 10 in-flight at any moment,
                             # only 4 inside the LLM call.
                             "limit": 10,
-                            "allowed_updates": '["message","edited_message","chat_member","callback_query"]',
+                            "allowed_updates": ALLOWED_UPDATES_JSON,
                         },
                     )
                     data = r.json()
