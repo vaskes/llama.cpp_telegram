@@ -626,3 +626,44 @@ async def test_per_user_cap_is_held_across_the_llm_call(monkeypatch, tmp_path,
         f"release is not swallowed by the try/except around it."
     )
     assert not _errors(capsys), f"{handler}: {_errors(capsys)}"
+
+# ------------------------------------- 9. reasoning-only answer, retried --
+
+@pytest.mark.asyncio
+async def test_a_reasoning_only_answer_is_retried(monkeypatch, tmp_path,
+                                                   capsys):
+    """A model that thinks and writes nothing must get a second attempt.
+
+    The empty-response retry keys off config.EMPTY_RESPONSE_PREFIX, and
+    the reasoning-only answer used to come back as free prose, so it
+    never matched: the model got one attempt, and the user got the
+    diagnostic ("the model spent all its tokens") instead of an answer.
+    Production, 2026-10-23: 18 generated tokens, finish_reason=stop.
+
+    The response is built by the real producer rather than written out
+    here, so this test fails if the producer's shape changes -- which is
+    the point: the marker is the contract between the two.
+    """
+    from llm_finish import finish_without_tool_calls
+
+    reasoning_only = finish_without_tool_calls(
+        content_buf="", reasoning_buf="думаю", finish_reason="stop",
+        executed_tools=[])
+
+    calls = []
+
+    async def fake_call(*a, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            return reasoning_only
+        return {"text": "second answer", "executed_tools": [], "aborted": False}
+
+    handlers, sent, _, _reg = _common(monkeypatch, tmp_path, fake_call)
+    await handlers.handle_text(_update(), _context())
+
+    assert len(calls) == 2, (
+        f"the reasoning-only answer was not retried ({len(calls)} call(s))")
+    joined = " ".join(sent.edits + sent.replies)
+    assert "second answer" in joined, (
+        f"the retry answer never reached the user: {joined!r}")
+    assert not _errors(capsys), f"{_errors(capsys)}"

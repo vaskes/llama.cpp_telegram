@@ -47,16 +47,37 @@ BOT = Path(__file__).resolve().parent.parent / "telegram-bot"
 # --------------------------------------------------------------------------
 
 def oracle_no_tools(content_buf, reasoning_buf, finish_reason, executed):
-    """Verbatim transcription of the pre-D3 `if not tool_calls:` body."""
+    """The specification of this branch, written out.
+
+    It used to be a verbatim transcription of the pre-D3
+    `if not tool_calls:` body. The reasoning-only branch changed on
+    2026-10-23 and the transcription stopped being true, which is what
+    the differential test below exists to notice -- so the oracle was
+    rewritten to the new specification rather than to whatever the code
+    happens to do:
+
+      * the answer carries the empty marker, so the handlers retry it;
+      * the wording follows the finish reason, because "the budget ran
+        out mid-thought" and "the model stopped and wrote nothing" are
+        different failures.
+
+    The marker is written out literally here instead of imported: an
+    oracle that reads the constant it is checking cannot fail.
+    """
     if content_buf:
         return {"text": content_buf, "executed_tools": list(executed),
                 "aborted": False}
     if reasoning_buf:
         tail = reasoning_buf[-3500:]
+        if finish_reason == "length":
+            what = ("модель потратила все токены на размышления, "
+                    "не оставив на сам ответ")
+        else:
+            what = ("модель закончила ответ в размышлениях и не выдала текст")
         return (
-            f'_(модель потратила все токены на размышления, не оставив на сам ответ; '
-            f'finish_reason={finish_reason}; reasoning_chars={len(reasoning_buf)})_\n\n'
-            f'{tail}'
+            f'[model returned an empty response. {what}; '
+            f'finish_reason={finish_reason}; reasoning_chars={len(reasoning_buf)}]'
+            f'\n\n{tail}'
         )
     return (
         f'[model returned an empty response. finish_reason={finish_reason}, '
@@ -114,6 +135,46 @@ def test_reasoning_alone_produces_the_explanatory_message():
     assert "модель потратила все токены на размышления" in got
     assert "finish_reason=length" in got
     assert got.endswith("думаю")
+
+
+def test_a_reasoning_only_answer_carries_the_empty_marker():
+    """The handlers retry exactly what starts with EMPTY_RESPONSE_PREFIX.
+
+    A reasoning-only answer is an empty answer that happens to carry the
+    model's thoughts. It used to come back as free prose, so it never
+    matched the marker, the model got a single attempt, and the user got
+    a diagnostic instead of a reply (production, 2026-10-23).
+    """
+    from config import EMPTY_RESPONSE_PREFIX
+
+    got = finish_without_tool_calls(content_buf="", reasoning_buf="думаю",
+                                    finish_reason="stop", executed_tools=[])
+    assert got.startswith(EMPTY_RESPONSE_PREFIX), (
+        f"the reasoning-only answer does not carry the marker, so no "
+        f"retry happens: {got[:120]!r}")
+
+
+def test_a_stop_does_not_claim_the_budget_was_spent():
+    """18 tokens out of 65536 is not "the model spent all its tokens".
+
+    The wording used to be the same for every finish reason, so a model
+    that stopped on its own was reported as having burned the budget.
+    """
+    got = finish_without_tool_calls(content_buf="", reasoning_buf="думаю",
+                                    finish_reason="stop", executed_tools=[])
+    assert "потратила все токены" not in got, (
+        f"a stop is reported as an exhausted budget: {got[:160]!r}")
+    assert "закончила ответ в размышлениях" in got, (
+        f"the honest wording is missing: {got[:160]!r}")
+    assert "finish_reason=stop" in got
+
+
+def test_a_length_still_reports_the_exhausted_budget():
+    """finish_reason=length is the one case where the old wording was right."""
+    got = finish_without_tool_calls(content_buf="", reasoning_buf="думаю",
+                                    finish_reason="length", executed_tools=[])
+    assert "модель потратила все токены на размышления" in got, (
+        f"an exhausted budget is no longer reported: {got[:160]!r}")
 
 
 def test_the_message_reports_the_full_reasoning_length_not_the_tail():

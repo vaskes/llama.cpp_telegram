@@ -79,10 +79,30 @@ def finish_without_tool_calls(*, content_buf: str, reasoning_buf: str,
     if ending.kind == "content":
         return _answer_dict(ending, executed_tools)
     if ending.kind == "reasoning":
+        # The marker comes first on purpose. The handlers retry exactly the
+        # responses that start with config.EMPTY_RESPONSE_PREFIX, and a
+        # reasoning-only answer IS an empty answer -- it just happens to
+        # carry the model's thoughts along. Without the marker the model
+        # got one attempt and the user got a diagnostic instead of a reply.
+        # 2026-10-23, production: 18 generated tokens, finish_reason=stop,
+        # and the user was told the model had spent all its tokens.
+        #
+        # The wording follows the finish reason, because the two are
+        # different failures. "length" means the budget ran out in the
+        # middle of a thought; anything else means the model stopped on
+        # its own and chose not to write an answer. The old wording
+        # claimed the budget in both cases, and for 18 tokens out of a
+        # 65536-token budget that was simply false.
+        if finish_reason == "length":
+            what = ("модель потратила все токены на размышления, "
+                    "не оставив на сам ответ")
+        else:
+            what = ("модель закончила ответ в размышлениях "
+                    "и не выдала текст")
         return (
-            f'_(модель потратила все токены на размышления, не оставив на сам ответ; '
-            f'finish_reason={finish_reason}; reasoning_chars={len(reasoning_buf)})_\n\n'
-            f'{ending.reasoning_tail}'
+            f'{EMPTY_RESPONSE_PREFIX} {what}; '
+            f'finish_reason={finish_reason}; reasoning_chars={len(reasoning_buf)}]'
+            f'\n\n{ending.reasoning_tail}'
         )
     return (
         f"{EMPTY_RESPONSE_PREFIX} finish_reason={finish_reason}, "
