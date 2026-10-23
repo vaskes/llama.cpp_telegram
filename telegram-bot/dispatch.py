@@ -332,16 +332,19 @@ async def _dispatch_update(upd_dict):
             log.info(f"[handler error] {type(err).__name__}: {err!r}")
 
         app.add_error_handler(log_error)
+        # PTB 21 requires Application.initialize() before process_update.
+        # We do not call app.start() — the hand-rolled polling loop drives
+        # dispatch. initialize() sets up the application context.
+        #
+        # Exactly once. Twice here for two waves was harmless -- PTB opens
+        # with `if self._initialized: return` -- but a duplicate makes
+        # "removed" and "added a redundant one" identical in the diff.
         await app.initialize()
         # Written through the polling module's setter, not by rebinding an
         # imported name: it owns the registry, and a rebind here would only
         # touch this module's copy of the binding.
         dispatch_polling.set_dispatcher(app)
         log.info("[dispatch] Application initialized (lazy)")
-        # PTB 21 requires Application.initialize() before process_update.
-        # We do not call app.start() — the hand-rolled polling loop drives
-        # dispatch. initialize() sets up the application context.
-        await app.initialize()
         _start_reanchor_scheduler()
         _start_summarise_on_boot()
 

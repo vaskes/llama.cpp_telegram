@@ -54,9 +54,8 @@ def set_dispatcher(app) -> None:
     _dispatcher = app
 
 
-_dispatcher = None
-
 _dispatch_tasks: set[asyncio.Task] = set()
+
 
 def _spawn_dispatch(upd_dict: dict, *, dispatch_update) -> asyncio.Task:
     """Create the dispatch task and keep a strong reference until it finishes."""
