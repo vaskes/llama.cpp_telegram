@@ -252,6 +252,7 @@ sudo systemctl start telegram-bot-compose
 - **[docs/WEBHOOK.md](docs/WEBHOOK.md)** — webhook transport: when to use, how to set up, security, fallback
 - **[docs/SETUP.md](docs/SETUP.md)** — installing on a fresh host (for humans); also covers group-mode deployment
 - **[docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)** — short command reference for AI agents
+- **[docs/CODEBOOK.md](docs/CODEBOOK.md)** — the rules this repo learned by breaking them: what a monolith is here, what stops one regrowing, and what a tripwire has to be able to do. Read this before changing anything.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — what's inside bot.py at a high level; covers both private and group modes
 - **[docs/CALL_LLAMA.md](docs/CALL_LLAMA.md)** — detailed design notes for `call_llama`, polling loop, abort ladder, image MIME detection, config block. The file to read for a code review.
 - **[docs/SECURITY.md](docs/SECURITY.md)** — whitelist (private mode), group-mode security, env vars, what NOT to commit

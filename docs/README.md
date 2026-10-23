@@ -16,6 +16,7 @@ root first, then this file, then the document your question points at.
 | [SETUP.md](SETUP.md) | How do I install and run this on a fresh host? | live |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | What is inside `telegram-bot/`, and why is it split this way? | live |
 | [AGENT_GUIDE.md](AGENT_GUIDE.md) | Short command reference for an AI agent operating the repo | live |
+| [CODEBOOK.md](CODEBOOK.md) | The rules this repo learned the hard way — what a monolith is, and what stops one regrowing | live — a rule marked `AUTO` names a test that runs |
 | [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) | Which limits are Telegram's, not ours | live |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Why is the bot not answering? | live |
 

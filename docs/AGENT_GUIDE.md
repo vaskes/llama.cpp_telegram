@@ -35,6 +35,24 @@ The live deployment on the operator's host uses a different layout
 (`/opt/telegrambot/`); `scripts/install.sh` is the source of truth for a
 fresh install, and `BOT_DIR` overrides it.
 
+### Before you change anything
+
+Read [`CODEBOOK.md`](CODEBOOK.md) first. It is the set of rules this
+repository learned by breaking them: what a monolith is here, what a
+tripwire has to be able to do, and which of the two delivery paths a
+feature has to live on for it to run in production.
+
+Two of those rules are enforced mechanically, and both will fail your test
+run rather than your build:
+
+- `tests/test_size_budget.py` — a function over 200 lines, or a module
+  over 1000 lines that is not in the debt register, fails the suite.
+- `tests/test_no_model_coauthor_trailers.py` — a co-author trailer
+  naming a model fails the suite.
+
+Section 5 of the codebook says what a new check has to prove before it
+counts as one.
+
 ## Common operations
 
 ### Check the bot is alive
