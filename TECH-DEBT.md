@@ -33,7 +33,7 @@ disagreement again without a test going red.
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
 | 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
 | 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `scripts/mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
-| 10 | `dispatch.py` — 1672 → 428 | **closed** — blocks A–F, 38 mutations; **ticket target ≤400 not met**, see Deviations | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
+| 10 | `dispatch.py` — 1672 → 345 | **closed** — blocks A–G, 40 mutations; ticket target ≤400 met by block G | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
 | 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1316, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
@@ -57,7 +57,8 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    428 lines, 4 top-level defs  <- was 1612
+dispatch.py    345 lines, 3 top-level defs  <- was 1612
+dispatch_group.py 108 lines, human-to-human reply absorb
 dispatch_polling.py   352 lines, startup + getUpdates loop
 dispatch_webhook.py   325 lines, PTB assembly + handlers
 webhook.py             224 lines, aiohttp server + secret check
@@ -94,30 +95,31 @@ the 1940-line figure below it is the size it *started* from.
 Recorded so the question stops resurfacing at every review.
 
 - **Going past 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
-  **Not met. `dispatch.py` is 428 lines.** This entry said "Done: 405"
-  for three waves while the size tripwire reported a different number
-  each time the file moved; the claim was wrong, not the measurement.
+  **Met, in block G: `dispatch.py` is 345 lines.** It was not for six
+  blocks. This entry said "Done: 405" for three waves while the size
+  tripwire reported a different number each time the file moved; the
+  claim was wrong, not the measurement.
 
-  The move was three blocks (D/E/F) plus the routing extraction from
-  block C. The split line was not line count: a function moved if it was
-  Telegram surface or bookkeeping, and stayed if it picks a handler.
-  Everything left is `_dispatch_update`, `_handle_reply_to_other_user`,
-  `main` and the concurrency caps.
+  The move was blocks D/E/F, the routing extraction from block C, and
+  then `_handle_reply_to_other_user` → `dispatch_group.py`. The split
+  line was never line count: a function moved if it was Telegram surface
+  or bookkeeping, and stayed if it picks a handler. What is left is
+  `_dispatch_update`, `main` and the concurrency caps.
 
-  Of the 428 lines, 225 are code, 164 are comments and 39 are blank.
-  The wave-5 and wave-6 fixes added ~45 of the comments: the `asyncio.Lock` that
-  closes a check-then-act race, the reason `offset` advances after
-  dispatch rather than before, and the reason `SHUTDOWN_EVENT` is never
-  rebound. Each one is a bug that shipped green through four review
-  waves precisely because the code looked correct; deleting the
-  explanation to save 25 lines buys a number and loses the reason.
+  The cut did not delete a comment to hit the number. It removed dead
+  code: an `_on_signal` closure in `main()` with zero callers, and four
+  section markers heading empty sections naming functions that had
+  already moved to `dispatch_webhook.py` and `dispatch_edit.py`. The
+  ~45 comments the wave-5 and wave-6 fixes added are still there,
+  because each one explains a bug that shipped green through four
+  review waves precisely because the code looked correct.
 
-  If the reviewer wants ≤400 as a hard gate rather than a proxy for
-  "this module stopped being everything", the honest next cut is
-  `main()` -- startup wiring is not routing, and moving it to
-  `dispatch_startup.py` would take the file to roughly 340 with no
-  comment deleted. That is a scope call, not a formatting one, so it
-  waits for an explicit go-ahead rather than being done quietly.
+  This entry had proposed cutting `main()` instead, into
+  `dispatch_startup.py`. That was the wrong cut. `bot.py` does
+  `from dispatch import main`, so moving it changes the module's
+  public surface and relocates what `test_startup_order.py` and
+  `test_polling_integration.py` read. The absorb path reaches the same
+  number and leaves the entry point alone.
 
   Two things are recorded because they cost real time, not because they
   sound cautionary:

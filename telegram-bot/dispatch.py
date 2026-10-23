@@ -24,7 +24,6 @@ from telegram.ext import (
     filters, ContextTypes,
 )
 
-import call_llama
 import storage
 import dispatch_polling
 from context_budget import get_budget
@@ -37,6 +36,7 @@ from selftest import _selftest
 # to `dispatch_webhook.py`. This module keeps the routing decision.
 # TECH-DEBT #10 block F: the edited-message rewrite is its own module now.
 from dispatch_edit import _apply_edited_message
+from dispatch_group import _handle_reply_to_other_user
 from dispatch_webhook import (
     _attach_handlers,
     _build_application,
@@ -80,7 +80,6 @@ log = get_logger(__name__)
 import persistence
 import prompts
 import rating
-import limits
 from config import (
     ALLOWED_USER_IDS, ALLOWED_USERNAMES, API_KEY, BOT_TOKEN,
     BOT_USERNAME, DB_PATH, DISABLED_TOOLS, DONSETCH_URL,
@@ -93,7 +92,6 @@ from prompts import (
     RATING_RULES, WELCOME_TEXT, _EMOJI_CHAR_RE, _RATING_PREFIX_RE,
     _LLM_TOKEN_RE, _SUBTALK_NAME_RE, _TOPIC_NAME_RE,
 )
-from persistence import persist as _persist_message, load_history as _load_history
 from handlers import (
     handle_document, handle_photo, handle_text, handle_voice,
     send_reply, _download_with_limit, _general_thread_id, _reply,
@@ -114,81 +112,6 @@ from commands import (
 )
 
 
-async def _handle_reply_to_other_user(upd, bot) -> None:
-    """T65.1 — a human replied to another human in a group.
-
-    The operator's design, verbatim from the ticket: the message must still be
-    *seen*. The model reads it, thinks about it, and leaves a reaction via the
-    react_to_message tool. What it must NOT do is answer, and the reasoning
-    must not appear in the chat — the group is talking to itself, and a visible
-    "💭 думаю…" from the bot on someone else's message is noise.
-
-    So: real LLM call, `silent=True`. Not a skip.
-
-    What was here before: an unconditional `return` before process_update,
-    which meant the message was never written to the DB at all. That is the
-    silent data loss this ticket exists to fix — the operator keeps this
-    history for a LoRA dataset, and an entire class of group conversation was
-    silently dropped.
-    """
-    msg = upd.message
-    rtm = msg.reply_to_message
-    rtm_from = rtm.from_user if rtm and rtm.from_user else None
-    tag = (
-        f"@{rtm_from.username}" if rtm_from and rtm_from.username
-        else f"id={rtm_from.id}" if rtm_from else "?"
-    )
-    chat_id = upd.effective_chat.id
-    thread_id = str(getattr(msg, "message_thread_id", None) or "main")
-    who = msg.from_user
-    sender = (
-        f"@{who.username}" if getattr(who, "username", None)
-        else (getattr(who, "first_name", None) or "unknown")
-    )
-    log.info(f"[dispatch] reply-to-other-user: absorbing silently "
-        f"(reply_to={tag}, chat={chat_id}, thread={thread_id}) "
-        f"update_id={upd.update_id}")
-
-    # 1. Persist. ALWAYS, and before anything that can fail — this is the part
-    #    the ticket is really about.
-    body = msg.text or msg.caption or ""
-    content = f"[reply to {tag}] {body}" if tag else body
-    try:
-        await _persist_message(
-            chat_id, thread_id, "user", content, sender_name=sender,
-        )
-    except Exception as exc:
-        log.info(f"[dispatch] persist failed for reply-to-other-user: {exc!r}")
-
-    # 2. Build context exactly as a normal turn would, then ask the model to
-    #    react without answering. `silent` suppresses the reasoning stream.
-    try:
-        history = await _load_history(chat_id, thread_id)
-        silent_prompt = (
-            "This message was sent by one human in the group to ANOTHER human, "
-            "not to you. Do not reply and do not say anything. Look at it, then "
-            "express your reaction ONLY by calling react_to_message with a "
-            "single emoji. Your reasoning is private and will not be shown."
-        )
-        await call_llama.call_llama(
-            history,
-            max_tokens=limits.MAX_TOKENS_REACT_ONLY,
-            user_text=silent_prompt,
-            thinking_msg=None,          # nothing to update: no chat message
-            use_stream=False,
-            bot=bot,
-            chat_id=chat_id,
-            current_message_id=msg.message_id,
-            chat_type=upd.effective_chat.type,
-            silent=True,                # reasoning stays out of the GUI
-        )
-        log.info(f"[dispatch] absorbed reply-to-other-user "
-            f"update_id={upd.update_id}")
-    except Exception as exc:
-        # A failed reaction must never lose the persisted message, and must
-        # never surface as an error to the group.
-        log.info(f"[dispatch] silent-absorb failed (message already persisted) "
-            f"update_id={upd.update_id}: {type(exc).__name__}: {exc}")
 
 # === Dispatch task tracking ===
 #
@@ -304,14 +227,12 @@ def main():
     except KeyboardInterrupt:
         log.info('[main] KeyboardInterrupt')
 
-# === application assembly ===
-
-# === _register_bot_menu ===
-
-# === _handle_chat_member_update ===
-
-# === _apply_edited_message ===
-
+# Four section markers stood here naming functions that had already moved:
+# application assembly and `_register_bot_menu` / `_handle_chat_member_update`
+# to `dispatch_webhook.py`, `_apply_edited_message` to `dispatch_edit.py`,
+# `_handle_reply_to_other_user` to `dispatch_group.py`. They headed empty
+# sections, which is worse than no marker -- a reader looking for
+# `_register_bot_menu` in this file found a heading and nothing under it.
 
 # === _dispatch_update ===
 # Guards the lazy Application build. Two updates arriving together (a

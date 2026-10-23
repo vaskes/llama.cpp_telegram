@@ -158,7 +158,7 @@ design, and do not read the green suite as evidence about it.
 
 
 
-**1672 → 408 lines**, six blocks. (`handlers.py` is 1283, which block C
+**1672 → 345 lines**, seven blocks. (`handlers.py` is 1283, which block C
 shrank from 1357; wave 4's comment fix moved it by five more.) Routing is pinned in `test_dispatch_routing.py`, the
 startup sequence in `test_startup_order.py`, the injection filter in
 `test_prompt_guard.py`, and every module is checked for names it reads but
@@ -168,9 +168,54 @@ does not bind.
 whole approach: seven startup mutations that survived a run because nothing
 in the suite had ever entered `main`.
 
-### The ticket's target was ≤ 400 lines. It is 408. That is done.
+### The ticket's target was ≤ 400 lines. It was 428 for six blocks.
 
-The ticket said **1612 → ≤ 400**. The last three blocks (D, E, F) got there.
+The ticket said **1612 → ≤ 400**. Blocks D, E and F got it to 428, and
+this entry spent three waves saying "Done: 405", "408", and then
+"428 is not 400, that is done" -- none of which matched the tree. The
+size tripwire caught it after block G.
+
+### Block G: the last thing that was not routing
+
+`_handle_reply_to_other_user` was the last function in `dispatch.py`
+that did not route. It absorbs a human-to-human group reply: persist,
+ask the model to react silently, return. It went to
+`dispatch_group.py`, which imports the five free names its body
+actually reads rather than relying on what `dispatch.py` happened to
+have bound -- the failure mode that has bitten every extraction here.
+
+Three imports were left orphaned by the move and removed
+(`call_llama`, `limits`, and the `persistence` pair); nothing outside
+the module imported them from `dispatch`, which was checked rather
+than assumed.
+
+Two other things went with it. `main()` defined an `_on_signal`
+closure with zero callers -- the real handler has lived in
+`dispatch_polling._install_signal_handlers` since block B -- and four
+section markers headed empty sections naming functions that had moved
+to `dispatch_webhook.py` and `dispatch_edit.py`. A reader looking for
+`_register_bot_menu` in this file found a heading and nothing under
+it.
+
+The deviation note in `TECH-DEBT.md` proposed cutting `main()` instead.
+That was the wrong cut and this one is better for a reason worth
+recording: `bot.py` does `from dispatch import main`, so moving it
+changes the module's public surface and moves the ground under
+`test_startup_order.py` and `test_polling_integration.py`, both of
+which read `dispatch.py` on purpose. Cutting the absorb path reaches
+the same number without touching the entry point and without deleting
+a single comment explaining a bug that once shipped green.
+
+**Two mutations, both red.** Deleting the `await
+_handle_reply_to_other_user(...)` call, and deleting the `return`
+after it. The second one is the interesting one: the pre-existing T65
+suite went green on it, because every test in it reads the function's
+own body and none of them can see whether anything calls it. That is
+the same hole the ToolLoop split had, and it is why
+`test_dispatch_group_seam.py` drives `_dispatch_update` from the
+caller's side -- with the negative half too, since a branch that
+absorbed *everything* would otherwise pass.
+
 
 The split line was never line count. A function moved when it was Telegram
 surface or bookkeeping and stayed when it picks a handler:
@@ -180,6 +225,7 @@ surface or bookkeeping and stayed when it picks a handler:
 | `dispatch_polling.py` | 306 | signals, runtime prep, the getUpdates loop, the task factory, and the Application registry |
 | `dispatch_webhook.py` | 327 | Application assembly, handler registration, the command menu, chat-member bookkeeping |
 | `dispatch_edit.py` | 108 | the edited-message rewrite, in one place |
+| `dispatch_group.py` | 108 | the human-to-human reply absorb path |
 
 `dispatch.py` is left with `_dispatch_update`, `_handle_reply_to_other_user`,
 `main`, the concurrency caps and the wiring between them.
@@ -257,5 +303,5 @@ declares a `global` its module does not have.
 **Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
 
-<!-- current: dispatch.py=428, handlers.py=1316 -->
+<!-- current: dispatch.py=345, handlers.py=1316 -->
 <!-- current: dispatch_polling.py=352, dispatch_webhook.py=325, dispatch_edit.py=108 -->

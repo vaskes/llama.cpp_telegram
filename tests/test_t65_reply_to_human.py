@@ -20,6 +20,19 @@ BOT_DIR = REPO_ROOT / "telegram-bot"
 if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
+# `_handle_reply_to_other_user` moved out of `dispatch.py` into
+# `dispatch_group.py` when the TECH-DEBT #10 split closed. The tests below
+# are redirected, not weakened: they still locate the function by name and
+# still assert the same statements in the same order. What changed is which
+# file is authoritative for the function's body, because that is what the
+# move actually did.
+#
+# A second constant rather than a renamed one -- the tests that check the
+# CALL SITE still read `dispatch.py`, and quietly repointing those too would
+# have turned "where does it live" into "where did it used to live".
+OWNER = BOT_DIR / "dispatch_group.py"
+CALLER = BOT_DIR / "dispatch.py"
+
 
 
 def _call_name(call_node):
@@ -40,7 +53,7 @@ def test_absorb_handler_persists_before_the_llm_call():
     exists to prevent. So this asserts on statement order, not on "persist is
     called somewhere".
     """
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = OWNER.read_text()
     fn = next(
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, ast.AsyncFunctionDef)
@@ -65,7 +78,7 @@ def test_absorb_handler_persists_before_the_llm_call():
 
 def test_handler_never_sends_a_text_reply():
     """The outward signal is a reaction, not a sentence."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = OWNER.read_text()
     fn = next(
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, ast.AsyncFunctionDef)
@@ -83,7 +96,7 @@ def test_handler_never_sends_a_text_reply():
 def test_handler_tags_the_reply_target():
     """The model has to know who was being addressed, otherwise 'вот' is
     unattributable context. The ticket specifies [reply to @name]."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = OWNER.read_text()
     assert "[reply to" in src, (
         "reply-to-human messages must record the target, or the model sees "
         "an answer with no question"
@@ -132,7 +145,7 @@ def test_silent_suppresses_the_thinking_stream():
 
 
 def test_handler_passes_silent_true():
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = OWNER.read_text()
     fn = next(
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, ast.AsyncFunctionDef)
@@ -154,7 +167,7 @@ def test_handler_passes_silent_true():
 def test_thinking_msg_is_none_not_a_real_message():
     """Regression guard: passing a real Message here would update a message
     the bot never sent."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = OWNER.read_text()
     fn = next(
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, ast.AsyncFunctionDef)
@@ -184,7 +197,7 @@ def test_reaction_turn_has_its_own_small_budget():
 def test_handler_swallows_llm_failure():
     """A failed reaction must not surface to the group and must not undo the
     persist. Both failures are already durable by then."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    src = OWNER.read_text()
     fn = next(
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, ast.AsyncFunctionDef)
@@ -207,7 +220,11 @@ def test_handler_swallows_llm_failure():
 def test_dispatch_branch_calls_the_handler_instead_of_returning():
     """The old code returned early. If someone restores a bare `return` here,
     the message is silently dropped again — the exact regression."""
-    src = (BOT_DIR / "dispatch.py").read_text()
+    # The CALL SITE, so this reads the caller, not the owner. Reading
+    # OWNER here would look for `_dispatch_update` in a file that has never
+    # had it, and the test would go red for the wrong reason -- or worse,
+    # be loosened until it passes without ever reaching the seam.
+    src = CALLER.read_text()
     fn = next(
         n for n in ast.walk(ast.parse(src))
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "_dispatch_update"
