@@ -13,8 +13,8 @@
 > pytest tests green on Python **3.11** (the production interpreter) and
 > **3.12**; eight review waves closed with an approve; a production smoke
 > after the deploy (`/healthz` → 200, zero fatal lines in the log, webhook
-> auth rejecting both a missing and a wrong secret, container contents
-> byte-identical to the repository).
+> auth rejecting both a missing and a wrong secret, and the deployed tree
+> matching the repository by md5).
 >
 > **What is not:** one path has never been exercised by a human end-to-end
 > — the live edit-replace flow (a user edits a message while the bot is
@@ -35,7 +35,7 @@
 > for the full stable-tag history.
 >
 
-**What `v0.13.0-stable` adds over `v0.12.0-stable`** (191 commits):
+**What `v0.13.0-stable` adds over `v0.12.0-stable`** (194 commits):
 
 - **The bot owns its context.** `ContextBudget` decides which persisted
   messages reach the engine — protect the recent window, summarise what

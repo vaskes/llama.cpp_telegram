@@ -15,8 +15,8 @@ this file is the human-readable summary.
 
 ## [v0.13.0-stable] — 2026-10-23 — Context memory, the dispatch split, and review waves 1–8
 
-**Status:** shipped and deployed. 191 commits since `v0.12.0-stable`; 107 of
-them touch production code. Tag `v0.13.0-stable` → `12d9a4e`.
+**Status:** shipped and deployed. 194 commits since `v0.12.0-stable`; 107 of
+them touch production code. Tag `v0.13.0-stable`.
 
 **This is a refactor release.** Nothing about the user-facing behaviour
 changed on purpose. What changed is where the code lives, who owns what,
@@ -26,8 +26,9 @@ and how much of it is covered by a test that can actually fail.
 (the production interpreter) and **3.12**; eight review waves closed with
 an approve; deployed to production in webhook mode with a backup taken
 first; `/healthz` → 200, zero fatal lines in the log, webhook auth
-rejecting both a missing and a wrong secret, and the container's files
-byte-identical to the repository.
+rejecting both a missing and a wrong secret, and the deployed tree
+matching the repository (md5, on every `.py` and on the key files inside
+the container).
 
 **Not verified:** the live edit-replace flow — a user edits a message
 while the bot is answering it, and the bot must rewrite its answer. It
