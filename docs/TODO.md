@@ -254,6 +254,29 @@ users or if LOCKDOWN is relaxed.
 `state._get_user_semaphore` is the function; the cap is
 `_PER_USER_SEMAPHORE_LIMIT` in the same module.
 
+### T-FREEZE-STOP-1 — the Stop button "does not always work"
+
+**Not reproducible.** The operator pressed Stop 100 times after the
+deploys stopped, and every press stopped the turn.
+
+What the surviving log shows: the container was recreated on every
+deploy, so only the last instance still has its stdout. It holds four
+Stop presses -- four `abort_event set`, four `ABORTED by user via Stop
+button`, four rolled-back persisted turns, zero failures, zero
+rejections.
+
+The earlier misses cannot be diagnosed: the containers that saw them
+were removed and their logs went with them. Two paths in
+`telegram-bot/commands/callback.py` can produce that symptom with the
+button itself blameless -- the press arrived while the webhook was
+down (Telegram gets a 502 on the POST and drops the update, so the
+callback never reaches the bot), or the turn had already finished (the
+handler answers "already done" and logs `no abort_event for ...`).
+
+The rule stays maker-taker: only the author of the message may stop
+its processing, and the check is `clicker_id != original_user_id`
+(`telegram-bot/commands/callback.py`).
+
 ### T-FREEZE-2 — `call_llama` was a god function
 
 **Closed, differently.** It was not "observed in production long enough":
