@@ -190,7 +190,7 @@ async def _selftest():
     await selftest_state.run_all()
 
     # === Media and attribution ===
-    # _bot_replies, the download size cap, and the sender-name flow.
+    # The download size cap and the sender-name flow.
     # Cut to selftest_media.py by T1.1; the blocks are byte-identical
     # apart from carrying their own verdict.
     await selftest_media.run_all()

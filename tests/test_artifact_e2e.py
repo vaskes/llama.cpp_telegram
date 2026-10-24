@@ -219,7 +219,6 @@ def _clean_process_state():
     cannot be mistaken for the rows of another."""
     def wipe():
         state._abort_events.clear()
-        state._bot_replies.clear()
         state._user_recent_msg.clear()
         chat_utils._send_window.clear()
 

@@ -132,14 +132,6 @@ def _no_boot_jobs(monkeypatch):
     monkeypatch.setattr(dispatch, "_start_reanchor_scheduler", lambda: None)
     monkeypatch.setattr(dispatch, "_start_summarise_on_boot", lambda: None)
 
-    async def _no_rewrite(upd_dict):
-        return None
-
-    # async, not a bare lambda: `_dispatch_update` awaits the result, and
-    # a sync stub fails with "object NoneType can't be used in 'await'
-    # expression" -- which points at dispatch.py, not at the stub.
-    monkeypatch.setattr(dispatch, "_apply_edited_message", _no_rewrite)
-
 
 
 def test_a_reply_to_another_human_is_absorbed_not_answered(monkeypatch):

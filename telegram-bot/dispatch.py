@@ -7,8 +7,7 @@
 # The PTB surface moved out -- `dispatch_polling.py` (signals, runtime
 # prep, getUpdates loop, task factory, Application registry),
 # `dispatch_webhook.py` (Application assembly, handler registration, the
-# command menu, chat-member bookkeeping), `dispatch_edit.py` (the
-# edited-message rewrite). None of it could pick a handler.
+# command menu, chat-member bookkeeping). None of it could pick a handler.
 
 import asyncio
 import signal
@@ -34,8 +33,6 @@ from selftest import _selftest
 # which also owns the Application registry.
 # TECH-DEBT #10 block E: PTB construction and chat-member bookkeeping moved
 # to `dispatch_webhook.py`. This module keeps the routing decision.
-# TECH-DEBT #10 block F: the edited-message rewrite is its own module now.
-from dispatch_edit import _apply_edited_message
 from dispatch_group import _handle_reply_to_other_user
 from dispatch_webhook import (
     _attach_handlers,
@@ -67,7 +64,7 @@ from chat_utils import (
 import state
 from state import (
     _GLOBAL_LLM_SEM_LIMIT, _PER_USER_SEMAPHORE_LIMIT,
-    _abort_events, _bot_replies, _global_llm_sem,
+    _abort_events, _global_llm_sem,
     _get_user_semaphore, _user_semaphores,
 )
 import handlers
@@ -185,6 +182,7 @@ def main():
         # Telegram defaults to ["message", "edited_message"] which
         # silently drops everything else. Without callback_query,
         # the Stop button appears in the UI but clicks are lost.
+        # (The list itself lives in config.ALLOWED_UPDATES.)
         if _config.WEBHOOK_URL and _config.WEBHOOK_SECRET_TOKEN:
             _webhook_auto_register_sync(
                 url=_config.WEBHOOK_URL,
@@ -293,14 +291,35 @@ async def _dispatch_update(upd_dict):
     # The single entry point both delivery modes share: the poll loop
     # calls _spawn_dispatch -> here, and webhook.py calls here directly.
     # Anything that decides what an update MEANS has to happen here, or
-    # one of the two modes silently loses it -- which is exactly how the
-    # edit-replace block ended up dead in production for years while two
-    # comments described it as living right here.
-    await _apply_edited_message(upd_dict)
-
+    # one of the two modes silently loses it.
     upd = Update.de_json(upd_dict, app.bot)
     if upd is None:
         log.info(f"[dispatch] de_json returned None for {upd_dict}")
+        return
+    # === an edited message is not a message ===
+    #
+    # The edit-replace feature was removed on 2026-10-24: an edited
+    # message is ignored, and the answer to the original stands. The
+    # user waits for the answer to the wrong question and asks again.
+    #
+    # The subscription is the first line of defence --
+    # `config.ALLOWED_UPDATES` does not list `edited_message`, so
+    # Telegram does not send edits. It is not the only one, and it
+    # cannot be the only one: `allowed_updates` is a setting on
+    # Telegram's side, and it survives until the webhook is
+    # re-registered. A bot that was restarted against a stale
+    # registration would keep receiving edits.
+    #
+    # The second line is here, and it has to be here, because PTB's
+    # `MessageFilter` reads `update.effective_message`, and
+    # `effective_message` falls back to `edited_message`. So
+    # `filters.TEXT` matches an edited message, and without this guard
+    # the bot would answer the edit as if it were a new message --
+    # two answers to one question, with the old one still on screen.
+    if upd.message is None and upd.edited_message is not None:
+        log.info(
+            f"[dispatch] ignoring edited_message update_id={upd.update_id} "
+            f"(the edit-replace feature was removed on 2026-10-24)")
         return
     # === chat_member (new join) handler ===
     # We handle chat_member updates BEFORE PTB's process_update

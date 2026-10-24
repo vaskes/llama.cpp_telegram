@@ -62,7 +62,6 @@ def test_constants_exposed():
     import state
 
     assert hasattr(state, "_abort_events"), "state._abort_events missing"
-    assert hasattr(state, "_bot_replies"), "state._bot_replies missing"
     assert hasattr(state, "_register_abort_event"), "state._register_abort_event missing"
     assert hasattr(state, "_GLOBAL_LLM_SEM_LIMIT"), "state._GLOBAL_LLM_SEM_LIMIT missing"
     assert hasattr(state, "_PER_USER_SEMAPHORE_LIMIT"), "state._PER_USER_SEMAPHORE_LIMIT missing"

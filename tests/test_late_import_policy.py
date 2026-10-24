@@ -219,9 +219,9 @@ def test_both_transports_subscribe_to_the_same_update_types():
     `dispatch_polling._poll_loop`, a real list in
     `dispatch_webhook._webhook_auto_register_sync` -- with the same four
     types in a different order and a different wire format. Nothing
-    compared them, so `edited_message` could vanish from one side
-    unnoticed, which is precisely how the edit-replace feature stayed
-    dead in production while a test said it worked.
+    compared them, so `callback_query` could vanish from one side
+    unnoticed -- which is precisely how the Stop button stayed dead in
+    production for years while a test said it worked.
 
     The check is on the SET, not on the text: the two transports must
     serialise differently because the Telegram API requires it, but they
@@ -231,7 +231,7 @@ def test_both_transports_subscribe_to_the_same_update_types():
 
     import config
 
-    expected = {"message", "edited_message", "callback_query", "chat_member"}
+    expected = {"message", "callback_query", "chat_member"}
 
     assert set(config.ALLOWED_UPDATES) == expected, (
         f"ALLOWED_UPDATES is {set(config.ALLOWED_UPDATES)}, expected "
@@ -255,7 +255,7 @@ def test_both_transports_subscribe_to_the_same_update_types():
             "route.")
         # Scoped to the subscription field, not the whole file: the
         # loop legitimately reads `upd_dict.get("message")` at runtime
-        # and the comments discuss edited_message at length, so a
+        # and the comments discuss update types at length, so a
         # file-wide literal scan reports a mention as a declaration.
         # What must not come back is a literal list bound to the
         # `allowed_updates` key.

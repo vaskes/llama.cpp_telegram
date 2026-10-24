@@ -235,7 +235,7 @@ async def _poll_loop(shutdown_event: asyncio.Event, *, register_bot_menu,
                             # content hash for cross-correlating
                             # with later log lines.
                             upd_id = upd_dict.get("update_id", "?")
-                            upd_msg = upd_dict.get("message") or upd_dict.get("edited_message") or {}
+                            upd_msg = upd_dict.get("message") or {}
                             upd_chat = upd_msg.get("chat") or {}
                             upd_from = upd_msg.get("from") or {}
                             upd_text = (upd_msg.get("text") or upd_msg.get("caption") or "")[:60]
@@ -260,38 +260,12 @@ async def _poll_loop(shutdown_event: asyncio.Event, *, register_bot_menu,
                             # default transport silently answering
                             # nothing at all.
                             next_offset = upd_dict["update_id"] + 1
-                            # edited_message handling:
-                            #
-                            # Telegram re-delivers edited messages as
-                            # `edited_message` updates (separate from
-                            # the original `message`). The bot used to
-                            # skip non-command edits — the original
-                            # was already answered, the edit was just
-                            # a typo fix. But this made the bot
-                            # appear unresponsive to the corrected
-                            # version: the user sees a wrong answer
-                            # for the typo and no new answer for the
-                            # correction.
-                            #
-                            # New behaviour:
-                            #   1. If the new text is a command, keep
-                            #      the old behaviour (commands are
-                            #      idempotent, re-running is fine).
-                            #   2. If the new text is regular text,
-                            #      look up the bot's previous reply
-                            #      to the original message in
-                            #      _bot_replies. If we have one,
-                            #      delete it. Then rewrite the
-                            #      update as a regular `message` and
-                            #      let the dispatcher process it
-                            #      like a fresh user message.
-                            #   3. If we have no previous reply
-                            #      (e.g., the original was rejected
-                            #      for security, or the bot never
-                            #      responded for some reason), just
-                            #      process the edit.
-                            # (The block itself moved out; see
-                            # _apply_edited_message below.)
+                            # edited_message updates are not
+                            # subscribed any more (config.ALLOWED_UPDATES
+                            # dropped them on 2026-10-24, together with
+                            # the edit-replace feature): an edited
+                            # message is ignored, and the answer to the
+                            # original stands.
                             # Dispatch as a TASK, not awaited. This is
                             # the critical change for the Stop button:
                             # previously, the polling loop was blocked

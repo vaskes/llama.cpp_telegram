@@ -72,6 +72,51 @@ summary is not placed in the position of its chunk, the raw tail and the
 old part are not capped, the fresh window loses its cap, a failed chunk
 is marked anyway, and the re-anchor stops summarising.
 
+### The edit-replace feature is gone
+
+A user could edit a message, and the bot would delete its own answer to
+that message and answer the edited text instead. It was the last user-facing
+feature in the bot with **no way to test it**: reproducing it needs two
+people, a deliberately slow model, a human watching real Telegram, and an
+active forum topic. The code existed, the unit tests were green, and the
+feature had never run in production — the block lived in the polling loop
+and production runs in webhook mode.
+
+The operator's call on 2026-10-24 was to remove it rather than to keep
+paying for it: let the user wait for the answer to the wrong question and
+ask again. So:
+
+- `dispatch_edit.py` is deleted;
+- `edited_message` is out of `config.ALLOWED_UPDATES`, so Telegram does not
+  even send edits to the bot;
+- the `_bot_replies` map in `state.py` is gone with it. It was written on
+  every single reply and read by nobody else — a leak with a lookup table;
+- an edited message is now ignored. The answer to the original stands.
+
+What is left of the routing tripwire is the part that outlived the feature:
+one entry point, `Update.de_json` called exactly once, both transports
+reaching it.
+
+**The removal is pinned, in both directions.** `tests/test_edit_removal.py`
+(6 tests) drives the real dispatcher: an edited message is not answered, and
+a normal message still is — a guard that dropped everything would satisfy the
+first test on its own. The write-only map is checked on `state.py`, the
+removed names on the AST of every production module (so the comments that
+explain the removal survive it), and the subscription on `config.py`.
+
+`scripts/mutation_harness_edit_removal.py`: 10 mutations, 7 caught, 3
+survived-as-intended, 0 refused, 0 invalid. The three are the second group:
+each removes a tripwire *and* the behaviour it catches, and the suite has to
+go green. That is the proof that the tripwire was the thing doing the work.
+
+**One thing the subscription alone could not do.** `allowed_updates` lives on
+Telegram's side and survives until the webhook is re-registered, so a bot
+restarted against a stale registration would still receive edits. And
+`filters.TEXT` reads `update.effective_message`, which falls back to
+`edited_message` — so the bot would have answered the edit as if it were a new
+message, with the old answer still on screen. The dispatcher now drops an
+edit explicitly, whatever the subscription says.
+
 ### An answer that carries a file now arrives as a file
 
 When the model answers with a formatted document — html, json, sql,

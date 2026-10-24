@@ -80,11 +80,6 @@
 [OK] leave event correctly skipped (0 calls)
 [OK] bot-join correctly skipped (0 calls)
 [selftest] state and rating tests: all pass
-[selftest] running edit-replace test...
-[OK] _bot_replies stores (chat, user_msg) → bot_msg mapping
-[OK] pop removes entry correctly
-[OK] pop on missing key returns None
-[selftest] edit-replace tests: all pass
 [selftest] running _download_with_limit test...
 [OK] oversized file rejected via file_size pre-check (no download)
 [OK] small file downloaded (250 bytes, no error reply)

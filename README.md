@@ -16,14 +16,15 @@
 > auth rejecting both a missing and a wrong secret, and the deployed tree
 > matching the repository by md5).
 >
-> **What is not:** one path has never been exercised by a human end-to-end
-> — the live edit-replace flow (a user edits a message while the bot is
-> answering; the bot must rewrite its answer). It needs two people, a slow
-> model and a real Telegram chat, so it is manual-only by nature and is
-> **not** covered by any automated test. Everything else that was
-> operator-pilot-tested was done on `v0.10.2-stable`, which remains the
-> release with a full human end-to-end pass on both private and
-> group-with-Topics modes.
+> **What is not:** the live edit-replace flow — a user edits a message
+> while the bot is answering, and the bot rewrites its answer — was never
+> exercised by a human end-to-end. It needed two people, a slow model and
+> a real Telegram chat, so it was manual-only by nature and **not** covered
+> by any automated test. It was **removed** on 2026-10-24 rather than kept
+> as a permanent gap: an edited message is now ignored, and the answer to
+> the original stands. Everything else that was operator-pilot-tested was
+> done on `v0.10.2-stable`, which remains the release with a full human
+> end-to-end pass on both private and group-with-Topics modes.
 >
 > ⚠️ **Do NOT `git clone <url>` without `--branch`.** The default
 > branch is bleeding-edge and may include unreleased refactors

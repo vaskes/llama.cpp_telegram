@@ -5,12 +5,12 @@
 # Cross-module state comes from module-level imports, not late ones:
 # `_is_group_chat` from chat_utils, `_should_mute_in_group` and
 # `_check_user_slot` from access, `_stop_button_markup` from llm_markup,
-# `_abort_events` and `_bot_replies` from state. There is no `from bot
-# import` here, at module level or inside a function -- the header used
-# to say there was, and to name `_user_semaphore` and `_persist_message`
-# as bot.py symbols, none of which exist in that shape: the semaphore
-# accessor is `state._get_user_semaphore`, and the persist/load helpers
-# here are thin re-export wrappers kept for tests.
+# `_abort_events` from state. There is no `from bot import` here, at
+# module level or inside a function -- the header used to say there was,
+# and to name `_user_semaphore` and `_persist_message` as bot.py
+# symbols, none of which exist in that shape: the semaphore accessor is
+# `state._get_user_semaphore`, and the persist/load helpers here are
+# thin re-export wrappers kept for tests.
 #
 # The trap this file fell into before: a comment that described a
 # dependency structure the code did not have, which then read as
@@ -76,7 +76,7 @@ from access import (
 )
 from llm_markup import _stop_button_markup
 import storage
-from state import _abort_events, _bot_replies, _get_global_llm_sem, _register_abort_event, _register_bot_reply
+from state import _abort_events, _get_global_llm_sem, _register_abort_event
 from rating import _is_rating_active, _apply_rating_and_persist
 # `handlers` does not import `dispatch`, at module level or inside a
 # function. Shared state lives in `state.py` precisely so that this stays
@@ -125,9 +125,6 @@ async def send_reply(update: Update, text: str):
     and return content='' for short prompts. We don't want the user to see a
     cryptic API error in that case.
 
-    Also records the (chat_id, user_message_id) → bot_message_id mapping
-    so a later user edit can trigger delete+reprocess.
-
     v0.10.2 (Qwen wave-3): applies per-chat rate limiting BEFORE sending.
     Without this, a burst (queue-drain after restart, or a rating-mode
     storm) can exceed Telegram's 20 msg/min/chat limit and trigger
@@ -139,20 +136,7 @@ async def send_reply(update: Update, text: str):
     text = (text or '').strip()
     if not text:
         text = EMPTY_RESPONSE_FALLBACK
-    sent = await _reply(update, text)
-    # Record the bot reply so an edit on the user message can replace it.
-    # update.message.message_id is the user's message; sent.message_id is
-    # the bot's reply. The mapping lets us delete the bot reply and
-    # process the edited user message as a fresh request.
-    try:
-        user_msg = update.message
-        if user_msg is not None and sent is not None:
-            chat_id = update.effective_chat.id if update.effective_chat else None
-            if chat_id is not None:
-                _register_bot_reply(chat_id, user_msg.message_id, sent.message_id)
-    except Exception as e:
-        # Never let tracking break a reply.
-        log.info(f"[send_reply] tracking failed: {type(e).__name__}: {e!r}")
+    await _reply(update, text)
 
 # === _reply_active ===
 
@@ -676,12 +660,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # concurrent getUpdates consumer, which Telegram rejects
         # (HTTP 409) — the check was a no-op in practice. The
         # _user_msg_text dict and the helper function were
-        # deleted in v0.5.1 (T4). The polling loop's
-        # edit-replace block (in _dispatch_update) now deletes
-        # the bot's stale reply and re-processes the edit as a
-        # new user message — there's a brief wrong-answer
-        # window. The Stop button (per-handler abort_event) is
-        # the recommended escape for long-running LLM calls.
+        # deleted in v0.5.1 (T4). The edit-replace feature that
+        # used to cover this was removed on 2026-10-24: an edited
+        # message is ignored now, so there is a wrong-answer
+        # window until the user asks again. The Stop button
+        # (per-handler abort_event) is the recommended escape for
+        # long-running LLM calls.
         # === RATING_MODE dispatch ===
         # In a group with RATING_MODE=1, the LLM prefixes its
         # response with [[TYPE:...]] [[RATE:N]]. We parse the

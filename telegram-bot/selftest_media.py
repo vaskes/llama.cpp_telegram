@@ -3,8 +3,6 @@
 T1.1 slice 5. Three blocks about files coming in and about who sent
 them:
 
-  * the `_bot_replies` map -- (chat, user_msg) -> bot_msg, which is how
-    a later poll knows which of its own messages to edit;
   * `_download_with_limit` -- the size cap, with the two distinct
     rejection paths. PTB 21.0 removed `File.download_as_chunks`, and any
     call to it surfaced to the user as "Failed to download photo/voice",
@@ -25,7 +23,6 @@ import storage
 from handlers import _download_with_limit, _sender_display_name
 from persistence import load_history as _load_history
 from persistence import persist as _persist_message
-from state import _bot_replies
 from logconf import get_logger
 
 # The name this section reports itself under. The summary line
@@ -45,55 +42,6 @@ def _store():
     importing dispatch would be a new failure mode on every restart.
     """
     return storage.get_store()
-
-
-async def check_edit_replace() -> bool:
-    # === Edit-replace test ===
-    # Verifies the _bot_replies tracking and the new edit-handling
-    # logic in the polling loop. We don't run the full polling loop
-    # (it requires a live Telegram server), but we exercise the
-    # data structure: record a (chat, user_msg) → bot_msg mapping,
-    # then verify it can be retrieved and popped.
-    log.info('[selftest] running edit-replace test...')
-    er_ok = True
-    try:  # noqa
-        # Save the existing map and clear it for the test
-        saved = dict(_bot_replies)
-        _bot_replies.clear()
-        # Record a mapping
-        _bot_replies[(-1001234567890, 100)] = 200
-        _bot_replies[(-1001234567890, 101)] = 201
-        # Lookup works
-        if _bot_replies.get((-1001234567890, 100)) != 200:
-            log.warning("  [FAIL] _bot_replies.get() returned wrong bot_msg_id")
-            er_ok = False
-        else:
-            log.info("  [OK] _bot_replies stores (chat, user_msg) → bot_msg mapping")
-        # Pop removes the entry
-        popped = _bot_replies.pop((-1001234567890, 100), None)
-        if popped != 200:
-            log.warning(f"  [FAIL] pop returned {popped}, expected 200")
-            er_ok = False
-        elif (-1001234567890, 100) in _bot_replies:
-            log.warning("  [FAIL] entry not actually removed by pop")
-            er_ok = False
-        else:
-            log.info("  [OK] pop removes entry correctly")
-        # Pop on missing key returns None (no exception)
-        if _bot_replies.pop((-1001234567890, 99999), None) is not None:
-            log.warning("  [FAIL] pop on missing key should return None")
-            er_ok = False
-        else:
-            log.info("  [OK] pop on missing key returns None")
-        # Restore the saved state
-        _bot_replies.clear()
-        _bot_replies.update(saved)
-    except Exception as e:
-        log.warning(f"  [FAIL] edit-replace test raised: {type(e).__name__}: {e!r}")
-        er_ok = False
-    all_ok = er_ok
-    log.warning(f"[selftest] edit-replace tests: {'all pass' if er_ok else 'FAILED'}")
-    return all_ok
 
 
 async def check_download_with_limit() -> bool:
@@ -335,7 +283,6 @@ async def check_sender_name_flow() -> bool:
 async def run_all() -> bool:
     """Every media/attribution block, in the order `_selftest` ran them."""
     all_ok = True
-    all_ok &= await check_edit_replace()
     all_ok &= await check_download_with_limit()
     all_ok &= await check_sender_name_flow()
     log.warning(

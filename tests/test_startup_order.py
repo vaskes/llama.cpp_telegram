@@ -211,7 +211,7 @@ def test_the_poll_loop_still_carries_the_allowed_updates():
         "second declaration.")
     ns = {"__file__": str(CONFIG), "__name__": "cfg_probe"}
     exec(compile(CONFIG.read_text(encoding="utf-8"), str(CONFIG), "exec"), ns)
-    for token in ("callback_query", "chat_member", "edited_message"):
+    for token in ("callback_query", "chat_member"):
         assert token in ns["ALLOWED_UPDATES"], (
             f"{token} is missing from config.ALLOWED_UPDATES; without it "
             "Telegram drops those updates silently in BOTH transports")

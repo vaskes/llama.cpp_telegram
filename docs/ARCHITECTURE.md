@@ -13,13 +13,12 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1365 lines)
+├── handlers.py            # handle_text/photo/voice/document (1349 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   478 lines file, 319 in the function
-├── dispatch.py            # routing, lifecycle, concurrency caps (345)
+├── dispatch.py            # routing, lifecycle, concurrency caps (364)
 ├── dispatch_group.py      # human-to-human reply absorb (108)
-├── dispatch_edit.py       # the edited-message rewrite (108)
-├── dispatch_polling.py    # startup + getUpdates loop (352)
+├── dispatch_polling.py    # startup + getUpdates loop (326)
 ├── dispatch_webhook.py    # PTB assembly + handler registration (325)
 ├── webhook.py             # aiohttp server + secret check (224)
 ├── commands/              # the slash-command handlers, as a package
@@ -33,8 +32,8 @@ telegram-bot/
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py      # KNOWN_TOOL_NAMES whitelist (141)
 ├── limits.py              # profile-based token/timeout limits (312)
-├── config.py              # env-var read at import time (349)
-├── state.py               # per-chat runtime state (240)
+├── config.py              # env-var read at import time (354)
+├── state.py               # per-chat runtime state (225)
 ├── storage.py             # SQLite: messages, threads, topics, summaries (940)
 ├── persistence.py         # conversation-history assembly (173)
 ├── turn.py                # one turn's persist/rollback ledger (159)
@@ -49,8 +48,8 @@ telegram-bot/
     └── bash_command.py    # T38: bash execution via sandbox side-car
 ```
 
-55 top-level modules, 134 test files, 2256 tests collected in a checkout.
-CI collects 2237 of them — the sandbox-marked file is excluded by name.
+54 top-level modules, 134 test files, 2235 tests collected in a checkout.
+CI collects 2216 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 

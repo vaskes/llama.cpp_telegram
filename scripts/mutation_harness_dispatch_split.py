@@ -45,16 +45,20 @@ MUTATIONS = [
     ("E3", "dispatch_webhook.py",
      "        start_reanchor_scheduler()\n        start_summarise_on_boot()\n",
      "        pass\n", 1),
-    ("F1", "dispatch_edit.py",
-     "        _dispatcher = dispatch_polling.get_dispatcher()\n", "", 1),
-    ("F2", "dispatch_edit.py",
-     "        old_bot_msg_id = _bot_replies.pop(key, None)\n",
-     "        old_bot_msg_id = None\n", 1),
-    ("F3", "dispatch.py",
-     "    await _apply_edited_message(upd_dict)\n", "    pass\n", 1),
     ("F4", "dispatch.py",
      "    await app.process_update(upd)\n", "    pass\n", 1),
 ]
+
+# F1, F2 and F3 were removed on 2026-10-24, with the edit-replace
+# feature they guarded: F1 and F2 mutated `dispatch_edit.py`, and F3
+# mutated the call to `_apply_edited_message` in `dispatch.py`. The
+# files and the call are gone, so the mutations have nothing to bite
+# on -- a mutation list that names deleted code is a list of REFUSED
+# rows, and a harness that reports REFUSED as if it were coverage is
+# lying about itself.
+#
+# The ids are not renumbered: F4 stays F4, so a report from before the
+# removal and one from after can still be compared row by row.
 
 
 def compile_check(path: Path) -> str | None:

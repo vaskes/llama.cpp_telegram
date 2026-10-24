@@ -190,8 +190,7 @@ def test_the_polling_loop_subscribes_to_the_types_it_handles(monkeypatch):
     client, seen, _ = _run_loop([[_msg(301)]], None, monkeypatch)
     assert seen, "precondition: an update was delivered"
     subscription = client.allowed_updates[0]
-    for needed in ("message", "edited_message", "callback_query",
-                   "chat_member"):
+    for needed in ("message", "callback_query", "chat_member"):
         assert needed in subscription, (
             f"{needed} is missing from allowed_updates: {subscription}")
 

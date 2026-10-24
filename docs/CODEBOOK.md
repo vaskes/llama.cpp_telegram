@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1365 lines, and it is
+Our largest file right now is `handlers.py` at 1349 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -270,9 +270,9 @@ indistinguishable from an ordinary assignment — reading is the only way.
 **N-5 — One declaration per constant; every consumer names it.** `AUTO`
 
 `allowed_updates` was written twice: a JSON string in `dispatch_polling`, a real
-list in `dispatch_webhook`. `edited_message` could vanish from one side
-unnoticed — which is exactly how edit-replace stayed dead in production while a
-test reported it working.
+list in `dispatch_webhook`. `callback_query` could vanish from one side
+unnoticed — which is exactly how the Stop button stayed dead in production
+while a test reported it working.
 
 The transports **cannot** match on format (`getUpdates` requires a JSON string
 in the query; `setWebhook` takes an array in the body). They must match **on
@@ -418,7 +418,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1365 and is registered. The threshold is 1000 because
+`handlers.py` is 1349 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -535,7 +535,9 @@ stubbed engine asserting on the value that comes out.
 
 **T-9 — Comments describing a location must survive their own refactor.** `AUTO`
 Covered by D-2. The edit-replace block was described in two comments as living
-"in `_dispatch_update`" for years while it lived nowhere at all.
+"in `_dispatch_update`" for years while it lived nowhere at all. (The feature
+itself was removed on 2026-10-24; the rule outlived it, which is the point of
+a rule.)
 
 ### 3.6 Delivery and diagnosis
 
@@ -551,6 +553,12 @@ the polling loop. Production runs in webhook mode, where the update
 arrives straight from the webhook handler and never enters the polling
 loop. **The feature had never executed in production.** The test that
 covered it passed, because the test called the polling path directly.
+
+It was removed on 2026-10-24 — the second half of the same lesson. A
+feature that cannot be exercised in the mode production runs in, and
+whose coverage requires two people and a deliberately slow model, is a
+feature that costs testing and returns nothing. The operator's call:
+let the user wait for the answer to the wrong question and ask again.
 
 > **"The feature is in the code" is not "the feature runs in the mode
 > production is in."** Find where the block physically is, not which file
@@ -619,7 +627,7 @@ infrastructure trouble rather than as a caught regression. Wrap in
 **H-5 — A mutation run against a subset says nothing about another subset.**
 `JUDGEMENT`
 
-> A mutation run against `test_dispatch_edited_message.py` says nothing about
+> A mutation run against `test_dispatch_routing.py` says nothing about
 > `test_late_import_policy.py`. The green belonged to a different run.
 
 **A review wave starts with a full pass over the tree. The diff is the second
@@ -770,7 +778,6 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_drift_handler_imports.py` | 2 | Application callbacks imported |
 | `test_drift_r8/r9/r10/r11` | 4 | Tools, profiles, env, handlers |
 | `test_polling_integration.py` | 9 | Cross-transport integration |
-| `test_edit_replace_live_path.py` | 7 | The live edit-replace path, in-process |
 | `test_size_budget.py` | 10 | S-1, S-6 — function and module size budgets |
 | `test_changelog_structure.py` | 7 | One `[Unreleased]` section; sections and tags agree |
 | `test_no_duplicate_definitions.py` | 4 | T-4 — repeated top-level definitions |
@@ -778,17 +785,25 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_dispatch_group_seam.py` | 4 | The seam a group-absorb extraction needs |
 | `test_signal_handler_ownership.py` | 3 | One signal policy, two modes |
 | `test_c3_initialize_failure.py` | 2 | The publish-after-initialize ordering |
+| `test_edit_removal.py` | 6 | The edit-replace feature is gone, and stays gone |
+| `test_codebook_test_table.py` | 6 | The table above names files that exist |
 
-133 test files in total; the table above is the ones that guard a rule in
+134 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
 pushes, and the reason is written into the workflow file itself. Do not quietly
 strengthen or quietly remove it.
 
-**One known gap:** the live edit-replace path has never been exercised by a
-human end to end. `test_edit_replace_live_path.py` is in-process
-characterisation, not live coverage, and the README says so too.
+**One known gap, now closed by removal:** the live edit-replace path was never
+exercised by a human end to end. The feature was removed on 2026-10-24
+rather than left as a permanent gap, and the README says so too.
+
+**One false claim this document carried, and what now guards it:** the table
+above once named `test_edit_replace_live_path.py` — a file that did not
+exist. The table is checked against the filesystem by
+`tests/test_codebook_test_table.py`; a name in it that is not a real file is
+now a red test.
 
 ---
 
@@ -800,7 +815,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1365 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1349 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -957,6 +972,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1365 lines and healthy — it only decides when somebody
+> `handlers.py` is 1349 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.

@@ -5,11 +5,10 @@
 #
 # Why a dedicated module:
 #   - handlers.py needs _abort_events (insert/pop),
-#     _bot_replies (insert), _get_global_llm_sem (acquire)
+#     _get_global_llm_sem (acquire)
 #   - dispatch.py needs _abort_events (lookup in cmd_callback),
-#     _bot_replies (lookup in edit-replace),
 #     _get_global_llm_sem (also acquire)
-#   - bot.py's _selftest accesses all three
+#   - bot.py's _selftest accesses them
 #
 # Without state.py, every consumer does `from bot import ...`
 # which is a circular import waiting to break.
@@ -22,7 +21,6 @@ _GLOBAL_LLM_SEM_LIMIT = 4
 _PER_USER_SEMAPHORE_LIMIT = 2
 _ABORT_EVENTS_MAXSIZE = 200
 _USER_SEMAPHORES_MAXSIZE = 500
-_BOT_REPLIES_MAXSIZE = 500
 
 _abort_events: "OrderedDict[tuple[int, int], asyncio.Event]" = OrderedDict()
 _global_llm_sem: "asyncio.Semaphore | None" = None
@@ -55,29 +53,16 @@ def _register_abort_event(chat_id: int, message_id: int, ev: asyncio.Event) -> N
             _abort_events.popitem(last=False)
 
 
-# === _bot_replies: edit-replace tracking (v0.10.0: LRU) ===
-# Maps (chat_id, user_message_id) -> bot_message_id so when the user
-# edits their message, we can delete the stale bot reply. Previously
-# grew without bound; v0.10.0 adds LRU eviction at _BOT_REPLIES_MAXSIZE.
-
-_bot_replies: "OrderedDict[tuple[int, int], int]" = OrderedDict()
-
-
-def _register_bot_reply(chat_id: int, user_message_id: int, bot_message_id: int) -> None:
-    """Track that the bot's reply to user_message_id is bot_message_id.
-    Used by the edit-replace flow in dispatch._dispatch_update.
-    """
-    key = (chat_id, user_message_id)
-    _bot_replies[key] = bot_message_id
-    _bot_replies.move_to_end(key)
-    while len(_bot_replies) > _BOT_REPLIES_MAXSIZE:
-        _bot_replies.popitem(last=False)
-
-
-def _pop_bot_reply(chat_id: int, user_message_id: int) -> int | None:
-    """Return and remove the bot's reply id for the user message, if any.
-    Returns None if no reply was tracked."""
-    return _bot_replies.pop((chat_id, user_message_id), None)
+# The `_bot_replies` LRU used to live here: (chat_id, user_message_id)
+# -> bot_message_id, so that an edit of the user's message could delete
+# the stale bot reply. The edit-replace feature was removed on 2026-10-24
+# -- it had no live coverage and no way to get one -- and the map was its
+# only reader. A map that is written on every reply and read by nobody
+# is not a cache, it is a leak with a lookup table.
+#
+# The write side was in `handlers._reply`, on every single reply: two
+# dict writes, a move_to_end and a while-loop, for a map with no reader.
+# That is the cost of a feature nobody could test.
 
 
 # Per-(chat_id, user_id) semaphore. Keys are tuples so the same

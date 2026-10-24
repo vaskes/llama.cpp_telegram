@@ -29,10 +29,10 @@
 |---|---|
 | HEAD | nineteen commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it) |
 | Production | **the host runs on a generator** — any request to the model overloads it (operator's measurement, 2026-10-24), so neither the bot nor the engine can be exercised there for now. The box also lost power earlier the same day |
-| Pytest | `2213 passed, 20 skipped, 1 failed` locally. The one failure is environmental: `test_backtest_deploy_artifacts.py::test_control_unmutated_tree_passes` spawns the system `python3`, which has no pytest in this sandbox (it fails on the clean tree too) |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** — `2214 passed, 1 skipped` on both at `60e6ab6` |
+| Pytest | `2215 passed, 20 skipped` locally |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
-| Production modules | 55 `.py` files in `telegram-bot/` |
+| Production modules | 54 `.py` files in `telegram-bot/` |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
 | Open review cycle | none — waves 1–8 closed just before the `v0.13.0-stable` tag ("production-ready") |
 
@@ -97,10 +97,9 @@ below are all parts of it, and the list is growing rather than shrinking:
 |---|---|
 | T68b | the engine keeps a KV cache for context that already fell out of the window, and the reset command is unreachable |
 | T66.1 | the guaranteed minimum of the last N messages when the window is empty |
-| Live edit-replace | the one user-visible scenario with no automated coverage |
 
 Closing the context-memory tickets closed *a* set of tasks. It did not
-close this. Treat the three rows above as one blocker with three faces,
+close this. Treat the two rows above as one blocker with two faces,
 and do not read a green board here as "the context problem is done".
 (T70.6 left this table on 2026-10-23: the operator's decision was that
 the thinking cap belongs to llama-server, so the bot-side knob was
@@ -269,18 +268,6 @@ window is anchored, not a sliding count.
 Nothing implements a floor. If the anchored window contains no messages,
 the context is empty. The operator's answer at the time was "not added" —
 this is recorded so it is a decision, not an omission.
-
-### Live edit-replace — the one test that cannot be automated
-
-**Status:** manual-only, by design. Not a gap in coverage.
-
-The edit-replace path (a user edits a message while the bot is answering
-it; the bot must rewrite its answer) needs two people, a slow model, and
-a human watching real Telegram. An in-process characterisation of the
-same code is **not** live coverage and is not labelled as such anywhere.
-
-**What it needs:** one operator session with a second participant. See
-the detail doc for the scenario: `docs/tech-debt/10-dispatch-1624-lines-high-open.md`.
 
 ---
 
@@ -492,7 +479,8 @@ False alarm — the Qwen report was wrong. Already correct.
 
 Executed against `v0.10.2` by the operator and a second tester (Vaskes and
 Dimon, 2026-10-12). The only item that was deliberately not done is the
-live edit-replace scenario, which is still open above.
+live edit-replace scenario — and the feature it covered was removed on
+2026-10-24, so the scenario is no longer part of the checklist.
 
 ---
 

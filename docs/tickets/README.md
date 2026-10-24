@@ -66,10 +66,10 @@ inside functions, the 1600-line `call_llama`, duplicated handler
 boilerplate) was one problem and got one focused refactor, sequenced after
 this blocker closed and before the next feature.
 
-One item keeps a standing caveat: **live edit-replace is manual-only**
-(`TECH-DEBT.md` #10). It needs two people, a slow model, and a human
-watching real Telegram; it is not covered by any automated test and is not
-labelled as if it were.
+One item kept a standing caveat until 2026-10-24: **live edit-replace was
+manual-only** (`TECH-DEBT.md` #10). It needed two people, a slow model, and
+a human watching real Telegram. The caveat is gone because the feature is:
+it was removed rather than kept as a permanent gap.
 
 ---
 

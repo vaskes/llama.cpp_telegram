@@ -48,14 +48,12 @@ Properties pinned, not the presence of a function:
 
 - every delivery mode reaches `_dispatch_update` (webhook awaits it,
   polling goes through `_spawn_dispatch`);
-- the edit rewrite runs **before** `Update.de_json`, not after;
 - `Update.de_json` is called **exactly once** in the entry point;
-- `edited_message` is gone from the dict afterwards, on both rewrite
-  paths -- leaving it makes PTB route the same text twice;
-- the rewrite preserves `message_thread_id`, which is the attribute
-  whose absence produced the original `AttributeError`;
-- an update that already carries `message` is left alone;
 - no module other than `dispatch.py` and `webhook.py` calls `de_json`.
+
+(The four bullets about the edit rewrite were dropped on 2026-10-24, when
+the feature itself was removed. The entry-point bullets outlived it --
+they are the ones that cost production two crashes.)
 
 **10 mutations, 10 caught**, on a clean-tree preflight. Two things the
 run changed rather than confirmed:
@@ -125,15 +123,15 @@ file pins the payloads as payloads and checks the filter has exactly one
 definition, because two copies drift and that is how the Application
 builders drifted two blocks ago.
 
-## Not verified: live edit-replace against a real user (manual only)
+## Closed by removal: the live edit-replace path (2026-10-24)
 
 The edit-replace path -- user edits a message, the bot deletes its old
-answer and recomputes -- has **never been observed running against live
-Telegram traffic**. It is characterised by unit tests and by
+answer and recomputes -- had **never been observed running against live
+Telegram traffic**. It was characterised by unit tests and by
 `_apply_edited_message` exercising the rewritten update dict, and that
-is the whole of the evidence.
+was the whole of the evidence.
 
-This is not an oversight that a better test would fix. To see the bug
+This was not an oversight that a better test would fix. To see the bug
 you need three things at once, and production has none of them:
 
 1. **two people**, because you must edit your own message while the bot
@@ -145,20 +143,53 @@ you need three things at once, and production has none of them:
    `message_thread_id`, which is only present in a forum topic.
 
 Production is the opposite: fast model, one user, topic traffic
-happening. So this case will hang open indefinitely unless the bot is
-deliberately run against a slow model with two people present. That is
-the intended arrangement, not a gap someone forgot.
+happening. So this case would have hung open indefinitely unless the bot
+was deliberately run against a slow model with two people present.
 
-Consequences for how to read the tripwires: `test_dispatch_routing.py`
-proves the rewrite runs before `de_json`, that `edited_message` is
-removed, and that `message_thread_id` survives. It cannot prove the
-Telegram client behaves the way the rewrite assumes, because that needs
-a real update from the real API. Treat the live path as untested by
-design, and do not read the green suite as evidence about it.
+**The operator closed it by removal on 2026-10-24.** The feature needs
+two people, a slow model and a human watching real Telegram to verify;
+the testing it carried cost more than the scenario was worth, and the
+benefit was a wrong-answer window that closes when the user asks again.
+So: `dispatch_edit.py` is deleted, `edited_message` is out of
+`config.ALLOWED_UPDATES`, and an edited message is ignored -- the answer
+to the original stands.
+
+What this document keeps is the reason, because the next feature that
+"lives in one transport" will be described the same way.
+
+### The removal is pinned, in both directions
+
+`tests/test_edit_removal.py` (6 tests) holds the removal:
+
+- an edited message is **not answered** -- driven through the real
+  `_dispatch_update`, because a unit test of the guard would pass with
+  the guard unreachable;
+- a normal message **is** still answered -- the other direction, because
+  a guard that dropped everything would satisfy the first test;
+- the write-only `_bot_replies` map is gone from `state.py`;
+- no production module *uses* the removed names -- AST, not a substring
+  scan, so the comments that explain the removal can survive it;
+- the subscription does not ask Telegram for edits.
+
+**`scripts/mutation_harness_edit_removal.py`: 10 mutations, 7 caught, 3
+survived-as-intended, 0 refused, 0 invalid.**
+
+The three that "survived" are the point of the second group: each one
+removes a tripwire *and* the behaviour it is supposed to catch, and the
+suite has to go **green**. A green suite with the tripwire gone is the
+proof that the tripwire was the thing doing the work.
+
+The guard in `_dispatch_update` is not a nicety. `filters.TEXT` reads
+`update.effective_message`, and `effective_message` falls back to
+`edited_message` -- so a bot that still received edits would have
+answered them, as a new message, with the old answer still on screen.
+`allowed_updates` is a setting on Telegram's side and survives until the
+webhook is re-registered, so the subscription alone is not enough.
 
 
 
-**1672 → 345 lines**, seven blocks. (`handlers.py` is 1283, which block C
+**1672 → 345 lines**, seven blocks (339 after the edit-replace removal
+on 2026-10-24). (`handlers.py` is 1283, which block C
 shrank from 1357; wave 4's comment fix moved it by five more.) Routing is pinned in `test_dispatch_routing.py`, the
 startup sequence in `test_startup_order.py`, the injection filter in
 `test_prompt_guard.py`, and every module is checked for names it reads but
@@ -193,7 +224,8 @@ Two other things went with it. `main()` defined an `_on_signal`
 closure with zero callers -- the real handler has lived in
 `dispatch_polling._install_signal_handlers` since block B -- and four
 section markers headed empty sections naming functions that had moved
-to `dispatch_webhook.py` and `dispatch_edit.py`. A reader looking for
+to `dispatch_webhook.py` (and, later, to the now-deleted
+`dispatch_edit.py`). A reader looking for
 `_register_bot_menu` in this file found a heading and nothing under
 it.
 
@@ -224,8 +256,10 @@ surface or bookkeeping and stayed when it picks a handler:
 |---|---|---|
 | `dispatch_polling.py` | 306 | signals, runtime prep, the getUpdates loop, the task factory, and the Application registry |
 | `dispatch_webhook.py` | 327 | Application assembly, handler registration, the command menu, chat-member bookkeeping |
-| `dispatch_edit.py` | 108 | the edited-message rewrite, in one place |
 | `dispatch_group.py` | 108 | the human-to-human reply absorb path |
+
+(`dispatch_edit.py` — the edited-message rewrite, 108 lines — was the fourth
+split of block F. It was deleted on 2026-10-24 with the feature.)
 
 `dispatch.py` is left with `_dispatch_update`, `_handle_reply_to_other_user`,
 `main`, the concurrency caps and the wiring between them.
@@ -303,5 +337,5 @@ declares a `global` its module does not have.
 **Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
 
-<!-- current: dispatch.py=345, handlers.py=1365 -->
-<!-- current: dispatch_polling.py=352, dispatch_webhook.py=325, dispatch_edit.py=108 -->
+<!-- current: dispatch.py=364, handlers.py=1349 -->
+<!-- current: dispatch_polling.py=326, dispatch_webhook.py=325 -->

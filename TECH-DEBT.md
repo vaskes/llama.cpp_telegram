@@ -33,10 +33,10 @@ disagreement again without a test going red.
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
 | 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
 | 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `scripts/mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
-| 10 | `dispatch.py` — 1672 → 345 | **closed** — blocks A–G, 40 mutations; ticket target ≤400 met by block G | `test_dispatch_routing.py` | Live edit-replace: manual-only, see detail doc |
+| 10 | `dispatch.py` — 1672 → 364 | **closed** — blocks A–G, 40 mutations; ticket target ≤400 met by block G | `test_dispatch_routing.py` | The edit-replace feature it carried was removed on 2026-10-24 |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
-| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1365, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
+| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1349, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
 | 14 | Duplicate top-level definitions in `tests/` | **closed** | `test_no_duplicate_definitions.py` | — |
 
 Four tripwires were found to be measuring something other than their
@@ -57,18 +57,17 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    345 lines, 3 top-level defs  <- was 1612
+dispatch.py    364 lines, 3 top-level defs  <- was 1612
 dispatch_group.py 108 lines, human-to-human reply absorb
-dispatch_polling.py   352 lines, startup + getUpdates loop
+dispatch_polling.py   326 lines, startup + getUpdates loop
 dispatch_webhook.py   325 lines, PTB assembly + handlers
 webhook.py             224 lines, aiohttp server + secret check
-dispatch_edit.py      108 lines, the edited-message rewrite
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   478 lines, ToolLoop owns the iteration, 17 llm_* leaf modules
-handlers.py    1365 lines
+handlers.py    1349 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      940 lines, class Storage encapsulated, get_store() sole entry
-config.py       349 lines, 24 env names, plus 12 elsewhere in the package
+config.py       354 lines, 24 env names, plus 12 elsewhere in the package
 
 Line counts are splitlines(); the trailing newline is not a line. The
 earlier figures in this file came from split("\n") and were each one
@@ -102,7 +101,10 @@ the 1940-line figure below it is the size it *started* from.
 Recorded so the question stops resurfacing at every review.
 
 - **Going past 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
-  **Met, in block G: `dispatch.py` is 345 lines.** It was not for six
+  **Met, in block G: `dispatch.py` is 345 lines** (364 after the
+  edit-replace feature was removed on 2026-10-24 -- the feature went, and
+  the guard that took its place is longer than the code it replaced). It
+  was not for six
   blocks. This entry said "Done: 405" for three waves while the size
   tripwire reported a different number each time the file moved; the
   claim was wrong, not the measurement.
@@ -116,7 +118,8 @@ Recorded so the question stops resurfacing at every review.
   The cut did not delete a comment to hit the number. It removed dead
   code: an `_on_signal` closure in `main()` with zero callers, and four
   section markers heading empty sections naming functions that had
-  already moved to `dispatch_webhook.py` and `dispatch_edit.py`. The
+  already moved to `dispatch_webhook.py` (and, later, to the now-deleted
+  `dispatch_edit.py`). The
   ~45 comments the wave-5 and wave-6 fixes added are still there,
   because each one explains a bug that shipped green through four
   review waves precisely because the code looked correct.

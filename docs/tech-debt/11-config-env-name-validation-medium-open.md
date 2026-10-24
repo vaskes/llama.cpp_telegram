@@ -55,4 +55,4 @@ recursive glob also hid `personal_tools/bash_command.py` and the whole
 bash-sandbox subpackage until reverting it to a recursive one was tried
 as a mutation.
 
-<!-- current: config.py=349 -->
+<!-- current: config.py=354 -->

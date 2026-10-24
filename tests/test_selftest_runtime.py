@@ -54,8 +54,8 @@ from selftest_harness import run_selftest  # noqa: E402
 
 GOLDEN = TESTS / "selftest_golden.log"
 
-# Measured, not estimated. The selftest has exactly 95 assertion
-# sites -- 95 unique [OK]/[FAIL] markers.
+# Measured, not estimated. The selftest has exactly 92 assertion
+# sites -- 92 unique [OK]/[FAIL] markers.
 #
 # It was 190 until this was counted properly. Every line the selftest
 # logs is written twice by the logging stack, and the first version of
@@ -64,9 +64,15 @@ GOLDEN = TESTS / "selftest_golden.log"
 # here rather than quietly replaced, because "the count is 95, and
 # here is why the earlier number was wrong" is the useful form.
 #
+# 95 -> 92 on 2026-10-24: the edit-replace block was removed (the
+# feature had no live coverage and no way to get one), and it carried
+# three [OK] markers with it. The golden diff for that removal was
+# exactly those five lines and nothing else -- which is the evidence
+# that no other block moved.
+#
 # Bump this deliberately when a block is added, never as a side effect
 # of something failing.
-EXPECTED_VERDICTS = 95
+EXPECTED_VERDICTS = 92
 
 # Run once per session. It starts a stub server and spawns a
 # subprocess, and the whole point is that it is cheap enough to run on

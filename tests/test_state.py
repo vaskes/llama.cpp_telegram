@@ -2,7 +2,6 @@
 
 Covers:
 - _user_semaphores: LRU at _USER_SEMAPHORES_MAXSIZE=500
-- _bot_replies: LRU at _BOT_REPLIES_MAXSIZE=500
 
 The OrderedDict.move_to_end() / popitem(last=False) pattern is
 shared with _abort_events (which had LRU since F4). The tests
@@ -12,8 +11,7 @@ verify that:
 - A "touch" (re-insert existing key) doesn't evict
 
 Note: the autouse _reset_module_state fixture in conftest.py
-clears _user_semaphores between tests. _bot_replies is also
-cleared (it's the same OrderedDict instance from state.py).
+clears _user_semaphores between tests.
 """
 import asyncio
 
@@ -110,38 +108,6 @@ def test_user_semaphores_at_actual_500_limit_evicts():
         _st._USER_SEMAPHORES_MAXSIZE = saved_maxsize
         _st._user_semaphores.clear()
 
-
-
-# === _bot_replies LRU ===
-
-def test_bot_replies_lru_evicts_oldest():
-    """v0.10.0: _register_bot_reply at maxsize evicts the oldest."""
-    saved_maxsize = _st._BOT_REPLIES_MAXSIZE
-    _st._BOT_REPLIES_MAXSIZE = 3
-    _st._bot_replies.clear()
-    try:
-        _st._register_bot_reply(1, 1, 100)
-        _st._register_bot_reply(1, 2, 101)
-        _st._register_bot_reply(1, 3, 102)
-        assert len(_st._bot_replies) == 3
-        _st._register_bot_reply(1, 4, 103)
-        assert len(_st._bot_replies) == 3
-        assert (1, 1) not in _st._bot_replies
-        assert (1, 4) in _st._bot_replies
-    finally:
-        _st._BOT_REPLIES_MAXSIZE = saved_maxsize
-        _st._bot_replies.clear()
-
-
-def test_bot_replies_pop_returns_value_or_none():
-    """v0.10.0: _pop_bot_reply returns the bot_message_id if present, None otherwise."""
-    _st._bot_replies.clear()
-    _st._register_bot_reply(1, 1, 100)
-    assert _st._pop_bot_reply(1, 1) == 100
-    assert (1, 1) not in _st._bot_replies
-    # Popping a missing key returns None
-    assert _st._pop_bot_reply(1, 999) is None
-    _st._bot_replies.clear()
 
 
 # === prompts.py long versions (regression on P0-3) ===

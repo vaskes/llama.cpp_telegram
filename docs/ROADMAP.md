@@ -52,13 +52,15 @@ question, and the question is written down in
 already DST-correct — but it means the bot restarts `llama-server` once a
 day, so it waits for an explicit go-ahead.
 
-### 2 — The live edit-replace test
+### 2 — ~~The live edit-replace test~~ (removed 2026-10-24)
 
-The one behaviour that cannot be automated: a human edits a message while
-the bot is answering, and the bot must rewrite its answer. It needs two
-people, a slow model, and someone watching real Telegram. It has been
-deferred since 2026-10-12 and it is the last unverified path in the
-dispatch split.
+The one behaviour that could not be automated: a human edits a message
+while the bot is answering, and the bot must rewrite its answer. It needs
+two people, a slow model, and someone watching real Telegram, so it was
+deferred from 2026-10-12 to 2026-10-24 and then **removed**: the feature
+went with it, the bot now ignores an edited message, and the answer to the
+original stands. The cost of keeping a path that only a human can walk
+was higher than the benefit of the path.
 
 ### 3 — Automation that replaces the operator's checklist
 

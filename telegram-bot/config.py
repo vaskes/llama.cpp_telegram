@@ -59,12 +59,17 @@ TELEGRAM_API = os.environ.get(
 # format -- polling passes a JSON string in the query, webhook passes a
 # real list in the JSON body.
 #
-# Why it matters: the edit-replace feature was dead in production for
-# years because its handler lived in the polling branch and production
-# ran webhook. `edited_message` is in this list, and nothing but this
-# constant keeps the subscription honest.
-ALLOWED_UPDATES = ("message", "edited_message", "callback_query",
-                   "chat_member")
+# Why one constant matters: the edit-replace feature was dead in
+# production for years because its handler lived in the polling branch
+# and production ran webhook. A subscription that names a type nobody
+# handles is a promise the bot cannot keep, and the subscription list is
+# the one place where that promise is visible.
+#
+# `edited_message` was dropped on 2026-10-24, together with the feature:
+# the bot no longer re-answers an edited message, so subscribing to
+# edits only buys traffic the bot has nothing to do with. An edited
+# message is simply ignored -- the answer to the original stays.
+ALLOWED_UPDATES = ("message", "callback_query", "chat_member")
 
 # Query-parameter form: getUpdates wants JSON-in-a-string.
 ALLOWED_UPDATES_JSON = _json.dumps(list(ALLOWED_UPDATES))
