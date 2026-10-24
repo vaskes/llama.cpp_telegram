@@ -72,6 +72,38 @@ summary is not placed in the position of its chunk, the raw tail and the
 old part are not capped, the fresh window loses its cap, a failed chunk
 is marked anyway, and the re-anchor stops summarising.
 
+### A ticket cannot be decided in one document and open in another
+
+The operator caught a contradiction that had been sitting in the
+repository for four days: the decision "we are not adding a guaranteed
+minimum of N messages" was recorded on 2026-10-20, and two documents on
+2026-10-23 still carried it as open. The tickets index said `open, low
+impact`; the backlog listed it under "the context blocker is not
+closed".
+
+Nothing was broken. The code was right, the decision was right, and the
+documents disagreed with each other — which is the dangerous shape, because
+the backlog is where a reader looks for work.
+
+Four documents now agree, and `tests/test_ticket_state_consistency.py`
+(4 tests) keeps them agreeing, in both directions:
+
+- a section under "## Open ..." whose status line says closed/decided is
+  a contradiction with its own heading;
+- a question the index marks answered must not appear as an entry in an
+  open section of the backlog;
+- a question the ticket documents mark settled must not be "open" in the
+  index.
+
+The last one is the direction the operator found, and it is the one that
+was missing: the first version of the check only looked at "index says
+answered" and not at "ticket says answered" — a mutation that flipped the
+index row back to `open, low impact` stayed green.
+
+Two more decided items were found in the same place and moved: T70.5
+(chunked summaries) and T70.6 (the reasoning cap lives on the engine)
+were both under "## Open ..." with a status line saying they were done.
+
 ### The edit-replace feature is gone
 
 A user could edit a message, and the bot would delete its own answer to

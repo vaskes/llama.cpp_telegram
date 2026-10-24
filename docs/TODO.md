@@ -96,101 +96,20 @@ below are all parts of it, and the list is growing rather than shrinking:
 | Piece | What it still leaves open |
 |---|---|
 | T68b | the engine keeps a KV cache for context that already fell out of the window, and the reset command is unreachable |
-| T66.1 | the guaranteed minimum of the last N messages when the window is empty |
 
 Closing the context-memory tickets closed *a* set of tasks. It did not
-close this. Treat the two rows above as one blocker with two faces,
-and do not read a green board here as "the context problem is done".
+close this. Treat the row above as the blocker, and do not read a green
+board here as "the context problem is done".
 (T70.6 left this table on 2026-10-23: the operator's decision was that
 the thinking cap belongs to llama-server, so the bot-side knob was
 deleted rather than implemented -- see that entry.
 T70.5 left this table on 2026-10-24: the operator decided on chunked
 summaries with a "СВЕДЕНО" marker in the database, and it is
-implemented -- see that entry.)
+implemented -- see that entry.
+T66.1 left this table on 2026-10-24: the operator's answer was recorded
+on 2026-10-20 -- "not adding" -- and it was never a piece of this
+blocker. See the closed list.)
 
-
-### T70.5 — what if the summary itself does not fit in the context window?
-
-**Status:** ✅ **decided by the operator 2026-10-24, implemented.**
-**Where:** `docs/tickets/TICKET-T70-context-protocol-redesign.md`,
-`docs/tickets/README.md` (open question 6), `telegram-bot/summarize.py`,
-`telegram-bot/context_budget.py`.
-
-The operator's answer: chunk the old part, summarise each chunk, and mark
-it in the database so the same chunk is never summarised again.
-
-> сводки надо делать чанками, и помечать. т.е. если ОБЪЕМ данных для сводки
-> > 200к надо сделав по ней сводку проставить в базе поле СВЕДЕНО, ссылку на
-> сводку которая сделана и по этому чанку больше сводки не делать. Если объем
-> данных для сводки <200к не проставлять поле сведено и не сводить, а грузить
-> как есть в контекст. Ну и при загрузке соответсвенно грузить только готовые
-> сводики и только сообщение которые не сведены.
-
-**The 200k became 64k**, and that is the one number in this entry that is
-not the operator's: 200k of raw history plus the fresh window plus llama's
-64k thinking block does not fit in a 256k window, and it fails the way
-T70.6 failed ("the model thought and did not answer"). 64k fits:
-
-    262144 - 65536 (thinking) - 16384 (answer) = 180224 for the prompt
-    180224 - ~48000 (fresh window) - ~4000 (system + tools)
-      = ~128000 for the old part  ->  SUMMARY_CONTEXT_TOKENS = 131072
-
-**What is in the code now:**
-
-- `SUMMARY_TAIL_TOKENS` (64k) -- how much old, never-summarised history is
-  loaded raw. Below it: nothing is summarised, nothing is marked, the old
-  part goes into the context as is.
-- `SUMMARY_CHUNK_TOKENS` (64k) -- how much old history goes into one
-  summarisation call.
-- `SUMMARY_CONTEXT_TOKENS` (128k) -- the ceiling on the old part as a
-  whole; when it does not fit, the oldest goes.
-- `summaries` table + `messages.summary_id`: the "СВЕДЕНО" marker with a
-  link to the summary that stands for those messages. Written in one
-  transaction with the summary itself.
-- The context is assembled as: the summaries (each standing where its chunk
-  was) + the messages that were never summarised + the fresh window.
-- A failed chunk stays unmarked: its messages are loaded raw and it is
-  retried at the next re-anchor.
-
-**What is NOT done:** the strategy is still off by default
-(`CONTEXT_STRATEGY=window`), because the production host is on a generator
-and the summarise path has never run against a live engine. That is the
-same live check as the answer-files feature.
-
-**Bonus defect the rewrite removed:** the old code summarised only the last
-400 old messages (`MAX_OLD_MESSAGES_PER_CALL`) and silently dropped the rest.
-There is no such cap now -- a chunk is bounded by tokens, not by a row
-count.
-
-**Verification:** `tests/test_t70_5_chunked_summaries.py` (the volume rule,
-the marker, the assembly, the budgets, the whole path) and
-`tests/test_t70_summarize.py` (the model call, the failure paths, the
-trigger placement) -- plus
-`scripts/mutation_harness_t70_5.py`: 14 mutations, 14 caught, 0 survived.
-Two mutations survived the first run and both were real holes: the
-ordering of a summary against an older raw chunk was not pinned (the
-partial-failure case), and one mutation was hitting an optimisation
-rather than a rule. Both are fixed and the mutation now targets the
-re-anchor call.
-
-The `summarize` strategy builds a synthetic `user→assistant` summary pair
-from history older than the anchor window. That summary is built from
-*all* of the old history. If the summary alone exceeds the engine's
-context window, something has to give, and the four candidates are not
-equivalent:
-
-- split the old part into several summaries;
-- drop the oldest facts;
-- bound by freshness inside the old part;
-- accept the overflow and say so honestly.
-
-**Why it is not urgent:** `T70.3` works without it. The question only
-arises at a scale the deployment has not reached — the current history
-fits in the window, so nothing is summarised into a corner.
-
-**What unblocks it:** the operator picks one of the four, or states a
-fifth. Until then the summarise path stays opt-in and off by default
-(`CONTEXT_STRATEGY=window`).
 
 ### T68b — `BOT_ENGINE_RESET_CMD` is unreachable in every mode
 
@@ -226,50 +145,6 @@ and the setting is advertised as the bot's own. But it is an operational
 decision: the bot would restart `llama-server` once a day and stop
 answering for the duration. **Implementation of (a) needs the operator's
 explicit go-ahead.**
-
-### T70.6 — the reasoning limit is declared and nobody reads it
-
-**Status:** CLOSED 2026-10-23 — the operator picked option (b) and named
-the engine budget. The knob is gone from the bot; the limit lives on
-the engine, where llama.cpp enforces it.
-**Where:** `telegram-bot/limits.py` (the constant is removed),
-`tests/test_limits.py` (two tripwires keep it from coming back), and the
-engine unit (`llama-qwen5090-256k.service`, `--reasoning-budget 65536`).
-
-**The operator's decision**, verbatim: "управление лимитами если
-возможно в ллама должно происходить в лама", "бот по возможности не
-является контекстным или лимитным ограничителем", engine budget 64K,
-`MAX_TOKENS_DEFAULT` 128K. So: option (b) — the bot-side
-`REASONING_RATIO_HARD_LIMIT` (and its env var) is **deleted**, not
-implemented. A knob that is declared, validated, documented and enforced
-nowhere is a trap, and the operator's rule is that the bot is not the
-limiter.
-
-**The second half of the problem is fixed by the numbers.** The engine's
-budget has to be smaller than the bot's `max_tokens`, or the answer has
-nowhere to go: the engine's 65536 equals the bot's old text cap (65536)
-and exceeds the old document cap (`MAX_TOKENS_CAPTION` = 16384), which
-is how a reasoning-only answer reached the user twice on 2026-10-23. The
-`dev` profile now sets 131072 / 98304 / 3600s — every per-path cap
-above the engine's thinking budget, with room for the answer after it.
-`tests/test_limits.py` pins that invariant.
-
-**Also fixed on the way:** the `dev` profile was a phantom. The name was
-accepted by the validation and then fell through to the PUBLIC defaults,
-so the operator's production ran the conservative numbers while
-believing it ran the aggressive ones. It has its own table now, and a
-test asserts it is not the public profile.
-
-### T66.1 — guaranteed minimum of last N messages when the window is empty
-
-**Status:** open, low impact. The operator's strict rule stands: the
-window is anchored, not a sliding count.
-
-Nothing implements a floor. If the anchored window contains no messages,
-the context is empty. The operator's answer at the time was "not added" —
-this is recorded so it is a decision, not an omission.
-
----
 
 ### RETHINK — the wording of `--reasoning-budget-message`
 
@@ -499,9 +374,133 @@ Not repeated here; each line points at the record.
 | `prompts.py` prose → `prompt_text/` | `TECH-DEBT.md` #12 |
 | Env-var name validation | `TECH-DEBT.md` #11 |
 | The edit-replace feature, removed | `CHANGELOG.md` § Unreleased; `docs/tech-debt/10-*.md` |
+| T66.1 — the guaranteed minimum, decided | `docs/tickets/README.md` (open question 3); `docs/tickets/TICKET-T66-*.md` |
+| T70.5 — chunked summaries with a "СВЕДЕНО" marker | `CHANGELOG.md` § Unreleased; `docs/tickets/TICKET-T70-*.md` |
+| T70.6 — the reasoning cap lives on the engine | `CHANGELOG.md` § Unreleased; `docs/CALL_LLAMA.md` |
 | Review waves 1–8 | `docs/archive/2026-10/`; `docs/review/README.md` |
 
 ---
+
+## Closed — and why (the reasoning behind the closed items)
+
+The items below were decided and are done. They are here because the
+*reasoning* is worth keeping, not because they are pending.
+
+### T70.5 — what if the summary itself does not fit in the context window?
+
+**Status:** ✅ **decided by the operator 2026-10-24, implemented.**
+**Where:** `docs/tickets/TICKET-T70-context-protocol-redesign.md`,
+`docs/tickets/README.md` (open question 6), `telegram-bot/summarize.py`,
+`telegram-bot/context_budget.py`.
+
+The operator's answer: chunk the old part, summarise each chunk, and mark
+it in the database so the same chunk is never summarised again.
+
+> сводки надо делать чанками, и помечать. т.е. если ОБЪЕМ данных для сводки
+> > 200к надо сделав по ней сводку проставить в базе поле СВЕДЕНО, ссылку на
+> сводку которая сделана и по этому чанку больше сводки не делать. Если объем
+> данных для сводки <200к не проставлять поле сведено и не сводить, а грузить
+> как есть в контекст. Ну и при загрузке соответсвенно грузить только готовые
+> сводики и только сообщение которые не сведены.
+
+**The 200k became 64k**, and that is the one number in this entry that is
+not the operator's: 200k of raw history plus the fresh window plus llama's
+64k thinking block does not fit in a 256k window, and it fails the way
+T70.6 failed ("the model thought and did not answer"). 64k fits:
+
+    262144 - 65536 (thinking) - 16384 (answer) = 180224 for the prompt
+    180224 - ~48000 (fresh window) - ~4000 (system + tools)
+      = ~128000 for the old part  ->  SUMMARY_CONTEXT_TOKENS = 131072
+
+**What is in the code now:**
+
+- `SUMMARY_TAIL_TOKENS` (64k) -- how much old, never-summarised history is
+  loaded raw. Below it: nothing is summarised, nothing is marked, the old
+  part goes into the context as is.
+- `SUMMARY_CHUNK_TOKENS` (64k) -- how much old history goes into one
+  summarisation call.
+- `SUMMARY_CONTEXT_TOKENS` (128k) -- the ceiling on the old part as a
+  whole; when it does not fit, the oldest goes.
+- `summaries` table + `messages.summary_id`: the "СВЕДЕНО" marker with a
+  link to the summary that stands for those messages. Written in one
+  transaction with the summary itself.
+- The context is assembled as: the summaries (each standing where its chunk
+  was) + the messages that were never summarised + the fresh window.
+- A failed chunk stays unmarked: its messages are loaded raw and it is
+  retried at the next re-anchor.
+
+**What is NOT done:** the strategy is still off by default
+(`CONTEXT_STRATEGY=window`), because the production host is on a generator
+and the summarise path has never run against a live engine. That is the
+same live check as the answer-files feature.
+
+**Bonus defect the rewrite removed:** the old code summarised only the last
+400 old messages (`MAX_OLD_MESSAGES_PER_CALL`) and silently dropped the rest.
+There is no such cap now -- a chunk is bounded by tokens, not by a row
+count.
+
+**Verification:** `tests/test_t70_5_chunked_summaries.py` (the volume rule,
+the marker, the assembly, the budgets, the whole path) and
+`tests/test_t70_summarize.py` (the model call, the failure paths, the
+trigger placement) -- plus
+`scripts/mutation_harness_t70_5.py`: 14 mutations, 14 caught, 0 survived.
+Two mutations survived the first run and both were real holes: the
+ordering of a summary against an older raw chunk was not pinned (the
+partial-failure case), and one mutation was hitting an optimisation
+rather than a rule. Both are fixed and the mutation now targets the
+re-anchor call.
+
+The `summarize` strategy builds a synthetic `user→assistant` summary pair
+from history older than the anchor window. That summary is built from
+*all* of the old history. If the summary alone exceeds the engine's
+context window, something has to give, and the four candidates are not
+equivalent:
+
+- split the old part into several summaries;
+- drop the oldest facts;
+- bound by freshness inside the old part;
+- accept the overflow and say so honestly.
+
+**Why it is not urgent:** `T70.3` works without it. The question only
+arises at a scale the deployment has not reached — the current history
+fits in the window, so nothing is summarised into a corner.
+
+**What unblocks it:** the operator picks one of the four, or states a
+fifth. Until then the summarise path stays opt-in and off by default
+(`CONTEXT_STRATEGY=window`).
+
+### T70.6 — the reasoning limit is declared and nobody reads it
+
+**Status:** CLOSED 2026-10-23 — the operator picked option (b) and named
+the engine budget. The knob is gone from the bot; the limit lives on
+the engine, where llama.cpp enforces it.
+**Where:** `telegram-bot/limits.py` (the constant is removed),
+`tests/test_limits.py` (two tripwires keep it from coming back), and the
+engine unit (`llama-qwen5090-256k.service`, `--reasoning-budget 65536`).
+
+**The operator's decision**, verbatim: "управление лимитами если
+возможно в ллама должно происходить в лама", "бот по возможности не
+является контекстным или лимитным ограничителем", engine budget 64K,
+`MAX_TOKENS_DEFAULT` 128K. So: option (b) — the bot-side
+`REASONING_RATIO_HARD_LIMIT` (and its env var) is **deleted**, not
+implemented. A knob that is declared, validated, documented and enforced
+nowhere is a trap, and the operator's rule is that the bot is not the
+limiter.
+
+**The second half of the problem is fixed by the numbers.** The engine's
+budget has to be smaller than the bot's `max_tokens`, or the answer has
+nowhere to go: the engine's 65536 equals the bot's old text cap (65536)
+and exceeds the old document cap (`MAX_TOKENS_CAPTION` = 16384), which
+is how a reasoning-only answer reached the user twice on 2026-10-23. The
+`dev` profile now sets 131072 / 98304 / 3600s — every per-path cap
+above the engine's thinking budget, with room for the answer after it.
+`tests/test_limits.py` pins that invariant.
+
+**Also fixed on the way:** the `dev` profile was a phantom. The name was
+accepted by the validation and then fell through to the PUBLIC defaults,
+so the operator's production ran the conservative numbers while
+believing it ran the aggressive ones. It has its own table now, and a
+test asserts it is not the public profile.
 
 ## House rules for this file
 

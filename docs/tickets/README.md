@@ -113,7 +113,7 @@ strategy afterwards.
 |---|---|---|---|
 | 1 | T70.3 — which model summarises? | operator | ✅ **same model as the bot** (2026-10-21) |
 | 2 | T70.3 — trigger threshold? | operator | ✅ **once at re-anchor** (2026-10-21) |
-| 3 | T66.1 — guaranteed minimum of N messages if the window is empty? | operator | open, low impact |
+| 3 | T66.1 — guaranteed minimum of N messages if the window is empty? | operator | ✅ **decided 2026-10-20 — not adding** (strict rule R-A; the newest message is never dropped, so the context is never empty) |
 | 4 | ~~T69 — personality questions~~ | operator | ✅ **answered, shipped 2026-10-21** |
 | 5 | T68 — systemd timer vs cron on host? | operator | 🔵 **moot** — ADR-0003 made it a mode, not a choice |
 | 6 | **T70.3 — what if the summary itself does not fit in 256k?** | operator | ✅ **answered 2026-10-24** — chunked summaries with a DB marker (T70.5) |
