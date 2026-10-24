@@ -80,9 +80,14 @@ def sandbox(monkeypatch):
             pane = [
                 "ubuntu@sandbox:/workspace$ " + command,
                 "LLAMABOT_SFB_" + token,
-            ]
+            ]  # the markers are printed with a leading newline
             if path in state["files"]:
-                pane.append(base64.b64encode(state["files"][path]).decode())
+                encoded = base64.b64encode(state["files"][path]).decode()
+                # The pane is a terminal: long lines are wrapped. The
+                # fake wraps them too, or the extraction would be
+                # tested against a shape the sandbox never produces.
+                pane.extend(encoded[i:i + 76]
+                            for i in range(0, len(encoded), 76))
             else:
                 pane.append("bash: base64: No such file or directory")
             pane.append("LLAMABOT_SFE_" + token)

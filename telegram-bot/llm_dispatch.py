@@ -276,10 +276,17 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
     # prompt and everything the session printed before. A marker that
     # appears in the echo would be found first, and the fetch would
     # read the command instead of the file.
+    # The leading \\n on both markers is not decoration. The pane is a
+    # terminal: it wraps long lines, and whatever the session printed
+    # before may not end with a newline -- so a marker printed without
+    # one can land in the middle of a line, and the extraction, which
+    # compares whole lines, would never find it. `base64 -w0` prints no
+    # trailing newline at all, which is how the end marker ended up
+    # glued to the last line of the payload.
     response = await _bc.call_bash_command(
-        f"printf '%s\\n' \"LLAMABOT_SFB\"\"_\"\"{token}\"; "
+        f"printf '\\n%s\\n' \"LLAMABOT_SFB\"\"_\"\"{token}\"; "
         f"base64 -w0 {quoted}; "
-        f"printf '%s\\n' \"LLAMABOT_SFE\"\"_\"\"{token}\"",
+        f"printf '\\n%s\\n' \"LLAMABOT_SFE\"\"_\"\"{token}\"",
         session_id=SESSION_ID_TEMPLATE.format(chat_id=deps.chat_id),
         chat_type=deps.chat_type,
         chat_id=deps.chat_id,
@@ -305,11 +312,16 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
             f"({len(encoded)} bytes of base64, the limit is "
             f"{MAX_SEND_FILE_BASE64_CHARS})]"))
 
+    # The pane wraps long lines, so the payload arrives broken into
+    # ~76-character pieces. The whitespace goes before the decode, and
+    # the decode still validates: a line of shell error text is not
+    # base64 and must not be accepted as an empty file.
+    compact = "".join(encoded.split())
     try:
-        payload = base64.b64decode(encoded, validate=True)
+        payload = base64.b64decode(compact, validate=True)
     except Exception as e:
         return ToolExecution(text=(
-            f"[send_file: could not decode {path}: {e!r}]"))
+            f"[send_file: could not read or decode {path}: {e!r}]"))
 
     name = os.path.basename(path) or "file.bin"
     try:
