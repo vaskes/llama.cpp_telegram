@@ -69,15 +69,26 @@ def sandbox(monkeypatch):
     async def fake_call(command, *, session_id=None, timeout=70.0,
                         chat_type="private", chat_id=None):
         state["commands"].append(command)
-        if command.startswith("base64 -w0 "):
-            # shlex, not strip(): the path is quoted, and a quote inside
-            # the path is escaped by the quoting.
-            path = shlex.split(command)[-1]
-            if path not in state["files"]:
-                return {"ok": False, "error": "No such file"}
-            return {"ok": True, "stdout": base64.b64encode(
-                state["files"][path]).decode(), "stderr": "",
-                "exit_code": 0, "duration_ms": 1}
+        if "base64 -w0" in command:
+            # The real sandbox is a persistent tmux session: its stdout
+            # is the whole pane, with the echoed command and the
+            # previous session's output in it too. The fake reproduces
+            # that, because the extraction is the thing under test.
+            args = shlex.split(command)
+            path = next(a for a in args if a.startswith("/")).rstrip(";")
+            token = command.split('"_""')[-1].strip('"')
+            pane = [
+                "ubuntu@sandbox:/workspace$ " + command,
+                "LLAMABOT_SFB_" + token,
+            ]
+            if path in state["files"]:
+                pane.append(base64.b64encode(state["files"][path]).decode())
+            else:
+                pane.append("bash: base64: No such file or directory")
+            pane.append("LLAMABOT_SFE_" + token)
+            pane.append("ubuntu@sandbox:/workspace$ ")
+            return {"ok": True, "stdout": "\n".join(pane), "stderr": "",
+                    "exit_code": 0, "duration_ms": 1}
         return {"ok": True, "stdout": "", "stderr": "",
                 "exit_code": 0, "duration_ms": 1}
 
@@ -153,6 +164,33 @@ async def test_a_missing_file_says_so(sandbox):
         "the model has to be able to tell the user WHICH file failed")
 
 
+async def test_the_fetch_ignores_the_rest_of_the_pane(sandbox):
+    """The pane holds everything the session ever printed. A base64
+    dump from an earlier turn is in there, and it must not be mistaken
+    for this file."""
+    sandbox["files"]["/workspace/new.bin"] = b"NEW" * 10
+    deps = _deps()
+    outcome = await execute_tool("send_file", {"path": "/workspace/new.bin"},
+                                 deps)
+    assert "sent new.bin" in outcome.text, outcome.text
+    payload = deps.bot.documents[0]["document"].input_file_content
+    assert payload == b"NEW" * 10
+
+
+async def test_the_markers_are_not_in_the_echoed_command(sandbox):
+    """The command line is echoed into the same pane as the output. If
+    the marker appears in the echo, the extraction finds the echo
+    first and reads the command instead of the file."""
+    sandbox["files"]["/workspace/a.bin"] = b"q" * 8
+    deps = _deps()
+    await execute_tool("send_file", {"path": "/workspace/a.bin"}, deps)
+    command = sandbox["commands"][-1]
+    assert "LLAMABOT_SFB_" not in command, (
+        "the marker has to be split, or the echoed command line carries "
+        f"it and the extraction reads the command instead of the file: "
+        f"{command}")
+
+
 async def test_a_file_that_is_too_big_says_so(monkeypatch):
     """The channel has a ceiling: the sandbox caps its captured output
     at 1 MB, and base64 is four thirds of the file."""
@@ -160,8 +198,15 @@ async def test_a_file_that_is_too_big_says_so(monkeypatch):
 
     async def fake_call(command, *, session_id=None, timeout=70.0,
                         chat_type="private", chat_id=None):
-        return {"ok": True, "stdout": "A" * (llm_dispatch.MAX_SEND_FILE_BASE64_CHARS + 10),
-                "stderr": "", "exit_code": 0, "duration_ms": 1}
+        token = command.split('"_""')[-1].strip('"')
+        pane = "\n".join([
+            "ubuntu@sandbox:/workspace$ " + command,
+            "LLAMABOT_SFB_" + token,
+            "A" * (llm_dispatch.MAX_SEND_FILE_BASE64_CHARS + 10),
+            "LLAMABOT_SFE_" + token,
+        ])
+        return {"ok": True, "stdout": pane, "stderr": "",
+                "exit_code": 0, "duration_ms": 1}
 
     monkeypatch.setattr(bc, "call_bash_command", fake_call)
     monkeypatch.setattr(bc, "is_enabled_for_active_profile", lambda: True)

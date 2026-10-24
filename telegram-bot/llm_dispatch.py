@@ -39,6 +39,7 @@ and should then be changed in one place with one test.
 """
 import base64
 import os
+import secrets
 import shlex
 from typing import Any, NamedTuple, Optional
 
@@ -210,6 +211,28 @@ async def _execute_bash(args, deps: DispatchDeps) -> ToolExecution:
     )
 
 
+def _extract_between_markers(text: str, begin: str, end: str):
+    """The lines between two markers, or None.
+
+    The sandbox's stdout is a terminal pane, not a pipe: it holds the
+    command that was echoed, the output, the prompt, and every command
+    the session ran before. A fetch has to pick its own output out of
+    that, and a marker pair is what makes it possible to say WHICH
+    output -- the model's earlier base64 dumps are in the same pane.
+    """
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.strip() == begin:
+            start = index + 1
+    if start is None:
+        return None
+    for index in range(start, len(lines)):
+        if lines[index].strip() == end:
+            return "\n".join(lines[start:index])
+    return None
+
+
 async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
     """Send a file from the sandbox workspace to the chat.
 
@@ -244,8 +267,19 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
     # model can read, so the reach is the same -- but the quoting is
     # not optional.
     quoted = shlex.quote(path)
+    token = secrets.token_hex(8)
+    begin = f"LLAMABOT_SFB_{token}"
+    end = f"LLAMABOT_SFE_{token}"
+    # The marker is built from pieces, so the ECHOED command line does
+    # not contain it: the sandbox is a persistent tmux session and its
+    # stdout is the whole pane -- the command line, the output, the
+    # prompt and everything the session printed before. A marker that
+    # appears in the echo would be found first, and the fetch would
+    # read the command instead of the file.
     response = await _bc.call_bash_command(
-        f"base64 -w0 {quoted}",
+        f"printf '%s\\n' \"LLAMABOT_SFB\"\"_\"\"{token}\"; "
+        f"base64 -w0 {quoted}; "
+        f"printf '%s\\n' \"LLAMABOT_SFE\"\"_\"\"{token}\"",
         session_id=SESSION_ID_TEMPLATE.format(chat_id=deps.chat_id),
         chat_type=deps.chat_type,
         chat_id=deps.chat_id,
@@ -255,10 +289,12 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
             f"[send_file: could not read {path}: "
             f"{response.get('error', 'unknown error')}]"))
 
-    encoded = (response.get("stdout") or "").strip()
-    if not encoded:
+    encoded = _extract_between_markers(
+        response.get("stdout") or "", begin, end)
+    if encoded is None:
         return ToolExecution(text=(
             f"[send_file: {path} is empty, missing, or not a regular file]"))
+    encoded = encoded.strip()
 
     # The sandbox caps its captured output at 1 MB, and base64 is four
     # thirds of the file, so this is the real ceiling of the path --

@@ -61,7 +61,7 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       304  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
+  llm_dispatch.py       340  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      513  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
