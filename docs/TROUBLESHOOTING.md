@@ -224,6 +224,243 @@ A llama-server with a large model and 8K context can eat all RAM. Watch
 
 ---
 
+## What arrived after v0.10.2
+
+Everything below landed after `v0.10.2` (2026-10-12). If the bot does
+something this guide does not describe above, start here.
+
+### Context memory: the window, the anchor, and `/stats`
+
+The bot does not send "the last 20 messages" to the model. It has a
+**context policy** (`telegram-bot/context_budget.py`) with two
+strategies:
+
+| `CONTEXT_STRATEGY` | what the model sees |
+|---|---|
+| `window` (default) | the messages inside the window; the older part is left out |
+| `summarize` | the same window, plus chunk summaries of the older part |
+
+The knobs (all described in `telegram-bot/.env.example`):
+
+| variable | default | meaning |
+|---|---|---|
+| `BOT_REMEMBER_DAYS` | `7` | how many days back the window reaches |
+| `CONTEXT_MAX_MESSAGES` | `400` | ceiling on the messages in the window |
+| `CONTEXT_STRATEGY` | `window` | `window` or `summarize` |
+| `SUMMARY_TAIL_TOKENS` | `65536` | how much never-summarised old history may still be loaded raw |
+| `SUMMARY_CHUNK_TOKENS` | `65536` | how much old history goes into ONE summarisation call |
+| `SUMMARY_CONTEXT_TOKENS` | `131072` | ceiling on the old part of the prompt as a whole |
+
+**"The bot forgot" is usually the window, not a bug.** The anchor is
+computed once, when the bot starts, and it does **not** slide:
+`/stats` says `окно памяти: 7 дн. от старта бота (якорь не скользит)`.
+A conversation that began eight days ago has nothing older than seven
+days in it until the next re-anchor.
+
+Ask the bot what it sees:
+
+    /stats
+
+It prints what is in the context now, what is in the database, how much
+is older than the window, the window itself, and the strategy. In
+`summarize` mode it also prints how many old messages are already
+compressed into summaries (`сведено в сводки: N в K сводках`).
+
+`CONTEXT_MESSAGES` is the old knob and is still read for backward
+compatibility, but `CONTEXT_MAX_MESSAGES` is the one that counts.
+
+### The old part of the history and the "СВЕДЕНО" marker
+
+In `summarize` mode the older part of the history is compressed **in
+chunks**, one summarisation call per chunk, and every chunk is marked in
+the database with a link to the summary that replaced it. A chunk is
+summarised **once in its life** -- the marker is what makes that true.
+
+What that means in practice:
+
+- a message covered by a summary is **not** also loaded raw; the summary
+  stands where the chunk was;
+- a chunk whose summarisation failed stays unmarked, is loaded raw, and
+  is retried at the next re-anchor;
+- if a summary row is deleted, the messages it covered come back raw.
+  Nothing is lost, and nothing is silently dropped.
+
+To look at the state:
+
+```bash
+docker exec telegram-bot sqlite3 /app/data/conversations.db \
+  "SELECT count(*), sum(n_messages) FROM summaries;"
+docker exec telegram-bot sqlite3 /app/data/conversations.db \
+  "SELECT count(*) FROM messages WHERE summary_id IS NOT NULL;"
+```
+
+The summarisation path has not been exercised against a live engine in
+this deployment yet -- see `docs/TODO.md` for the live checklist. Until
+that happens, `CONTEXT_STRATEGY=window` is the safe setting.
+
+### The daily re-anchor: `soft`, `process`, `process+engine`
+
+The anchor only moves when the bot re-anchors, and how it does that
+depends on what the operator is allowed to do
+(`docs/adr/ADR-0003-context-reanchoring.md`):
+
+| `BOT_REANCHOR_MODE` | what happens at `BOT_REANCHOR_AT` | what it needs |
+|---|---|---|
+| `soft` | the anchor moves inside the running process | nothing; no root, no systemd, no engine access |
+| `process` | the process is restarted, so the anchor is recomputed at import | a supervisor (systemd timer, cron) that restarts the bot |
+| `process+engine` | the same, and the engine's KV cache is dropped afterwards | the same, plus the right to run `BOT_ENGINE_RESET_CMD` |
+
+| variable | default | meaning |
+|---|---|---|
+| `BOT_REANCHOR_MODE` | `process+engine` | the mode above |
+| `BOT_REANCHOR_AT` | `05:00` | local time of the daily re-anchor, 24h |
+| `BOT_REANCHOR_TZ` | `TZ` | the timezone `BOT_REANCHOR_AT` is read in |
+| `BOT_ENGINE_RESET_CMD` | empty | shell command that drops the engine's KV cache |
+
+**Known defect (T68b): `BOT_ENGINE_RESET_CMD` never runs.** The engine
+reset is called from the in-process re-anchor loop, and that loop only
+starts in `soft` mode -- which is exactly the mode that must not touch
+the engine. In `process+engine` there is no in-process loop at all. The
+consequence is narrow: the anchor moves and the bot restarts, but the
+engine keeps its KV cache for context that has already fallen out of the
+window. It costs VRAM, not correctness. The fix is an operator decision
+(in-process task, or the command moved to cron/systemd) and is tracked
+in `docs/TODO.md`.
+
+If the re-anchor did not happen at the expected time, look for:
+
+```bash
+sudo docker logs telegram-bot --tail 500 | grep -i "reanchor\|anchor"
+```
+
+### The persona file
+
+The bot can speak with a persona, and the persona lives in a file, not
+in the code:
+
+| variable | default | meaning |
+|---|---|---|
+| `BOT_PERSONA_FILE` | `persona.local.json` next to the bot | the file to read |
+
+```bash
+# start from the shipped example
+cp telegram-bot/personality.json.example telegram-bot/persona.local.json
+$EDITOR telegram-bot/persona.local.json
+```
+
+Three things to know:
+
+- **`enabled: false` means no persona at all.** That is the correct
+  state for a bot nobody configured; it is not a default personality.
+- **Missing fields are omitted, never invented.** If the file does not
+  say how old the persona is, the prompt does not mention an age. A
+  model left to fill the gap invents a biography, and that invention
+  becomes "the persona" within a few turns.
+- The file is **gitignored** on purpose (`persona.local.json`), so a
+  fork never inherits somebody else's character. The example
+  (`telegram-bot/personality.json.example`) ships with
+  `enabled=false`.
+
+"the bot answers in a strange voice" and "the persona is ignored" are
+both usually this file: it is missing, it is not where `BOT_PERSONA_FILE`
+points, or `enabled` is still `false`.
+
+### The dispatch split
+
+`dispatch.py` used to be one 1600-line file that did routing, the
+polling loop, the webhook, the PTB setup and the group-mode rules. It
+is now a set of modules with one owner each:
+
+| module | owns |
+|---|---|
+| `dispatch.py` | routing, lifecycle, concurrency, the update dispatcher |
+| `dispatch_polling.py` | the `getUpdates` loop and the signal handlers |
+| `dispatch_webhook.py` | PTB application assembly, the bot menu, chat-member bookkeeping |
+| `dispatch_group.py` | the human-to-human absorb in a group |
+| `handlers.py` | the four message handlers (text, photo, voice, document) |
+| `commands/` | the slash commands |
+
+So a symptom that used to be "look in dispatch.py" now has a home:
+a lost update is in `dispatch.py`, a webhook that never fires is in
+`dispatch_webhook.py`, a group message the bot ignored is in
+`dispatch_group.py`, and the answer itself is in `handlers.py`.
+
+**Edited messages are ignored.** The edit-replace feature (rewrite the
+old answer when the question is edited) was removed on 2026-10-24: it
+needed two people, a deliberately slow model and a live Telegram, and
+the operator decided that waiting for the answer to the wrong question
+and asking again was better. The bot now drops an update that carries
+only `edited_message`, and the log says so:
+
+```
+[dispatch] ignoring edited_message update_id=...
+```
+
+`allowed_updates` lives on **Telegram's** side: it survives a bot
+restart and only changes when the webhook is registered again. The bot
+does not rely on it -- there is an explicit guard in the dispatcher --
+so a stale `edited_message` in `getWebhookInfo` is harmless, but
+re-registering the webhook with the current list keeps the two honest.
+
+### Answers that arrive as documents
+
+Since 2026-10-24 a code block in an answer is delivered as a **file**,
+not as text in the chat: the chat gets the prose, and each fenced block
+becomes its own document with a caption `📄 <name>`.
+
+- the file name comes from the heading before the block, or from a
+  comment in the first line (`// greet.js`, `-- cradle.sql`); without
+  one the file is `answer.<ext>`, or `answer-N.<ext>` for the second
+  and later blocks;
+- the extension comes from the language of the fence; an unknown or
+  missing language means `.txt`;
+- the bot's own tool trace and the reasoning tail of a diagnostic are
+  **not** files;
+- the bot remembers the whole answer, code included, so a follow-up
+  ("поменяй в нём цвет") still knows what it sent. The chat and the
+  history are two different strings on purpose.
+
+If a file did not arrive: check the log for `[send_files]`, and check
+that the answer really had a fenced block -- a raw document with no
+fence is not extracted. If the file arrived in General instead of the
+forum topic, the topic id was not carried through; that path is
+`llm_files.py`.
+
+### The Stop button
+
+The Stop button stops **the turn the button belongs to**, and only the
+author of that message may press it (maker-taker). Since 2026-10-23 the
+allowlist is **not** part of that decision: the button used to be
+rejected for anyone outside `ALLOWED_USER_IDS`, so in a group it did
+nothing for ordinary members and the model kept generating.
+
+If the Stop button does nothing:
+
+```bash
+sudo docker logs telegram-bot --tail 200 | grep -i "callback\|abort"
+```
+
+- `[SECURITY] rejected ... msg=''` means the update never reached the
+  handler -- that is an authorisation problem, not a Stop problem;
+- `no abort_event for ...` means the turn had already finished;
+- `abort_event set` means the turn was stopped.
+
+### "The model thinks and never answers"
+
+This is two budgets, not one: the engine's thinking budget and the
+bot's `max_tokens`. If they are equal, the thinking eats the whole
+allowance and the answer has nowhere to go -- the user sees a
+diagnostic instead of a reply.
+
+The bot's caps come from the deployment profile
+(`LLAMABOT_DEPLOYMENT_PROFILE`): `public` (conservative), `personal`
+(aggressive), `dev` (the operator's). The engine's thinking budget is
+`--reasoning-budget` on the llama-server unit, and it must be **below**
+the bot's `max_tokens`. `docs/CALL_LLAMA.md` has the numbers and the
+arithmetic.
+
+---
+
 ## Group mode (Telegram Topics) issues
 
 ### `/newsub <name>` says "Created sub-talk" instead of "Created topic"
@@ -280,11 +517,15 @@ Two possibilities:
 
 ### Bot crashes on every command with `AttributeError: 'NoneType'`
 
-Old bot version (pre-`cf96920`). Triggered when the user edited
-a command message (Telegram sends an `edited_message` update
-where `update.message is None`). The current code branches
-in the polling loop: edited commands are normalised into a
-fresh `message` and re-processed; edited text is dropped.
+Old bot version (pre-`cf96920`). It was triggered when the user edited
+a command message: Telegram sends an `edited_message` update where
+`update.message is None`, and the old code dereferenced it.
+
+Since 2026-10-24 the edit-replace feature is gone entirely, and an
+update that carries only `edited_message` is dropped with a log line
+(`[dispatch] ignoring edited_message ...`) instead of crashing. The
+answer to the original message stands; a correction has to be sent as
+a new message.
 
 ### `is_forum=True` in the log but bot still uses private-mode strings
 
