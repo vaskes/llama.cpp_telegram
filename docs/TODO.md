@@ -27,10 +27,10 @@
 
 | | |
 |---|---|
-| HEAD | eighteen commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it) |
+| HEAD | nineteen commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it) |
 | Production | **the host runs on a generator** — any request to the model overloads it (operator's measurement, 2026-10-24), so neither the bot nor the engine can be exercised there for now. The box also lost power earlier the same day |
 | Pytest | `2213 passed, 20 skipped, 1 failed` locally. The one failure is environmental: `test_backtest_deploy_artifacts.py::test_control_unmutated_tree_passes` spawns the system `python3`, which has no pytest in this sandbox (it fails on the clean tree too) |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** — `2214 passed, 1 skipped` on both at `60e6ab6` |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 55 `.py` files in `telegram-bot/` |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |

@@ -50,7 +50,7 @@ telegram-bot/
 ```
 
 55 top-level modules, 133 test files, 2234 tests collected in a checkout.
-(CI collects fewer: the sandbox-marked tests are not collected there.)
+CI collects 2215 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 
