@@ -49,7 +49,8 @@ telegram-bot/
     └── bash_command.py    # T38: bash execution via sandbox side-car
 ```
 
-55 top-level modules, 132 test files, 2221 tests.
+55 top-level modules, 133 test files, 2234 tests collected in a checkout.
+(CI collects fewer: the sandbox-marked tests are not collected there.)
 
 ### The leaf modules of `call_llama`
 
@@ -331,6 +332,15 @@ bearer token.
     suite is necessary and not sufficient: the suite is largely
     structural, and the three wave-5 blockers were all behaviour over
     time or across a module boundary.
+  * `tests/test_artifact_e2e.py` is the seam test for the answer-files
+    feature: the real handler, the real parser, the real sender and the
+    real database, with `call_llama` replaced by the answer shapes that
+    were measured on the live engine. The unit tests call
+    `extract_files` and `send_files` directly and therefore cannot see
+    whether the handler wires them together — and a feature that is in
+    the code but not in the path the production turn takes is the
+    failure mode this repository keeps meeting. Run it as a script to
+    print the transcripts.
 
 ## Deployment profiles (T35)
 

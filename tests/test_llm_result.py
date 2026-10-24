@@ -275,3 +275,44 @@ def test_every_handler_sends_the_files_of_its_own_answer(handler):
         f"{handler}: `answer` is never assigned from unwrap_answer, so "
         f"the files that are sent are not the files of the answer"
     )
+
+
+@pytest.mark.parametrize("handler", [
+    "handle_photo", "handle_text", "handle_document", "handle_voice"])
+def test_the_files_are_not_guarded_by_the_prose(handler):
+    """A file goes out even when there is no prose.
+
+    An answer can be nothing but a document -- a raw HTML page, say --
+    and then there is no prose to send. A `send_files` call inside
+    `if bot_response:` drops exactly those files, and the user is left
+    with nothing at all: no prose, no file.
+
+    The behavioural half of this rule is in tests/test_artifact_e2e.py:
+    it drives the real handler with a document-only answer and watches
+    the file go out. This half is the property on all four handlers,
+    including the ones the offline replay does not drive.
+
+    The condition is allowed to mention `answer.files` -- a guard like
+    `if answer.files:` is the opposite of the bug. It is not allowed to
+    depend on the prose alone.
+    """
+    tree = _handler_tree(handler)
+    call = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id == "send_files")
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    node = parents.get(call)
+    while node is not None:
+        if isinstance(node, ast.If):
+            test = ast.unparse(node.test)
+            if "bot_response" in test and "answer.files" not in test:
+                pytest.fail(
+                    f"{handler}: the files are sent only when there is "
+                    f"prose ({test!r}) -- an answer that is nothing but a "
+                    f"document would reach the user as nothing at all"
+                )
+        node = parents.get(node)

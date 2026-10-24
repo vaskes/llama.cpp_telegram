@@ -27,9 +27,9 @@
 
 | | |
 |---|---|
-| HEAD | seventeen commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature) |
-| Production | **the host is down** — no power since 2026-10-24; the bot, the engine and the deploy path are all unreachable until it comes back |
-| Pytest | `2200 passed, 20 skipped` locally. The one failure is environmental: `test_backtest_deploy_artifacts.py::test_control_unmutated_tree_passes` spawns the system `python3`, which has no pytest in this sandbox (it fails on the clean tree too) |
+| HEAD | eighteen commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it) |
+| Production | **the host runs on a generator** — any request to the model overloads it (operator's measurement, 2026-10-24), so neither the bot nor the engine can be exercised there for now. The box also lost power earlier the same day |
+| Pytest | `2213 passed, 20 skipped, 1 failed` locally. The one failure is environmental: `test_backtest_deploy_artifacts.py::test_control_unmutated_tree_passes` spawns the system `python3`, which has no pytest in this sandbox (it fails on the clean tree too) |
 | CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 55 `.py` files in `telegram-bot/` |
@@ -46,6 +46,44 @@ Sizes are `splitlines()`-based and are recomputed by
 
 These are not forgotten; they are parked on a question only the operator
 can answer. Each one records the decision that unblocks it.
+
+### The answer-files feature has never run in production — the generator takes the model load
+
+**Status:** open since 2026-10-24. The feature is implemented, tested and
+pushed (`e8e4ff0`); what is missing is the live check.
+
+**What the operator measured:** the production host runs on a generator, and
+any request to the model overloads it. So the bot cannot be exercised
+against the real engine for now — not because the code is wrong, but
+because the box cannot take the load. (Earlier the same day the host also
+had no power at all.)
+
+**What was done instead:** `tests/test_artifact_e2e.py` — the real handler,
+the real parser, the real sender and the real database, with the engine
+replaced by the answer shapes that were measured on the live engine on
+2026-10-24. It runs in CI, and as a script it prints the transcript of
+each shape:
+
+    python tests/test_artifact_e2e.py
+
+**What is still missing, and what it needs:** the live check itself, once
+the generator can take the load. The checklist:
+
+1. deploy the current `main` to the production bot;
+2. ask the model for a json, an html page, a site in three files, and one
+   plain question with no code at all;
+3. check that the code arrives as a **document** with the right name and
+   extension, and that the chat gets the prose and not the code;
+4. ask a follow-up about the file ("поменяй в нём цвет") and check that
+   the bot still remembers the code — that is the whole point of keeping
+   the raw answer in the history;
+5. check the topic: a document sent from a forum topic has to land in
+   that topic, not in General;
+6. check that the reasoning-only answer still arrives as a diagnostic and
+   not as a document.
+
+**Decision needed:** when the host can take the model load, and who runs
+the checklist.
 
 ### The context blocker is not closed — and its list is growing
 
@@ -233,6 +271,38 @@ wording, change it, or drop the flag again.
 
 
 ## Open — code, not blocked on anyone
+
+### T-FREEZE-EMPTY-1 — the empty-response fallback never reaches the user
+
+**Status:** open since 2026-10-24. Found by the offline replay of the
+answer-files feature, not by a test that was written for it.
+
+When the model spends its whole budget on reasoning, `call_llama` returns
+a diagnostic string that starts with `EMPTY_RESPONSE_PREFIX`. The handler
+retries once; if the retry is empty too, it assigns
+`EMPTY_RESPONSE_USER_FALLBACK` to `bot_response` — and then
+`_persist_for_reply` returns the answer's prose over it. The fallback is
+discarded, and the user gets the diagnostic with the reasoning tail
+instead of the friendly "не удалось получить ответ" message.
+
+**Measured on the production bot, 2026-10-24:** assistant turn id 10369 in
+the production database, 3618 characters — the diagnostic, with a
+45108-character reasoning tail behind it.
+
+**Why it was not fixed inside the answer-files change:** it is a different
+feature (the empty-answer retry, 2026-10-22), and the operator has to
+choose what the user should see — the friendly fallback or the raw
+diagnostic. Changing it would change production behaviour under cover of
+another feature, which is exactly what the CODEBOOK's "one concern" rule
+exists to prevent.
+
+**Note:** `tests/test_artifact_e2e.py` pins the current behaviour (the
+diagnostic reaches the chat), so fixing this will break that test on
+purpose.
+
+**What it needs:** the operator's choice, and then the fix in
+`_persist_for_reply` or in the handlers, plus the test that the user
+actually sees the chosen text.
 
 ### T-FREEZE-CHUNK-1 — a long answer to a photo or a document is not chunked
 

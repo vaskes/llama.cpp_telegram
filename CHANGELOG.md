@@ -77,6 +77,16 @@ the prose; the history gets what the model wrote, because the model
 wrote that code, and a follow-up question about the file it just sent
 needs it to still be there.
 
+**Verification.** The feature is covered end to end *offline*:
+`tests/test_artifact_e2e.py` drives the real handler, the real parser,
+the real sender and the real database, with the engine replaced by the
+shapes listed above. Run it as a script and it prints the transcript of
+each one — what the user would have read, and what the bot would have
+kept. The live check on the production bot is still missing: the host
+runs on a generator, and any request to the model overloads it
+(operator's measurement, 2026-10-24). The checklist for it is in
+`docs/TODO.md`.
+
 ### The Stop button only worked for the ids on the allowlist
 
 The Stop button on the bot's "💭 думаю…" message was gated by the

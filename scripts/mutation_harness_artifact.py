@@ -23,7 +23,11 @@ notice. The rules it breaks:
   * the executed-tool trace is still in front of the answer;
   * a file that cannot be uploaded goes out as text;
   * the topic id goes with the document;
-  * every handler sends the files of its own answer.
+  * every handler sends the files of its own answer;
+  * the bot remembers the code it just sent -- the chat gets the prose,
+    the database keeps the whole answer;
+  * the files go out even when there is no prose, so an answer that is
+    nothing but a document still reaches the user.
 
 The rules this harness holds itself to, because a mutation run that
 cannot report INVALID is a decoration:
@@ -66,6 +70,12 @@ TARGETS = [
     # tested in the file that owns the handler tail -- a harness that
     # did not run it would report a survivor it never looked for.
     "tests/test_handler_tail.py",
+    # The seam: the real handler, the real parser, the real sender, the
+    # real database, with the engine replaced by the answer shapes that
+    # were measured on the live engine. A harness that did not run it
+    # would never look at whether the handler wires the feature
+    # together -- the part the unit tests cannot see.
+    "tests/test_artifact_e2e.py",
 ]
 
 #: A mutation that hangs the suite is still a catch, but it has to be
@@ -143,6 +153,22 @@ MUTATIONS = [
     ]),
     ("the handlers send no files", HAND, [
         (r"answer\.files", "[]", 4),
+    ]),
+    ("the bot forgets the code it just sent", HAND, [
+        (r"        context, update, chat_id, thread_id, answer\.raw, rating_active,\n",
+         "        context, update, chat_id, thread_id, answer.text, rating_active,\n", 1),
+    ]),
+    # The files have to go out even when there is no prose: an answer
+    # that is nothing but a document has no prose to send, and a guard
+    # on the prose drops exactly those files. Two mutations, because
+    # the two pairs of handlers sit at different indentation levels.
+    ("the files only go out when there is prose (photo, voice)", HAND, [
+        (r"(?m)^        await send_files\(update, answer\.files\)$",
+         "            await send_files(update, answer.files)", 2),
+    ]),
+    ("the files only go out when there is prose (text, document)", HAND, [
+        (r"(?m)^            await send_files\(update, answer\.files\)$",
+         "                await send_files(update, answer.files)", 2),
     ]),
 ]
 
