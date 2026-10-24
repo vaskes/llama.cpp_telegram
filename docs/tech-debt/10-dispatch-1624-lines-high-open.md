@@ -199,6 +199,13 @@ does not bind.
 whole approach: seven startup mutations that survived a run because nothing
 in the suite had ever entered `main`.
 
+`scripts/mutation_harness_dispatch_split.py` still carries the D–F set.
+It has **8** mutations now, not 11: F1 and F2 mutated `dispatch_edit.py`
+and F3 mutated the call to `_apply_edited_message`, and all three went
+with the feature on 2026-10-24. A mutation list that names deleted code
+produces REFUSED rows, and a harness that counts REFUSED as coverage is
+lying about itself.
+
 ### The ticket's target was ≤ 400 lines. It was 428 for six blocks.
 
 The ticket said **1612 → ≤ 400**. Blocks D, E and F got it to 428, and
