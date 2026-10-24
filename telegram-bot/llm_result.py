@@ -82,13 +82,30 @@ class Answer(NamedTuple):
     raw: str
 
 
+#: How much of one command's output goes into the chat.
+#:
+#: The output is what the operator asked to see ("вывод консоли надо
+#: выводить в чат"), but a command that prints a megabyte must not
+#: become a megabyte-long message. The model sees the whole output in
+#: its context; the chat gets enough of it to see what happened.
+MAX_TRANSCRIPT_OUTPUT_CHARS = 2000
+
+
 def _format_executed_tools(executed_tools) -> str:
-    """T44: render a fenced ```` ```bash ... ``` ```` block listing
-    the bash commands the model actually ran this turn.
+    """T44: render a fenced ```` ```bash ... ``` ```` block with the
+    bash commands the model ran this turn AND what they printed.
 
     Only ``bash_command`` entries are surfaced — the other tools
     (react_to_message, donsetch web tools) are not user-facing
     commands so they would just be noise in the history.
+
+    The output is here because of the operator's rule (2026-10-24): the
+    console output goes into the chat. Before this the chat showed the
+    COMMANDS and the user saw the OUTPUT only through the model's
+    paraphrase — or, worse, as a `.txt` document, because the model
+    pasted the output into a code block and the file feature took it
+    out of the chat and delivered it as a file. A transcript without
+    its output is half a transcript.
 
     Returns "" if there is nothing to show.
     """
@@ -103,12 +120,22 @@ def _format_executed_tools(executed_tools) -> str:
             continue
         cmd = _args.get("command", "")
         if cmd:
-            bash_cmds.append(cmd)
+            bash_cmds.append((cmd, t.get("stdout") or ""))
     if not bash_cmds:
         return ""
     lines = ["```bash"]
-    for cmd in bash_cmds:
+    for cmd, printed in bash_cmds:
         lines.append(f"$ {cmd}")
+        # A new name, not a rebind of the loop variable: the flag-order
+        # tripwire reads `x = x.strip()` inside a loop as "the flag is
+        # read before it is bound", and it is right to -- the shape
+        # that took production down twice.
+        out = printed.rstrip("\n")
+        if out.strip():
+            if len(out) > MAX_TRANSCRIPT_OUTPUT_CHARS:
+                out = (out[:MAX_TRANSCRIPT_OUTPUT_CHARS]
+                       + "\n[... the output was truncated ...]")
+            lines.append(out)
     lines.append("```")
     return "\n".join(lines)
 
@@ -128,9 +155,14 @@ def unwrap_answer(result) -> Answer:
     if not isinstance(result, dict):
         return Answer(result, [], result if isinstance(result, str) else "")
     text = result.get("text") or ""
-    prose, files = extract_files(text)
-    raw = text
     executed = result.get("executed_tools") or []
+    # What the tools printed. The extractor needs it: a code block that
+    # repeats the console output is output, not a deliverable, and it
+    # belongs in the chat.
+    tool_outputs = [t.get("stdout") or "" for t in executed
+                    if isinstance(t, dict)]
+    prose, files = extract_files(text, tool_outputs=tool_outputs)
+    raw = text
     if executed:
         trace = _format_executed_tools(executed)
         if trace:

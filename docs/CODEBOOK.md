@@ -366,7 +366,7 @@ There are four, and it is worth reading what they are:
 
 | Function | Lines | What it is |
 |---|---|---|
-| `call_llama` | 324 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
+| `call_llama` | 341 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
 | `run_one` | 319 | One tool-loop iteration, nine concerns. Debt item 08. |
 | `handle_photo` | 245 | One concern plus a media path. Debt item 13. |
 | `handle_text` | 209 | Not debt. Same shape as `handle_photo`. |
@@ -788,7 +788,10 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_edit_removal.py` | 6 | The edit-replace feature is gone, and stays gone |
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
 
-134 test files in total; the table above is the ones that guard a rule in
+| `test_console_output_in_chat.py` | 7 | The console output goes into the chat; it is not a file |
+| `test_send_file_tool.py` | 8 | A file from the sandbox reaches the chat as a document |
+
+140 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

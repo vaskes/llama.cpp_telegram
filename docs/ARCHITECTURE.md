@@ -15,7 +15,7 @@ telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
 ├── handlers.py            # handle_text/photo/voice/document (1381 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   478 lines file, 319 in the function
+│                          #   495 lines file, 319 in the function
 ├── dispatch.py            # routing, lifecycle, concurrency caps (369)
 ├── dispatch_group.py      # human-to-human reply absorb (108)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
@@ -61,11 +61,11 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       201  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _finish
+  llm_dispatch.py       304  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      513  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
-  call_llama.py         478  call_llama
+  call_llama.py         495  call_llama
   llm_loop_guard.py     170  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py        83  _tag_sender
@@ -73,14 +73,15 @@ tests, none of which build a full `call_llama`.
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         307  StreamOutcome, stream_iteration, _fallback_to_nonstream
   llm_abort.py             64  finalize_aborted_turn
-  llm_result.py           139  Answer, unwrap_answer
-  llm_artifact.py         425  Artifact, extract_files
+  llm_result.py           171  Answer, unwrap_answer
+  llm_artifact.py         487  Artifact, extract_files
   llm_files.py            144  send_files
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape
   llm_thinking.py       128  ThinkingThrottle, push_thinking
   llm_toolargs.py       215  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
+  llm_sendfile.py         68  send_file_tool_def
 ```
 
 The split is by *decision*, not by size. Three of them answer "should

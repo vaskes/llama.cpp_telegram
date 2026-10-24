@@ -322,6 +322,13 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # personal_tools/bash_command.py.
         from personal_tools.bash_command import BASH_COMMAND_TOOL_DEF
         bot_side_tool_defs.append(BASH_COMMAND_TOOL_DEF)
+        # send_file reads from the same sandbox, so it is advertised
+        # under the same condition: no sandbox, no way to send a file
+        # out of it. (2026-10-24: the operator asked for a binary file
+        # and the bytes had no way to travel -- the model's text was
+        # the only channel.)
+        from llm_sendfile import send_file_tool_def
+        bot_side_tool_defs.append(send_file_tool_def())
     all_tools = tools + bot_side_tool_defs
 
     # === Group context (always-injected system message) ===
@@ -395,7 +402,17 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 + 'You have access to: '
                 + 'donsetch_web_search / donsetch_web_fetch / '
                 + 'donsetch_web_crawl / donsetch_web_screenshot, '
-                + 'and react_to_message (set a Telegram reaction). '
+                + 'react_to_message (set a Telegram reaction), '
+                + 'and send_file (send a file from the sandbox to the '
+                + 'chat as a document). '
+                + 'When the user asks for a FILE -- an archive, an '
+                + 'image, a generated script, a binary blob -- create '
+                + 'it with bash_command and then call send_file with '
+                + 'its path. Do not paste the contents into the chat '
+                + 'and do not send base64: the file itself is what the '
+                + 'user asked for, and it does not have to fit in a '
+                + 'message. The user sees what your commands printed, '
+                + 'so do not repeat the console output either. '
                 + 'Use a tool when the user asks for fresh data, '
                 + 'real-world facts you cannot be sure about, weather, '
                 + 'news, prices, sports results, or any web content. '

@@ -159,7 +159,7 @@ class _Block(NamedTuple):
     end: int        # index of the closing fence line, inclusive
 
 
-def extract_files(text):
+def extract_files(text, tool_outputs=()):
     """Split an answer into the prose and the files it carries.
 
     Returns `(prose, artifacts)`.  When the answer carries no file the
@@ -170,6 +170,12 @@ def extract_files(text):
     executed-tool trace is added after this call, so a trace is never
     in here to be mistaken for a file.  A trace that the model itself
     wrote is still recognised, by its shape.
+
+    `tool_outputs` is what the tools printed this turn.  The bot knows
+    it -- it ran them.  A code block that repeats it is CONSOLE OUTPUT,
+    not a deliverable: the operator's rule (2026-10-24) is that the
+    console output goes into the chat, and a `.txt` document full of
+    `xxd` output is neither a file the user asked for nor an answer.
     """
     if not isinstance(text, str) or not text.strip():
         return (text or "", [])
@@ -191,6 +197,8 @@ def extract_files(text):
     for index, block in enumerate(blocks):
         if _is_tool_trace(block):
             continue
+        if _is_console_output(block, tool_outputs):
+            continue
         before = lines[_previous_end(blocks, index):block.start]
         after = lines[block.end + 1:_next_start(blocks, index)]
         artifacts.append(_artifact_for(block, before, after, counters))
@@ -201,6 +209,8 @@ def extract_files(text):
     removed = set()
     for block in blocks:
         if _is_tool_trace(block):
+            continue
+        if _is_console_output(block, tool_outputs):
             continue
         removed.update(range(block.start, block.end + 1))
     prose = "\n".join(line for i, line in enumerate(lines) if i not in removed)
@@ -269,17 +279,69 @@ def _find_blocks(lines):
 def _is_tool_trace(block):
     """True for the bot's own executed-tool trace.
 
-    A shell fence whose every non-empty line starts with "$ " is a
-    transcript of commands, not a deliverable.  The trace the bot
-    itself renders is exactly this shape, and a model that echoes it
-    back should not turn it into a file either.
+    A shell fence that STARTS with a "$ " line is a transcript of a
+    terminal session, not a deliverable.  The bot renders exactly this
+    shape -- the commands, and since 2026-10-24 what they printed --
+    and a model that echoes the transcript back should not turn it into
+    a file either.
+
+    The rule is "the first non-empty line starts with $ ", not "every
+    line does": the trace carries the console output now, and the
+    output does not start with "$ ".  A model-written shell script
+    does not start with "$ " either, so it is still a file.
     """
     if block.tag not in _SHELL_TAGS:
         return False
     body = [line for line in block.body if line.strip()]
     if not body:
         return False
-    return all(line.lstrip().startswith("$ ") for line in body)
+    return body[0].lstrip().startswith("$ ")
+
+
+def _is_console_output(block, tool_outputs) -> bool:
+    """True for a block that repeats what a tool printed.
+
+    The bot ran the tool, so it knows the output.  The model often
+    pastes that output into a code block -- the base64 of a file, the
+    `xxd` dump of a binary, the listing of a directory -- and the file
+    feature used to take the block out of the chat and deliver it as a
+    `.txt` document.  The user then got the console output as a file
+    and the chat without it.
+
+    Two ways to match, because the model quotes in two ways:
+
+      * the block IS the output (a part of it) -- normalised and
+        compared as a substring;
+      * the block is a QUOTE of the output -- the model pasted some
+        lines of it, possibly with its own framing, so most of the
+        block's lines have to be found in the output.
+
+    The second rule has a cost, stated here because it is a policy and
+    not an accident: a file the model wrote AND printed (cat'ed) is
+    output too, and stays in the chat instead of arriving as a
+    document.  The content is still visible to the user either way;
+    what changes is whether there is a file to save.
+    """
+    if not tool_outputs:
+        return False
+    body = "\n".join(block.body).strip()
+    if not body:
+        return False
+    body_norm = " ".join(body.split())
+    body_lines = [line.strip() for line in body.splitlines() if line.strip()]
+    for out in tool_outputs:
+        if not out or not out.strip():
+            continue
+        out_norm = " ".join(out.split())
+        if body_norm and body_norm in out_norm:
+            return True
+        out_lines = set(line.strip() for line in out.splitlines() if line.strip())
+        if not out_lines or not body_lines:
+            continue
+        hits = sum(1 for line in body_lines if line in out_lines)
+        if hits / len(body_lines) >= 0.6:
+            return True
+    return False
 
 
 def _previous_end(blocks, index):

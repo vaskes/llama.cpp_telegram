@@ -37,6 +37,9 @@ uniform signal to key on. It is kept as its own function because it is
 pure and because it is the kind of predicate that will be wrong one day
 and should then be changed in one place with one test.
 """
+import base64
+import os
+import shlex
 from typing import Any, NamedTuple, Optional
 
 from rating import _execute_react_to_message
@@ -44,8 +47,8 @@ from rating import _execute_react_to_message
 UNAVAILABLE_TOOL_MESSAGE = (
     '[tool {name} unavailable in this mode. Bot supports: '
     'donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, '
-    'donsetch_web_screenshot, react_to_message, bash_command '
-    '(personal mode only).]'
+    'donsetch_web_screenshot, react_to_message, bash_command, '
+    'send_file (personal mode only).]'
 )
 
 # T57 #S16: never trust the LLM's session_id. Deterministic on purpose.
@@ -62,6 +65,12 @@ UNAVAILABLE_TOOL_MESSAGE = (
 SESSION_ID_TEMPLATE = "chat-{chat_id}"
 
 MAX_TOOL_RESULT_CHARS = 12000
+
+#: How much base64 the send_file path may fetch. The sandbox caps its
+#: captured output at 1 MB, and base64 is four thirds of the file, so
+#: this is the ceiling of the channel rather than a policy: a file
+#: bigger than this cannot come out of the sandbox this way.
+MAX_SEND_FILE_BASE64_CHARS = 900_000
 
 
 class DispatchDeps(NamedTuple):
@@ -135,6 +144,9 @@ async def execute_tool(name: str, args, deps: DispatchDeps) -> ToolExecution:
     if name == "bash_command":
         return await _execute_bash(args, deps)
 
+    if name == "send_file":
+        return await _execute_send_file(args, deps)
+
     registry = deps.custom_tools or {}
     if name in registry:
         result = await registry[name](args)
@@ -185,9 +197,100 @@ async def _execute_bash(args, deps: DispatchDeps) -> ToolExecution:
     return _finish(
         _bc.tool_result_to_text(response),
         _entry("bash_command", args, deps.iteration,
-               ok=response.get("ok", False)),
+               ok=response.get("ok", False),
+               # The stdout rides along in the ledger so the chat can
+               # show what the command printed. The operator's rule
+               # (2026-10-24): the console output belongs in the chat.
+               # Before this, the output reached the user only through
+               # the model's paraphrase -- or, worse, as a .txt
+               # document, because the model pasted it into a code
+               # block and the file feature took it out of the chat.
+               stdout=response.get("stdout", "") or ""),
         deps,
     )
+
+
+async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
+    """Send a file from the sandbox workspace to the chat.
+
+    The operator asked for a zip, then for a 10 KB binary, and both
+    times the file stayed in the sandbox: the only way out of the
+    sandbox was the model's own text, so a binary had no way to reach
+    the chat at all. The model could paste base64, and did -- 180 lines
+    of it, in a message.
+
+    So the bot fetches the bytes and sends them. The fetch is the same
+    sandbox the model writes into, through the same side-car, so the
+    file travels no further than the model could have read it itself.
+    """
+    path = str(args.get("path", "") or "").strip()
+    if not path:
+        return ToolExecution(text="[send_file: no path given]")
+
+    try:
+        from personal_tools import bash_command as _bc
+    except Exception as e:
+        return ToolExecution(text=f"[send_file unavailable: {e!r}]")
+
+    if not _bc.is_enabled_for_active_profile():
+        return ToolExecution(text=(
+            "[send_file unavailable: requires the sandbox ("
+            "LLAMABOT_DEPLOYMENT_PROFILE=personal or dev with an "
+            "allowlist) and AGENT_STACK_TOKEN.]"
+        ))
+
+    # shlex.quote: the path comes from the model, and it goes into a
+    # shell command. The sandbox user can already read anything the
+    # model can read, so the reach is the same -- but the quoting is
+    # not optional.
+    quoted = shlex.quote(path)
+    response = await _bc.call_bash_command(
+        f"base64 -w0 {quoted}",
+        session_id=SESSION_ID_TEMPLATE.format(chat_id=deps.chat_id),
+        chat_type=deps.chat_type,
+        chat_id=deps.chat_id,
+    )
+    if not response.get("ok"):
+        return ToolExecution(text=(
+            f"[send_file: could not read {path}: "
+            f"{response.get('error', 'unknown error')}]"))
+
+    encoded = (response.get("stdout") or "").strip()
+    if not encoded:
+        return ToolExecution(text=(
+            f"[send_file: {path} is empty, missing, or not a regular file]"))
+
+    # The sandbox caps its captured output at 1 MB, and base64 is four
+    # thirds of the file, so this is the real ceiling of the path --
+    # not a number the bot invented.
+    if len(encoded) > MAX_SEND_FILE_BASE64_CHARS:
+        return ToolExecution(text=(
+            f"[send_file: {path} is too large to fetch "
+            f"({len(encoded)} bytes of base64, the limit is "
+            f"{MAX_SEND_FILE_BASE64_CHARS})]"))
+
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except Exception as e:
+        return ToolExecution(text=(
+            f"[send_file: could not decode {path}: {e!r}]"))
+
+    name = os.path.basename(path) or "file.bin"
+    try:
+        from telegram import InputFile
+        await deps.bot.send_document(
+            chat_id=deps.chat_id,
+            document=InputFile(payload, filename=name),
+            # The reply keeps the document in the topic the question
+            # came from -- in a forum supergroup a plain send lands in
+            # General.
+            reply_to_message_id=deps.current_message_id,
+        )
+    except Exception as e:
+        return ToolExecution(text=f"[send_file: sending {name} failed: {e!r}]")
+
+    return ToolExecution(text=(
+        f"[send_file: sent {name} ({len(payload)} bytes) to the chat]"))
 
 
 def _finish(result, ledger: dict, deps: DispatchDeps) -> ToolExecution:

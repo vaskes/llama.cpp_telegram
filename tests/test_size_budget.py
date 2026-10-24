@@ -46,7 +46,7 @@ MODULE_LIMIT = 1000
 EXCEPTIONS = {
     "call_llama": (
         "call_llama.py",
-        324,
+        341,
         "2026-10-22",
         "Carries a DO NOT REFACTOR notice with its own trigger; the "
         "transport, the four response buffers and the abort state across "
