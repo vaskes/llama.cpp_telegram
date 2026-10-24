@@ -305,6 +305,68 @@ def test_a_message_too_long_fails(tmp_path):
     assert report.rows[0][1] == smoke.FAIL
 
 
+def test_a_fatal_line_from_a_previous_run_does_not_fail(tmp_path):
+    """A log file is a bind mount: it outlives the container.
+
+    The production log on 2026-10-24 still carried a traceback from a
+    synthetic update an operator had POSTed by hand the day before. The
+    check looked at the last 2000 lines, found that old traceback and
+    reported FAIL -- on a deployment whose current process had not
+    written a single error. A check that is always red after the first
+    incident is a check nobody reads, so the window is the current run.
+    """
+    path = tmp_path / "bot.log"
+    path.write_text(
+        "[webhook] listening on http://0.0.0.0:8443/tg-webhook/\n"
+        "Traceback (most recent call last):\n"
+        "AttributeError: 'NoneType' object has no attribute 'id'\n"
+        "🤖 LlamaBot v2 started...\n"
+        "[main] webhook mode: aiohttp on http://0.0.0.0:8443/tg-webhook/\n"
+        "[dispatch] processed update_id=42\n",
+        encoding="utf-8")
+    report = smoke.Report()
+    smoke.check_log(report, str(path))
+    assert report.rows[0][1] == smoke.PASS
+    assert "since the last start" in report.rows[0][2]
+
+
+def test_a_fatal_line_from_the_current_run_still_fails(tmp_path):
+    """The other half of the rule: the window must not hide new failures."""
+    path = tmp_path / "bot.log"
+    path.write_text(
+        "🤖 LlamaBot v2 started...\n"
+        "[dispatch] processed update_id=42\n"
+        "Traceback (most recent call last):\n"
+        "AttributeError: 'NoneType' object has no attribute 'id'\n",
+        encoding="utf-8")
+    report = smoke.Report()
+    smoke.check_log(report, str(path))
+    assert report.rows[0][1] == smoke.FAIL
+    assert "since the last start" in report.rows[0][2]
+
+
+def test_a_log_without_a_start_banner_is_scanned_whole(tmp_path):
+    """No banner means we cannot tell which run is which -- scan it all."""
+    path = tmp_path / "bot.log"
+    path.write_text("[ERR text] UnboundLocalError: boom\n", encoding="utf-8")
+    report = smoke.Report()
+    smoke.check_log(report, str(path))
+    assert report.rows[0][1] == smoke.FAIL
+
+
+def test_current_run_lines_cuts_at_the_last_banner():
+    lines = [
+        "old\n",
+        "🤖 LlamaBot v2 started...\n",
+        "run one\n",
+        "🤖 LlamaBot v2 started...\n",
+        "run two\n",
+    ]
+    assert smoke.current_run_lines(lines) == [
+        "🤖 LlamaBot v2 started...\n", "run two\n",
+    ]
+
+
 # --- the exit code ---------------------------------------------------------
 
 def test_the_script_exits_1_when_a_check_failed(monkeypatch, tmp_path):

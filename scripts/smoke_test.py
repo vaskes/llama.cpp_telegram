@@ -76,6 +76,16 @@ FATAL_PATTERNS = (
     re.compile(r"\[rate_limit\].*window full"),
 )
 
+#: The banner every process start writes (dispatch.py). The log file is a
+#: bind mount that survives container restarts, so it accumulates the whole
+#: history of the box. A smoke test that scans the whole history is a smoke
+#: test that is permanently red after the first incident -- and the operator
+#: cannot tell "the bot is broken now" from "the bot was broken once". So
+#: the log check looks at the CURRENT process only: everything after the
+#: last banner. The old lines are not hidden, they are just not this
+#: deployment's news.
+START_MARKER = "LlamaBot v2 started"
+
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 
 
@@ -305,13 +315,28 @@ def check_database(report: Report, path: str, chat_id: str | None) -> None:
         conn.close()
 
 
+def current_run_lines(lines: list[str]) -> list[str]:
+    """Only the lines the CURRENT process wrote.
+
+    The log file is a bind mount: it outlives the container. Everything
+    before the last startup banner belongs to a previous life of the bot.
+    Keeping that history in the window means one old traceback fails every
+    future smoke test, which trains the operator to ignore the one check
+    that is supposed to be loud.
+    """
+    for index in range(len(lines) - 1, -1, -1):
+        if START_MARKER in lines[index]:
+            return lines[index:]
+    return lines
+
+
 def check_log(report: Report, path: str) -> None:
     """The log: the failures that would not show up as a failed answer."""
     if not os.path.exists(path):
         report.add("log", FAIL, f"{path} does not exist")
         return
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        lines = handle.readlines()[-2000:]
+        lines = current_run_lines(handle.readlines())[-2000:]
     hits = []
     for line in lines:
         for pattern in FATAL_PATTERNS:
@@ -320,9 +345,11 @@ def check_log(report: Report, path: str) -> None:
                 break
     if hits:
         report.add("log", FAIL,
-                   f"{len(hits)} suspicious line(s); last: {hits[-1]}")
+                   f"{len(hits)} suspicious line(s) since the last start; "
+                   f"last: {hits[-1]}")
     else:
-        report.add("log", PASS, f"{len(lines)} lines, nothing suspicious")
+        report.add("log", PASS,
+                   f"{len(lines)} lines since the last start, nothing suspicious")
 
 
 def manual_items() -> None:
