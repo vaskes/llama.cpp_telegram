@@ -227,10 +227,15 @@ def main():
 
 # Four section markers stood here naming functions that had already moved:
 # application assembly and `_register_bot_menu` / `_handle_chat_member_update`
-# to `dispatch_webhook.py`, `_apply_edited_message` to `dispatch_edit.py`,
-# `_handle_reply_to_other_user` to `dispatch_group.py`. They headed empty
-# sections, which is worse than no marker -- a reader looking for
-# `_register_bot_menu` in this file found a heading and nothing under it.
+# to `dispatch_webhook.py`, `_handle_reply_to_other_user` to
+# `dispatch_group.py`. They headed empty sections, which is worse than no
+# marker -- a reader looking for `_register_bot_menu` in this file found a
+# heading and nothing under it.
+#
+# The fourth one is gone from this list on purpose: the edit-replace path
+# it named (`_apply_edited_message`, in `dispatch_edit.py`) was removed with
+# the feature itself on 2026-10-24. Naming a module that no longer exists
+# is the same rot as naming a line that moved.
 
 # === _dispatch_update ===
 # Guards the lazy Application build. Two updates arriving together (a
