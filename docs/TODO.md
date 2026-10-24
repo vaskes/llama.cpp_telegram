@@ -498,6 +498,7 @@ Not repeated here; each line points at the record.
 | `handlers.py` shared wrapper | `TECH-DEBT.md` #13 |
 | `prompts.py` prose → `prompt_text/` | `TECH-DEBT.md` #12 |
 | Env-var name validation | `TECH-DEBT.md` #11 |
+| The edit-replace feature, removed | `CHANGELOG.md` § Unreleased; `docs/tech-debt/10-*.md` |
 | Review waves 1–8 | `docs/archive/2026-10/`; `docs/review/README.md` |
 
 ---
