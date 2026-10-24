@@ -226,29 +226,6 @@ purpose.
 `_persist_for_reply` or in the handlers, plus the test that the user
 actually sees the chosen text.
 
-### T-FREEZE-CHUNK-1 — a long answer to a photo or a document is not chunked
-
-**Status:** open since 2026-10-24. Not caused by the answer-files work, and
-not fixed by it either.
-
-`handle_text` and `handle_voice` split an answer longer than 4000 characters
-into several messages. `handle_photo` and `handle_document` do not: they
-hand the whole answer to `send_reply`, and Telegram's own limit is 4096
-characters. A long answer to a photo is therefore a `Message_too_long`
-error, and the user sees the error instead of the answer.
-
-**Why it was not fixed inside the answer-files change:** it is a different
-defect, and fixing it there would have changed the behaviour of two
-handlers under cover of another feature -- the thing the CODEBOOK's
-"one concern" rule exists to prevent. The feature made the exposure
-*smaller* rather than larger: the code blocks now leave the prose and
-arrive as documents, so an answer that was mostly code is now mostly a
-file, and what is left to overflow is the prose.
-
-**What it needs:** the same 4000-character chunking the other two handlers
-use, on the two paths that lack it, and a test that drives a long answer
-through both handlers.
-
 ### T-FREEZE-AUTO-1 — `scripts/smoke_test.py`
 
 **Status:** open since 2026-10-12 (Qwen's wave-3 recommendation).
@@ -501,6 +478,35 @@ accepted by the validation and then fell through to the PUBLIC defaults,
 so the operator's production ran the conservative numbers while
 believing it ran the aggressive ones. It has its own table now, and a
 test asserts it is not the public profile.
+
+### T-FREEZE-CHUNK-1 — a long answer to a photo or a document
+
+**Status:** ✅ **closed 2026-10-24.**
+
+Telegram rejects a text message over 4096 characters. The text and voice
+handlers split their answer; photo and document sent one message, so a
+long answer to a photo came back as `Message_too_long` and the user saw
+the API error instead of the answer.
+
+The split moved into `_send_answer_text` (in `handlers.py`), and all four
+handlers use it. The policy -- 4000 characters per piece -- lives in
+`chat_utils.TELEGRAM_TEXT_CHUNK`, next to the splitter itself.
+
+Two things were fixed on the way, and both were found by the new tests:
+
+- the pieces are sent untrimmed. A trimmed piece loses the space between
+  the last word of one piece and the first word of the next, and the user
+  reads "строка 372строка 373";
+- the pieces go through the same rate limiter as any other message.
+  Telegram counts messages, not answers, and a 40k-character answer is
+  ten messages in a row.
+
+**Verification:** `tests/test_answer_chunking.py` -- the splitter itself,
+the two paths that lacked the split (through the real handlers, with the
+engine replaced), and the structural tripwire that no handler sends its
+answer on its own. `scripts/mutation_harness_chunking.py`: 9 mutations, 7
+caught, 2 survived-as-intended (the group-B reversals: remove the
+tripwire *and* the behaviour, and the suite has to stay green).
 
 ## House rules for this file
 

@@ -19,6 +19,33 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### A long answer to a photo or a document no longer dies at the Telegram limit
+
+Telegram rejects a text message over 4096 characters with
+`Message_too_long`. The text and voice handlers have split their answer
+since v0.10.1; the photo and document paths did not, so a long answer to
+a photo came back as an API error, and the user saw the error instead of
+the answer.
+
+The split now lives in one place — `_send_answer_text` — and all four
+handlers use it:
+
+- the answer goes out in 4000-character pieces, under Telegram's 4096
+  with room for what the transport adds;
+- each piece is sent untrimmed. A piece trimmed at the boundary loses
+  the space between the last word of one piece and the first word of the
+  next, and the user reads "строка 372строка 373";
+- the pieces go through the same rate limiter as any other message,
+  because Telegram counts messages, not answers.
+
+Two tripwires hold it in place: a behavioural one (a long answer through
+the real photo and document handlers, with the engine replaced) and a
+structural one (no handler may send its answer on its own).
+`scripts/mutation_harness_chunking.py` breaks the rule in nine ways:
+seven have to turn the suite red, and two remove a tripwire *and* the
+behaviour it catches and have to leave it green — the only proof that
+the tripwire was the thing doing the work.
+
 ### The old history is summarised in chunks, and each chunk is summarised once
 
 The `summarize` strategy used to build ONE summary out of the whole
