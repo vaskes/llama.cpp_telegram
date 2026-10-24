@@ -116,7 +116,7 @@ strategy afterwards.
 | 3 | T66.1 — guaranteed minimum of N messages if the window is empty? | operator | open, low impact |
 | 4 | ~~T69 — personality questions~~ | operator | ✅ **answered, shipped 2026-10-21** |
 | 5 | T68 — systemd timer vs cron on host? | operator | 🔵 **moot** — ADR-0003 made it a mode, not a choice |
-| 6 | **T70.3 — what if the summary itself does not fit in 256k?** | operator | 🔴 **open, blocks T70.3** |
+| 6 | **T70.3 — what if the summary itself does not fit in 256k?** | operator | ✅ **answered 2026-10-24** — chunked summaries with a DB marker (T70.5) |
 
 ## Measurements (2026-10-20, llmhost1, Qwen3.8-27B 256k)
 

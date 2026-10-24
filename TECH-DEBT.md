@@ -67,7 +67,7 @@ selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   478 lines, ToolLoop owns the iteration, 17 llm_* leaf modules
 handlers.py    1365 lines
 prompts.py      75 lines, 0 functions (module constants)
-storage.py      725 lines, class Storage encapsulated, get_store() sole entry
+storage.py      940 lines, class Storage encapsulated, get_store() sole entry
 config.py       349 lines, 24 env names, plus 12 elsewhere in the package
 
 Line counts are splitlines(); the trailing newline is not a line. The

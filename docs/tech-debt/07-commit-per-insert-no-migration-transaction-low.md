@@ -49,4 +49,4 @@ This is recorded as a decision rather than closed as "done", because
 "no tech debt" should mean every item is either fixed or a deliberate,
 trigger-backed choice — not that everything got built.
 
-<!-- current: storage.py=725 -->
+<!-- current: storage.py=940 -->

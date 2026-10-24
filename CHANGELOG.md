@@ -19,6 +19,59 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The old history is summarised in chunks, and each chunk is summarised once
+
+The `summarize` strategy used to build ONE summary out of the whole
+history that had fallen out of the memory window. That answer has a
+problem the operator named: if the summary itself does not fit the
+window, something has to give.
+
+The old part is now split into chunks, and each chunk is summarised on
+its own. The chunk's messages get a marker in the database — the
+operator's "СВЕДЕНО" field — pointing at the summary that stands for
+them, and a marked chunk is never summarised again. So summarisation is
+not a bill that arrives on every restart: it is paid once per chunk,
+when the chunk leaves the window.
+
+- below the volume budget, nothing is summarised and nothing is marked:
+  the old part is loaded into the context as it is;
+- above it, the old part is chunked, each chunk is summarised, and the
+  context is assembled from the finished summaries — each standing in the
+  place of its own chunk, so the model reads the timeline in order —
+  plus the messages that were never summarised;
+- a chunk whose summarisation failed stays unmarked: its messages are
+  loaded raw and it is retried at the next re-anchor. Nothing is lost
+  either way.
+
+The volumes are configuration, with the arithmetic written out in
+`.env.example`: `SUMMARY_TAIL_TOKENS` (64k), `SUMMARY_CHUNK_TOKENS`
+(64k) and `SUMMARY_CONTEXT_TOKENS` (128k). They are in estimated
+tokens, because the engine is swappable and the bot has no tokenizer
+to ask. The 64k is the operator's number; the operator's first number
+was 200k, and that did not fit — 200k of raw history plus the fresh
+window plus llama's 64k thinking block overflows a 256k window, and it
+fails the way the thinking cap failed in v0.13.0: the model thinks and
+does not answer.
+
+Two side effects worth knowing:
+
+- the old code summarised only the last 400 old messages and silently
+  dropped everything before them. A chunk is bounded by tokens now, not
+  by a row count;
+- `/stats` no longer says "older than the window (not sent)". Part of
+  the old history is compressed and part of it is sent raw, and the line
+  now says which is which.
+
+**Verification.** The rules are pinned by
+`tests/test_t70_5_chunked_summaries.py` and `tests/test_t70_summarize.py`,
+and by `scripts/mutation_harness_t70_5.py` — 14 mutations, 14 caught, 0
+survived: the marker is not written, the summary row is not written, the
+marked messages are loaded raw as well, the old part is summarised below
+the budget, the chunking drops a message, the summaries are ignored, the
+summary is not placed in the position of its chunk, the raw tail and the
+old part are not capped, the fresh window loses its cap, a failed chunk
+is marked anyway, and the re-anchor stops summarising.
+
 ### An answer that carries a file now arrives as a file
 
 When the model answers with a formatted document — html, json, sql,

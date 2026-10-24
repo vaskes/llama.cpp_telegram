@@ -95,24 +95,84 @@ below are all parts of it, and the list is growing rather than shrinking:
 
 | Piece | What it still leaves open |
 |---|---|
-| T70.5 | what happens when the summary itself does not fit the window |
 | T68b | the engine keeps a KV cache for context that already fell out of the window, and the reset command is unreachable |
 | T66.1 | the guaranteed minimum of the last N messages when the window is empty |
 | Live edit-replace | the one user-visible scenario with no automated coverage |
 
 Closing the context-memory tickets closed *a* set of tasks. It did not
-close this. Treat the four rows above as one blocker with four faces,
+close this. Treat the three rows above as one blocker with three faces,
 and do not read a green board here as "the context problem is done".
 (T70.6 left this table on 2026-10-23: the operator's decision was that
 the thinking cap belongs to llama-server, so the bot-side knob was
-deleted rather than implemented -- see that entry.)
+deleted rather than implemented -- see that entry.
+T70.5 left this table on 2026-10-24: the operator decided on chunked
+summaries with a "СВЕДЕНО" marker in the database, and it is
+implemented -- see that entry.)
 
 
 ### T70.5 — what if the summary itself does not fit in the context window?
 
-**Status:** deferred by the operator 2026-10-21.
+**Status:** ✅ **decided by the operator 2026-10-24, implemented.**
 **Where:** `docs/tickets/TICKET-T70-context-protocol-redesign.md`,
-`docs/tickets/README.md` (open question 6).
+`docs/tickets/README.md` (open question 6), `telegram-bot/summarize.py`,
+`telegram-bot/context_budget.py`.
+
+The operator's answer: chunk the old part, summarise each chunk, and mark
+it in the database so the same chunk is never summarised again.
+
+> сводки надо делать чанками, и помечать. т.е. если ОБЪЕМ данных для сводки
+> > 200к надо сделав по ней сводку проставить в базе поле СВЕДЕНО, ссылку на
+> сводку которая сделана и по этому чанку больше сводки не делать. Если объем
+> данных для сводки <200к не проставлять поле сведено и не сводить, а грузить
+> как есть в контекст. Ну и при загрузке соответсвенно грузить только готовые
+> сводики и только сообщение которые не сведены.
+
+**The 200k became 64k**, and that is the one number in this entry that is
+not the operator's: 200k of raw history plus the fresh window plus llama's
+64k thinking block does not fit in a 256k window, and it fails the way
+T70.6 failed ("the model thought and did not answer"). 64k fits:
+
+    262144 - 65536 (thinking) - 16384 (answer) = 180224 for the prompt
+    180224 - ~48000 (fresh window) - ~4000 (system + tools)
+      = ~128000 for the old part  ->  SUMMARY_CONTEXT_TOKENS = 131072
+
+**What is in the code now:**
+
+- `SUMMARY_TAIL_TOKENS` (64k) -- how much old, never-summarised history is
+  loaded raw. Below it: nothing is summarised, nothing is marked, the old
+  part goes into the context as is.
+- `SUMMARY_CHUNK_TOKENS` (64k) -- how much old history goes into one
+  summarisation call.
+- `SUMMARY_CONTEXT_TOKENS` (128k) -- the ceiling on the old part as a
+  whole; when it does not fit, the oldest goes.
+- `summaries` table + `messages.summary_id`: the "СВЕДЕНО" marker with a
+  link to the summary that stands for those messages. Written in one
+  transaction with the summary itself.
+- The context is assembled as: the summaries (each standing where its chunk
+  was) + the messages that were never summarised + the fresh window.
+- A failed chunk stays unmarked: its messages are loaded raw and it is
+  retried at the next re-anchor.
+
+**What is NOT done:** the strategy is still off by default
+(`CONTEXT_STRATEGY=window`), because the production host is on a generator
+and the summarise path has never run against a live engine. That is the
+same live check as the answer-files feature.
+
+**Bonus defect the rewrite removed:** the old code summarised only the last
+400 old messages (`MAX_OLD_MESSAGES_PER_CALL`) and silently dropped the rest.
+There is no such cap now -- a chunk is bounded by tokens, not by a row
+count.
+
+**Verification:** `tests/test_t70_5_chunked_summaries.py` (the volume rule,
+the marker, the assembly, the budgets, the whole path) and
+`tests/test_t70_summarize.py` (the model call, the failure paths, the
+trigger placement) -- plus
+`scripts/mutation_harness_t70_5.py`: 14 mutations, 14 caught, 0 survived.
+Two mutations survived the first run and both were real holes: the
+ordering of a summary against an older raw chunk was not pinned (the
+partial-failure case), and one mutation was hitting an optimisation
+rather than a rule. Both are fixed and the mutation now targets the
+re-anchor call.
 
 The `summarize` strategy builds a synthetic `user→assistant` summary pair
 from history older than the anchor window. That summary is built from

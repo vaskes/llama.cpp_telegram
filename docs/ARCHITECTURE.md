@@ -23,8 +23,8 @@ telegram-bot/
 ├── dispatch_webhook.py    # PTB assembly + handler registration (325)
 ├── webhook.py             # aiohttp server + secret check (224)
 ├── commands/              # the slash-command handlers, as a package
-├── context_budget.py      # which persisted messages reach the engine (450)
-├── summarize.py           # summarise out-of-window history (224)
+├── context_budget.py      # which persisted messages reach the engine (658)
+├── summarize.py           # summarise out-of-window history, in chunks (317)
 ├── reanchor.py            # when the memory window re-anchors (272)
 ├── personality.py         # the optional persona block (214)
 ├── prompt_guard.py        # the sender-label prompt-injection filter (109)
@@ -35,8 +35,8 @@ telegram-bot/
 ├── limits.py              # profile-based token/timeout limits (312)
 ├── config.py              # env-var read at import time (349)
 ├── state.py               # per-chat runtime state (240)
-├── storage.py             # SQLite: messages, threads, topics (725)
-├── persistence.py         # conversation-history assembly (118)
+├── storage.py             # SQLite: messages, threads, topics, summaries (940)
+├── persistence.py         # conversation-history assembly (173)
 ├── turn.py                # one turn's persist/rollback ledger (159)
 ├── access.py              # authorisation and group policy (256)
 ├── chat_utils.py          # chat-shape and command-argument helpers (129)
@@ -49,8 +49,8 @@ telegram-bot/
     └── bash_command.py    # T38: bash execution via sandbox side-car
 ```
 
-55 top-level modules, 133 test files, 2234 tests collected in a checkout.
-CI collects 2215 of them — the sandbox-marked file is excluded by name.
+55 top-level modules, 134 test files, 2256 tests collected in a checkout.
+CI collects 2237 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 
@@ -403,9 +403,27 @@ topics exist for the current chat.
   * The webhook authentication and request size limits are
     in [WEBHOOK.md](WEBHOOK.md).
   * The history persistence layer is `storage.py` (SQLite: messages,
-    threads, topics) with the async wrappers in `persistence.py` and
-    the policy that decides *which* messages are sent in
-    `context_budget.py`.
+    threads, topics, and the chunk summaries of T70.5) with the async
+    wrappers in `persistence.py` and the policy that decides *which*
+    messages are sent in `context_budget.py`.
+
+### The `summarize` strategy, in one paragraph
+
+`CONTEXT_STRATEGY=window` (the default) sends the messages that are
+inside the anchored window and nothing else. `CONTEXT_STRATEGY=summarize`
+adds the part that fell out of it: at the daily re-anchor, the old
+history is split into chunks of about `SUMMARY_CHUNK_TOKENS`, each chunk
+is summarised by the same model that answers the bot, and the chunk's
+messages are marked in SQLite (`messages.summary_id` → `summaries.id`),
+so a chunk is summarised once and never again. The context the engine
+then sees is the finished summaries — each standing in the place of its
+own chunk — plus the old messages that were never summarised, plus the
+fresh window. If the old part is smaller than `SUMMARY_TAIL_TOKENS` it
+is not summarised at all and goes into the context as it is. The
+volumes are in estimated tokens: the engine is swappable, so the bot has
+no tokenizer to ask, and the estimate is deliberately conservative
+(15% over). The arithmetic behind the default numbers is in
+`context_budget.py` and in `.env.example`.
 
 ## See also
 
