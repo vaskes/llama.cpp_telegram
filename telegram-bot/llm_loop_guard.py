@@ -20,13 +20,24 @@ not one, and building it as one would have changed behaviour:
 
 The shared counter, which is the subtle part
 
-`last_empty` is incremented in two distant places:
+`last_empty` counts the fruitless iterations of the tool loop, and two
+things feed it:
 
-  * `note_rejected_call()` -- three times inside the tool loop, when the
-    model emits malformed args (too repetitive, unparseable, or parsed
-    to an empty object).
+  * `note_rejected_call()` -- once per rejected tool call (too
+    repetitive, unparseable, or parsed to an empty object).
   * `tick()` -- once at the tail, when the iteration produced no real
-    result.
+    result AND carried no rejected call.
+
+An iteration that carried a rejected call is counted ONCE, by the
+rejection. It used to be counted twice -- once by the rejection and once
+by the tail -- which made a single rejected call look like the second
+empty iteration. The second empty iteration ends the tool loop with a
+nudge, so the model was told "please re-emit the tool call" and the loop
+ended before it could: the user got a canned diagnostic instead of the
+work. That is not a theoretical difference. On 2026-10-24 a legitimate
+3081-character bash command was rejected by the argument screen, the
+nudge fired, the final summarize call came back empty, and the user got
+a message about flight prices.
 
 And it is zeroed at the tail whenever the iteration DID produce a real
 result, which overwrites the rejections counted in the same iteration.
@@ -69,23 +80,32 @@ class LoopGuard:
     One instance per call_llama.
     """
 
-    __slots__ = ("budget_sec", "prev_calls", "last_empty")
+    __slots__ = ("budget_sec", "prev_calls", "last_empty",
+                 "_rejected_this_iter")
 
     def __init__(self, budget_sec: float):
         self.budget_sec = budget_sec
         self.prev_calls = []
         self.last_empty = 0
+        self._rejected_this_iter = False
 
     # -- called from inside the tool loop ---------------------------
 
     def note_rejected_call(self) -> None:
         """A tool call was rejected for malformed args.
 
-        Three sites in call_llama do this. It counts toward the same
-        budget as an iteration that produced nothing, which is how a
-        model that emits nothing but malformed calls gets stopped.
+        It counts toward the same budget as an iteration that produced
+        nothing, which is how a model that emits nothing but malformed
+        calls gets stopped.
+
+        One rejection is ONE fruitless iteration. The tail must not
+        count the same iteration again: the model was just told "please
+        re-emit the tool call", and if the tail counts the iteration as
+        empty too, the loop ends before the re-emit can happen. The flag
+        is what keeps those two facts apart.
         """
         self.last_empty += 1
+        self._rejected_this_iter = True
 
     # -- the loop tail ----------------------------------------------
 
@@ -127,17 +147,24 @@ class LoopGuard:
         #    iteration; see the module docstring before "fixing" it.
         if iter_had_real_result:
             self.last_empty = 0
-        else:
+        elif not self._rejected_this_iter:
+            # An iteration whose tool calls were all rejected was
+            # already counted by note_rejected_call(). Counting it here
+            # as well made one rejection look like two, and two is the
+            # nudge that ends the tool loop -- so the model was told
+            # "please re-emit the tool call" and the loop ended before
+            # it could.
             self.last_empty += 1
-            if self.last_empty >= 3:
-                log.info(f"[loop] iter={iteration} 3 empty iters in a row; aborting")
-                return Abort(
-                    f'_(модель 3 итерации подряд не получила полезных данных от инструментов; '
-                    f'останавливаю, чтобы не сжигать токены. '
-                    f'finish_reason={finish_reason}, reasoning_chars={len(reasoning_tail)})\n\n'
-                    f'{reasoning_tail}'
-                )
-            if self.last_empty >= 2:
-                return Nudge(NO_NUDGE_TEXT)
+        self._rejected_this_iter = False
+        if self.last_empty >= 3:
+            log.info(f"[loop] iter={iteration} 3 empty iters in a row; aborting")
+            return Abort(
+                f'_(модель 3 итерации подряд не получила полезных данных от инструментов; '
+                f'останавливаю, чтобы не сжигать токены. '
+                f'finish_reason={finish_reason}, reasoning_chars={len(reasoning_tail)})\n\n'
+                f'{reasoning_tail}'
+            )
+        if self.last_empty >= 2:
+            return Nudge(NO_NUDGE_TEXT)
 
         return None

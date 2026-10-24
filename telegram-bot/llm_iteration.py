@@ -499,9 +499,15 @@ class ToolLoop:
                     "by a content filter. Try a shorter prompt or try "
                     "again in a minute.")
         msg3 = _choices3b[0].get("message") or {}
+        # The empty answer here is not a search that found nothing: it
+        # is the model returning no text at all after the tool loop
+        # ended in a nudge. The old wording talked about flight prices
+        # and Google Flights, which is what a user asked for on some
+        # other day and what this user got on 2026-10-24 while asking
+        # for a zip file. A diagnostic that describes a different
+        # situation is worse than no diagnostic: it sends the user
+        # looking for a search that never happened.
         return msg3.get("content") or (
-            '[bot: search returned no useful data. '
-            'For live data (flight prices, news, stocks), please use a '
-            'direct service like Aviasales, Google Flights, or your '
-            'browser.]'
+            '[bot: the model returned an empty answer, so there is '
+            'nothing to send. Ask again, or ask for something simpler.]'
         )

@@ -25,7 +25,7 @@ sys.path.insert(0, str(BOT_DIR))
 
 QUOTE_MARK_COLON = chr(34) + ":" + chr(34)
 
-from llm_toolargs import (MAX_DUPLICATE_KEY_HINTS,  # noqa: E402
+from llm_toolargs import (MAX_DUPLICATE_KEY_OCCURRENCES,  # noqa: E402
                           MAX_RAW_ARGS_CHARS, ArgsOk, ArgsRejected,
                           parse_tool_args)
 
@@ -81,7 +81,14 @@ def test_absent_or_non_string_arguments_are_an_empty_call(raw):
 # --- rejection 1: repetitive or oversized --------------------------------
 
 def test_many_duplicate_keys_are_rejected():
-    raw = ",".join(f'"max_chars":8000' for _ in range(MAX_DUPLICATE_KEY_HINTS + 2))
+    """The same key, over and over -- the MTP-head pathology.
+
+    The arguments are valid JSON: json.loads accepts a duplicated key
+    and keeps the last value, so without an exact count the repetition
+    is invisible and the call goes through with a silently wrong value.
+    """
+    raw = "{" + ",".join(f'"max_chars":8000'
+                         for _ in range(MAX_DUPLICATE_KEY_OCCURRENCES + 1)) + "}"
     got = parse_tool_args("fetch", raw)
     assert isinstance(got, ArgsRejected)
     assert got.reason == "repetitive_or_long"
@@ -96,14 +103,55 @@ def test_an_over_long_argument_string_is_rejected():
     assert str(MAX_RAW_ARGS_CHARS + 100) in got.detail or "chars" in got.detail
 
 
-def test_the_screen_does_not_parse_what_it_is_screening():
-    """The duplicate-key screen is a count, not JSON analysis -- that is
-    deliberate, since the point is to avoid the parse. Pinned so nobody
-    "improves" it into a full parse and loses the property."""
-    raw = ",".join(f'"k{i}": 1' for i in range(MAX_DUPLICATE_KEY_HINTS + 2))
-    assert '"k0": 1' in raw
-    got = parse_tool_args("fetch", raw)
+def test_the_length_screen_rejects_before_anything_parses(monkeypatch):
+    """The screen is a bound on the PARSE, so it has to short-circuit.
+
+    It used to be a count of `":` occurrences -- which cannot tell a key
+    from a quotation mark, and so rejected any command whose text
+    contained JSON. The exact count needs the parse; the length bound
+    still has to come first, or a model emitting megabytes of arguments
+    gets to make the bot chew on them.
+
+    Pinned with a json.loads that refuses to run, so the property
+    cannot rot into "the parse happens first and the bound is checked
+    afterwards".
+    """
+    import llm_toolargs
+
+    parsed = []
+
+    def spy(text, *args, **kwargs):
+        parsed.append(len(text))
+        return json.loads(text, *args, **kwargs)
+
+    monkeypatch.setattr(llm_toolargs.json, "loads", spy)
+    got = parse_tool_args("fetch", "x" * (MAX_RAW_ARGS_CHARS + 1))
     assert isinstance(got, ArgsRejected)
+    assert got.reason == "repetitive_or_long"
+    assert parsed == [], (
+        "the parser ran on a string the length screen should have "
+        "refused -- the screen is a bound on the parse, so it has to "
+        "come first")
+
+
+def test_a_call_with_many_string_valued_parameters_is_accepted():
+    """The other half: the old screen counted the three-character
+    sequence `":` -- which, in the compact JSON a model emits, is one
+    per string-valued parameter. So ANY call with more than eight
+    string-valued parameters was called "repetitive" and refused. A
+    search with nine filters is not a broken call.
+
+    Distinct keys are not duplicates, and the exact check knows the
+    difference.
+    """
+    raw = "{" + ",".join(f'"p{i}":"v{i}"' for i in range(12)) + "}"
+    assert raw.count(QUOTE_MARK_COLON) == 12, (
+        "the probe must have more string-valued parameters than the old "
+        f"screen allowed -- it has {raw.count(QUOTE_MARK_COLON)}")
+    got = parse_tool_args("search", raw)
+    assert isinstance(got, ArgsOk), (
+        f"a call with twelve distinct parameters was rejected: {got!r}")
+    assert len(got.args) == 12
 
 
 # --- rejection 2: unparseable --------------------------------------------
@@ -196,17 +244,17 @@ def test_the_duplicate_screen_boundary():
     nothing about the threshold it was named for.
     """
     def build(n):
-        return "{" + ",".join(f'"k{i}":1' for i in range(n)) + "}"
+        """n copies of the SAME key -- the pathology."""
+        return "{" + ",".join('"max_chars":8000' for _ in range(n)) + "}"
 
-    ok = build(MAX_DUPLICATE_KEY_HINTS)
-    assert ok.count('":') == MAX_DUPLICATE_KEY_HINTS
+    ok = build(MAX_DUPLICATE_KEY_OCCURRENCES)
     assert isinstance(parse_tool_args("f", ok), ArgsOk)
 
-    got = parse_tool_args("f", build(MAX_DUPLICATE_KEY_HINTS + 1))
+    got = parse_tool_args("f", build(MAX_DUPLICATE_KEY_OCCURRENCES + 1))
     assert isinstance(got, ArgsRejected)
     assert got.reason == "repetitive_or_long", (
-        f"rejected for {got.reason!r} -- the parser caught it, not the "
-        f"screen, so the threshold itself is untested")
+        f"rejected for {got.reason!r} -- the duplicate check is what "
+        f"has to catch this, so the threshold itself is untested")
 
 
 def test_the_length_screen_boundary():
@@ -320,10 +368,97 @@ def test_the_thresholds_are_defined_once():
     hypothetical: it is what the first version of this test did, and it
     turned the positive control below into a failure with a message that
     pointed nowhere near the cause.
+
+    The length threshold is 8704 and not 1500 because the screen must
+    never be stricter than the tool it guards -- see
+    test_the_screen_is_not_stricter_than_the_tool_it_guards, which
+    reads the tool's own limit out of its source and fails if this
+    number drops below it. Pinning the number here as well is fine:
+    both pins fail together when the limit has to move.
     """
     import llm_toolargs
-    assert llm_toolargs.MAX_RAW_ARGS_CHARS == 1500
-    assert llm_toolargs.MAX_DUPLICATE_KEY_HINTS == 8
+    assert llm_toolargs.MAX_RAW_ARGS_CHARS == 65536
+    assert llm_toolargs.MAX_DUPLICATE_KEY_OCCURRENCES == 2
+
+
+# --- the screen and the tool it guards -----------------------------------
+
+def _bash_command_max_len() -> int:
+    """The command length the bash_command tool accepts.
+
+    Read out of the tool's source, not imported: the tool module pulls
+    in httpx and the deployment profile, and a tripwire that has to
+    import the world to read one number is a tripwire that breaks for
+    reasons that have nothing to do with what it checks.
+    """
+    import ast
+
+    src = (BOT_DIR / "personal_tools" / "bash_command.py").read_text(
+        encoding="utf-8")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (isinstance(target, ast.Name)
+                        and target.id == "_BASH_COMMAND_MAX_LEN"
+                        and isinstance(node.value, ast.Constant)
+                        and isinstance(node.value.value, int)):
+                    return node.value.value
+    raise AssertionError(
+        "_BASH_COMMAND_MAX_LEN is gone from personal_tools/bash_command.py "
+        "-- the screen has nothing to compare itself against")
+
+
+def test_the_screen_is_not_stricter_than_the_tool_it_guards():
+    """The bug this pins, measured on production on 2026-10-24.
+
+    The model asked for a zip file, wrote a 3081-character bash
+    heredoc to build it, and the screen rejected the call as "too
+    repetitive or too long" -- because the screen's limit was 1500
+    characters while the tool itself accepts 8192. The tool never saw
+    the call. The loop ended, the user got a canned diagnostic about
+    flight prices, and no zip.
+
+    A screen stricter than the tool is a policy the user cannot see and
+    the model cannot work around: the call is legal, it is just refused
+    on the way in. The screen must be at least the tool's own limit,
+    plus the JSON envelope around it.
+    """
+    tool_limit = _bash_command_max_len()
+    # The screen measures the ENCODED arguments, and encoding inflates
+    # a non-ASCII character sixfold (one char -> \uXXXX). So the screen
+    # has to leave room for the tool's limit in its worst encoding, or
+    # a command full of Cyrillic is refused for being long.
+    assert MAX_RAW_ARGS_CHARS >= tool_limit * 6, (
+        f"the argument screen allows {MAX_RAW_ARGS_CHARS} chars, but a "
+        f"bash_command of {tool_limit} chars, encoded, is up to "
+        f"{tool_limit * 6} chars of raw arguments -- the screen must "
+        f"not be stricter than the tool")
+    assert MAX_RAW_ARGS_CHARS >= tool_limit + 128, (
+        "the raw arguments are the command PLUS the JSON envelope "
+        "around it (the key, the quotes, the session id) -- the screen "
+        "has to leave room for that too")
+
+
+def test_a_legitimate_long_bash_command_is_accepted():
+    """The live shape: a heredoc that writes files, then zips them."""
+    command = (
+        "set -euo pipefail\n"
+        "mkdir -p /workspace/context-pack/context\n"
+        "cd /workspace/context-pack\n"
+        + "cat > context/README.txt <<'EOF'\n"
+        + ("Пример произвольного контекста.\n" * 80)
+        + "EOF\n"
+        + "zip -r context-pack.zip context\n"
+    )
+    raw = json.dumps({"command": command, "session_id": "s" * 36})
+    assert 1500 < len(raw) < MAX_RAW_ARGS_CHARS, (
+        f"the probe has to be longer than the old 1500-char screen and "
+        f"shorter than the current one -- it is {len(raw)} chars")
+    got = parse_tool_args("bash_command", raw)
+    assert isinstance(got, ArgsOk), (
+        f"a legitimate {len(raw)}-char command was rejected: {got!r}")
+    assert got.args["command"] == command
 
 
 # --- the positive control -------------------------------------------------

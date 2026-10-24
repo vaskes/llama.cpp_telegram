@@ -206,14 +206,50 @@ def test_three_rejected_calls_in_one_iteration_stop_the_loop():
 
 
 def test_rejections_accumulate_across_iterations_without_a_real_result():
+    """Two rejected iterations, and the loop ends -- but with a nudge, not
+    an abort.
+
+    A nudge is the graceful end: the model gets one last plain answer
+    out of what it already has. The abort is for a model that burns
+    three fruitless iterations, and two are not three.
+
+    What changed on 2026-10-24 is the OTHER direction: a single
+    rejection used to be counted TWICE (once by the rejection, once by
+    the tail), so one rejected call looked like two, and the nudge --
+    which ends the tool loop -- fired before the model could re-emit the
+    call it had just been told to re-emit. The user got a canned
+    diagnostic instead of the work.
+    """
     g = LoopGuard(600)
     g.note_rejected_call()
     g.note_rejected_call()
     out = tick(g, real_result=False)
-    assert isinstance(out, Abort), (
-        "two rejections plus an empty iteration is three -- this is the "
-        "path that catches a model stuck in malformed tool calls"
-    )
+    assert isinstance(out, Nudge), (
+        f"two rejected iterations end the tool loop with a nudge, not an "
+        f"abort -- got {type(out).__name__}")
+
+
+def test_one_rejection_lets_the_model_re_emit():
+    """The regression this pins, measured on production on 2026-10-24.
+
+    The model asked for a zip file and wrote a 3081-character bash
+    heredoc to build it. The argument screen called it "too long", the
+    loop ended, and the user got a message about flight prices instead
+    of a file. The rejection message says "please re-emit the tool
+    call" -- so the loop has to give the model that chance.
+
+    One rejected call is ONE fruitless iteration, and the tail must not
+    count the same iteration again.
+    """
+    g = LoopGuard(600)
+    g.note_rejected_call()
+    out = tick(g, real_result=False)
+    assert out is None, (
+        f"a single rejected call ended the tool loop ({type(out).__name__}) "
+        f"-- the model was told to re-emit the call and never got the "
+        f"chance")
+    assert g.last_empty == 1, (
+        "one rejection is one fruitless iteration, not two")
 
 
 def test_rejections_are_cleared_by_the_next_real_iteration():
