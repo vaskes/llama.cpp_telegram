@@ -29,10 +29,16 @@ CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "llm_iterat
 
 
 def test_known_tool_names_exact_set():
-    """The whitelist must contain exactly the 6 documented
+    """The whitelist must contain exactly the 7 documented
     tools. Adding a tool requires updating KNOWN_TOOL_NAMES
     AND shipping a handler. Removing a tool requires
     updating both the whitelist and the system prompt.
+
+    Seven since 2026-10-24: send_file joins the list with its handler
+    in llm_dispatch. The live probe found what this test could not: a
+    tool that is dispatched but not in the whitelist is soft-rejected
+    by the isolation layer, and the model loops on it until the loop
+    gives up.
     """
     sys_path = str(pathlib.Path(__file__).parent.parent / "telegram-bot")
     import sys
@@ -46,6 +52,7 @@ def test_known_tool_names_exact_set():
         "donsetch_web_screenshot",
         "react_to_message",
         "bash_command",
+        "send_file",
     })
     assert KNOWN_TOOL_NAMES == expected, \
         f"KNOWN_TOOL_NAMES changed: {KNOWN_TOOL_NAMES!r}"

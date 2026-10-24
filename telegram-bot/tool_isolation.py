@@ -63,6 +63,15 @@ KNOWN_TOOL_NAMES: frozenset[str] = frozenset({
     # forwards to the vaskes/OpenWebUI-bash-sandbox side-car over
     # HTTP. Available only in personal profile.
     "bash_command",
+    # send_file: implemented in llm_dispatch.py, reads a file out of
+    # the same sandbox side-car and sends it to the chat as a Telegram
+    # document. It reaches no further than bash_command does -- the
+    # sandbox user can already read whatever the model can read -- but
+    # it hands the model a way to move BYTES, which the answer-files
+    # feature cannot do: a code block becomes a document, and a binary
+    # has no text form. Without this name in the list the isolation
+    # layer soft-rejects the call and the model loops on it.
+    "send_file",
 })
 
 

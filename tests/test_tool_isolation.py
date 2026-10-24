@@ -38,6 +38,7 @@ def test_known_tool_names_includes_required_bot_tools():
         "donsetch_web_screenshot",
         "react_to_message",
         "bash_command",
+        "send_file",
     }
     missing = expected - set(KNOWN_TOOL_NAMES)
     extra = set(KNOWN_TOOL_NAMES) - expected
