@@ -226,19 +226,6 @@ purpose.
 `_persist_for_reply` or in the handlers, plus the test that the user
 actually sees the chosen text.
 
-### T-FREEZE-AUTO-1 — `scripts/smoke_test.py`
-
-**Status:** open since 2026-10-12 (Qwen's wave-3 recommendation).
-**Effort:** small.
-
-The recommended first automation step: a real Telegram API + `getUpdates`
-polling script that covers ~80% of the operator checklist with no mocking.
-The checklist it would replace is the "operator tests pending" section
-that used to live in this file and that pointed at a file which no longer
-exists.
-
-Today the closest thing is `scripts/verify.py` — production health checks,
-not a Telegram round-trip. It has never been a substitute for this.
 
 ### T-FREEZE-DOC-1 — `docs/TROUBLESHOOTING.md` after `v0.10.2`
 
@@ -507,6 +494,42 @@ engine replaced), and the structural tripwire that no handler sends its
 answer on its own. `scripts/mutation_harness_chunking.py`: 9 mutations, 7
 caught, 2 survived-as-intended (the group-B reversals: remove the
 tripwire *and* the behaviour, and the suite has to stay green).
+
+### T-FREEZE-AUTO-1 — `scripts/smoke_test.py`
+
+**Status:** ✅ **closed 2026-10-24.**
+
+A real round trip against a real bot, with no mocks and no fixtures:
+`scripts/smoke_test.py`.
+
+What it checks:
+
+- the token (`getMe`), and with it the bot's identity;
+- the webhook (`getWebhookInfo`): the registered URL against the one the
+  deployment expects, the last error, the pending queue, and the
+  subscription (a stale `edited_message` in it is a warning: the feature
+  is gone, the bot ignores edits anyway, and the subscription survives a
+  restart);
+- the round trip: a probe goes out, the answer comes back, and the
+  answer is an answer rather than the empty-response diagnostic;
+- the memory: the last assistant turns in the bot's own database, and
+  whether the answer was kept whole;
+- the log: the fatal lines that would not show up as a failed answer.
+
+**What it cannot do, and says so in the script:** Telegram does not let
+a bot act as a user -- a bot's own messages never come back as updates --
+so the round trip needs a SECOND bot in the same chat (`--tester-token`,
+`--chat`). And a bot cannot press an inline button, so the Stop button
+stays a manual click; the script prints the three log lines to look for
+and checks the log afterwards.
+
+Standard library only: it runs on the operator's host, where installing
+packages is not an option.
+
+**Verification:** `tests/test_smoke_test_script.py` -- the script's own
+logic, with the Telegram API replaced by a fake `urlopen`. What is
+tested is the script, not the bot: the bot is the thing the script goes
+and asks.
 
 ## House rules for this file
 

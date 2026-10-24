@@ -19,6 +19,24 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The operator's checklist is a script now
+
+`scripts/verify.py` checks that the bot is healthy and that the tests
+pass. It never asked the bot a question. `scripts/smoke_test.py` does:
+it sends a probe into a real chat, reads the real answer, checks the
+real database and the real log, and prints a checklist.
+
+What it can and cannot do is written down in the script, because a smoke
+test that quietly skips half of what it claims to check is worse than
+none. Telegram does not let a bot act as a user — a bot's own messages
+never come back as updates — so the round trip needs a second bot in
+the same chat (`--tester-token`, `--chat`). And a bot cannot press an
+inline button, so the Stop button stays a manual click; the script says
+which three log lines to look for and checks the log afterwards.
+
+Standard library only, on purpose: it runs on the operator's host, where
+installing packages is not an option.
+
 ### A long answer to a photo or a document no longer dies at the Telegram limit
 
 Telegram rejects a text message over 4096 characters with
