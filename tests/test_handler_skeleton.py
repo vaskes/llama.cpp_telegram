@@ -97,7 +97,11 @@ STAGES = [
     # `_persist_for_reply` in block E. The name changed because the
     # handler now makes one call instead of reaching in for two.
     "_persist_for_reply",
-    "send_reply",
+    # The answer goes out through the chunking helper since 2026-10-24
+    # (T-FREEZE-CHUNK-1): a handler that called send_reply itself would
+    # send the whole answer in one message, and Telegram rejects a
+    # message over 4096 characters.
+    "_send_answer_text",
 ]
 
 
@@ -266,7 +270,7 @@ def test_the_reply_is_sent_after_the_turn_is_persisted(handler):
     # the handler's own call; the rating dispatch and the write live
     # inside the helper, so the handler no longer reaches in for them
     persist = min(_sites(fn, "_persist_for_reply"))
-    reply = min(_sites(fn, "send_reply"))
+    reply = min(_sites(fn, "_send_answer_text"))
     assert persist < reply, (
         f"{handler}: persists at {persist} but replies at {reply}"
     )

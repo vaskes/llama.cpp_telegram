@@ -13,7 +13,7 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1349 lines)
+├── handlers.py            # handle_text/photo/voice/document (1381 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   478 lines file, 319 in the function
 ├── dispatch.py            # routing, lifecycle, concurrency caps (364)
@@ -75,7 +75,7 @@ tests, none of which build a full `call_llama`.
   llm_abort.py             64  finalize_aborted_turn
   llm_result.py           139  Answer, unwrap_answer
   llm_artifact.py         425  Artifact, extract_files
-  llm_files.py            143  send_files
+  llm_files.py            144  send_files
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape
   llm_thinking.py       128  ThinkingThrottle, push_thinking
   llm_toolargs.py       134  ArgsOk, ArgsRejected, _rejection, parse_tool_args

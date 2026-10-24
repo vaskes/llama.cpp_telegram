@@ -15,10 +15,16 @@ await between the persist and the reply that Stop could land in -- so
 their guard was always `if bot_response`, and giving them an event would
 add a check that can never fire.
 
-What is deliberately left in the handlers is the >4000-char chunking.
-The streaming handlers send long answers with `_reply` in slices; photo
-and document send one `send_reply`. That is a real difference in what the
-user receives, so it did not come along for the ride.
+The >4000-char chunking used to be deliberately left in the handlers:
+the streaming handlers sent long answers in slices, photo and document
+sent one `send_reply`, and that difference in what the user receives was
+not something an extraction could quietly change.
+
+It changed on purpose on 2026-10-24 (T-FREEZE-CHUNK-1). Telegram
+rejects a message over 4096 characters, so a long answer to a photo
+came back as `Message_too_long` and the user saw the error instead of
+the answer. The split now lives in `_send_answer_text`, and all four
+handlers use it.
 """
 import ast
 import sys
@@ -219,22 +225,27 @@ def test_non_streaming_handlers_keep_the_plain_guard(handler):
     )
 
 
-@pytest.mark.parametrize("handler", STREAMING)
-def test_the_chunking_stayed_in_the_streaming_handlers(handler):
-    """The part deliberately not extracted.
+@pytest.mark.parametrize("handler", STREAMING + NON_STREAMING)
+def test_every_handler_sends_the_answer_through_the_chunking_helper(handler):
+    """The split is on all four paths since 2026-10-24.
 
-    Wrapping this into the helper would have changed what photo and
-    document send for a long answer -- a behaviour change wearing an
-    extraction's clothes.
+    Before that, only the two streaming handlers split their answer and
+    photo and document sent one `send_reply` -- so a long answer to a
+    photo came back as `Message_too_long` (T-FREEZE-CHUNK-1). The
+    helper is the one place that splits, and a handler that sends the
+    answer on its own is one long answer away from the same error.
     """
     fn = _fn(_tree(), handler)
     assert [n for n in ast.walk(fn)
-            if isinstance(n, ast.For) and "4000" in ast.unparse(n)], \
-        f"{handler}: lost its >4000 chunking"
-    for other in NON_STREAMING:
-        assert not [n for n in ast.walk(_fn(_tree(), other))
-                    if isinstance(n, ast.For) and "4000" in ast.unparse(n)], \
-            f"{other} grew chunking it never had"
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_send_answer_text"], \
+        f"{handler}: does not send the answer through _send_answer_text"
+    assert not [n for n in ast.walk(fn)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id == "send_reply"], \
+        f"{handler}: sends the answer itself, unsplit"
 
 
 @pytest.mark.parametrize("handler", STREAMING + NON_STREAMING)
@@ -246,7 +257,7 @@ def test_the_reply_still_comes_after_the_persist(handler):
                   and n.func.id == "_persist_for_reply")
     reply = min(n.lineno for n in ast.walk(fn)
                 if isinstance(n, ast.Call)
-                and getattr(n.func, "id", None) == "send_reply")
+                and getattr(n.func, "id", None) == "_send_answer_text")
     assert persist < reply, f"{handler}: replies at {reply}, persists at {persist}"
 
 

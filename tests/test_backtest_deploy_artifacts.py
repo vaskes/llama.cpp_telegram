@@ -10,6 +10,7 @@ repo file is never touched.
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,7 +52,7 @@ def _materialise(tmp_path: Path, mutate=None) -> Path:
 def _run_one(test_id: str, root: Path) -> subprocess.CompletedProcess:
     """Run a single tripwire test against the mutated tree."""
     proc = subprocess.run(
-        ["python3", "-m", "pytest",
+        [sys.executable, "-m", "pytest",
          f"tests/test_deploy_artifacts.py::{test_id}",
          "-q", "--tb=no", "-p", "no:cacheprovider"],
         cwd=str(root), capture_output=True, text=True,
@@ -220,7 +221,7 @@ def test_backtest_compose_parse_guard_removal_is_caught(tmp_path):
 def test_control_unmutated_tree_passes(tmp_path):
     root = _materialise(tmp_path)
     proc = subprocess.run(
-        ["python3", "-m", "pytest", "tests/test_deploy_artifacts.py",
+        [sys.executable, "-m", "pytest", "tests/test_deploy_artifacts.py",
          "-q", "--tb=line", "-p", "no:cacheprovider"],
         cwd=str(root), capture_output=True, text=True,
     )

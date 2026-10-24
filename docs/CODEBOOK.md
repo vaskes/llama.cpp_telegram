@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1349 lines, and it is
+Our largest file right now is `handlers.py` at 1381 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -91,7 +91,7 @@ only thing anyone could write was a test that read the source text and hoped.
 > **If a function holds more than about four unrelated things — not branches,
 > not lines — it is a monolith regardless of length.**
 
-`run_one` at 319 lines, nine concerns. `handle_photo` at 245 lines, one concern
+`run_one` at 319 lines, nine concerns. `handle_photo` at 251 lines, one concern
 plus a media path. `call_llama` at 324 lines, four concerns and a documented
 `DO NOT REFACTOR` with a trigger. Length is a proxy. Concern count is the
 signal. Where they disagree, count the concerns.
@@ -418,7 +418,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1349 and is registered. The threshold is 1000 because
+`handlers.py` is 1381 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -815,7 +815,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1349 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1381 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -840,7 +840,7 @@ false**, and the pattern is worth more than the four fixes.
 
 | First draft said | Reality |
 |---|---|
-| S-1: a function is ≤ 200 lines. `AUTO` | Nothing checked function length. `test_tech_debt_doc_sizes.py` checks the size of *files*. Four functions were over the limit, including `handle_text` at 209, which had crossed it unnoticed. |
+| S-1: a function is ≤ 200 lines. `AUTO` | Nothing checked function length. `test_tech_debt_doc_sizes.py` checks the size of *files*. Four functions were over the limit, including `handle_text` at 209, which had crossed it unnoticed (it is 211 now; the number in the registry is the measured one). |
 | S-2: a module over 500 lines carries a section map. `AUTO` | `test_section_markers.py` looks at `handlers.py` only, and enforces a different property. The 500-line threshold was checked by nothing. |
 | S-5: definition, then its marker, immediately. `AUTO` | The test enforces "no *other* definition between the marker and the function" — it says in its own docstring that distance is a convention. |
 | §2: "Enforcement: `AUTO` — add `test_no_monolith_markers.py`" and "Also `AUTO` — a sonar rule in CI" | Neither file nor job existed. §0 had promised that everything is either a real tripwire or marked `JUDGEMENT`. |
@@ -972,6 +972,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1349 lines and healthy — it only decides when somebody
+> `handlers.py` is 1381 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.

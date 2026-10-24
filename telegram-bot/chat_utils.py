@@ -81,6 +81,40 @@ def _parse_topic_arg(text: str) -> str | None:
     return name
 
 
+# === Telegram message limits ===
+#
+# Telegram's own limit for a text message is 4096 characters. A reply
+# over that comes back as `Message_too_long`, and the user sees the
+# API error instead of the answer.
+#
+# 4000, not 4096: the chunk has to fit with room for whatever the
+# transport adds, and a boundary that lands exactly on the limit is one
+# character away from a rejected message.
+
+#: The size of one text message the bot sends.
+TELEGRAM_TEXT_CHUNK = 4000
+
+
+def split_text(text: str, limit: int = TELEGRAM_TEXT_CHUNK) -> list[str]:
+    """Split `text` into pieces of at most `limit` characters.
+
+    Empty input gives an empty list: there is nothing to send, and an
+    empty message is rejected by Telegram ("Message text is empty").
+
+    A chunk that is only whitespace is dropped. It carries no
+    information, and on the path that falls back to a friendly message
+    it would put that message in the middle of an answer.
+
+    The split is on character boundaries, not on words. A code block cut
+    in the middle is still readable as text, and a half-sentence would
+    be worse than a half-code-block.
+    """
+    if not text:
+        return []
+    pieces = [text[i:i + limit] for i in range(0, len(text), limit)]
+    return [piece for piece in pieces if piece.strip()]
+
+
 # === Send rate limiting ===
 #
 # Review finding (Qwen, 2026-10-21): chat_id keys were created here and never

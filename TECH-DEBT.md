@@ -36,7 +36,7 @@ disagreement again without a test going red.
 | 10 | `dispatch.py` — 1672 → 364 | **closed** — blocks A–G, 40 mutations; ticket target ≤400 met by block G | `test_dispatch_routing.py` | The edit-replace feature it carried was removed on 2026-10-24 |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
 | 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
-| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1349, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
+| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1381, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
 | 14 | Duplicate top-level definitions in `tests/` | **closed** | `test_no_duplicate_definitions.py` | — |
 
 Four tripwires were found to be measuring something other than their
@@ -64,7 +64,7 @@ dispatch_webhook.py   325 lines, PTB assembly + handlers
 webhook.py             224 lines, aiohttp server + secret check
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   478 lines, ToolLoop owns the iteration, 17 llm_* leaf modules
-handlers.py    1349 lines
+handlers.py    1381 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      940 lines, class Storage encapsulated, get_store() sole entry
 config.py       354 lines, 24 env names, plus 12 elsewhere in the package

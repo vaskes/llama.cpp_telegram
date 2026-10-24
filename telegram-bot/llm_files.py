@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 
-from chat_utils import _rate_limit_send
+from chat_utils import TELEGRAM_TEXT_CHUNK, _rate_limit_send
 from logconf import get_logger
 
 log = get_logger(__name__)
@@ -46,8 +46,9 @@ __all__ = ["send_files"]
 _MAX_FILE_BYTES = 10 * 1024 * 1024
 
 #: How much of a file goes out per message when the file has to be
-#: sent as text.  The same 4000 the text answer uses.
-_TEXT_CHUNK = 4000
+#: sent as text.  The same number the text answer uses, because it is
+#: the same limit: Telegram rejects a message over 4096 characters.
+_TEXT_CHUNK = TELEGRAM_TEXT_CHUNK
 
 
 async def send_files(update, files) -> None:

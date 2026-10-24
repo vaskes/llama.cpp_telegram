@@ -69,6 +69,7 @@ from turn import Turn
 # import is unconditional again.
 from chat_utils import (
     _is_group_chat, _parse_subtalk_arg, _parse_topic_arg, _rate_limit_send,
+    split_text,
 )
 from access import (
     _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
@@ -117,7 +118,7 @@ from prompts import GROUP_CONTEXT, RATING_RULES
 # === send_reply ===
 
 
-async def send_reply(update: Update, text: str):
+async def send_reply(update: Update, text: str, *, strip: bool = True):
     """Reply to a Telegram message, falling back to a helpful message if the model returned nothing.
 
     Telegram rejects empty messages with `Message text is empty`. Some models
@@ -129,14 +130,53 @@ async def send_reply(update: Update, text: str):
     Without this, a burst (queue-drain after restart, or a rating-mode
     storm) can exceed Telegram's 20 msg/min/chat limit and trigger
     RetryAfter. _rate_limit_send sleeps if the chat is over budget.
+
+    `strip=False` sends the text as it is. The chunking helper needs that:
+    a chunk trimmed at the boundary loses the space that separated the
+    last word of one chunk from the first word of the next, and the user
+    reads "строка 372строка 373" instead of two sentences.
     """
     chat_id = update.effective_chat.id if update.effective_chat else None
     if chat_id is not None:
         await _rate_limit_send(chat_id)
-    text = (text or '').strip()
-    if not text:
+    if strip:
+        text = (text or '').strip()
+    if not text or not text.strip():
         text = EMPTY_RESPONSE_FALLBACK
     await _reply(update, text)
+
+
+# === _send_answer_text ===
+
+
+async def _send_answer_text(update: Update, text: str):
+    """Send the prose of an answer, split so that Telegram accepts it.
+
+    Telegram's limit for a text message is 4096 characters. An answer
+    over that comes back as `Message_too_long`, and the user sees the
+    API error instead of the answer.
+
+    The text and voice handlers have split their answer since v0.10.1.
+    The photo and document paths did not, so a long answer to a photo
+    died at the API boundary (T-FREEZE-CHUNK-1, 2026-10-24).
+
+    All four handlers send their answer through here, so the next path
+    cannot forget the split. `send_reply` does the rate limiting and
+    the empty-answer fallback, and it runs once per chunk: the chunks
+    are separate messages, and Telegram counts messages, not answers.
+    """
+    chunks = split_text(text)
+    if not chunks:
+        # Nothing but whitespace. send_reply turns it into the friendly
+        # "no answer" message; sending nothing would leave the user
+        # waiting for a turn that already ended.
+        await send_reply(update, text)
+        return
+    for chunk in chunks:
+        # strip=False: a chunk trimmed at the boundary loses the space
+        # between the last word of this chunk and the first word of the
+        # next one.
+        await send_reply(update, chunk, strip=False)
 
 # === _reply_active ===
 
@@ -233,11 +273,12 @@ async def _persist_for_reply(context, update, chat_id, thread_id, answer,
     sent needs it to still be there. The trace is part of it for the
     same reason the model has always been shown its own tool trace.
 
-    The >4000-char chunking is deliberately NOT here. Only the two
-    streaming handlers do it, and they send it with `_reply` rather than
-    `send_reply`. Folding it in would change what photo and document
-    send for a long answer, which is a behaviour change wearing an
-    extraction's clothes.
+    The >4000-char split is not here either. It belongs to the sending
+    side -- `_send_answer_text` -- because the chat is the thing with a
+    size limit, and the database has none. Two of the handlers have
+    split their answer since v0.10.1; the photo and document paths
+    joined them on 2026-10-24 (T-FREEZE-CHUNK-1), when a long answer
+    to a photo turned into `Message_too_long`.
     """
     text = await _apply_rating_and_persist(
         context, update, chat_id, thread_id, answer.raw, rating_active,
@@ -686,7 +727,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rating_active,
         )
         if bot_response:
-            await send_reply(update, bot_response)
+            await _send_answer_text(update, bot_response)
         # The files go out even when there is no prose: an answer that
         # is nothing but a document has no prose to send, and dropping
         # the file would leave the user with nothing at all.
@@ -876,15 +917,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         # v0.10.1 (Qwen wave-2 review): final abort check before sending.
         if bot_response:
-            # In rating mode the response is short (no chunking needed).
-            # The original 4000-char chunking applied to voice transcripts
-            # which are unlikely to exceed 4k after going through the LLM
-            # in this mode.
-            if len(bot_response) > 4000:
-                for i in range(0, len(bot_response), 4000):
-                    await _reply(update, bot_response[i:i+4000])
-            else:
-                await send_reply(update, bot_response)
+            # The answer may be longer than Telegram accepts in one
+            # message; _send_answer_text splits it. The rating path is
+            # short and never reaches the split.
+            await _send_answer_text(update, bot_response)
         # The files go out even when there is no prose: an answer that
         # is nothing but a document has no prose to send, and dropping
         # the file would leave the user with nothing at all.
@@ -1072,7 +1108,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rating_active,
             )
             if bot_response:
-                await send_reply(update, bot_response)
+                await _send_answer_text(update, bot_response)
             # The files go out even when there is no prose: an answer that
             # is nothing but a document has no prose to send, and dropping
             # the file would leave the user with nothing at all.
@@ -1280,11 +1316,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             # v0.10.1 (Qwen wave-2 review): final abort check before sending.
             if bot_response:
-                if len(bot_response) > 4000:
-                    for i in range(0, len(bot_response), 4000):
-                        await _reply(update, bot_response[i:i+4000])
-                else:
-                    await send_reply(update, bot_response)
+                await _send_answer_text(update, bot_response)
             # The files go out even when there is no prose: an answer that
             # is nothing but a document has no prose to send, and dropping
             # the file would leave the user with nothing at all.
