@@ -22,7 +22,7 @@ than a nuisance: a copy that drops it does not fail, it answers without
 the tool trace, and the user sees a response that looks like the model
 did nothing.
 
-`unwrap_llm_result` is the one form. The primary and retry sites were
+`unwrap_answer` is the one form. The primary and retry sites were
 not two shapes of the same rule; they were one rule written twice, and
 the retry copy's missing `else` was the only difference -- a non-dict
 `retry_response` left the name alone, which is exactly what returning
@@ -33,10 +33,53 @@ It is the other half of the same decision: given the executed tools,
 render the block. Keeping it in `handlers.py` would have made this
 module a leaf that imports the module it was extracted from, which is
 the import cycle TECH-DEBT #2 was closed to remove.
+
+The second half of the answer
+-----------------------------
+
+An answer is not only text. When the model answers with a document --
+html, json, sql, code -- the document is a file, and a file in a chat
+is something the user can open. So the answer carries two things now:
+the prose, and the files the prose was wrapped around.
+
+The split is made here rather than in the handlers because the *type* of
+the result is what says whether the text is an answer at all. A dict is
+an answer: the model produced content, and the code blocks in it are
+files. A plain string is a diagnostic -- "the model spent all its
+tokens on reasoning" -- and it carries the model's reasoning tail.
+That tail is not a file and must never become one: it is the model
+thinking out loud about a failure, not a deliverable. The type is the
+only thing that tells the two apart, so the split has to happen where
+the type is still visible.
+
+Pure: no client, no clock, no await. That is the point of the
+extraction and it is what makes it testable on its own.
 """
 from __future__ import annotations
 
-__all__ = ["unwrap_llm_result"]
+from typing import NamedTuple
+
+from llm_artifact import Artifact, extract_files
+
+__all__ = ["Answer", "unwrap_answer"]
+
+
+class Answer(NamedTuple):
+    """A finished answer: the text to send, the files it carries, and
+    the answer as the model wrote it.
+
+    `text` is what the chat gets. `files` is what arrives as a document
+    each. `raw` is the answer with the code blocks still in it, and it
+    is what the bot remembers: the model wrote that code, and a follow-up
+    question about the file it just sent needs it to still be there.
+
+    For a diagnostic there are no files, and `text` is the diagnostic,
+    unchanged. `text` is None for an aborted turn, which is what
+    `call_llama` returns when the user pressed Stop.
+    """
+    text: str | None
+    files: list[Artifact]
+    raw: str
 
 
 def _format_executed_tools(executed_tools) -> str:
@@ -71,22 +114,26 @@ def _format_executed_tools(executed_tools) -> str:
 
 
 
-def unwrap_llm_result(result):
-    """`call_llama`'s return value, as the text to answer with.
+def unwrap_answer(result) -> Answer:
+    """`call_llama`'s return value, as the answer to send.
 
     `None` survives -- it is what an aborted turn returns, and every
-    caller branches on it afterwards. A dict becomes `text`, prefixed
-    with the executed-tool trace when there is one to show.
+    caller branches on it afterwards. A dict becomes the prose, with
+    the executed-tool trace in front of it and the code blocks the
+    model wrote pulled out as files.
 
-    Pure: no client, no clock, no await. That is the point of the
-    extraction and it is what makes it testable on its own.
+    A string is a diagnostic and is returned as it is, with no files:
+    the reasoning tail it may carry is not a deliverable.
     """
     if not isinstance(result, dict):
-        return result
+        return Answer(result, [], result if isinstance(result, str) else "")
     text = result.get("text") or ""
+    prose, files = extract_files(text)
+    raw = text
     executed = result.get("executed_tools") or []
     if executed:
         trace = _format_executed_tools(executed)
         if trace:
-            text = trace + "\n\n" + text
-    return text
+            raw = trace + "\n\n" + text
+            prose = trace + "\n\n" + prose
+    return Answer(prose, files, raw)

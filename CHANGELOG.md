@@ -19,6 +19,64 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### An answer that carries a file now arrives as a file
+
+When the model answers with a formatted document — html, json, sql,
+code, txt — the document used to arrive as a wall of text in the chat,
+wrapped in backticks. It now arrives as a Telegram document, and one
+answer can carry several of them.
+
+What the model wrote is the input, and the shapes were measured on the
+live engine rather than guessed:
+
+- a traits dump the model prefixed with `[llm] ` and put in a ```json
+  fence, with no name anywhere;
+- prose, a ```html fence, and a tail "Сохрани как `index.html`";
+- prose, a ```js fence whose first line is `// greet.js`;
+- prose, a ```sql fence whose first line is `-- cradle.sql`;
+- three blocks in one answer, each under a heading (`## index.html`,
+  `## style.css`, `## app.js`);
+- a 425-line HTML page with no fence at all.
+
+The name of a file is looked for in three places, in this order: the
+line right above the block, when that line *is* a name; a comment on the
+block's first line; a name mentioned in the prose that follows the
+block. When none of them names the file, it is called `answer.<ext>` —
+`answer-2.<ext>` for the second file with the same extension. The
+extension comes from the fence tag; a tag that is not in the table is a
+`.txt` file, because guessing an extension would put a `.py` name on
+something that is not Python.
+
+Three things that look like files and are not:
+
+- the bot's own executed-tool trace. It is a ```bash fence whose lines
+  all start with `$ ` — a log of what the model ran, not a
+  deliverable. A shell *script* (no `$ ` in front of its lines) is still
+  a file;
+- the reasoning tail of an empty answer. A diagnostic is a plain string
+  result and an answer is a dict result, and the type is what says which
+  one this is — so the split is made where the type is still visible.
+  Reasoning that happens to look like a code block never becomes
+  something the user is asked to open;
+- a fence that was cut off mid-block. A fragment is not a file, and it
+  stays in the text.
+
+A file is created regardless of how short the answer is: the operator
+asked for "json со своими traits" and got a few hundred characters,
+which is exactly the case a size threshold would have thrown away.
+
+Two things about the delivery are worth stating, because each of them is
+a way for the content to be lost. The document carries the topic id, so
+a file in a forum topic lands in that topic and not in General. And a
+file that cannot be uploaded goes out as text instead: the content was
+taken out of the message the user has already received, so a failed
+upload that dropped it would leave a question with no answer in it.
+
+The bot remembers the whole answer, code blocks included. The chat gets
+the prose; the history gets what the model wrote, because the model
+wrote that code, and a follow-up question about the file it just sent
+needs it to still be there.
+
 ### The Stop button only worked for the ids on the allowlist
 
 The Stop button on the bot's "💭 думаю…" message was gated by the

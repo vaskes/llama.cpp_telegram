@@ -8,7 +8,7 @@ CODEBOOK S-1 and S-6. Two claims, each falsifiable:
     register, with its current size declared.
 
 Why 200 and not "smaller is better": the number is not the point, the
-*registration* is. `handlers.py` is 1316 lines and healthy -- four
+*registration* is. `handlers.py` is 1365 lines and healthy -- four
 handlers of one shape, where a fix to the skeleton breaks four call
 sites identically. `handle_photo` at 245 and `handle_text` at 209 are
 that shape. `call_llama` at 324 and `run_one` at 319 are not, and they
@@ -65,7 +65,7 @@ EXCEPTIONS = {
     ),
     "handle_photo": (
         "handlers.py",
-        245,
+        251,
         "2026-10-23",
         "One concern (a photo) plus a media path. Same shape as the other "
         "three handlers, so the repetition is the point -- a fix to the "
@@ -75,7 +75,7 @@ EXCEPTIONS = {
     ),
     "handle_text": (
         "handlers.py",
-        209,
+        215,
         "2026-10-23",
         "Not a debt item -- same shape as handle_photo, and registered only "
         "because it crossed 200 lines while nobody was looking. The reason "

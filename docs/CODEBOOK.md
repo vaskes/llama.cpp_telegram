@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1316 lines, and it is
+Our largest file right now is `handlers.py` at 1365 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -418,7 +418,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1316 and is registered. The threshold is 1000 because
+`handlers.py` is 1365 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -800,7 +800,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1316 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1365 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -957,6 +957,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1316 lines and healthy — it only decides when somebody
+> `handlers.py` is 1365 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.

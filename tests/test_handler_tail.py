@@ -49,6 +49,13 @@ def _tree():
     return ast.parse((BOT / "handlers.py").read_text(encoding="utf-8"))
 
 
+def _answer(text, files=(), raw=None):
+    """An answer as `unwrap_answer` returns it: the prose, the files, and
+    the answer as the model wrote it."""
+    from llm_result import Answer
+    return Answer(text, list(files), text if raw is None else raw)
+
+
 def _patch(monkeypatch, persisted, abort=False):
     async def apply_rating_and_persist(context, update, chat_id, thread_id,
                                        bot_response, rating_active):
@@ -68,8 +75,35 @@ def _patch(monkeypatch, persisted, abort=False):
 async def test_the_persisted_answer_comes_back(monkeypatch):
     _patch(monkeypatch, "the answer")
     got = await handlers._persist_for_reply(
-        None, None, 1, "main", "the answer", False)
+        None, None, 1, "main", _answer("the answer"), False)
     assert got == "the answer"
+
+
+async def test_the_answer_is_persisted_whole_and_the_chat_gets_the_prose(monkeypatch):
+    """Two different strings since 2026-10-24.
+
+    The code blocks the model wrote are delivered as documents, so the
+    chat gets the prose. The bot remembers the whole answer, because the
+    model wrote that code, and a follow-up question about the file it
+    just sent needs it to still be there. Persisting only the prose
+    would make the model forget what it just sent.
+    """
+    seen = {}
+
+    async def apply_rating_and_persist(context, update, chat_id, thread_id,
+                                       bot_response, rating_active):
+        seen["persisted"] = bot_response
+        return bot_response
+
+    monkeypatch.setattr(handlers, "_apply_rating_and_persist",
+                        apply_rating_and_persist)
+
+    from llm_result import Answer
+    answer = Answer("Here it is:", [],
+                    "Here it is:\n\n```json\n{\"a\": 1}\n```")
+    got = await handlers._persist_for_reply(None, None, 1, "main", answer, False)
+    assert got == "Here it is:"
+    assert "```json" in seen["persisted"]
 
 
 async def test_a_rating_only_turn_sends_nothing(monkeypatch):
@@ -78,7 +112,7 @@ async def test_a_rating_only_turn_sends_nothing(monkeypatch):
     empty message."""
     _patch(monkeypatch, "")
     assert await handlers._persist_for_reply(
-        None, None, 1, "main", "text", True) is None
+        None, None, 1, "main", _answer("text"), True) is None
 
 
 async def test_the_persist_happens_before_the_abort_check(monkeypatch):
@@ -102,7 +136,8 @@ async def test_the_persist_happens_before_the_abort_check(monkeypatch):
             return True
 
     assert await handlers._persist_for_reply(
-        None, None, 1, "main", "text", False, abort_event=_Event()) is None
+        None, None, 1, "main", _answer("text"), False,
+        abort_event=_Event()) is None
     assert seen == {"persisted": True, "checked": True}
 
 
@@ -115,7 +150,8 @@ async def test_a_stop_between_persist_and_reply_sends_nothing(monkeypatch):
         def is_set(self):
             return True
     assert await handlers._persist_for_reply(
-        None, None, 1, "main", "answer", False, abort_event=_Event()) is None
+        None, None, 1, "main", _answer("answer"), False,
+        abort_event=_Event()) is None
 
 
 async def test_no_event_means_no_abort_check(monkeypatch):
@@ -124,7 +160,7 @@ async def test_no_event_means_no_abort_check(monkeypatch):
     would silence two of the four handlers entirely."""
     _patch(monkeypatch, "answer", abort=True)
     got = await handlers._persist_for_reply(
-        None, None, 1, "main", "answer", False)
+        None, None, 1, "main", _answer("answer"), False)
     assert got == "answer"
 
 

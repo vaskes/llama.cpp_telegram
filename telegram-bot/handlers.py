@@ -31,7 +31,13 @@ import tempfile
 # four times for the primary result and three for the empty-response
 # retry. llm_result owns it now. `_format_executed_tools` keeps its
 # historical name because tests/test_t44.py and the call sites use it.
-from llm_result import _format_executed_tools, unwrap_llm_result
+#
+# 2026-10-24: the answer carries files as well as text. `unwrap_answer`
+# is the one form; it also pulls the code blocks the model wrote out of
+# the prose, so that they can arrive as documents. `llm_files` sends
+# them.
+from llm_result import _format_executed_tools, unwrap_answer
+from llm_files import send_files
 from llm_abort import finalize_aborted_turn
 
 # TECH-DEBT #10 block C: the sender-label injection filter lives
@@ -218,7 +224,7 @@ async def _route_to_thread(update, context) -> tuple[int, str, bool] | None:
 # === _persist_for_reply ===
 
 
-async def _persist_for_reply(context, update, chat_id, thread_id, bot_response,
+async def _persist_for_reply(context, update, chat_id, thread_id, answer,
                               rating_active, abort_event=None):
     """Rating dispatch, persist the turn, and say whether there is an answer.
 
@@ -235,20 +241,28 @@ async def _persist_for_reply(context, update, chat_id, thread_id, bot_response,
     have no such window between the two points -- their guard was always
     `if bot_response`.
 
+    The answer goes in as it was written, and the text that comes out is
+    the prose. Those are two different strings since 2026-10-24: the code
+    blocks the model wrote are delivered as documents, and the chat gets
+    the rest. The bot remembers the whole answer, because the model
+    wrote that code and a follow-up question about the file it just
+    sent needs it to still be there. The trace is part of it for the
+    same reason the model has always been shown its own tool trace.
+
     The >4000-char chunking is deliberately NOT here. Only the two
     streaming handlers do it, and they send it with `_reply` rather than
     `send_reply`. Folding it in would change what photo and document
     send for a long answer, which is a behaviour change wearing an
     extraction's clothes.
     """
-    bot_response = await _apply_rating_and_persist(
-        context, update, chat_id, thread_id, bot_response, rating_active,
+    text = await _apply_rating_and_persist(
+        context, update, chat_id, thread_id, answer.raw, rating_active,
     )
-    if not bot_response:
+    if not text:
         return None
     if abort_event is not None and abort_event.is_set():
         return None
-    return bot_response
+    return answer.text
 
 
 
@@ -595,7 +609,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-            bot_response = unwrap_llm_result(_result)
+            answer = unwrap_answer(_result)
+            bot_response = answer.text
         # None-safe: when user clicks Stop, call_llama returns None.
         # The previous print(f"...len(bot_response)...") crashed with
         # TypeError on None (caught by the outer except and surfaced
@@ -644,11 +659,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # AttributeError: 'dict' object has no attribute 'startswith'.
             # The executed-tools preamble is reproduced too; dropping it
             # would answer without the tool trace, which fails quietly.
-            retry_response = unwrap_llm_result(retry_response)
-            if not (isinstance(retry_response, str)
-                    and retry_response.startswith(
+            retry_answer = unwrap_answer(retry_response)
+            if not (isinstance(retry_answer.text, str)
+                    and retry_answer.text.startswith(
                         EMPTY_RESPONSE_PREFIX)):
-                bot_response = retry_response
+                answer = retry_answer
+                bot_response = answer.text
                 log.info(f"[handle_photo] retry succeeded")
             else:
                 log.info(f"[handle_photo] retry also empty, sending fallback")
@@ -682,11 +698,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # question/request/confirmation) and returns the text
         # to reply with (possibly empty for rating-only turns).
         bot_response = await _persist_for_reply(
-            context, update, chat_id, thread_id, bot_response,
+            context, update, chat_id, thread_id, answer,
             rating_active,
         )
         if bot_response:
             await send_reply(update, bot_response)
+        # The files go out even when there is no prose: an answer that
+        # is nothing but a document has no prose to send, and dropping
+        # the file would leave the user with nothing at all.
+        await send_files(update, answer.files)
     except Exception as e:
         # `log.exception`, not `log.info`: every real failure in this file
         # was logged at INFO, which left `journalctl -p warning` empty
@@ -845,7 +865,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
             _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-            bot_response = unwrap_llm_result(_result)
+            answer = unwrap_answer(_result)
+            bot_response = answer.text
         # v0.8.0: handle_voice had no abort check at all (handle_photo/
         # handle_document/handle_text had `if bot_response is None` but
         # voice didn't). When call_llama returns None on abort,
@@ -866,7 +887,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # question/request/confirmation) and returns the text
         # to reply with (possibly empty for rating-only turns).
         bot_response = await _persist_for_reply(
-            context, update, chat_id, thread_id, bot_response,
+            context, update, chat_id, thread_id, answer,
             rating_active, abort_event=abort_event,
         )
         # v0.10.1 (Qwen wave-2 review): final abort check before sending.
@@ -880,6 +901,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await _reply(update, bot_response[i:i+4000])
             else:
                 await send_reply(update, bot_response)
+        # The files go out even when there is no prose: an answer that
+        # is nothing but a document has no prose to send, and dropping
+        # the file would leave the user with nothing at all.
+        await send_files(update, answer.files)
     except Exception as e:
         log.exception(f"[ERR voice] {type(e).__name__}: {e}")
         # Rollback is best-effort here. Unguarded, a rollback failure
@@ -993,7 +1018,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # T1 (P0-1): global LLM concurrency cap.
             async with _get_global_llm_sem():
                 _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-                bot_response = unwrap_llm_result(_result)
+                answer = unwrap_answer(_result)
+                bot_response = answer.text
             if bot_response is None or abort_event.is_set():
                 await finalize_aborted_turn(
                     label='handle_document', response=bot_response,
@@ -1029,11 +1055,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # AttributeError: 'dict' object has no attribute 'startswith'.
                 # The executed-tools preamble is reproduced too; dropping it
                 # would answer without the tool trace, which fails quietly.
-                retry_response = unwrap_llm_result(retry_response)
-                if not (isinstance(retry_response, str)
-                        and retry_response.startswith(
+                retry_answer = unwrap_answer(retry_response)
+                if not (isinstance(retry_answer.text, str)
+                        and retry_answer.text.startswith(
                             EMPTY_RESPONSE_PREFIX)):
-                    bot_response = retry_response
+                    answer = retry_answer
+                    bot_response = answer.text
                     log.info(f"[handle_document] retry succeeded")
                 else:
                     log.info(f"[handle_document] retry also empty, sending fallback")
@@ -1057,11 +1084,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # question/request/confirmation) and returns the text
             # to reply with (possibly empty for rating-only turns).
             bot_response = await _persist_for_reply(
-                context, update, chat_id, thread_id, bot_response,
+                context, update, chat_id, thread_id, answer,
                 rating_active,
             )
             if bot_response:
                 await send_reply(update, bot_response)
+            # The files go out even when there is no prose: an answer that
+            # is nothing but a document has no prose to send, and dropping
+            # the file would leave the user with nothing at all.
+            await send_files(update, answer.files)
         except Exception as e:
             log.exception(f"[ERR doc] {type(e).__name__}: {e}")
             # The user sent a document and is waiting. text/photo/voice
@@ -1203,7 +1234,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # concurrent LLM forwards on the same GPU.
             async with _get_global_llm_sem():
                 _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
-                bot_response = unwrap_llm_result(_result)
+                answer = unwrap_answer(_result)
+                bot_response = answer.text
             if bot_response is None or abort_event.is_set():
                 await finalize_aborted_turn(
                     label='handle_text', response=bot_response,
@@ -1239,11 +1271,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # AttributeError: 'dict' object has no attribute 'startswith'.
                 # The executed-tools preamble is reproduced too; dropping it
                 # would answer without the tool trace, which fails quietly.
-                retry_response = unwrap_llm_result(retry_response)
-                if not (isinstance(retry_response, str)
-                        and retry_response.startswith(
+                retry_answer = unwrap_answer(retry_response)
+                if not (isinstance(retry_answer.text, str)
+                        and retry_answer.text.startswith(
                             EMPTY_RESPONSE_PREFIX)):
-                    bot_response = retry_response
+                    answer = retry_answer
+                    bot_response = answer.text
                     log.info(f"[handle_text] retry succeeded")
                 else:
                     log.info(f"[handle_text] retry also empty, sending fallback")
@@ -1258,7 +1291,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # question/request/confirmation) and returns the text
             # to reply with (possibly empty for rating-only turns).
             bot_response = await _persist_for_reply(
-                context, update, chat_id, thread_id, bot_response,
+                context, update, chat_id, thread_id, answer,
                 rating_active, abort_event=abort_event,
             )
             # v0.10.1 (Qwen wave-2 review): final abort check before sending.
@@ -1268,6 +1301,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await _reply(update, bot_response[i:i+4000])
                 else:
                     await send_reply(update, bot_response)
+            # The files go out even when there is no prose: an answer that
+            # is nothing but a document has no prose to send, and dropping
+            # the file would leave the user with nothing at all.
+            await send_files(update, answer.files)
         except Exception as e:
             import traceback
             log.exception(f"[ERR text] {type(e).__name__}: {e}")

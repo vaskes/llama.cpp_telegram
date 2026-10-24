@@ -13,7 +13,7 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1316 lines)
+├── handlers.py            # handle_text/photo/voice/document (1365 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   478 lines file, 319 in the function
 ├── dispatch.py            # routing, lifecycle, concurrency caps (345)
@@ -44,12 +44,12 @@ telegram-bot/
 ├── http_clients.py        # the shared httpx helpers (87)
 ├── logconf.py             # logging configuration (129)
 ├── selftest.py            # in-tree selftest entry (239) + 7 selftest_*.py leaves
-├── llm_*.py               # 17 leaf modules, one decision each
+├── llm_*.py               # 19 leaf modules, one decision each
 └── personal_tools/
     └── bash_command.py    # T38: bash execution via sandbox side-car
 ```
 
-53 top-level modules, 132 test files, 2110 tests.
+55 top-level modules, 132 test files, 2221 tests.
 
 ### The leaf modules of `call_llama`
 
@@ -73,7 +73,9 @@ tests, none of which build a full `call_llama`.
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         307  StreamOutcome, stream_iteration, _fallback_to_nonstream
   llm_abort.py             64  finalize_aborted_turn
-  llm_result.py            92  unwrap_llm_result
+  llm_result.py           139  Answer, unwrap_answer
+  llm_artifact.py         425  Artifact, extract_files
+  llm_files.py            143  send_files
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape
   llm_thinking.py       128  ThinkingThrottle, push_thinking
   llm_toolargs.py       134  ArgsOk, ArgsRejected, _rejection, parse_tool_args

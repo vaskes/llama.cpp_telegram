@@ -27,12 +27,12 @@
 
 | | |
 |---|---|
-| HEAD | three commits past the `v0.13.0-stable` tag (co-author trailers, log hygiene, reasoning-only retry) |
-| Production | webhook mode, container `tb-bot`, `/healthz` → 200 |
-| Pytest | `2139 passed, 20 skipped` (the sandbox-only suite is skipped without a token) |
+| HEAD | seventeen commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature) |
+| Production | **the host is down** — no power since 2026-10-24; the bot, the engine and the deploy path are all unreachable until it comes back |
+| Pytest | `2200 passed, 20 skipped` locally. The one failure is environmental: `test_backtest_deploy_artifacts.py::test_control_unmutated_tree_passes` spawns the system `python3`, which has no pytest in this sandbox (it fails on the clean tree too) |
 | CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
-| Production modules | 53 `.py` files in `telegram-bot/` |
+| Production modules | 55 `.py` files in `telegram-bot/` |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
 | Open review cycle | none — waves 1–8 closed just before the `v0.13.0-stable` tag ("production-ready") |
 
@@ -233,6 +233,29 @@ wording, change it, or drop the flag again.
 
 
 ## Open — code, not blocked on anyone
+
+### T-FREEZE-CHUNK-1 — a long answer to a photo or a document is not chunked
+
+**Status:** open since 2026-10-24. Not caused by the answer-files work, and
+not fixed by it either.
+
+`handle_text` and `handle_voice` split an answer longer than 4000 characters
+into several messages. `handle_photo` and `handle_document` do not: they
+hand the whole answer to `send_reply`, and Telegram's own limit is 4096
+characters. A long answer to a photo is therefore a `Message_too_long`
+error, and the user sees the error instead of the answer.
+
+**Why it was not fixed inside the answer-files change:** it is a different
+defect, and fixing it there would have changed the behaviour of two
+handlers under cover of another feature -- the thing the CODEBOOK's
+"one concern" rule exists to prevent. The feature made the exposure
+*smaller* rather than larger: the code blocks now leave the prose and
+arrive as documents, so an answer that was mostly code is now mostly a
+file, and what is left to overflow is the prose.
+
+**What it needs:** the same 4000-character chunking the other two handlers
+use, on the two paths that lack it, and a test that drives a long answer
+through both handlers.
 
 ### T-FREEZE-AUTO-1 — `scripts/smoke_test.py`
 
