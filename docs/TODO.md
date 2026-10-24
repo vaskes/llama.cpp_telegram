@@ -27,10 +27,10 @@
 
 | | |
 |---|---|
-| HEAD | thirty-nine commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide) |
-| Production | **the host runs on a generator** — any request to the model overloads it (operator's measurement, 2026-10-24), so neither the bot nor the engine can be exercised there for now. The box also lost power earlier the same day. **Not deployed:** the production tree is still `55efac0` |
-| Pytest | `2259 passed, 1 skipped` locally |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** — `2259 passed, 1 skipped` on both at `0418c8e` (runs `40107554545`, `40107554109`) |
+| HEAD | forty-two commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window) |
+| Production | **deployed and verified** (2026-10-24 19:15–19:30). The host is up, `llama-qwen5090-256k` is `active`, the bot container runs `a6c20fc` with 0 restarts, `/healthz` is 200, the fatal scan is 0, `getWebhookInfo` is clean (pending 0, no last_error) and the smoke script passes 8/8. The answer split and the answer-files extraction were checked **against the live engine**: a 5856-character answer went out as two messages (4000 + 1856) that rejoin character for character, and a code block left the chat as `answer.py` (412 bytes) |
+| Pytest | `2263 passed, 1 skipped` locally |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- `2263 passed, 1 skipped` on both at `95c4a3f` (runs `40111495352`, `40111495690`) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 54 `.py` files in `telegram-bot/` |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
@@ -47,29 +47,41 @@ Sizes are `splitlines()`-based and are recomputed by
 These are not forgotten; they are parked on a question only the operator
 can answer. Each one records the decision that unblocks it.
 
-### The answer-files feature has never run in production — the generator takes the model load
+### The answer-files feature has never been checked by a human — the machine check passed on the live engine
 
 **Status:** open since 2026-10-24. The feature is implemented, tested and
-pushed (`e8e4ff0`); what is missing is the live check.
+pushed (`e8e4ff0`) and **deployed** (the production tree is `a6c20fc` as of
+2026-10-24 19:15). What is still missing is a human looking at the chat:
+the machine check cannot see what the user sees.
 
 **What the operator measured:** the production host runs on a generator, and
-any request to the model overloads it. So the bot cannot be exercised
-against the real engine for now — not because the code is wrong, but
-because the box cannot take the load. (Earlier the same day the host also
-had no power at all.)
+any request to the model overloads it. So for most of that day the bot
+could not be exercised against the real engine — not because the code is
+wrong, but because the box could not take the load. (Earlier the same day
+the host also had no power at all.) The host came back at 19:13.
 
-**What was done instead:** `tests/test_artifact_e2e.py` — the real handler,
-the real parser, the real sender and the real database, with the engine
-replaced by the answer shapes that were measured on the live engine on
-2026-10-24. It runs in CI, and as a script it prints the transcript of
-each shape:
+**What was done while the host was up:** the deployed container was run
+through a real turn with only the Telegram transport replaced — the real
+handler, the real prompts, the real engine, the real chunking and the real
+file extraction, with the database pointed at a temporary file. The answer
+was 5856 characters and went out as two messages (4000 + 1856) that rejoin
+character for character, and the code block left the chat as a document
+named `answer.py` (412 bytes). That is a machine reading of the transcript;
+it is not the same as a person seeing the file arrive in the chat.
+
+**What was done while the host was down:** `tests/test_artifact_e2e.py` —
+the real handler, the real parser, the real sender and the real database,
+with the engine replaced by the answer shapes that were measured on the
+live engine on 2026-10-24. It runs in CI, and as a script it prints the
+transcript of each shape:
 
     python tests/test_artifact_e2e.py
 
 **What is still missing, and what it needs:** the live check itself, once
 the generator can take the load. The checklist:
 
-1. deploy the current `main` to the production bot;
+1. ~~deploy the current `main` to the production bot~~ — done 2026-10-24
+   19:15, the tree in the container is `a6c20fc`;
 2. ask the model for a json, an html page, a site in three files, and one
    plain question with no code at all;
 3. check that the code arrives as a **document** with the right name and
@@ -82,8 +94,9 @@ the generator can take the load. The checklist:
 6. check that the reasoning-only answer still arrives as a diagnostic and
    not as a document.
 
-**Decision needed:** when the host can take the model load, and who runs
-the checklist.
+**Decision needed:** who runs the checklist. The host can take the load
+now, so the only thing missing is a pair of human eyes — the machine
+half of it was done on 2026-10-24 (see above).
 
 ### The context blocker is not closed — and its list is growing
 
