@@ -227,25 +227,6 @@ purpose.
 actually sees the chosen text.
 
 
-### T-FREEZE-DOC-1 — `docs/TROUBLESHOOTING.md` after `v0.10.2`
-
-**Status:** open since 2026-10-12. Low value, low cost.
-
-The troubleshooting guide covers transport, LLM, Whisper, donsetch, Docker,
-networking, and group-mode topics. It does not cover anything that arrived
-after `v0.10.2`: the context-memory block (`/stats` counters, the
-anchored window), the `soft` / `process` / `process+engine` re-anchor
-modes, the persona file, or the dispatch split.
-
-### T-FREEZE-AUTO-2 — `tests/test_integration.py` with an `integration` marker
-
-**Status:** open, and **subsumed**. The marker machinery exists
-(`pytest.ini` registers `tech_debt`; `asyncio_mode = auto`), and the
-suite has grown by an order of magnitude since the recommendation was
-written. The sandbox integration tests that *do* need a live side-car
-live in `tests/test_shell_integration.py` and are excluded from CI by
-name. Writing a second, parallel mechanism is not obviously worth it.
-
 ### T-FREEZE-AUTO-3 — a deploy workflow (`.github/workflows/deploy.yml`)
 
 **Status:** open, **needs an operator decision and a secret.**
@@ -530,6 +511,66 @@ packages is not an option.
 logic, with the Telegram API replaced by a fake `urlopen`. What is
 tested is the script, not the bot: the bot is the thing the script goes
 and asks.
+
+### T-FREEZE-DOC-1 — the troubleshooting guide after `v0.10.2`
+
+**Status:** ✅ **closed 2026-10-24.** `docs/TROUBLESHOOTING.md` now
+covers everything that arrived after `v0.10.2`.
+
+What was added, and why each piece is a troubleshooting entry rather
+than a feature description:
+
+- **the context-memory block** -- the two strategies (`window`,
+  `summarize`), the five knobs (`BOT_REMEMBER_DAYS`,
+  `CONTEXT_MAX_MESSAGES`, `SUMMARY_TAIL_TOKENS`,
+  `SUMMARY_CHUNK_TOKENS`, `SUMMARY_CONTEXT_TOKENS`), the anchor that
+  does not slide, and what `/stats` prints. "The bot forgot" is the
+  question this section has to answer, and the answer is usually the
+  window.
+- **the chunk summaries and the "СВЕДЕНО" marker** -- what a summary
+  replaces, that a failed chunk stays raw and is retried, that a
+  deleted summary brings its messages back, and the two SQL queries
+  that show the state.
+- **the daily re-anchor** -- the three modes, what each one needs, the
+  four variables, and the known defect T68b: `BOT_ENGINE_RESET_CMD`
+  never runs, because the loop that would call it only starts in
+  `soft` mode.
+- **the persona file** -- where it is, why `enabled: false` means *no*
+  persona rather than a default one, and why the file is gitignored.
+- **the dispatch split** -- which module owns what, so a symptom that
+  used to mean "look in dispatch.py" has a home now.
+- **the answers that arrive as documents** -- where the file name
+  comes from, what is not a file, and why the chat and the history are
+  two different strings.
+- **the Stop button** -- the maker-taker rule, and what each of the
+  three log lines means.
+
+One stale claim was corrected on the way: the guide still said that an
+edited command message is "normalised into a fresh message and
+re-processed". The edit-replace feature was removed on 2026-10-24; an
+update that carries only `edited_message` is dropped, with a log line.
+
+### T-FREEZE-AUTO-2 — a second integration-test mechanism
+
+**Status:** ✅ **closed 2026-10-24 — subsumed, on purpose.**
+
+The recommendation was a `tests/test_integration.py` with an
+`integration` marker. What exists now:
+
+- `pytest.ini` registers the `tech_debt` marker and `asyncio_mode =
+  auto`, so a marker-based split is available;
+- the suite has grown by an order of magnitude since the
+  recommendation was written (377 -> 2200+ tests);
+- the tests that need a live side-car live in
+  `tests/test_shell_integration.py`, and CI excludes them **by name**,
+  not by a marker;
+- the sandbox tests that need credentials skip themselves when the
+  credentials are absent.
+
+A second, parallel mechanism would have to be kept in step with the
+first, and nothing it would catch is not caught today. Closed as
+subsumed rather than done: the machinery is there if a future test
+needs it.
 
 ## House rules for this file
 

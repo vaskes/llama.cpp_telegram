@@ -19,6 +19,26 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The troubleshooting guide caught up with the bot
+
+`docs/TROUBLESHOOTING.md` was written for `v0.10.2` and had not been
+touched since. Everything that arrived after it — the context-memory
+block, the chunked summaries and the "СВЕДЕНО" marker, the three
+re-anchor modes, the persona file, the dispatch split, the answers that
+arrive as documents, the Stop button's maker-taker rule — was missing
+from it.
+
+The guide now has an entry for each of them, written as a symptom
+rather than as a feature description, because that is what a guide is
+for. It also carries the known defect T68b: `BOT_ENGINE_RESET_CMD`
+never runs, because the loop that would call it only starts in `soft`
+mode.
+
+One stale claim was corrected on the way: the guide still said that an
+edited command message is "normalised into a fresh message and
+re-processed". The edit-replace feature was removed on 2026-10-24; an
+update that carries only `edited_message` is dropped, with a log line.
+
 ### The operator's checklist is a script now
 
 `scripts/verify.py` checks that the bot is healthy and that the tests
