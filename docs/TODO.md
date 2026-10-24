@@ -80,23 +80,54 @@ transcript of each shape:
 **What is still missing, and what it needs:** the live check itself, once
 the generator can take the load. The checklist:
 
-1. ~~deploy the current `main` to the production bot~~ — done 2026-10-24
-   19:15, the tree in the container is `a6c20fc`;
-2. ask the model for a json, an html page, a site in three files, and one
-   plain question with no code at all;
-3. check that the code arrives as a **document** with the right name and
-   extension, and that the chat gets the prose and not the code;
+1. ~~deploy the current `main` to the production bot~~ -- done 2026-10-24
+   19:15, the tree in the container is `c7d32ae`;
+2. ~~ask the model for a json, an html page, a site in three files, and one
+   plain question with no code at all~~ -- the operator asked for a sql file
+   and an html page; both arrived;
+3. ~~check that the code arrives as a **document** with the right name and
+   extension, and that the chat gets the prose and not the code~~ -- done:
+   `beer_log.sql` and `index.html`, in the topic, prose in the chat;
 4. ask a follow-up about the file ("поменяй в нём цвет") and check that
-   the bot still remembers the code — that is the whole point of keeping
+   the bot still remembers the code -- that is the whole point of keeping
    the raw answer in the history;
-5. check the topic: a document sent from a forum topic has to land in
-   that topic, not in General;
+5. ~~check the topic: a document sent from a forum topic has to land in
+   that topic, not in General~~ -- done, both documents landed in the topic;
 6. check that the reasoning-only answer still arrives as a diagnostic and
    not as a document.
 
-**Decision needed:** who runs the checklist. The host can take the load
-now, so the only thing missing is a pair of human eyes — the machine
-half of it was done on 2026-10-24 (see above).
+**Decision needed:** who runs the rest of the checklist. The host can take
+the load now, so the only thing missing is a pair of human eyes -- the
+machine half of it was done on 2026-10-24 (see above), and the operator has
+already done steps 1, 2, 3 and 5.
+
+### A binary file from the sandbox cannot reach the chat
+
+**Status:** open since 2026-10-24, found by the operator's human test on
+production.
+
+**What happens now:** the model CAN make a real file in the sandbox. Proven
+on production at 19:57: the model ran `bash_command`, built
+`/workspace/probe/probe.zip` (273 bytes, md5 e6e347b8..., containing
+`note.txt` and `math.txt`) and reported the path, the size and the md5.
+Before the fix (`c7d32ae`) that very call was refused by the argument
+screen.
+
+**Why the user still does not get the file:** the only channel from the bot
+to the chat is the answer's TEXT. A code block becomes a document (the
+answer-files feature); a zip has no text form, so the bot can only report
+the path and offer base64. The model itself said so: "могу лишь показать
+содержимое или путь. Если хочешь -- дам base64 прямо в сообщении".
+
+**Decision needed:** is that acceptable, or is a file-transfer path wanted?
+
+* (a) accept it -- the bot reports path/size/md5 and the user asks for
+  base64 if they want the bytes;
+* (b) the bot fetches the file from the sandbox and sends it as a document.
+  The sandbox proxy would have to serve the file back, and the bot would
+  need a way to ask for it by path -- a feature, not a bug fix;
+* (c) base64 in the answer -- the answer-files feature would deliver it as
+  a `.b64` document, and the user decodes it by hand.
 
 ### The context blocker is not closed — and its list is growing
 
