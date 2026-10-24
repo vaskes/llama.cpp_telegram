@@ -109,7 +109,16 @@ async def test_use_stream_false_takes_the_non_streaming_branch(monkeypatch):
     calls = _Calls("use_stream=False").install(monkeypatch)
     result = await make_loop(use_stream=False).run_one(0)
     assert calls.nonstream == 1
-    assert result.terminal == "ok"
+    # The non-streaming path ends the turn with the answer, and the
+    # answer carries the tools the turn ran -- the same shape the
+    # streaming path produces, so the transcript with the console
+    # output is in the chat on both paths. (Before 2026-10-25 this
+    # path returned a bare string, and the tools were lost with it.)
+    assert isinstance(result.terminal, dict), (
+        f"the non-streaming turn ended as {type(result.terminal).__name__}, "
+        f"not as an answer")
+    assert result.terminal["text"] == "ok"
+    assert result.terminal["executed_tools"] == []
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,7 @@ telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
 ├── handlers.py            # handle_text/photo/voice/document (1381 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   495 lines file, 319 in the function
+│                          #   495 lines file, 338 in the function
 ├── dispatch.py            # routing, lifecycle, concurrency caps (369)
 ├── dispatch_group.py      # human-to-human reply absorb (108)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
@@ -63,7 +63,7 @@ tests, none of which build a full `call_llama`.
   module                lines  public surface
   llm_dispatch.py       382  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
-  llm_iteration.py      513  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
+  llm_iteration.py      544  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
   call_llama.py         495  call_llama
   llm_loop_guard.py     170  Nudge, Abort, LoopGuard

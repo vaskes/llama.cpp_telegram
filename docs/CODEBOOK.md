@@ -395,7 +395,7 @@ naming a renamed function goes red.
 The 500-line threshold itself is enforced by nothing. Three of the five
 production modules over 500 lines have a section map; `storage.py` has
 one marker for 940 lines, `bash_command.py` has two for 590, and
-`llm_iteration.py` has none for 507. Writing this rule down as `AUTO`
+`llm_iteration.py` has none for 544. Writing this rule down as `AUTO`
 would have been a claim with no check behind it — see D-1.
 
 **S-3 — One concept, one owning module.** `AUTO`

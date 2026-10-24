@@ -122,6 +122,18 @@ class ToolLoop:
         # --- what crosses iterations, and nothing else ---
         self.accumulated_reasoning = ""
         self.final_fallback: Optional[str] = None
+        # The tools this TURN ran, with what they printed.
+        #
+        # It belongs here, not in `run_one`. As a local of the iteration
+        # it was thrown away every time the iteration returned, so the
+        # tools of iterations 0..n-1 never reached the answer -- and
+        # the transcript with the console output never reached the chat.
+        # Measured on production, 2026-10-25: the file arrived as a
+        # document, and the commands that made it were nowhere to be
+        # seen. The unit tests did not catch it, because they handed
+        # `executed_tools` to the formatter by hand -- a shape the
+        # production loop never produces.
+        self.executed_tools: list[dict] = []
 
     async def run(self) -> Any:
         """Drive the iterations and return the turn's answer."""
@@ -140,8 +152,10 @@ class ToolLoop:
         It was a local of the loop body before, and the only difference
         is that the loop body is now reachable by name.
         """
-        # T44: per-turn accumulator for executed tools.
-        _executed_tools_in_turn: list[dict] = []
+        # T44: per-turn accumulator for executed tools. It lives on the
+        # loop (see `__init__`), because a local of this method dies
+        # with the iteration -- and the iteration is not the turn.
+        _executed_tools_in_turn = self.executed_tools
         # Per-iteration flags. These live at the top of the body and not
         # next to the code that happens to read them: the set-sites are
         # spread across the request, the response normalisation and the
@@ -253,7 +267,24 @@ class ToolLoop:
                     # disagree on the abort path, where the turn ends with a
                     # legitimate None.
                     if _ns_step.is_terminal:
-                        return IterationResult.done(_ns_step.assert_terminal())
+                        if result.outcome == "final":
+                            # A diagnostic, not an answer: the engine
+                            # said something that is not the model's
+                            # reply (an overflow, an abort, no choices).
+                            # There are no tools to show with it.
+                            return IterationResult.done(
+                                _ns_step.assert_terminal())
+                        # TEXT: the model's answer. It carries the tools
+                        # the turn ran, exactly like the streaming path
+                        # does -- the answer is what the chat gets, and
+                        # the transcript with the console output is
+                        # part of it.
+                        return IterationResult.done(
+                            finish_without_tool_calls(
+                                content_buf=result.content,
+                                reasoning_buf=result.reasoning,
+                                finish_reason=result.finish_reason,
+                                executed_tools=self.executed_tools))
                     saw_unavailable_tool = _ns_step.saw_unavailable_tool
                     content_buf = _ns_step.content_buf
                     reasoning_buf = _ns_step.reasoning_buf

@@ -37,6 +37,7 @@ import time
 import storage
 from call_llama import call_llama
 from chat_utils import _is_group_chat
+from llm_result import unwrap_answer
 from rating import _execute_react_to_message
 from state import (
     _GLOBAL_LLM_SEM_LIMIT, _abort_events, _get_global_llm_sem,
@@ -145,7 +146,12 @@ async def check_vision() -> bool:
             use_stream=False,
             chat_type='private',
         )
-        log.info(f"[selftest] call_llama result: {len(result)} chars, head={result[:300]!r}")
+        # The answer is read the way production reads it. `call_llama`
+        # returns a dict when the turn ran tools and a plain string
+        # otherwise, and both are answers; slicing the dict is a
+        # TypeError, not a measurement.
+        _answer_text = unwrap_answer(result).text or ""
+        log.info(f"[selftest] call_llama result: {len(_answer_text)} chars, head={_answer_text[:300]!r}")
     except Exception as e:
         log.warning(f"[selftest] FAILED: {type(e).__name__}: {e}")
         import traceback
@@ -615,6 +621,10 @@ async def check_nonstream_tool_call() -> bool:
                 chat_type='group',
             )
 
+        # Read the answer the way production reads it: a dict when the
+        # turn ran tools, a plain string otherwise.
+        _ns_text = unwrap_answer(result).text or ""
+
         # The bot response should NOT be empty - it should be a
         # follow-up message after the tool ran (or at least a
         # non-empty tool result wrapping message). What we really
@@ -632,12 +642,12 @@ async def check_nonstream_tool_call() -> bool:
         elif call_count[0] != 2:
             log.warning(f"  [FAIL] expected 2 LLM calls (1 tool + 1 follow-up), got {call_count[0]}")
             ns_ok = False
-        elif 'Done' not in result:
+        elif 'Done' not in _ns_text:
             log.warning(f"  [FAIL] call_llama result doesn't contain the follow-up text: {result!r}")
             ns_ok = False
         else:
             log.info(f"  [OK] non-streaming tool_call dispatched: chat_id={react_calls[0]['chat_id']} msg_id={react_calls[0]['message_id']} emoji={react_calls[0]['emojis']}")
-            log.info(f"  [OK] call_llama returned {len(result)} chars (LLM was re-called after tool result): {result[:80]!r}")
+            log.info(f"  [OK] call_llama returned {len(_ns_text)} chars (LLM was re-called after tool result): {_ns_text[:80]!r}")
     except Exception as e:
         # The traceback, not just the type and message. On 2026-10-22 this
         # line read

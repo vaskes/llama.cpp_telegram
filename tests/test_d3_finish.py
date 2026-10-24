@@ -428,32 +428,45 @@ def test_the_two_loop_branches_are_in_order():
     version matched every `if not tool_calls` in call_llama and found
     three -- the third being the fallback ending, which is also handled
     here now but is not part of the loop body.
+
+    Since 2026-10-25 there is a third delegating call, and it is not
+    one of these two branches: the non-streaming path ends its turn
+    with `finish_without_tool_calls` too, because the fallback's
+    answer has to carry the tools the turn ran like the streaming
+    path's does. The check therefore names the branches it cares
+    about instead of counting calls -- a list of names is an accident
+    of the code, and the order of the two branches is the rule.
     """
     fn = _call_llama()
-    pairs = []
-    delegating = {"finish_without_tool_calls", "refuse_hallucinated_tools"}
+    no_tool_calls_line = None
+    hallucination_line = None
     for node in ast.walk(fn):
         if not isinstance(node, ast.If):
             continue
-        # any direct return, not just the first statement: the
-        # hallucination branch logs before returning.
+        is_no_tool_calls = "not tool_calls" in ast.unparse(node.test)
         for stmt in ast.walk(node):
             if not isinstance(stmt, ast.Call):
                 continue
             f = stmt.func
             if not isinstance(f, ast.Name):
                 continue
-            if f.id not in delegating:
-                continue
             # Since T8.1 the ending is handed back as
             # `IterationResult.done(finish_...)`, so the call sits
             # one level deeper. Both shapes mean the same delegation
             # and the check must not care which one it is.
-            pairs.append((stmt.lineno, f.id))
-    pairs.sort()
-    assert [name for _, name in pairs] == ["finish_without_tool_calls",
-                                           "refuse_hallucinated_tools"], \
-        f"branch order changed: {pairs}"
+            if f.id == "finish_without_tool_calls" and is_no_tool_calls:
+                no_tool_calls_line = stmt.lineno
+            if f.id == "refuse_hallucinated_tools":
+                hallucination_line = stmt.lineno
+    assert no_tool_calls_line is not None, (
+        "the no-tool-calls branch stopped delegating to "
+        "finish_without_tool_calls")
+    assert hallucination_line is not None, (
+        "the hallucination branch stopped delegating to "
+        "refuse_hallucinated_tools")
+    assert no_tool_calls_line < hallucination_line, (
+        f"branch order changed: no-tool-calls at {no_tool_calls_line}, "
+        f"hallucination at {hallucination_line}")
 
 
 def test_all_three_endings_are_delegated():
@@ -530,12 +543,31 @@ def test_the_fallback_message_is_not_the_loop_message():
 
 
 def test_the_returned_value_goes_straight_back():
-    """Both branches return what the module returns, with no wrapper. A
+    """The branches return what the module returns, with no wrapper. A
     wrapper here would be the first sign of someone re-flattening the
-    mixed dict/str contract."""
+    mixed dict/str contract.
+
+    The number of delegating calls is not the rule. The non-streaming
+    path delegates too since 2026-10-25 -- its answer carries the
+    tools the turn ran, like the streaming path's does. The rule is
+    that every delegation is handed straight back, inside
+    `IterationResult.done(...)`, and not re-wrapped on the way out.
+    """
     fn = _call_llama()
     delegating = [n for n in ast.walk(fn)
                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                   and n.func.id in {"finish_without_tool_calls",
                                     "refuse_hallucinated_tools"}]
-    assert len(delegating) == 2, f"expected two direct returns, got {len(delegating)}"
+    assert delegating, "no branch delegates any more"
+    parents = {}
+    for node in ast.walk(fn):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    for call in delegating:
+        parent = parents.get(call)
+        assert isinstance(parent, ast.Call), (
+            f"{call.func.id} is not handed back through a call")
+        assert (isinstance(parent.func, ast.Attribute)
+                and parent.func.attr == "done"), (
+            f"{call.func.id} is wrapped in {ast.unparse(parent.func)}, "
+            f"not in IterationResult.done(...)")
