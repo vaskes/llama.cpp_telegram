@@ -66,10 +66,25 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             window_text = f"{window_days} дн. от старта бота (якорь не скользит)"
         age_text = "—" if age is None else f"{int(age // 86400)} дн."
+        old_total = max(0, stored - n_in)
+        if policy["strategy"] == "summarize":
+            # T70.5: the old part is no longer simply "not sent" -- part of it
+            # is compressed into chunk summaries and part of it is loaded raw.
+            # Saying "не отправляется" here would be a lie.
+            n_summarised, n_sums = await loop.run_in_executor(
+                None, store.count_summarised, chat_id, thread_id
+            )
+            old_line = (
+                f' • Старше окна: {old_total} сообщ. '
+                f'(сведено в сводки: {n_summarised} в {n_sums} сводках, '
+                f'в контексте как есть: {max(0, old_total - n_summarised)})'
+            )
+        else:
+            old_line = f' • Старше окна (не отправляется): {old_total} сообщ.'
         return (
             f' • В контексте сейчас: {n_in} сообщ.\n'
             f' • Всего в базе: {stored} сообщ.\n'
-            f' • Старше окна (не отправляется): {max(0, stored - n_in)} сообщ.\n'
+            f'{old_line}\n'
             f' • Окно памяти: {window_text}\n'
             f' • Старейшее сообщение в базе: {age_text}\n'
             f' • Стратегия: {policy["strategy"]}, потолок {policy["max_messages"]}'

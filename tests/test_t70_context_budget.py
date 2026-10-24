@@ -181,7 +181,53 @@ def test_split_for_summary_with_no_cutoff_returns_everything_as_inside():
 def test_describe_exposes_the_policy():
     d = cb.ContextBudget(strategy="window", max_messages=20, anchor=123.0).describe()
     assert d == {"strategy": "window", "max_messages": 20,
-                 "remember_days": 7, "anchor": 123.0}
+                 "remember_days": 7, "anchor": 123.0,
+                 # T70.5 budgets: /stats and the operator read them from here.
+                 "summary_tail_tokens": cb.SUMMARY_TAIL_TOKENS,
+                 "summary_context_tokens": cb.SUMMARY_CONTEXT_TOKENS,
+                 "summary_chunk_tokens": cb.SUMMARY_CHUNK_TOKENS}
+
+
+def test_the_summary_budgets_are_read_from_the_environment():
+    """The operator asked for the volume to be a config knob with a
+    description, not a constant buried in the code. So it must actually be
+    read from the environment -- a knob that is documented but not wired is
+    a knob that does nothing.
+
+    Checked in a subprocess, not by reloading the module in-process: a
+    reload replaces the ContextBudget class object, and every other module
+    that imported it keeps the old one. That is a cross-test landmine for a
+    test that only wants to read three integers.
+    """
+    import os
+    import subprocess
+    import sys
+    code = (
+        "import context_budget as c; "
+        "print(c.SUMMARY_TAIL_TOKENS, c.SUMMARY_CHUNK_TOKENS, "
+        "c.SUMMARY_CONTEXT_TOKENS)"
+    )
+    env = dict(os.environ)
+    env.update({
+        "SUMMARY_TAIL_TOKENS": "12345",
+        "SUMMARY_CHUNK_TOKENS": "54321",
+        "SUMMARY_CONTEXT_TOKENS": "99999",
+    })
+    out = subprocess.run(
+        [sys.executable, "-c", code], cwd=str(BOT_DIR), env=env,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "12345 54321 99999", out.stdout
+
+
+def test_the_tail_budget_is_64k():
+    """The operator's number, 2026-10-24. 200k did not fit the engine
+    window; 64k does. If this assertion ever fires, the arithmetic in
+    context_budget.py has to be redone, not the constant."""
+    assert cb.SUMMARY_TAIL_TOKENS == 65536
+    assert cb.SUMMARY_CHUNK_TOKENS == 65536
+    assert cb.SUMMARY_CONTEXT_TOKENS == 131072
 
 
 def test_get_budget_returns_the_module_instance():

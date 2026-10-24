@@ -1,56 +1,90 @@
-"""T70.3 — summarise out-of-window history, once per re-anchor.
+"""T70.3 / T70.5 — summarise out-of-window history, in chunks, once per chunk.
 
-Operator's design, verbatim:
+Operator's design, verbatim (2026-10-21, extended 2026-10-24):
 
 > Модель пусть пересказывает та же самая, на которой бот, не надо выдумывать
 > и усложнять. При старте бота надо «пересказывать» то, что не влезло в 7d
 > окно, потом делать context reset и загружать туда пересказанное + 7d окно.
 
-So: once per re-anchor, not per request. Same model as the bot. Context becomes
-{system} + {summary} + {window}. The summary is reused until the next re-anchor.
+and the extension that closed T70.5 (2026-10-24):
+
+> сводки надо делать чанками, и помечать. т.е. если ОБЪЕМ данных для сводки
+> > 200к надо сделав по ней сводку проставить в базе поле СВЕДЕНО, ссылку на
+> сводку которая сделана и по этому чанку больше сводки не делать. Если объем
+> данных для сводки <200к не проставлять поле сведено и не сводить, а грузить
+> как есть в контекст. Ну и при загрузке соответсвенно грузить только готовые
+> сводики и только сообщение которые не сведены.
+
+(200k was corrected to 64k -- see context_budget.py for the arithmetic.)
+
+So: once per re-anchor, not per request. Same model as the bot. The old part
+of the history is compressed into CHUNKS, each chunk summarised on its own
+and marked in the database, and the context is assembled from the finished
+summaries plus the messages that were never summarised.
 
 Design constraints, all of which are easy to break:
 
-1. **The LLM call does NOT live in ContextBudget.apply().** apply() is pure —
-   no I/O, no network, no clock. Twelve tests depend on that. So the summary is
-   built out here, ahead of time, and apply() only splices in text it was given.
+1. **The LLM call does NOT live in ContextBudget.apply_summaries().** That
+   method is pure -- no I/O, no network, no clock. A dozen tests depend on
+   that. So the summaries are built out here, ahead of time, and the
+   assembler only splices in text it was given.
 
 2. **The trigger is reanchor(), not process start.** If it were process start,
    `soft` and `process` modes would silently differ in memory quality while
    looking identical in config. See ADR-0003.
 
-3. **SQLite stays the source of truth.** The summary is derived and rebuildable;
-   deleting it loses nothing. Losing it only means the next re-anchor is a bit
-   more expensive.
+3. **SQLite stays the source of truth.** The messages are never deleted, and
+   the summary is a DERIVED artefact -- but a derived artefact WITH A LINK:
+   `messages.summary_id` says which summary stands for which messages, so
+   the two can be checked against each other instead of merely believed.
+   That link is what makes persisting the summary safe, and it is what makes
+   "summarise each chunk exactly once" possible at all.
 
-4. **Any failure falls back to `window`.** A summarisation outage must degrade
-   to "remembers less", never to "bot is down" and never to "silent data loss".
+4. **Any failure falls back to the raw tail.** A summarisation outage must
+   degrade to "remembers less", never to "bot is down" and never to "silent
+   data loss". A chunk whose summary failed stays unmarked, so it is loaded
+   raw and retried at the next re-anchor.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import time
+from typing import Sequence
 
 import httpx
 
+from context_budget import estimate_message_tokens
 from logconf import get_logger
 log = get_logger(__name__)
 
-#: (chat_id, thread_id) -> {"text": str, "n_messages": int, "at": float}
-#: In-memory on purpose. The summary is a derived artefact; persisting it would
-#: create a second source of truth that could disagree with the first. Losing
-#: it on restart costs one LLM call.
-_SUMMARIES: dict[tuple[int, str], dict] = {}
-
 #: Below this many old messages, summarising costs more than it saves: the
 #: model call plus prompt tokens outweigh the handful of messages dropped.
+#: The volume trigger (context_budget.SUMMARY_TAIL_TOKENS) is the real
+#: condition; this one is a cheap floor under it.
 MIN_MESSAGES_TO_SUMMARIZE = 8
 
-#: Cap on how much old history goes into one summarisation call. The engine
-#: has a 256k window and the prompt has to leave room for the window itself.
-MAX_OLD_MESSAGES_PER_CALL = 400
+#: How many old messages one summarisation pass may pull from the DB. The
+#: history is unbounded in principle; this is the ceiling on one pass, and it
+#: keeps the OLDEST pending messages (so a pass that hits the ceiling makes
+#: progress instead of stalling on the same newest chunk forever).
+SUMMARY_FETCH_LIMIT = 20000
+
+#: How many chunks one re-anchor may summarise. Each chunk is one model
+#: call, and the box running the bot also serves the live bot -- a run that
+#: summarises thirty chunks would keep the GPU busy for minutes. Whatever is
+#: left over is summarised at the next re-anchor, which is why the order is
+#: oldest-first: progress, not starvation.
+MAX_CHUNKS_PER_RUN = 8
+
+#: Backstop on the messages in one summarisation call. The chunking is done
+#: by token volume; this is the row-count ceiling that catches a chat full of
+#: one-word messages.
+MAX_MESSAGES_PER_CALL = 2000
+
+#: Output cap of one summarisation call. A chunk is 64k tokens of history;
+#: its summary is a few hundred words.
+SUMMARY_MAX_TOKENS = 1024
 
 SUMMARY_SYSTEM_PROMPT = (
     "Ты сжимаешь историю группового чата, чтобы продолжить разговор без "
@@ -63,30 +97,12 @@ SUMMARY_SYSTEM_PROMPT = (
 )
 
 
-def get_summary(chat_id: int, thread_id: str) -> str | None:
-    """Return the cached summary text, or None."""
-    entry = _SUMMARIES.get((chat_id, thread_id))
-    return entry["text"] if entry else None
-
-
-def stats() -> dict:
-    """For /stats and tests."""
-    return {
-        "threads": len(_SUMMARIES),
-        "messages_summarised": sum(
-            e["n_messages"] for e in _SUMMARIES.values()
-        ),
-        "newest": max(
-            (e["at"] for e in _SUMMARIES.values()), default=0.0
-        ),
-    }
-
-
-def clear() -> None:
-    _SUMMARIES.clear()
-
-
 def _decode(rows) -> list[dict]:
+    """Turn raw DB rows into the dict shape the chunker works on.
+
+    Carries `_id` (the row id -- the chunk boundaries and the summary
+    placement are both id-based) and `_created_at`.
+    """
     out = []
     for r in rows:
         d = dict(r)
@@ -102,22 +118,45 @@ def _decode(rows) -> list[dict]:
         else:
             item = {"role": d.get("role", "user"), "content": content}
         item["_created_at"] = d.get("created_at")
+        item["_id"] = d.get("id")
         if d.get("sender_name"):
             item["_sender_name"] = d["sender_name"]
         out.append(item)
     return out
 
 
-async def _call_model(llama_url: str, model: str, old: list[dict],
-                      timeout: float) -> str | None:
-    """One summarisation round-trip. Returns text or None on any failure.
+def chunk_messages(messages: Sequence[dict],
+                   chunk_tokens: int) -> list[list[dict]]:
+    """Split old history into contiguous chunks of ~`chunk_tokens` each.
 
-    Deliberately a plain chat-completions call, no tools, no tool loop: a
-    summariser that can call web_search is a summariser that can go off and do
-    something else instead.
+    Contiguous, because a chunk is a slice of the timeline: the summary
+    stands for a stretch of history that really was consecutive, and the
+    marker points at a range of message ids.
+
+    A single message larger than the chunk budget is its own chunk -- it
+    cannot be split, and refusing to summarise it would leave it pending
+    forever.
     """
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_tokens = 0
+    for m in messages:
+        tokens = estimate_message_tokens(m)
+        if current and current_tokens + tokens > chunk_tokens:
+            chunks.append(current)
+            current = []
+            current_tokens = 0
+        current.append(m)
+        current_tokens += tokens
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _render(messages: Sequence[dict]) -> str:
+    """Old history as plain text for the summarisation prompt."""
     lines = []
-    for m in old[-MAX_OLD_MESSAGES_PER_CALL:]:
+    for m in messages[:MAX_MESSAGES_PER_CALL]:
         who = m.get("_sender_name") or m.get("role", "user")
         text = m.get("content")
         if isinstance(text, list):
@@ -130,15 +169,27 @@ async def _call_model(llama_url: str, model: str, old: list[dict],
         if not text:
             continue
         lines.append(f"{who}: {text}")
-    if not lines:
+    return "\n".join(lines)
+
+
+async def _call_model(llama_url: str, model: str, old: list[dict],
+                      timeout: float) -> str | None:
+    """One summarisation round-trip. Returns text or None on any failure.
+
+    Deliberately a plain chat-completions call, no tools, no tool loop: a
+    summariser that can call web_search is a summariser that can go off and
+    do something else instead.
+    """
+    body = _render(old)
+    if not body:
         return None
     payload = {
         "model": model,
-        "max_tokens": 1024,
+        "max_tokens": SUMMARY_MAX_TOKENS,
         "stream": False,
         "messages": [
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": "\n".join(lines)},
+            {"role": "user", "content": body},
         ],
     }
     try:
@@ -165,29 +216,68 @@ async def _call_model(llama_url: str, model: str, old: list[dict],
 async def summarise_thread(*, chat_id: int, thread_id: str,
                            budget, store, llama_url: str, model: str,
                            timeout: float = 180.0) -> dict:
-    """Build (or skip) the summary for one thread. Never raises."""
+    """Summarise the pending old history of one thread, chunk by chunk.
+
+    Never raises. The pending history is the old part of the thread that no
+    summary stands for yet:
+
+      * below the tail budget -> leave it raw. The operator's rule: "если
+        объем < порога, не сводить, а грузить как есть";
+      * above the tail budget -> split it into chunks, summarise each chunk
+        on its own, store the summary and mark the chunk's messages so the
+        same chunk is never summarised twice.
+
+    A chunk whose model call failed stays unmarked: it is loaded raw and
+    retried at the next re-anchor. Nothing is lost either way.
+    """
     try:
-        rows = store.get_messages(chat_id, thread_id, 5000)
-        inside, older = budget.split_for_summary(_decode(rows))
-        if len(older) < MIN_MESSAGES_TO_SUMMARIZE:
-            _SUMMARIES.pop((chat_id, thread_id), None)
+        if budget.anchor <= 0.0:
+            # No age filter: nothing is "old", so nothing to summarise.
+            return {"ok": True, "skipped": True, "reason": "no age filter"}
+        pending = _decode(store.get_pending_old(
+            chat_id, thread_id, budget.anchor, SUMMARY_FETCH_LIMIT,
+        ))
+        if len(pending) < MIN_MESSAGES_TO_SUMMARIZE:
+            return {"ok": True, "skipped": True, "reason": "too few messages",
+                    "pending": len(pending)}
+        pending_tokens = sum(estimate_message_tokens(m) for m in pending)
+        if pending_tokens <= budget.summary_tail_tokens:
+            # Small enough to load as is. No summary, no marker -- exactly
+            # what the operator asked for in this case.
             return {"ok": True, "skipped": True,
-                    "old_messages": len(older)}
-        text = await _call_model(llama_url, model, older, timeout)
-        if not text:
-            # Fall back to window. Losing old context is survivable; a failed
-            # summarisation must never be visible as a broken bot.
-            return {"ok": False, "skipped": True, "old_messages": len(older)}
-        _SUMMARIES[(chat_id, thread_id)] = {
-            "text": text,
-            "n_messages": len(older),
-            "at": time.time(),
-        }
+                    "reason": "within the tail budget",
+                    "pending": len(pending), "pending_tokens": pending_tokens}
+
+        chunks = chunk_messages(pending, budget.summary_chunk_tokens)
+        summarised = 0
+        failed = 0
+        for chunk in chunks[:MAX_CHUNKS_PER_RUN]:
+            text = await _call_model(llama_url, model, chunk, timeout)
+            if not text:
+                # Leave the chunk unmarked: it stays raw in the context and
+                # is retried at the next re-anchor.
+                failed += 1
+                continue
+            first_id = chunk[0].get("_id")
+            last_id = chunk[-1].get("_id")
+            if first_id is None or last_id is None:
+                failed += 1
+                continue
+            store.save_summary_chunk(
+                chat_id, thread_id, text, int(first_id), int(last_id),
+                len(chunk),
+                float(chunk[0].get("_created_at") or 0.0),
+                float(chunk[-1].get("_created_at") or 0.0),
+            )
+            summarised += 1
         log.info(f"[summarize] chat={chat_id} thread={thread_id}: "
-            f"{len(older)} old messages -> {len(text)} chars "
-            f"(window keeps {len(inside)})")
-        return {"ok": True, "old_messages": len(older),
-                "summary_chars": len(text), "in_window": len(inside)}
+                 f"{len(pending)} pending messages "
+                 f"({pending_tokens} est. tokens) -> {summarised} chunks "
+                 f"summarised, {failed} failed, {len(chunks)} chunks total")
+        return {"ok": True, "pending": len(pending),
+                "pending_tokens": pending_tokens,
+                "chunks": len(chunks), "summarised": summarised,
+                "failed": failed}
     except Exception as exc:
         log.info(f"[summarize] thread {chat_id}/{thread_id} failed: {exc!r}")
         return {"ok": False, "error": str(exc)}
@@ -206,19 +296,22 @@ async def summarise_all(*, budget, store, llama_url: str, model: str,
     except Exception as exc:
         log.info(f"[summarize] cannot list chats: {exc!r}")
         return {"ok": False, "error": str(exc)}
-    total = {"threads": 0, "summarised": 0, "skipped": 0, "failed": 0}
+    total = {"threads": 0, "summarised": 0, "chunks": 0, "skipped": 0,
+             "failed": 0}
     for chat_id, thread_id in chats:
         r = await summarise_thread(
             chat_id=chat_id, thread_id=thread_id, budget=budget,
             store=store, llama_url=llama_url, model=model, timeout=timeout,
         )
         total["threads"] += 1
-        if r.get("ok") and r.get("summary_chars"):
-            total["summarised"] += 1
-        elif r.get("ok"):
-            total["skipped"] += 1
-        else:
+        if not r.get("ok"):
             total["failed"] += 1
-    log.info(f"[summarize] done: {total['summarised']} summarised, "
-        f"{total['skipped']} skipped, {total['failed']} failed")
+        elif r.get("summarised"):
+            total["summarised"] += 1
+            total["chunks"] += r.get("summarised", 0)
+        else:
+            total["skipped"] += 1
+    log.info(f"[summarize] done: {total['summarised']} threads summarised "
+             f"({total['chunks']} chunks), {total['skipped']} skipped, "
+             f"{total['failed']} failed")
     return {"ok": total["failed"] == 0, **total}

@@ -97,6 +97,34 @@ CREATE TABLE IF NOT EXISTS active_thread (
     thread_id   TEXT NOT NULL
 );
 
+-- T70.5: chunked summaries.
+--
+-- One row per summarised CHUNK of old history. The chunk's messages keep
+-- their own rows (nothing is deleted -- the history is the source of truth
+-- and is destined for LoRA training data); they are POINTED at the summary
+-- through messages.summary_id instead.
+--
+-- The summary is derived data, but it is derived data WITH A LINK: the
+-- marker says exactly which messages the summary stands for, so the two
+-- can be checked against each other instead of merely believed. That is
+-- what makes it safe to persist, and it is what the operator asked for:
+-- "проставить в базе поле СВЕДЕНО, ссылку на сводку которая сделана".
+CREATE TABLE IF NOT EXISTS summaries (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id      INTEGER NOT NULL,
+    thread_id    TEXT NOT NULL,
+    text         TEXT NOT NULL,
+    n_messages   INTEGER NOT NULL,
+    first_msg_id INTEGER NOT NULL,
+    last_msg_id  INTEGER NOT NULL,
+    first_created_at REAL NOT NULL DEFAULT 0,
+    last_created_at  REAL NOT NULL DEFAULT 0,
+    created_at   REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_summaries_lookup
+    ON summaries(chat_id, thread_id, first_msg_id);
+
 -- known_topics: tracks forum topics the bot has created (or that
 -- were registered via /subs sync). Used to back /subs and /delsub
 -- in group mode, since Telegram Bot API does NOT expose a
@@ -256,6 +284,25 @@ class Storage:
         # "user" prefix. Idempotent on existing v4 DBs.
         try:
             c.execute("ALTER TABLE messages ADD COLUMN sender_name TEXT")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e):
+                c.execute("ROLLBACK")
+                raise
+        except BaseException:
+            c.execute("ROLLBACK")
+            raise
+        c.execute("COMMIT")
+        # v4 -> v5 (T70.5): add `summary_id` to messages. It is the "СВЕДЕНО"
+        # marker: the id of the summaries row that stands for this message.
+        # NULL means "never summarised" -- the message is loaded raw.
+        #
+        # Same transaction discipline as the two ALTERs above, for the same
+        # reason: a half-applied migration is a schema that is neither the
+        # old one nor the new one, and the only record of it is a warning
+        # line (TECH-DEBT #5).
+        c.execute("BEGIN")
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN summary_id INTEGER")
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e):
                 c.execute("ROLLBACK")
@@ -627,8 +674,10 @@ class Storage:
         c = self._conn()
         rows = c.execute(
             """
-            SELECT role, content, sender_name, rating, created_at FROM (
-                SELECT role, content, sender_name, rating, created_at, id FROM messages
+            SELECT id, role, content, sender_name, rating, created_at,
+                   summary_id FROM (
+                SELECT id, role, content, sender_name, rating, created_at,
+                       summary_id FROM messages
                 WHERE chat_id = ? AND thread_id = ?
                 ORDER BY id DESC
                 LIMIT ?
@@ -647,6 +696,172 @@ class Storage:
             (chat_id, thread_id),
         ).fetchone()
         return dict(row) if row else None
+
+    # === T70.5: chunked summaries =========================================
+    #
+    # The old part of the history is stored twice over: as messages (the
+    # source of truth, never deleted) and as chunk summaries (the compressed
+    # form the model actually reads). The link between the two is
+    # messages.summary_id, and it is written in the SAME transaction as the
+    # summary row -- a marker without a summary is a hole in the memory, and
+    # a summary without a marker means the same history gets summarised
+    # again at the next re-anchor.
+
+    def save_summary_chunk(self, chat_id: int, thread_id: str, text: str,
+                           first_msg_id: int, last_msg_id: int,
+                           n_messages: int,
+                           first_created_at: float = 0.0,
+                           last_created_at: float = 0.0) -> int:
+        """Store one chunk summary and mark its messages in one transaction.
+
+        Returns the new summary id. The messages in [first_msg_id,
+        last_msg_id] get `summary_id` pointing at it, which is the operator's
+        "СВЕДЕНО" field with the link to the summary that was made.
+
+        The range is a contiguous id range, which is what a chunk is: a
+        contiguous slice of the pending history in chronological order.
+
+        The timestamps say when the chunk was. The context assembler uses
+        them to decide whether the chunk is still outside the window -- the
+        anchor only ever moves forward, so it always is, but the check is
+        what keeps a summary from being loaded next to the very messages it
+        replaces if that ever changes.
+        """
+        c = self._conn()
+        try:
+            c.execute("BEGIN")
+            cur = c.execute(
+                "INSERT INTO summaries (chat_id, thread_id, text, n_messages, "
+                "first_msg_id, last_msg_id, first_created_at, "
+                "last_created_at, created_at) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_SQL_NOW})",
+                (chat_id, thread_id, text, n_messages, first_msg_id,
+                 last_msg_id, first_created_at, last_created_at),
+            )
+            summary_id = int(cur.lastrowid)
+            c.execute(
+                "UPDATE messages SET summary_id = ? "
+                "WHERE chat_id = ? AND thread_id = ? "
+                "AND id >= ? AND id <= ? AND summary_id IS NULL",
+                (summary_id, chat_id, thread_id, first_msg_id, last_msg_id),
+            )
+            c.execute("COMMIT")
+        except BaseException:
+            c.execute("ROLLBACK")
+            raise
+        return summary_id
+
+    def get_summaries(self, chat_id: int, thread_id: str) -> list[dict]:
+        """Every chunk summary of this thread, oldest chunk first.
+
+        Ordered by first_msg_id, not by created_at: the ORDER of the
+        summaries IS the order of the history, and the clock is not a
+        reliable witness of it (a re-anchor can summarise an old chunk
+        after a new one).
+        """
+        c = self._conn()
+        rows = c.execute(
+            "SELECT id, text, n_messages, first_msg_id, last_msg_id, "
+            "first_created_at, last_created_at, created_at FROM summaries "
+            "WHERE chat_id = ? AND thread_id = ? ORDER BY first_msg_id ASC",
+            (chat_id, thread_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_messages_since(self, chat_id: int, thread_id: str,
+                           since: float, limit: int) -> list[dict]:
+        """The newest `limit` messages newer than `since`, chronological.
+
+        The fresh half of the context. It is fetched by age rather than by
+        "the last N rows" because the two are different questions: the
+        message cap and the age window are independent policies, and the
+        fresh part of the context is "the newest messages that are also
+        inside the window".
+        """
+        c = self._conn()
+        rows = c.execute(
+            """
+            SELECT id, role, content, sender_name, rating, created_at
+            FROM (
+                SELECT id, role, content, sender_name, rating, created_at
+                FROM messages
+                WHERE chat_id = ? AND thread_id = ? AND created_at >= ?
+                ORDER BY id DESC
+                LIMIT ?
+            ) ORDER BY id ASC
+            """,
+            (chat_id, thread_id, since, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_pending_old(self, chat_id: int, thread_id: str, before: float,
+                        limit: int, *, newest_first: bool = False) -> list[dict]:
+        """Old messages that no valid summary stands for, chronological.
+
+        "Old" = created before `before` (the window anchor). "No valid
+        summary stands for it" = its `summary_id` is NULL, or points at a
+        summary row that no longer exists -- an orphaned marker must not
+        make the message disappear from the context, so those come back as
+        raw and get summarised again at the next re-anchor.
+
+        This is the "load only the messages that are not summarised" half of
+        the operator's rule; the other half is get_summaries().
+
+        `newest_first` decides WHICH END the limit cuts, and the two callers
+        need opposite ends:
+
+          * the summariser takes the OLDEST pending, so that a pass which
+            hits the ceiling makes progress instead of re-summarising the
+            same newest chunk forever;
+          * the context assembler takes the NEWEST pending, because the raw
+            tail is the recent past and the recent past is what survives a
+            budget cut.
+
+        Either way the result is chronological.
+        """
+        c = self._conn()
+        order = "DESC" if newest_first else "ASC"
+        rows = c.execute(
+            f"""
+            SELECT id, role, content, sender_name, rating, created_at,
+                   summary_id
+            FROM (
+                SELECT id, role, content, sender_name, rating, created_at,
+                       summary_id
+                FROM messages
+                WHERE chat_id = ? AND thread_id = ? AND created_at < ?
+                  AND (summary_id IS NULL OR summary_id NOT IN (
+                        SELECT id FROM summaries
+                        WHERE chat_id = ? AND thread_id = ?
+                          AND last_created_at < ?))
+                ORDER BY id {order}
+                LIMIT ?
+            ) ORDER BY id ASC
+            """,
+            (chat_id, thread_id, before, chat_id, thread_id, before, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_summarised(self, chat_id: int, thread_id: str) -> tuple[int, int]:
+        """(messages covered by a summary, number of summaries).
+
+        For /stats: how much of the old history is compressed and how many
+        chunks it is spread over.
+        """
+        c = self._conn()
+        row = c.execute(
+            "SELECT COUNT(*) FROM messages m "
+            "WHERE m.chat_id = ? AND m.thread_id = ? AND m.summary_id IN "
+            "(SELECT id FROM summaries WHERE chat_id = ? AND thread_id = ?)",
+            (chat_id, thread_id, chat_id, thread_id),
+        ).fetchone()
+        n_msgs = int(row[0]) if row else 0
+        row = c.execute(
+            "SELECT COUNT(*) FROM summaries WHERE chat_id = ? AND thread_id = ?",
+            (chat_id, thread_id),
+        ).fetchone()
+        n_sums = int(row[0]) if row else 0
+        return n_msgs, n_sums
 
     def delete_last_user_message(self, chat_id: int, thread_id: str) -> bool:
         """Delete the most recent user-role message in a thread.

@@ -9,11 +9,20 @@
 # writes are append-only and never replace existing rows.
 
 import asyncio
+import functools
 import json
 from typing import TYPE_CHECKING
 
 from context_budget import FETCH_LIMIT, get_budget
 import storage
+
+#: How many old, never-summarised messages the context assembler may pull
+#: for the raw tail. The tail is capped by volume (context_budget's
+#: SUMMARY_TAIL_TOKENS), so this is a row-count backstop: a chat of
+#: one-word messages would hit the token budget in a few thousand rows, and
+#: a chat of huge messages would hit it in a few hundred. Either way the
+#: volume cap decides, this only keeps the query bounded.
+RAW_TAIL_FETCH_LIMIT = 5000
 
 if TYPE_CHECKING:
     # Declared so static analysers can see that persistence reaches summarize
@@ -69,6 +78,12 @@ def _decode(rows: list[dict]) -> list[dict]:
         context_budget to decide what falls inside the memory window.
         Carried through as an out-of-band field so it never reaches the
         engine as a message field.
+      - "_id": int | None. The row id. T70.5 uses it to place a chunk
+        summary on the timeline (at the id of the first message of the
+        chunk it stands for) and to slice chunks out of the old history.
+      - "_summary_id": int | None. T70.5's "СВЕДЕНО" marker: the id of
+        the summary that stands for this message, or None if it was never
+        summarised.
     """
     out = []
     for r in rows:
@@ -84,6 +99,10 @@ def _decode(rows: list[dict]) -> list[dict]:
         if r.get("sender_name"):
             msg["_sender_name"] = r["sender_name"]
         msg["_created_at"] = r.get("created_at")
+        if r.get("id") is not None:
+            msg["_id"] = r["id"]
+        if r.get("summary_id") is not None:
+            msg["_summary_id"] = r["summary_id"]
         out.append(msg)
     return out
 
@@ -103,16 +122,52 @@ async def load_history(chat_id: int, thread_id: str) -> list:
     The returned dicts still carry the out-of-band `_sender_name` /
     `_created_at` fields; call_llama strips them before the HTTP request.
     """
-    rows = await asyncio.to_thread(
-        storage.get_store().get_messages, chat_id, thread_id, FETCH_LIMIT
-    )
     budget = get_budget()
-    messages = _decode(rows)
+    store = storage.get_store()
     if budget.strategy == "summarize":
-        # T70.3: the summary itself was built ahead of time by summarize.py at
-        # the last re-anchor. Here we only splice in whatever text it holds.
-        # No model call on the request path — that is the whole point of the
-        # "once per re-anchor" design.
-        from summarize import get_summary
-        return budget.apply_summarize(messages, get_summary(chat_id, thread_id))
-    return budget.apply(messages)
+        return await _load_summarize_context(chat_id, thread_id, budget, store)
+    rows = await asyncio.to_thread(
+        store.get_messages, chat_id, thread_id, FETCH_LIMIT
+    )
+    return budget.apply(_decode(rows))
+
+
+async def _load_summarize_context(chat_id: int, thread_id: str, budget,
+                                   store) -> list:
+    """T70.5: assemble the context from chunk summaries + the raw tail.
+
+    The operator's rule: "при загрузке соответсвенно грузить только готовые
+    сводики и только сообщения которые не сведены". So three reads:
+
+      1. the fresh part -- the newest messages inside the window;
+      2. the summaries -- one row per summarised chunk;
+      3. the raw tail -- the old messages no summary stands for.
+
+    The summarised messages themselves are NOT loaded: their summary stands
+    for them, in their place on the timeline. The messages are still in the
+    database -- nothing is deleted -- but the engine gets the compressed
+    form.
+
+    No model call here. This is on the request path, and the whole point of
+    the design is that summarisation happens at the re-anchor, not per
+    request.
+    """
+    loop = asyncio.get_running_loop()
+    # run_in_executor takes positional arguments only, and get_pending_old
+    # takes newest_first as a keyword -- so it goes through a partial.
+    raw_tail = functools.partial(
+        store.get_pending_old, chat_id, thread_id, budget.anchor,
+        RAW_TAIL_FETCH_LIMIT, newest_first=True,
+    )
+    fresh_rows, raw_rows, summaries = await asyncio.gather(
+        loop.run_in_executor(
+            None, store.get_messages_since, chat_id, thread_id,
+            budget.anchor, budget.max_messages or FETCH_LIMIT,
+        ),
+        loop.run_in_executor(None, raw_tail),
+        loop.run_in_executor(
+            None, store.get_summaries, chat_id, thread_id,
+        ),
+    )
+    messages = _decode(list(fresh_rows) + list(raw_rows))
+    return budget.apply_summaries(messages, summaries)

@@ -104,6 +104,92 @@ STRATEGY = (
 
 VALID_STRATEGIES = ("window", "summarize")
 
+# === T70.5: chunked summaries ===
+#
+# The operator's decision (2026-10-24), verbatim:
+#
+#   > сводки надо делать чанками, и помечать. т.е. если ОБЪЕМ данных для
+#   > сводки > 200к надо сделав по ней сводку проставить в базе поле СВЕДЕНО,
+#   > ссылку на сводку которая сделана и по этому чанку больше сводки не
+#   > делать. Если объем данных для сводки <200к не проставлять поле сведено
+#   > и не сводить, а грузить как есть в контекст. Ну и при загрузке
+#   > соответсвенно грузить только готовые сводики и только сообщение которые
+#   > не сведены.
+#
+# The 200k figure did not survive the arithmetic. 200k of raw history plus
+# the fresh window plus llama's 64k thinking block does not fit in a 256k
+# engine window -- and the way it fails is the exact failure T70.6 was about
+# ("the model thought and did not answer"), so the number had to come down:
+#
+#     262144 (n_ctx) - 65536 (thinking) - 16384 (answer reserve)
+#       = 180224 for the prompt
+#     180224 - ~48000 (fresh window, 400 messages) - ~4000 (system + tools)
+#       = ~128000 for the OLD part  ->  SUMMARY_CONTEXT_TOKENS = 131072
+#
+# and the RAW tail inside that old part is capped separately, at 64k. So:
+#
+#   SUMMARY_TAIL_TOKENS      raw, never-summarised old data in the prompt
+#   SUMMARY_CHUNK_TOKENS     old data per summarisation call
+#   SUMMARY_CONTEXT_TOKENS   summaries + raw tail together
+#
+# All three are tokens, estimated (see estimate_tokens below) because the bot
+# is engine-agnostic and has no tokenizer. They are budgets, not exact
+# counts: an estimate that is slightly wrong must never be the difference
+# between "the bot answers" and "the engine refused the prompt".
+DEFAULT_SUMMARY_TAIL_TOKENS = 65536
+DEFAULT_SUMMARY_CHUNK_TOKENS = 65536
+DEFAULT_SUMMARY_CONTEXT_TOKENS = 131072
+
+SUMMARY_TAIL_TOKENS = int(
+    os.environ.get("SUMMARY_TAIL_TOKENS", str(DEFAULT_SUMMARY_TAIL_TOKENS))
+)
+SUMMARY_CHUNK_TOKENS = int(
+    os.environ.get("SUMMARY_CHUNK_TOKENS", str(DEFAULT_SUMMARY_CHUNK_TOKENS))
+)
+SUMMARY_CONTEXT_TOKENS = int(
+    os.environ.get("SUMMARY_CONTEXT_TOKENS", str(DEFAULT_SUMMARY_CONTEXT_TOKENS))
+)
+
+#: Characters per token, measured on the operator's own chat: 1 MB of text is
+#: ~280k tokens (docs/tickets/README.md), i.e. 1048576 / 280000 = 3.75.
+#: Measured on mixed Russian/English group chat, which is the content that
+#: matters here.
+CHARS_PER_TOKEN = 3.75
+
+#: The estimate must OVER-count, never under-count: a budget that is
+#: under-estimated is a budget the engine can refuse. 1.15 buys the margin
+#: for code blocks, emoji and the JSON envelopes.
+TOKEN_ESTIMATE_SAFETY = 1.15
+
+
+def estimate_tokens(text) -> int:
+    """Approximate token count of a string.
+
+    Engine-agnostic by necessity: the bot must not know which engine serves
+    it, so it cannot ask for a tokenizer. The number is used for BUDGETS
+    (how much old history may be summarised, how much may be loaded raw),
+    where being 15% conservative is free and being 15% optimistic is not.
+
+    Empty text costs zero. A non-string (a multimodal content list) is
+    measured by its text parts only -- images are not remembered (T67.2).
+    """
+    if not text:
+        return 0
+    if not isinstance(text, str):
+        if isinstance(text, (list, tuple)):
+            total = 0
+            for part in text:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    total += estimate_tokens(part.get("text"))
+            return total
+        text = str(text)
+    return int(len(text) / CHARS_PER_TOKEN * TOKEN_ESTIMATE_SAFETY) + 1
+
+
+def estimate_message_tokens(message: dict) -> int:
+    """Approximate token count of one message dict."""
+    return estimate_tokens(message.get("content"))
+
 # === T68: how the window gets re-anchored ===
 #
 # Three modes, because the 200+ forks of this repo have wildly different
@@ -248,6 +334,9 @@ class ContextBudget:
         anchor: float | None = None,
         remember_days: int = REMEMBER_DAYS,
         summarizer: Callable[[Sequence[dict]], str] | None = None,
+        summary_tail_tokens: int = SUMMARY_TAIL_TOKENS,
+        summary_context_tokens: int = SUMMARY_CONTEXT_TOKENS,
+        summary_chunk_tokens: int = SUMMARY_CHUNK_TOKENS,
     ):
         self.strategy = strategy if strategy in VALID_STRATEGIES else "window"
         self.max_messages = max(0, int(max_messages))
@@ -258,6 +347,10 @@ class ContextBudget:
         #: Only used by the `summarize` strategy, and only if the caller
         #: supplies one. Kept as data, not called here — apply() is pure.
         self.summarizer = summarizer
+        # T70.5 budgets. See the T70.5 block above for the derivation.
+        self.summary_tail_tokens = max(0, int(summary_tail_tokens))
+        self.summary_context_tokens = max(0, int(summary_context_tokens))
+        self.summary_chunk_tokens = max(0, int(summary_chunk_tokens))
 
     # -- introspection, used by /stats and tests --------------------------
     def describe(self) -> dict:
@@ -266,6 +359,9 @@ class ContextBudget:
             "max_messages": self.max_messages,
             "remember_days": self.remember_days,
             "anchor": self.anchor,
+            "summary_tail_tokens": self.summary_tail_tokens,
+            "summary_context_tokens": self.summary_context_tokens,
+            "summary_chunk_tokens": self.summary_chunk_tokens,
         }
 
     def age_cutoff_active(self) -> bool:
@@ -332,37 +428,150 @@ class ContextBudget:
         """Default. Age filter + message cap. See apply()."""
         return self.apply(messages)
 
-    def apply_summarize(self, messages: Iterable[dict],
-                        summary: str | None = None) -> list[dict]:
-        """Keep the in-window tail, prepend a prepared summary.
+    def apply_summaries(self, messages: Iterable[dict],
+                        summaries: Iterable[dict] | None = None) -> list[dict]:
+        """Assemble the context for the `summarize` strategy (T70.5).
 
-        PURE. The LLM round-trip happens in summarize.py, ahead of time, and
-        its output arrives here as the `summary` string. That split is not
-        stylistic: apply() is the thing 12 tests hold pure, and a network call
-        in here would make every context test need an engine.
+        PURE. The LLM round-trips happen in summarize.py, ahead of time, and
+        their output arrives here as data. That split is not stylistic:
+        apply() is the thing a dozen tests hold pure, and a network call in
+        here would make every context test need an engine.
 
-        The summary becomes a synthetic user->assistant pair rather than a bare
-        system note, so the model reads it as a finished exchange rather than
-        as an instruction it might try to obey.
+        The operator's rule, verbatim:
 
-        `summary=None` — including when the caller forgot, or the summariser
-        failed — degrades to plain window(). Losing old context is survivable;
-        the bot going down is not.
+          > при загрузке соответсвенно грузить только готовые сводики и
+          > только сообщения которые не сведены
+
+        So the old part of the history is made of two kinds of thing:
+
+          * a chunk summary -- one per chunk, standing IN THE PLACE of the
+            chunk it replaces, so the model reads the timeline in order;
+          * a raw message -- old, never summarised, small enough that the
+            operator's rule says "load it as is".
+
+        `messages` must be in chronological order and carries the out-of-band
+            `_created_at`, `_id` and `_summary_id` fields. `summaries` is a
+            list of dicts with `id`, `text`, `first_msg_id` and
+            `last_created_at`; `first_msg_id` is what places the summary on
+            the timeline, and `last_created_at` is what says whether its
+            chunk is still outside the window.
+
+        A message that carries `_summary_id` pointing at a KNOWN summary is
+        NOT loaded raw -- the summary stands for it. That is the operator's
+        rule, and it is enforced here as well as in the query, so a caller
+        that hands over more than it meant to cannot produce a duplicated
+        chunk.
+
+        Two budgets, both applied from the NEWEST end, because the recent
+        past is the part worth keeping when something does not fit:
+
+          * the raw tail is capped at `summary_tail_tokens`;
+          * summaries + raw tail together at `summary_context_tokens`.
+
+        The fresh window keeps the message cap of the `window` strategy --
+        the same newest-N rule, so the two strategies do not disagree about
+        what "recent" means.
         """
         items = list(messages)
-        if not summary or not summary.strip():
-            return self.apply(items)
+        summaries = list(summaries or [])
+        if not items and not summaries:
+            return []
+
         inside, older = self.split_for_summary(items)
-        if not older:
-            # Nothing fell out of the window, so there is nothing to compress.
-            return self.apply(items)
-        body = summary.strip()
-        return [
-            {"role": "user", "content": "Сводка предыдущего разговора "
-                                        "(вне текущего окна памяти):"},
-            {"role": "assistant", "content": body},
-            *inside,
-        ]
+        summary_by_id = {}
+        for s in summaries:
+            sid = s.get("id")
+            if sid is not None:
+                summary_by_id[sid] = s
+
+        # --- the old part, as a chronological list of units ---------------
+        # A unit is a chunk summary or a raw message. `order` is the id of
+        # the first message the unit stands for -- that is what places it on
+        # the timeline, and it is why a summary sits where its chunk was
+        # rather than in a pile at the head.
+        units: list[dict] = []
+        for s in summary_by_id.values():
+            text = s.get("text") or ""
+            if not text.strip():
+                continue
+            # A summary whose chunk is INSIDE the window is not used: the
+            # messages themselves are in the context, and adding the summary
+            # would say the same thing twice.
+            last_at = s.get("last_created_at")
+            if last_at is not None and self.anchor > 0.0 \
+                    and float(last_at) >= self.anchor:
+                continue
+            units.append({
+                "kind": "summary",
+                "id": s.get("id"),
+                "text": text,
+                "tokens": estimate_tokens(text),
+                "order": s.get("first_msg_id") or 0,
+            })
+        for m in older:
+            sid = m.get("_summary_id")
+            if sid is not None and sid in summary_by_id:
+                # The summary stands for this message. Loading both would
+                # tell the model the same stretch of history twice.
+                continue
+            units.append({
+                "kind": "message",
+                "message": m,
+                "tokens": estimate_message_tokens(m),
+                "order": m.get("_id") or 0,
+            })
+        units.sort(key=lambda u: u["order"])
+
+        # --- budgets, applied from the newest end -------------------------
+        kept: list[dict] = []
+        raw_tokens = 0
+        total_tokens = 0
+        for unit in reversed(units):
+            if unit["kind"] == "message":
+                if raw_tokens + unit["tokens"] > self.summary_tail_tokens:
+                    # Older than the tail budget. The summaries that come
+                    # after it in the walk are OLDER still, but they are
+                    # compressed -- they are worth more per token, so the
+                    # walk continues instead of stopping here.
+                    continue
+                raw_tokens += unit["tokens"]
+            if total_tokens + unit["tokens"] > self.summary_context_tokens:
+                break
+            total_tokens += unit["tokens"]
+            kept.append(unit)
+        kept.reverse()
+
+        # --- the fresh window ---------------------------------------------
+        fresh = list(inside)
+        if self.max_messages and len(fresh) > self.max_messages:
+            fresh = fresh[-self.max_messages:]
+        if not fresh and items:
+            # Same guarantee as apply(): the newest message is the whole
+            # point of the turn, so it is never dropped. Unless the old part
+            # already carries it -- then adding it again would say the same
+            # message twice.
+            newest = items[-1]
+            already = any(u["kind"] == "message"
+                          and u["message"] is newest for u in kept)
+            if not already:
+                fresh = [newest]
+
+        # --- render --------------------------------------------------------
+        out: list[dict] = []
+        n_summaries = 0
+        for unit in kept:
+            if unit["kind"] == "summary":
+                n_summaries += 1
+                out.append({
+                    "role": "user",
+                    "content": "Сводка разговора вне окна памяти "
+                                f"(часть {n_summaries}):",
+                })
+                out.append({"role": "assistant", "content": unit["text"]})
+            else:
+                out.append(unit["message"])
+        out.extend(fresh)
+        return out
 
     # -- helper for the summarize strategy's caller ------------------------
     def split_for_summary(self, messages: Iterable[dict]) -> tuple[list[dict], list[dict]]:

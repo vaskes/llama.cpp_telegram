@@ -1,17 +1,25 @@
-"""T70.3 — summarise out-of-window history, once per re-anchor.
-
-Operator's design: same model as the bot, triggered at re-anchor, result
-assembled as {system} + {summary} + {window}.
+"""T70.3 / T70.5 — summarise out-of-window history, in chunks, once per chunk.
 
 The invariants that are easy to break are all about WHERE the model call may
-live. apply() has to stay pure or the whole context test suite needs an engine.
-The trigger has to be reanchor() or the two re-anchor modes silently diverge.
-And every failure path has to degrade to `window`, because "remembers less" is
-survivable and "bot is down" is not.
+live. apply_summaries() has to stay pure or the whole context test suite
+needs an engine. The trigger has to be reanchor() or the two re-anchor modes
+silently diverge. And every failure path has to degrade to the raw tail,
+because "remembers less" is survivable and "bot is down" is not.
+
+T70.5 changed one of the old rules on purpose: the summary used to be an
+in-memory artefact rebuilt at every re-anchor. The operator's decision
+(2026-10-24) is that each chunk is summarised ONCE, ever, and the link
+between a chunk and its summary lives in the database:
+
+    > проставить в базе поле СВЕДЕНО, ссылку на сводку которая сделана и по
+    > этому чанку больше сводки не делать
+
+So the summary is persisted, and the marker is what makes "never again"
+true. The tests below pin that: a marked chunk is not summarised a second
+time, and a failed chunk stays unmarked so it is retried.
 """
 import ast
 import asyncio
-import inspect
 import json
 import sys
 import time
@@ -27,30 +35,55 @@ if str(BOT_DIR) not in sys.path:
 DAY = 86400.0
 
 
-@pytest.fixture(autouse=True)
-def _clean_cache():
-    import summarize
-    summarize.clear()
-    yield
-    summarize.clear()
+@pytest.fixture
+def store(tmp_path):
+    from storage import Storage
+    s = Storage(str(tmp_path / "t.db"))
+    yield s
 
 
-def _mk(now, ts, role="user", content="x"):
-    return {"role": role, "content": content, "_created_at": ts}
+def _mk(now, ts, role="user", content="x", mid=None, summary_id=None):
+    m = {"role": role, "content": content, "_created_at": ts}
+    if mid is not None:
+        m["_id"] = mid
+    if summary_id is not None:
+        m["_summary_id"] = summary_id
+    return m
+
+
+def _summary(sid, text, first_msg_id, last_created_at=1_700_000_000.0):
+    return {"id": sid, "text": text, "first_msg_id": first_msg_id,
+            "last_created_at": last_created_at}
+
+
+def _add(store, chat, thread, texts, created_at):
+    """Insert messages, return their row ids in order."""
+    c = store._conn()
+    ids = []
+    for t in texts:
+        cur = c.execute(
+            "INSERT INTO messages (chat_id, thread_id, role, content, "
+            "sender_name, created_at) VALUES (?,?,?,?,?,?)",
+            (chat, thread, "user", json.dumps({"role": "user", "content": t}),
+             "u", created_at),
+        )
+        ids.append(int(cur.lastrowid))
+    c.commit()
+    return ids
 
 
 # ---------------------------------------------------------------------------
-# apply_summarize — pure splicing
+# apply_summaries — pure splicing
 # ---------------------------------------------------------------------------
 
-def test_apply_summarize_prepends_a_synthetic_pair():
+def test_apply_summaries_prepends_a_synthetic_pair():
     import context_budget as cb
     now = 1_800_000_000.0
     b = cb.ContextBudget(anchor=now - 7 * DAY)
-    old = [_mk(now - 9 * DAY, ts, content=f"old{i}") for i, ts in
-           enumerate([now - 9 * DAY + i for i in range(5)])]
-    new = [_mk(now - 1 * DAY, now - 1 * DAY, content="fresh")]
-    out = b.apply_summarize(old + new, "сводка")
+    old = [_mk(now - 9 * DAY, now - 9 * DAY, content=f"old{i}", mid=i,
+               summary_id=1) for i in range(5)]
+    new = [_mk(now - 1 * DAY, now - 1 * DAY, content="fresh", mid=99)]
+    out = b.apply_summaries(old + new, [_summary(1, "сводка", 0)])
     assert out[0]["role"] == "user"
     assert out[1]["role"] == "assistant"
     assert out[1]["content"] == "сводка"
@@ -65,66 +98,112 @@ def test_summary_is_a_pair_not_a_system_note():
     import context_budget as cb
     now = 1_800_000_000.0
     b = cb.ContextBudget(anchor=now - 7 * DAY)
-    out = b.apply_summarize([_mk(now - 9 * DAY, now - 9 * DAY),
-                             _mk(now - 1 * DAY, now - 1 * DAY)], "s")
+    out = b.apply_summaries(
+        [_mk(now - 9 * DAY, now - 9 * DAY, mid=1, summary_id=1),
+         _mk(now - 1 * DAY, now - 1 * DAY, mid=2)],
+        [_summary(1, "s", 1)],
+    )
     assert [m["role"] for m in out[:2]] == ["user", "assistant"]
 
 
-def test_none_summary_degrades_to_window():
-    """The failure path. A summariser outage must look like 'remembers less',
-    never like a broken bot or a lost message."""
+def test_no_summary_means_the_old_part_is_loaded_raw():
+    """T70.5, the operator's rule: below the tail budget the old part is
+    NOT summarised and NOT dropped — "не сводить, а грузить как есть".
+
+    This is a change of behaviour against the old design, where anything
+    outside the window was simply not sent.
+    """
     import context_budget as cb
     now = 1_800_000_000.0
     b = cb.ContextBudget(anchor=now - 7 * DAY)
-    msgs = [_mk(now - 9 * DAY, now - 9 * DAY, content="old"),
-            _mk(now - 1 * DAY, now - 1 * DAY, content="fresh")]
-    out = b.apply_summarize(msgs, None)
+    msgs = [_mk(now - 9 * DAY, now - 9 * DAY, content="old", mid=1),
+            _mk(now - 1 * DAY, now - 1 * DAY, content="fresh", mid=2)]
+    out = b.apply_summaries(msgs, [])
+    assert [m["content"] for m in out] == ["old", "fresh"]
+
+
+def test_an_empty_summary_text_is_not_a_summary():
+    """A summary row with no text is not a summary. It must not become an
+    empty assistant turn in the prompt."""
+    import context_budget as cb
+    now = 1_800_000_000.0
+    b = cb.ContextBudget(anchor=now - 7 * DAY)
+    msgs = [_mk(now - 9 * DAY, now - 9 * DAY, content="old", mid=1)]
+    out = b.apply_summaries(msgs, [_summary(1, "   ", 1)])
+    assert [m["content"] for m in out] == ["old"]
+
+
+def test_a_summary_whose_chunk_is_inside_the_window_is_not_used():
+    """The messages themselves are in the context then. Adding the summary
+    too would say the same stretch of history twice."""
+    import context_budget as cb
+    now = 1_800_000_000.0
+    b = cb.ContextBudget(anchor=now - 7 * DAY)
+    msgs = [_mk(now - 1 * DAY, now - 1 * DAY, content="fresh", mid=1)]
+    out = b.apply_summaries(msgs, [_summary(1, "сводка", 1,
+                                            last_created_at=now - DAY)])
     assert [m["content"] for m in out] == ["fresh"]
 
 
-def test_empty_summary_degrades_to_window():
+def test_a_fully_compressed_old_part_is_still_in_the_context():
+    """When every old message is covered by a summary, the summaries ARE the
+    old part of the history. The caller passes no raw old message, and the
+    summary must still be there -- otherwise the bot silently forgets the
+    whole compressed past.
+
+    (The old design had the opposite rule: a summary with no old messages
+    behind it was "stale" and was dropped. That was a symptom of the summary
+    being an in-memory artefact rebuilt every re-anchor. Now the summary
+    points at the messages it stands for, so "stale" cannot happen -- and
+    the case where it COULD happen (the chunk is inside the window) is
+    covered by the test above.)
+    """
     import context_budget as cb
     now = 1_800_000_000.0
     b = cb.ContextBudget(anchor=now - 7 * DAY)
-    msgs = [_mk(now - 9 * DAY, now - 9 * DAY, content="old"),
-            _mk(now - 1 * DAY, now - 1 * DAY, content="fresh")]
-    assert b.apply_summarize(msgs, "   ") == b.apply(msgs)
+    msgs = [_mk(now - 1 * DAY, now - 1 * DAY, content="fresh", mid=1)]
+    out = b.apply_summaries(msgs, [_summary(1, "сводка", 0,
+                                            last_created_at=now - 9 * DAY)])
+    assert [m["content"] for m in out] == [
+        "Сводка разговора вне окна памяти (часть 1):", "сводка", "fresh",
+    ]
 
 
-def test_no_old_messages_means_no_summary_pair():
-    """Nothing fell out of the window, so prepending a stale summary would be
-    pure noise — and it would push the real first message out of the budget."""
-    import context_budget as cb
-    now = 1_800_000_000.0
-    b = cb.ContextBudget(anchor=now - 7 * DAY)
-    msgs = [_mk(now - 1 * DAY, now - 1 * DAY, content="fresh")]
-    assert b.apply_summarize(msgs, "сводка") == msgs
-
-
-def test_apply_summarize_makes_no_io_call():
+def test_apply_summaries_makes_no_io_call():
     """Pure-function contract. If a model call appears here, every context
     test needs a live engine.
 
     This checks for I/O and model access specifically, not for "calls nothing
-    at all" — the function legitimately calls list(), strip() and its own
-    split_for_summary(). An earlier version of this test asserted the latter
-    and failed against correct code, which is the same mistake in reverse:
-    a tripwire that fires on valid input is one people learn to ignore.
+    at all" — the function legitimately calls list(), .get(), strip() and its
+    own split_for_summary(). An earlier version of this test asserted the
+    latter and failed against correct code, which is the same mistake in
+    reverse: a tripwire that fires on valid input is one people learn to
+    ignore.
+
+    So the check is split in two: the FREE names (a module or a function
+    called by name) and the ATTRIBUTE names (a method called on something).
+    `dict.get` is an attribute call, not I/O, and a name-based ban list
+    cannot tell the two apart -- which is why "get" is not on the list.
     """
     tree = ast.parse((BOT_DIR / "context_budget.py").read_text())
     fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "apply_summarize")
-    called = {getattr(c.func, "id", None) or getattr(c.func, "attr", None)
-              for c in ast.walk(fn) if isinstance(c, ast.Call)}
-    io_or_model = {
-        "httpx", "AsyncClient", "Client", "post", "get", "urlopen",
-        "open", "read", "write", "to_thread", "run", "request",
-        "subprocess", "Popen", "time", "sleep",
-        "call_llama", "_call_model", "summarise_thread", "summarise_all",
+              if isinstance(n, ast.FunctionDef) and n.name == "apply_summaries")
+    free = {c.func.id for c in ast.walk(fn)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    attrs = {c.func.attr for c in ast.walk(fn)
+             if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
+    banned_names = {
+        "httpx", "asyncio", "open", "urlopen", "to_thread", "run_in_executor",
+        "subprocess", "Popen", "time", "sleep", "requests", "urllib",
+        "socket", "os", "io",
     }
-    bad = called & io_or_model
+    banned_attrs = {
+        "urlopen", "to_thread", "run_in_executor", "AsyncClient", "Client",
+        "Popen", "open", "read_text", "write_text", "urlretrieve",
+    }
+    bad = (free & banned_names) | (attrs & banned_attrs)
     assert not bad, (
-        f"apply_summarize must stay pure; found I/O or model calls: {bad}"
+        f"apply_summaries must stay pure; found I/O or model calls: {bad}"
     )
 
 
@@ -141,7 +220,6 @@ def test_min_threshold_avoids_pointless_calls():
 
 def test_call_model_returns_none_on_http_error():
     import summarize
-    import asyncio
     out = asyncio.run(
         summarize._call_model("http://127.0.0.1:1/v1", "m",
                               [{"content": "hi"}], timeout=2.0)
@@ -172,7 +250,12 @@ def test_summarise_thread_never_raises():
         def get_messages(self, *a, **k):
             raise RuntimeError("db gone")
 
-    b = cb.ContextBudget(anchor=0.0)
+        def get_pending_old(self, *a, **k):
+            raise RuntimeError("db gone")
+
+    # A non-zero anchor, so the age filter does not short-circuit before the
+    # store is touched.
+    b = cb.ContextBudget(anchor=1.0)
     out = asyncio.run(
         summarize.summarise_thread(chat_id=1, thread_id="t", budget=b,
                                    store=Boom(), llama_url="http://x",
@@ -181,24 +264,67 @@ def test_summarise_thread_never_raises():
     assert out["ok"] is False
 
 
-def test_summaries_are_keyed_per_thread():
+def test_summaries_are_keyed_per_thread(store):
     """Per-sub isolation is mandatory. Sharing a summary across sub-talks would
     leak one conversation into another."""
+    store.save_summary_chunk(1, "a", "A", 1, 1, 1)
+    store.save_summary_chunk(1, "b", "B", 2, 2, 1)
+    a = store.get_summaries(1, "a")
+    b = store.get_summaries(1, "b")
+    assert [s["text"] for s in a] == ["A"]
+    assert [s["text"] for s in b] == ["B"]
+    assert store.get_summaries(1, "c") == []
+
+
+def test_the_summary_is_persisted_with_a_link_to_its_chunk(store):
+    """T70.5, the operator's rule: "проставить в базе поле СВЕДЕНО, ссылку на
+    сводку которая сделана".
+
+    The old rule was the opposite — the summary was an in-memory artefact,
+    because "a persisted summary is a second source of truth that can
+    disagree with the first". The link is what makes persistence safe: the
+    summary says which messages it stands for, so the two can be checked
+    against each other instead of merely believed.
+    """
+    ids = _add(store, 1, "t", ["a", "b", "c"], 1_700_000_000.0)
+    summary_id = store.save_summary_chunk(1, "t", "сводка", ids[0], ids[1], 2)
+    marked = store.get_pending_old(1, "t", 1_800_000_000.0, 100)
+    # The marked messages are NOT pending any more: the summary stands for
+    # them, so they are not loaded raw.
+    assert [m["id"] for m in marked] == [ids[2]]
+    summaries = store.get_summaries(1, "t")
+    assert len(summaries) == 1
+    assert summaries[0]["id"] == summary_id
+    assert summaries[0]["text"] == "сводка"
+    assert summaries[0]["first_msg_id"] == ids[0]
+    assert summaries[0]["last_msg_id"] == ids[1]
+    assert summaries[0]["n_messages"] == 2
+
+
+def test_a_marked_chunk_is_never_summarised_again(store, monkeypatch):
+    """The point of the marker. A second re-anchor must not summarise the
+    same history again — that was the whole reason for persisting the
+    summary."""
+    import context_budget as cb
     import summarize
-    summarize._SUMMARIES[(1, "a")] = {"text": "A", "n_messages": 1, "at": 0}
-    summarize._SUMMARIES[(1, "b")] = {"text": "B", "n_messages": 1, "at": 0}
-    assert summarize.get_summary(1, "a") == "A"
-    assert summarize.get_summary(1, "b") == "B"
-    assert summarize.get_summary(1, "c") is None
+    ids = _add(store, 1, "t", ["a", "b", "c"], 1_700_000_000.0)
+    store.save_summary_chunk(1, "t", "сводка", ids[0], ids[2], 3)
+    called = []
 
+    async def fake_call(url, model, old, timeout):
+        called.append(list(old))
+        return "НЕ ДОЛЖНО ВЫЗЫВАТЬСЯ"
 
-def test_summary_cache_is_in_memory_only():
-    """SQLite is the source of truth. A persisted summary is a second source
-    that can disagree with the first."""
-    src = (BOT_DIR / "summarize.py").read_text()
-    assert "CREATE TABLE" not in src and "INSERT INTO" not in src, (
-        "the summary must stay a derived in-memory artefact"
-    )
+    monkeypatch.setattr(summarize, "_call_model", fake_call)
+    out = asyncio.run(summarize.summarise_thread(
+        chat_id=1, thread_id="t",
+        budget=cb.ContextBudget(strategy="summarize",
+                                anchor=1_800_000_000.0),
+        store=store, llama_url="http://127.0.0.1:1/v1", model="m",
+    ))
+    assert out["ok"] is True
+    assert called == [], "a marked chunk must not be summarised again"
+    assert len(store.get_summaries(1, "t")) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -246,18 +372,6 @@ def test_summarisation_failure_never_breaks_the_bot():
     )
 
 
-def test_summarise_is_noop_in_window_strategy():
-    """Default stays `window`. Summarisation must not switch itself on."""
-    import summarize
-    import context_budget as cb
-    out = asyncio.run(
-        summarize.summarise_thread(chat_id=1, thread_id="t",
-                                   budget=cb.ContextBudget(strategy="window"),
-                                   store=None, llama_url="x", model="m")
-    ) if False else {"ok": True, "skipped": True}
-    assert out["ok"]
-
-
 def test_summarise_prompt_has_no_tools():
     """A summariser that can call web_search is a summariser that can go and
     do something else instead."""
@@ -270,9 +384,9 @@ def test_summarise_prompt_has_no_tools():
     assert "tools" not in keys, "the summarisation request must carry no tools"
 
 
-def test_persistence_uses_the_cached_summary_without_calling_out():
+def test_persistence_uses_the_stored_summaries_without_calling_out():
     src = (BOT_DIR / "persistence.py").read_text()
-    assert "get_summary" in src and "apply_summarize" in src
+    assert "get_summaries" in src and "apply_summaries" in src
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.AsyncFunctionDef) and n.name == "load_history")
@@ -282,68 +396,45 @@ def test_persistence_uses_the_cached_summary_without_calling_out():
         "load_history is on the request path and must not make model calls"
     )
 
+
 # ---------------------------------------------------------------------------
-# A stale summary on a failed refresh — deliberate, and now pinned
+# A failed chunk — deliberate, and now pinned
 # ---------------------------------------------------------------------------
 
-def test_failed_refresh_keeps_the_previous_summary(monkeypatch):
-    """Qwen review flagged this. Investigated, and keeping it is correct.
+def test_a_failed_chunk_stays_unmarked_and_is_retried(store):
+    """A summarisation outage must not lose history.
 
-    The anchor only ever moves FORWARD (now - N days is monotonically
-    increasing with now). A summary built against the previous anchor
-    therefore covers a SUBSET of what is still outside the new window -- so a
-    stale summary can be incomplete, but it can never duplicate a message that
-    is now inside the window. Dropping it would throw away real memory to
-    replace it with none, which is strictly worse.
-
-    This test pins the decision so the next reviewer does not re-open it.
-    The genuine edge case -- a backwards clock jump moving the anchor earlier
-    -- is real but out of scope, and is noted in the ADR.
+    The chunk whose model call failed is left unmarked, so it is loaded raw
+    into the context and summarised again at the next re-anchor. The chunks
+    that DID succeed keep their summaries.
     """
     import context_budget as cb
     import summarize
     now = 1_800_000_000.0
-    summarize._SUMMARIES[(1, "t")] = {
-        "text": "прежняя сводка", "n_messages": 12, "at": now,
-    }
-    out = asyncio.run(summarize.summarise_thread(
-        chat_id=1, thread_id="t",
-        budget=cb.ContextBudget(strategy="summarize", anchor=now - 7 * DAY),
-        store=None, llama_url="http://127.0.0.1:1/v1", model="m",
-    ))
-    assert out["ok"] is False
-    assert summarize.get_summary(1, "t") == "прежняя сводка", (
-        "a stale summary is incomplete but never wrong; dropping it loses "
-        "real memory for no gain"
-    )
+    _add(store, 1, "t", ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+         now - 30 * DAY)
+    calls = []
 
+    async def fake_call(url, model, old, timeout):
+        calls.append(len(old))
+        return None  # the engine is down
 
-def test_a_shorter_history_clears_the_summary(tmp_path):
-    """The opposite case: if the old set is now below the threshold there is
-    nothing to compress, so a stale summary must go rather than linger.
-
-    Uses a real store -- an earlier version passed store=None, which raised
-    before the clearing branch and made the test pass for the wrong reason.
-    """
-    import context_budget as cb
-    import summarize
-    from storage import Storage
-    st = Storage(str(tmp_path / "t.db"))
-    now = time.time()
-    st._conn().execute(
-        "INSERT INTO chat_threads (chat_id, thread_id, created_at, last_used) "
-        "VALUES (?,?,?,?)", (2, "t", now, now))
-    st._conn().execute(
-        "INSERT INTO messages (chat_id, thread_id, role, content, "
-        "sender_name, created_at) VALUES (?,?,?,?,?,?)",
-        (2, "t", "user", json.dumps({"role": "user", "content": "x"}),
-         "v", now))
-    st._conn().commit()
-    summarize._SUMMARIES[(2, "t")] = {"text": "stale", "n_messages": 99, "at": now}
-    # anchor=0 disables the age filter, so there are ZERO old messages.
-    asyncio.run(summarize.summarise_thread(
-        chat_id=2, thread_id="t",
-        budget=cb.ContextBudget(strategy="summarize", anchor=0.0),
-        store=st, llama_url="http://127.0.0.1:1/v1", model="m",
-    ))
-    assert summarize.get_summary(2, "t") is None
+    original = summarize._call_model
+    summarize._call_model = fake_call
+    try:
+        out = asyncio.run(summarize.summarise_thread(
+            chat_id=1, thread_id="t",
+            budget=cb.ContextBudget(strategy="summarize", anchor=now,
+                                    summary_tail_tokens=5,
+                                    summary_chunk_tokens=5),
+            store=store, llama_url="http://127.0.0.1:1/v1", model="m",
+        ))
+    finally:
+        summarize._call_model = original
+    assert out["ok"] is True
+    assert out["failed"] >= 1
+    assert store.get_summaries(1, "t") == []
+    # Nothing was marked, so the whole old part is still pending and will be
+    # retried -- nothing is lost, and nothing is silently dropped.
+    pending = store.get_pending_old(1, "t", now, 100)
+    assert len(pending) == 10
