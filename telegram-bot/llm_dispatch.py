@@ -206,9 +206,39 @@ async def _execute_bash(args, deps: DispatchDeps) -> ToolExecution:
                # the model's paraphrase -- or, worse, as a .txt
                # document, because the model pasted it into a code
                # block and the file feature took it out of the chat.
-               stdout=response.get("stdout", "") or ""),
+               stdout=_ledger_stdout(response.get("stdout", "") or "")),
         deps,
     )
+
+
+#: How much of the sandbox's output the ledger keeps.
+#:
+#: The ledger is written to the database and to the log, once per tool
+#: call. The sandbox's stdout is a whole terminal pane -- the echoed
+#: command, the output, the prompt and every command the session ran
+#: before -- and on production it measured 118 KB for a single call. A
+#: ledger that carries the whole pane turns every command into a
+#: hundred kilobytes of database rows and log lines, and the log is a
+#: bind-mount that outlives the container.
+MAX_LEDGER_STDOUT_CHARS = 2000
+
+
+def _ledger_stdout(stdout: str) -> str:
+    """The tail of the sandbox's output, bounded.
+
+    The tail, because that is the end that matters: the command that
+    just ran and what it printed. The head is the scrollback of what
+    the session did before, which is not what the command printed and
+    not what the chat should show.
+    """
+    if len(stdout) <= MAX_LEDGER_STDOUT_CHARS:
+        return stdout
+    marker = ("[... the pane's earlier characters were dropped: "
+              f"{len(stdout)} characters in total ...]\n")
+    keep = MAX_LEDGER_STDOUT_CHARS - len(marker)
+    if keep <= 0:
+        return marker[:MAX_LEDGER_STDOUT_CHARS]
+    return marker + stdout[-keep:]
 
 
 def _extract_between_markers(text: str, begin: str, end: str):

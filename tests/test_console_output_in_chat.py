@@ -27,7 +27,9 @@ BOT_DIR = Path(__file__).resolve().parent.parent / "telegram-bot"
 if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
+import llm_dispatch  # noqa: E402
 from llm_artifact import extract_files  # noqa: E402
+from llm_dispatch import DispatchDeps, execute_tool  # noqa: E402
 from llm_result import unwrap_answer  # noqa: E402
 
 
@@ -150,6 +152,73 @@ def test_a_model_echo_of_the_transcript_is_not_a_file():
     prose, files = extract_files(answer)
     assert files == []
     assert "uname -a" in prose
+
+
+async def test_the_ledger_does_not_carry_the_whole_pane(monkeypatch):
+    """The ledger is written to the database and to the log.
+
+    The sandbox's stdout is a whole terminal pane, and on production one
+    call measured 118 KB of it. A ledger that carries all of it turns
+    every command into a hundred kilobytes of rows and log lines -- and
+    the log is a bind-mount that outlives the container. So the ledger
+    keeps a bounded tail: the end of the pane, which is the command
+    that just ran and what it printed.
+    """
+    pane = ("HEAD_MARKER the very first line of the pane\n"
+            + "filler line\n" * 5000
+            + "TAIL_MARKER the command that just ran printed this\n")
+
+    async def fake_call(command, *, session_id=None, timeout=70.0,
+                        chat_type="private", chat_id=None):
+        return {"ok": True, "stdout": pane, "stderr": "",
+                "exit_code": 0, "duration_ms": 1}
+
+    import personal_tools.bash_command as bc
+    monkeypatch.setattr(bc, "call_bash_command", fake_call)
+    monkeypatch.setattr(bc, "is_enabled_for_active_profile", lambda: True)
+
+    deps = DispatchDeps(
+        bot=None,
+        chat_id=-1004461679108,
+        current_message_id=1,
+        chat_type="supergroup",
+        iteration=0,
+        custom_tools={},
+        donsetch_tools={},
+    )
+    outcome = await execute_tool("bash_command", {"command": "echo hi"}, deps)
+
+    stored = outcome.ledger["stdout"]
+    assert len(stored) <= llm_dispatch.MAX_LEDGER_STDOUT_CHARS, (
+        f"the ledger kept {len(stored)} characters of a "
+        f"{len(pane)}-character pane")
+    assert "TAIL_MARKER" in stored, (
+        "the ledger must keep the end of the pane -- that is the output "
+        "of the command")
+    assert "HEAD_MARKER" not in stored, (
+        "the ledger must not keep the head of the pane -- that is the "
+        "history of previous commands")
+
+
+def test_the_transcript_shows_the_tail_of_the_pane():
+    """Same reason: the chat shows what the command printed, and the
+    printed part is the end of the pane."""
+    pane = ("HEAD_MARKER the very first line of the pane\n"
+            + "filler line\n" * 5000
+            + "TAIL_MARKER the command that just ran printed this\n")
+    result = {
+        "text": "Готово.",
+        "executed_tools": [
+            {"name": "bash_command",
+             "args": {"command": "echo hi"},
+             "iter": 0,
+             "stdout": pane},
+        ],
+    }
+    answer = unwrap_answer(result)
+    assert "TAIL_MARKER" in answer.text
+    assert "HEAD_MARKER" not in answer.text, (
+        "the transcript showed the scrollback instead of the output")
 
 
 if __name__ == "__main__":

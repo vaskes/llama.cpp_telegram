@@ -133,7 +133,14 @@ def _format_executed_tools(executed_tools) -> str:
         out = printed.rstrip("\n")
         if out.strip():
             if len(out) > MAX_TRANSCRIPT_OUTPUT_CHARS:
-                out = (out[:MAX_TRANSCRIPT_OUTPUT_CHARS]
+                # The tail, not the head. The sandbox's stdout is a
+                # terminal pane: its head is the scrollback of what the
+                # session did before, and its tail is the command that
+                # just ran and what it printed. The model reads the
+                # same end (tool_result_to_text keeps the last 8000
+                # characters), so the chat and the model see the same
+                # thing.
+                out = (out[-MAX_TRANSCRIPT_OUTPUT_CHARS:]
                        + "\n[... the output was truncated ...]")
             lines.append(out)
     lines.append("```")
