@@ -19,6 +19,42 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The console output is a native Telegram code block
+
+The bash output is text in the message — which is right, because sending
+it as an attached file broke the eyes — but it arrived with its
+backticks visible, because Telegram renders a code block natively only
+when the message carries a parse mode.
+
+The answer now goes out as HTML, and the fenced block becomes a `<pre>`:
+monospace, selectable, with Telegram's own copy button.
+
+HTML and not MarkdownV2: MarkdownV2 needs eighteen characters escaped,
+and escaping them would turn the model's own `**bold**` into literal
+asterisks. The parse would fix the code block and break the prose
+around it. HTML needs three — `&`, `<`, `>` — so the prose survives as
+the model wrote it.
+
+Two rules keep the answer from being lost. A block the splitter cut in
+half stays literal text: a `<pre>` without its closing tag is a message
+Telegram rejects, and a rejected message means the user gets *nothing*,
+which is worse than a code block that reads as plain text. A code block
+bigger than one message stays literal too, so the splitter can cut it
+the way it cuts prose.
+
+And when a cut would land inside a block, it moves *before* the block,
+which opens the next message with it, whole — moving the cut past the
+block instead would make the message longer than Telegram's limit, and
+that is the same rejection wearing a different hat.
+
+Only the answer carries the parse mode. The notices and the errors are
+written for a person and have no markup to render — a parse mode there
+would only give them a new way to fail.
+
+`tests/test_telegram_code_formatting.py` covers it, and the new module
+`telegram_format.py` owns the decision: `escape_html`, `render_html`,
+`split_html`.
+
 ### The command menu was never registered in the mode production runs in
 
 The English menu below was deployed, and the menu in the chat stayed

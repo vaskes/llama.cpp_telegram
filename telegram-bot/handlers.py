@@ -70,8 +70,9 @@ from turn import Turn
 # import is unconditional again.
 from chat_utils import (
     _is_group_chat, _parse_subtalk_arg, _parse_topic_arg, _rate_limit_send,
-    split_text,
+    TELEGRAM_TEXT_CHUNK,
 )
+from telegram_format import render_html, split_html
 from access import (
     _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
     is_authorized, reject_if_unauthorized,
@@ -119,7 +120,8 @@ from prompts import GROUP_CONTEXT, RATING_RULES
 # === send_reply ===
 
 
-async def send_reply(update: Update, text: str, *, strip: bool = True):
+async def send_reply(update: Update, text: str, *, strip: bool = True,
+                     parse_mode: str | None = None):
     """Reply to a Telegram message, falling back to a helpful message if the model returned nothing.
 
     Telegram rejects empty messages with `Message text is empty`. Some models
@@ -136,6 +138,12 @@ async def send_reply(update: Update, text: str, *, strip: bool = True):
     a chunk trimmed at the boundary loses the space that separated the
     last word of one chunk from the first word of the next, and the user
     reads "строка 372строка 373" instead of two sentences.
+
+    `parse_mode` is Telegram's parse mode. It is None for the plain
+    messages -- the notices, the errors: their text is written for a
+    person and has no markup to render -- and "HTML" for the answer,
+    whose console-output block is a code block Telegram can render
+    natively. See telegram_format.
     """
     chat_id = update.effective_chat.id if update.effective_chat else None
     if chat_id is not None:
@@ -144,7 +152,7 @@ async def send_reply(update: Update, text: str, *, strip: bool = True):
         text = (text or '').strip()
     if not text or not text.strip():
         text = EMPTY_RESPONSE_FALLBACK
-    await _reply(update, text)
+    await _reply(update, text, parse_mode=parse_mode)
 
 
 # === _send_answer_text ===
@@ -165,19 +173,29 @@ async def _send_answer_text(update: Update, text: str):
     cannot forget the split. `send_reply` does the rate limiting and
     the empty-answer fallback, and it runs once per chunk: the chunks
     are separate messages, and Telegram counts messages, not answers.
+
+    The answer goes out as HTML. The console output the model produced
+    is a fenced code block, and Telegram renders a code block natively
+    only when the message carries a parse mode -- sent as plain text
+    the user reads the backticks too. `telegram_format` escapes the
+    prose and turns the complete code blocks into `<pre>`, and
+    `split_html` splits the result so that a `<pre>` is never cut in
+    half: a message Telegram cannot parse is a message the user never
+    gets.
     """
-    chunks = split_text(text)
+    html = render_html(text)
+    chunks = split_html(html, TELEGRAM_TEXT_CHUNK)
     if not chunks:
         # Nothing but whitespace. send_reply turns it into the friendly
         # "no answer" message; sending nothing would leave the user
         # waiting for a turn that already ended.
-        await send_reply(update, text)
+        await send_reply(update, text, parse_mode="HTML")
         return
     for chunk in chunks:
         # strip=False: a chunk trimmed at the boundary loses the space
         # between the last word of this chunk and the first word of the
         # next one.
-        await send_reply(update, chunk, strip=False)
+        await send_reply(update, chunk, strip=False, parse_mode="HTML")
 
 # === _reply_active ===
 

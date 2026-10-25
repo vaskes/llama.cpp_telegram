@@ -289,7 +289,9 @@ async def test_retry_keeps_the_executed_tools_preamble(monkeypatch, tmp_path,
 
     assert not _errors(capsys), f"retry took the error path: {_errors(capsys)}"
     joined = " ".join(sent.edits + sent.replies)
-    assert "```bash" in joined and "$ ls -la" in joined, (
+    # The trace is a code block, and the answer goes out as HTML: the
+    # block is a <pre>, not the literal fence the bot used to send.
+    assert "<pre>" in joined and "$ ls -la" in joined, (
         f"the tool trace was dropped from the retry: {joined!r}")
 
 

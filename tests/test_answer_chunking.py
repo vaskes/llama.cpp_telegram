@@ -357,10 +357,19 @@ def test_every_handler_sends_its_answer_through_the_helper():
 
 def test_the_helper_is_where_the_split_happens():
     """The helper must actually split. A helper that sends the answer in
-    one piece would pass the two tests above."""
+    one piece would pass the two tests above.
+
+    The split is `split_html`, not `split_text`: the answer goes out as
+    HTML, so the piece has to be cut where a `<pre>` cannot be cut in
+    half. The rendering is checked here too -- a helper that splits the
+    plain text and then sends it as HTML would cut a code block in
+    half."""
     tree = _handlers_tree()
     fn = _function(tree, "_send_answer_text")
-    assert _calls(fn, "split_text"), (
+    assert _calls(fn, "render_html"), (
+        "_send_answer_text does not render the answer as HTML -- the code "
+        "block would reach the chat as literal backticks")
+    assert _calls(fn, "split_html"), (
         "_send_answer_text does not split the answer -- it sends it in "
         "one message")
     assert _calls(fn, "send_reply"), (
@@ -373,4 +382,4 @@ def test_the_scan_found_the_handlers():
     tree = _handlers_tree()
     for name in HANDLERS:
         _function(tree, name)
-    assert len(_calls(_function(tree, "_send_answer_text"), "split_text")) == 1
+    assert len(_calls(_function(tree, "_send_answer_text"), "split_html")) == 1

@@ -681,6 +681,58 @@ tripwire.
 
 ---
 
+### 3.8 How an answer is formatted
+
+**X-6 — A parse mode is a contract with the channel, not a decoration.**
+`AUTO`
+
+The answer the user reads carries markup, because the console output
+the model produced is a fenced code block and Telegram renders a code
+block natively — monospace, selectable, with a copy button — only when
+the message carries a parse mode. Sent as plain text, the user reads
+the backticks too.
+
+HTML, not MarkdownV2. MarkdownV2 needs eighteen characters escaped
+(`_*[]()~`>#+-=|{}.!`), and escaping them destroys the model's own
+markdown: `**bold**` arrives as literal asterisks. The parse would
+fix the code block and break the prose around it. HTML needs three
+(`&`, `<`, `>`), so the prose survives as the model wrote it and the
+block becomes a `<pre>`.
+
+The contract has three halves, and all of them are about not losing the
+answer:
+
+* a **complete** fenced block is converted; a block the splitter cut in
+  half stays literal text. A `<pre>` without its closing tag is a
+  message Telegram rejects with "can't parse entities", and a rejected
+  message means the user gets *nothing* — a worse failure than a code
+  block that reads as plain text;
+* a block **bigger than one message** stays literal too, and the
+  splitter cuts it the way it cuts prose. A `<pre>` that does not fit
+  is a message Telegram rejects, and the plain text it replaced would
+  have been split and delivered;
+* a cut that would land inside a `<pre>` moves **before** that block,
+  and the block opens the next message, whole. Moving it *past* the
+  block would make the message longer than Telegram's limit — the same
+  rejection, wearing a different hat. The block always fits on its own,
+  because the rule above left anything bigger as literal text.
+
+So the escape happens before the split — Telegram counts the HTML it is
+sent, so the budget has to be spent on what is actually sent.
+
+Only the answer carries the parse mode. The notices and the errors are
+written for a person, have no markup to render, and a parse mode would
+only give them a new way to fail.
+
+Checked by `tests/test_telegram_code_formatting.py`: the console block
+becomes a `<pre>`, the prose survives, the special characters are
+escaped, an unclosed fence stays literal, a code block bigger than a
+message stays literal, a `<pre>` is never cut in half, every piece
+fits Telegram's limit, and the answer goes out with the parse mode
+while the plain messages do not.
+
+---
+
 ## 4. Rules for the reviewer and the harness
 
 These are the ones that cost me personally, three waves running. They are about
@@ -885,8 +937,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
 | `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
+| `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
 
-145 test files in total; the table above is the ones that guard a rule in
+148 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
