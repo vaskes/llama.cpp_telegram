@@ -687,6 +687,48 @@ cannot answer does not bind its socket, and the readiness criterion is
 the real one — an Application that has not finished initializing cannot
 read `app.bot.id`.
 
+**X-9 — What the chat already has, the chat does not get twice.**
+`AUTO`
+
+Measured on production, 2026-10-25. The operator asked for an HTML
+file. The model wrote it in the sandbox with a heredoc, called
+`send_file`, and the document arrived — 595 bytes, the right bytes.
+Then the chat got a second message: the transcript of that heredoc,
+which is the same HTML, twice over inside it — once inside the command
+(a heredoc command carries the whole file in its own text) and once
+inside the output (the sandbox answers with the pane, and the pane
+shows what was typed). A user who asked for a file got the file and a
+copy of it.
+
+The transcript exists because the operator asked for the console output
+in the chat (2026-10-24). That rule is about the case where the output
+is the *only* place the user can see what the model did. It is not a
+rule about repeating a deliverable that is already in the chat as a
+document.
+
+So a file that reached the chat takes the transcript with it. Four
+things stay as they were, and each of them is a decision:
+
+  * the transcript still goes to the chat when **no file was
+    delivered** — there it is the only witness;
+  * a delivery that **failed** does not count as a delivery — its
+    output is then the only witness, and hiding it would leave the user
+    with nothing;
+  * the transcript still goes into `raw`, which is what the bot
+    remembers. **Delivery and memory are two artefacts**: what the user
+    reads and what the next turn needs are not the same thing, and the
+    history is what a follow-up question about the file is answered
+    from;
+  * the files an answer carries — pulled out of the model's own text —
+    are **not** counted as a delivered file. The transcript cannot be
+    showing them twice, so it stays in the chat.
+
+Checked by `tests/test_trace_not_duplicating_a_delivered_file.py`: the
+transcript is kept out of the chat after a delivered file, stays in it
+when no file was delivered and when the delivery failed, stays in the
+remembered answer, and the files out of the model's own text do not
+switch it off.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1025,6 +1067,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
 
 | `test_console_output_in_chat.py` | 9 | The console output goes into the chat; it is not a file |
+| `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
 | `test_send_file_tool.py` | 14 | A file from the sandbox reaches the chat as a document |
 | `test_file_transport.py` | 18 | The file door: the bytes, the digest, the purge, the version |
 | `test_sandbox_contract.py` | 9 | The bot's claims about the sandbox match the sandbox we run |
@@ -1035,7 +1078,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
 
-150 test files in total; the table above is the ones that guard a rule in
+151 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

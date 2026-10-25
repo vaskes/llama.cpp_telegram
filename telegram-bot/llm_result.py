@@ -52,6 +52,39 @@ thinking out loud about a failure, not a deliverable. The type is the
 only thing that tells the two apart, so the split has to happen where
 the type is still visible.
 
+The transcript and the delivered file
+-------------------------------------
+
+The transcript in front of the answer is the console output of the
+commands the model ran (the operator's rule, 2026-10-24: the console
+output belongs in the chat).  It is also the one place where a file
+can arrive twice.
+
+Measured on production, 2026-10-25.  The operator asked for an HTML
+file.  The model wrote it in the sandbox with a heredoc, called
+`send_file`, and the document arrived -- 595 bytes, correct.  Then the
+chat got a second message: the transcript of the heredoc, which is the
+same HTML, twice over, once as the command and once as the output,
+because a heredoc command carries the whole file in its own text and
+the sandbox answers with the pane that shows what was typed.
+
+The user asked for a file and got the file and a copy of it.  So when
+a file reached the chat, the transcript does not go with it.
+
+Two things are deliberately NOT changed:
+
+  * the transcript still goes to the chat when no file was delivered.
+    There it is the only place the user can see what the model did, and
+    the operator asked for it by name;
+  * the transcript still goes into `raw`, which is what the bot
+    remembers, even when it is kept out of the chat.  Delivery and
+    memory are two different artefacts: what the user reads and what
+    the next turn needs are not the same thing.
+
+And the files the answer carries (`extract_files`) are not counted as
+"a file was delivered": those come out of the model's own text, so the
+transcript cannot be showing them a second time.
+
 Pure: no client, no clock, no await. That is the point of the
 extraction and it is what makes it testable on its own.
 """
@@ -145,6 +178,30 @@ def _format_executed_tools(executed_tools) -> str:
 
 
 
+def _delivered_a_file(executed_tools) -> bool:
+    """True when a file reached the chat in this turn.
+
+    The `send_file` tool is the only thing that puts a file into the
+    chat on its own, and its ledger carries the sha256 of the bytes it
+    delivered.  A delivery that failed has no ledger at all, so the
+    hash is what says "this one got there" -- and a file that did not
+    get there must NOT switch the transcript off: its output is then
+    the only place the user can see what the model wrote.
+
+    The files the answer carries (`extract_files`) are a different
+    channel and are NOT counted here.  Those come out of the model's
+    own text, so the transcript cannot be showing them twice.
+    """
+    for entry in executed_tools or ():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("name") != "send_file":
+            continue
+        if entry.get("sha256"):
+            return True
+    return False
+
+
 def unwrap_answer(result) -> Answer:
     """`call_llama`'s return value, as the answer to send.
 
@@ -171,5 +228,13 @@ def unwrap_answer(result) -> Answer:
         trace = _format_executed_tools(executed)
         if trace:
             raw = trace + "\n\n" + text
-            prose = trace + "\n\n" + prose
+            # 2026-10-25: the file is already in the chat, and the
+            # transcript would deliver it a second time -- the command
+            # that made it carries the whole file in its own text (a
+            # heredoc IS the file), so trimming the OUTPUT would not be
+            # enough, the command has to go as well.  The chat gets the
+            # model's answer; the transcript stays in `raw`, which is
+            # what the bot remembers.
+            if not _delivered_a_file(executed):
+                prose = trace + "\n\n" + prose
     return Answer(prose, files, raw)

@@ -19,6 +19,39 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The bot delivered the file twice
+
+The operator asked for an HTML file. The model wrote it in the sandbox
+with a heredoc, called `send_file`, and the document arrived — 595
+bytes, the right bytes. Then the chat got a second message: the
+transcript of that heredoc, which is the same HTML, twice over inside
+it — once inside the command (a heredoc command carries the whole file
+in its own text) and once inside the output (the sandbox answers with
+the pane, and the pane shows what was typed). A user who asked for a
+file got the file and a copy of it.
+
+A file that reached the chat now takes the transcript with it. Three
+things stay as they were:
+
+  * the transcript still goes to the chat when no file was delivered —
+    there it is the only place the user can see what the model did, and
+    the operator asked for it by name (2026-10-24);
+  * a delivery that *failed* does not count — its output is then the
+    only witness of what the model wrote;
+  * the transcript still goes into what the bot remembers (`raw`).
+    Delivery and memory are two artefacts: what the user reads and what
+    the next turn needs are not the same thing.
+
+The files an answer carries — the ones pulled out of the model's own
+text — are not counted as a delivered file: the transcript cannot be
+showing them twice.
+
+`tests/test_trace_not_duplicating_a_delivered_file.py` covers the rule
+with the shapes measured on the live sandbox, and
+`scripts/mutation_harness_trace_dup.py` mutates it: eight mutations,
+five caught, three survived as intended (the tripwire removed together
+with the behaviour it is there to catch).
+
 ### The bot's claims about the sandbox were three versions out of date
 
 The operator turned the sandbox's privilege mode on (side-car v2.8.0): a

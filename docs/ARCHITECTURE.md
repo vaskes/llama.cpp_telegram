@@ -50,8 +50,8 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, purge the copy
 ```
 
-58 top-level modules, 148 test files, 2475 tests collected in a checkout.
-CI collects 2456 of them — the sandbox-marked file is excluded by name.
+58 top-level modules, 151 test files, 2526 tests collected in a checkout.
+CI collects 2507 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 
@@ -76,7 +76,7 @@ tests, none of which build a full `call_llama`.
   llm_stream.py         310  StreamOutcome, stream_iteration, _fallback_to_nonstream
   user_notice.py         128  engine_failure_message
   llm_abort.py             64  finalize_aborted_turn
-  llm_result.py           175  Answer, unwrap_answer
+  llm_result.py           240  Answer, unwrap_answer
   llm_artifact.py         487  Artifact, extract_files
   llm_files.py            144  send_files
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape
