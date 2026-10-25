@@ -27,10 +27,10 @@
 
 | | |
 |---|---|
-| HEAD | forty-two commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window) |
-| Production | **deployed and verified** (2026-10-24 19:15–19:30). The host is up, `llama-qwen5090-256k` is `active`, the bot container runs `a6c20fc` with 0 restarts, `/healthz` is 200, the fatal scan is 0, `getWebhookInfo` is clean (pending 0, no last_error) and the smoke script passes 8/8. The answer split and the answer-files extraction were checked **against the live engine**: a 5856-character answer went out as two messages (4000 + 1856) that rejoin character for character, and a code block left the chat as `answer.py` (412 bytes) |
-| Pytest | `2263 passed, 1 skipped` locally |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- `2263 passed, 1 skipped` on both at `95c4a3f` (runs `40111495352`, `40111495690`) |
+| HEAD | 55 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door) |
+| Production | **deployed and verified** (2026-10-25 04:20). The bot container runs `fcef3d5` with 0 restarts, `/healthz` is 200, the fatal scan is 0, `getWebhookInfo` is clean (pending 0, no last_error) and the smoke script passes 8/8. The sandbox side-car is **v2.7.1** (the file door), and the door was checked on the deployed tree without the model: 200000 bytes through `/files`, the delivered sha256 equal to the sandbox's, the sandbox copy deleted, the pointer in the ledger being the channel's `file_id`. **`llama-qwen5090-256k` is `inactive`** -- the operator starts the engine by hand, so the bot has no LLM until he does |
+| Pytest | `2337 passed, 20 skipped` locally |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `fcef3d5` (runs `40150122264`, `40150121982`) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 54 `.py` files in `telegram-bot/` |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
