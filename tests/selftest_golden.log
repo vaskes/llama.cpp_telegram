@@ -83,7 +83,7 @@
 [selftest] running _download_with_limit test...
 [OK] oversized file rejected via file_size pre-check (no download)
 [OK] small file downloaded (250 bytes, no error reply)
-[OK] download exception -> 'Failed to download' reply (no download_as_chunks mention)
+[OK] download exception -> the download-failure reply (no download_as_chunks mention)
 [OK] post-check on len(buf) catches oversized file when file_size is missing
 [selftest] _download_with_limit tests: all pass
 [selftest] running sender-name flow test...

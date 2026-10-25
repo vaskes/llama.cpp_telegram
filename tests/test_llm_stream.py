@@ -377,7 +377,12 @@ async def test_a_dead_fallback_reports_both_errors(monkeypatch):
     monkeypatch.setattr(ls.httpx, "AsyncClient", lambda **_kw: _Boom())
     out, _ = await _run(_lines(), client=_Client([], fail=True))
     assert out.is_terminal is True
-    assert "both streaming and non-streaming failed" in out.terminal
+    # The user gets a sentence. The two exceptions are in the log
+    # ("[stream err ...]", "[fallback err ...]"), which is where the
+    # operator reads them -- not in the chat.
+    assert out.terminal, "the turn must end with something to say"
+    assert "HTTPError" not in out.terminal, out.terminal
+    assert "fallback died too" not in out.terminal, out.terminal
 
 
 # --- the seam --------------------------------------------------------

@@ -48,6 +48,7 @@ import httpx
 import limits
 from config import API_KEY, LLAMA_URL
 from context_budget import OVERFLOW_MESSAGE, is_context_overflow
+from user_notice import engine_failure_message
 from llm_finish import finish_fallback_empty
 from llm_sse import StreamAccumulator
 from llm_thinking import push_thinking
@@ -186,10 +187,12 @@ async def _fallback_to_nonstream(
             append_msg=msg)
     except Exception as e2:
         log.info(f"[fallback err iter={iteration}] {type(e2).__name__}: {e2}")
+        # The user gets a sentence, not a repr of two exceptions. The
+        # detail is in the two log lines above -- and it is where the
+        # operator reads it. See llm_failure.
         return StreamOutcome(
             is_terminal=True,
-            terminal=(f"[both streaming and non-streaming failed: "
-                      f"stream_err={stream_err!r}, fallback_err={e2!r}]"))
+            terminal=engine_failure_message(e2))
 
 
 async def stream_iteration(

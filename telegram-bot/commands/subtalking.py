@@ -21,6 +21,8 @@ from handlers import _general_thread_id, _reply, _reply_active
 from chat_utils import _is_group_chat, _parse_subtalk_arg, \
     _parse_topic_arg, _SUBTALK_NAME_RE
 from logconf import get_logger
+from user_notice import (TOPIC_CREATE_FAILURE_MESSAGE,
+                      TOPIC_DELETE_FAILURE_MESSAGE)
 
 log = get_logger(__name__)
 
@@ -53,7 +55,7 @@ async def cmd_newsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e:
             log.info(f"[ERR newsub-group] {type(e).__name__}: {e}")
-            await _reply(update, f'❌ createForumTopic failed: {e}')
+            await _reply(update, TOPIC_CREATE_FAILURE_MESSAGE)
             return
         # Record the topic in our local index so /subs and /delsub
         # can find it later. Telegram Bot API does NOT expose a
@@ -347,7 +349,7 @@ async def cmd_delsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e:
             log.info(f"[ERR delsub-group-delete] {type(e).__name__}: {e}")
-            await _reply(update, f'❌ deleteForumTopic failed: {e}')
+            await _reply(update, TOPIC_DELETE_FAILURE_MESSAGE)
             return
         # Remove from known_topics + wipe local message history.
         await asyncio.to_thread(

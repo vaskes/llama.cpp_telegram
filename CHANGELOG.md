@@ -19,6 +19,63 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### A dead engine answered the user with a Python repr
+
+The operator wrote "выведи hmtl" into the chat while the engine was
+down, and the bot answered:
+
+    [both streaming and non-streaming failed: stream_err=ConnectError(
+    'All connection attempts failed'), fallback_err=ConnectError(...)]
+
+That is what the user reads when the language engine is unreachable: a
+repr of two exceptions, in English, with no advice in it. It can also
+carry the engine's own address -- the internal endpoint is not the
+user's business.
+
+Three places build that text: the non-streaming classifier, the
+tools-less fallback, and the streaming branch when both of its attempts
+failed. All three now ask `llm_failure.engine_failure_message` for the
+sentence the user reads, and the classification is by the kind of
+failure, because that is what the user can act on:
+
+* the engine is not listening -- "the bot could not reach the language
+  engine, it is unavailable, try again in a minute";
+* the engine listened and did not answer in time -- a different advice
+  (shorten the question, or /reset);
+* the engine answered with an error.
+
+The technical detail did not go anywhere: it was always written to the
+log (`[stream err iter=0] ConnectError: ...`), and that is still where
+it is. The chat gets the sentence.
+
+`tests/test_engine_failure_message.py` (9) drives the real streaming
+branch with a dead client and the real error classifier, and asserts
+that the user's copy carries no exception repr, no class name and no
+URL.
+
+### The same leak on five more paths
+
+While the engine case was being fixed, the same class of leak turned up
+in the places that were not the engine at all -- each one logging the
+exception properly and then ALSO pushing its raw text into the chat:
+
+    ❌ Error: ConnectError('All connection attempts failed')   x4  (the four handlers' catch-alls)
+    ❌ Failed to download photo: ...
+    ❌ createForumTopic failed: ...
+    ❌ deleteForumTopic failed: ...
+
+All seven now ask `user_notice` for the wording, and the wording
+module is the one place that decides what the user reads when
+something breaks. The log keeps the detail in every case.
+
+`tests/test_no_exception_in_user_copy.py` (5) is an AST tripwire
+against the whole shape of the defect, not a grep: a name bound by
+`except ... as NAME` (or derived from one inside that handler),
+interpolated into an f-string, passed to a call whose text reaches
+the user. The log lines are untouched by it -- the detail belongs
+there -- and the tripwire includes a test that smuggles an exception
+past its own face, because a check that cannot fail is a comment.
+
 ### The troubleshooting guide caught up with the bot
 
 `docs/TROUBLESHOOTING.md` was written for `v0.10.2` and had not been

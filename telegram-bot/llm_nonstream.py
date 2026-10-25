@@ -41,6 +41,7 @@ import limits
 from config import API_KEY, LLAMA_URL
 from context_budget import OVERFLOW_MESSAGE, is_context_overflow
 from http_clients import _abortable_post
+from user_notice import engine_failure_message
 from logconf import get_logger
 from tool_isolation import (KNOWN_TOOL_NAMES, UnknownToolNameError,
                             validate_tool_calls)
@@ -257,7 +258,8 @@ async def tools_less_fallback(req_body: dict, *, iteration: int,
     except Exception as e2:
         log.info(f"[call_llama] tools-less fallback also failed: "
                  f"{type(e2).__name__}: {e2}")
-        return f"[llama-server request failed: {primary_error}]"
+        # The user gets a sentence; the repr stays in the log above.
+        return engine_failure_message(primary_error)
 
 
 # --- TECH-DEBT #8, block 2 -----------------------------------------
@@ -431,7 +433,10 @@ def classify_error(exc: BaseException, req_body: dict) -> ErrorStep:
     retry = status == 500 and bool(req_body.get("tools"))
     return ErrorStep(
         retry_without_tools=retry,
-        message="" if retry else f"[llama-server request failed: {exc}]",
+        # The user gets a sentence, not a Python repr. The repr -- with
+        # the engine's address in it -- stays in the log, where the
+        # call site writes it. See llm_failure.
+        message="" if retry else engine_failure_message(exc, status=status),
         status_code=status,
         body=body,
     )

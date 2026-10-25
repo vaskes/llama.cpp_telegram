@@ -818,6 +818,8 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_console_output_in_chat.py` | 9 | The console output goes into the chat; it is not a file |
 | `test_send_file_tool.py` | 14 | A file from the sandbox reaches the chat as a document |
 | `test_file_transport.py` | 15 | The file door: the bytes, the digest, the purge, the version |
+| `test_engine_failure_message.py` | 9 | What the user reads when the engine could not be reached |
+| `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |
 | `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
 
 143 test files in total; the table above is the ones that guard a rule in

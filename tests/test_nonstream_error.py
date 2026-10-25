@@ -28,6 +28,7 @@ import pytest
 BOT_DIR = Path(__file__).resolve().parent.parent / "telegram-bot"
 sys.path.insert(0, str(BOT_DIR))
 
+from user_notice import ENGINE_ERROR_MESSAGE  # noqa: E402
 from llm_nonstream import classify_error  # noqa: E402
 
 pytestmark = pytest.mark.tech_debt(
@@ -66,7 +67,9 @@ def test_a_500_on_a_request_without_tools_does_not_retry():
     """Nothing to strip. Retrying would send the identical request."""
     step = classify_error(_WithResponse(_Resp(500)), {"model": "m"})
     assert step.retry_without_tools is False
-    assert step.message == "[llama-server request failed: boom]"
+    assert step.message == ENGINE_ERROR_MESSAGE, (
+        "the user gets a sentence, not a repr of the exception -- the "
+        "repr stays in the log, where the call site writes it")
 
 
 @pytest.mark.parametrize("status", [400, 401, 404, 429, 502, 503])
@@ -78,7 +81,9 @@ def test_no_other_status_retries(status):
     """
     step = classify_error(_WithResponse(_Resp(status)), TOOLS)
     assert step.retry_without_tools is False
-    assert "llama-server request failed" in step.message
+    assert step.message == ENGINE_ERROR_MESSAGE
+    assert "boom" not in step.message, (
+        "the exception's text is the operator's, not the user's")
 
 
 def test_an_exception_without_a_response_is_still_classified():
@@ -87,12 +92,17 @@ def test_an_exception_without_a_response_is_still_classified():
     Reading `exc.response.status_code` unguarded raises AttributeError
     from inside the handler that is meant to be reporting the failure,
     so the user gets a traceback instead of an apology.
+
+    The apology is what the message is now: the classifier must not
+    read a response that is not there, and it must not hand the
+    exception's own text to the user either. The text goes to the log.
     """
     step = classify_error(ValueError("no response attached"), TOOLS)
     assert step.retry_without_tools is False
     assert step.status_code is None
     assert step.body == ""
-    assert "no response attached" in step.message
+    assert step.message == ENGINE_ERROR_MESSAGE
+    assert "no response attached" not in step.message
 
 
 def test_a_response_with_none_status_does_not_retry():

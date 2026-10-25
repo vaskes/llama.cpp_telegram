@@ -37,6 +37,7 @@ import tempfile
 # the prose, so that they can arrive as documents. `llm_files` sends
 # them.
 from llm_result import _format_executed_tools, unwrap_answer
+from user_notice import (DOWNLOAD_FAILURE_MESSAGE, GENERIC_FAILURE_MESSAGE)
 from llm_files import send_files
 from llm_abort import finalize_aborted_turn
 
@@ -742,7 +743,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.exception(f"[ERR photo] {type(e).__name__}: {e}")
         # T67.2: no rollback needed — the image was never written.
         try:
-            await _reply(update, f'❌ Error: {e}')
+            await _reply(update, GENERIC_FAILURE_MESSAGE)
         except Exception:
             pass
     finally:
@@ -803,7 +804,9 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
     try:
         buf = await file.download_as_bytearray()
     except Exception as e:
-        await _reply(update, f'❌ Failed to download {kind.lower()}: {e}')
+        log.info(f"[download] {kind.lower()} download failed: "
+                 f"{type(e).__name__}: {e}")
+        await _reply(update, DOWNLOAD_FAILURE_MESSAGE)
         return None
     if len(buf) > max_bytes:
         await _reply(update,
@@ -935,7 +938,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             log.exception("[ERR voice] rollback failed")
         try:
-            await _reply(update, f'❌ Error: {e}')
+            await _reply(update, GENERIC_FAILURE_MESSAGE)
         except Exception:
             log.exception("[ERR voice] error reply failed")
     finally:
@@ -1123,7 +1126,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 log.exception("[ERR doc] rollback failed")
             try:
-                await _reply(update, f'❌ Error: {e}')
+                await _reply(update, GENERIC_FAILURE_MESSAGE)
             except Exception:
                 log.exception("[ERR doc] error reply failed")
         finally:
@@ -1326,7 +1329,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.exception(f"[ERR text] {type(e).__name__}: {e}")
             traceback.print_exc()
             await turn.rollback('aborted')
-            await _reply(update, f'❌ Error: {e}')
+            await _reply(update, GENERIC_FAILURE_MESSAGE)
         finally:
             # T46: revert T45 (and original T41) edit_text pattern.
             # The success path already sends the final response via

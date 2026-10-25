@@ -5,8 +5,8 @@ them:
 
   * `_download_with_limit` -- the size cap, with the two distinct
     rejection paths. PTB 21.0 removed `File.download_as_chunks`, and any
-    call to it surfaced to the user as "Failed to download photo/voice",
-    so this block exists to keep `download_as_bytearray` in place;
+    call to it surfaced to the user as a download failure, so this block
+    exists to keep `download_as_bytearray` in place;
   * the sender-name flow -- display-name resolution, the
     persist/`_load_history` round-trip of `sender_name`, and the
     `From: <name>: ` tag for text and multimodal content.
@@ -24,6 +24,7 @@ from handlers import _download_with_limit, _sender_display_name
 from persistence import load_history as _load_history
 from persistence import persist as _persist_message
 from logconf import get_logger
+from user_notice import DOWNLOAD_FAILURE_MESSAGE
 
 # The name this section reports itself under. The summary line
 # in `run_all` uses it, so the label cannot drift away from the
@@ -49,7 +50,7 @@ async def check_download_with_limit() -> bool:
     # Bug: PTB 21.0 removed File.download_as_chunks. Any code path
     # still calling it raised "File object has no attribute
     # download_as_chunks", which the bot surfaced as
-    # "Failed to download photo/voice" to the user. We now use
+    # a download failure to the user. We now use
     # File.download_as_bytearray() inside _download_with_limit.
     # These 4 cases verify the helper behaves correctly with a
     # mock File object, without needing a real Telegram file.
@@ -115,14 +116,14 @@ async def check_download_with_limit() -> bool:
             async def download_as_bytearray(self):
                 raise RuntimeError("network error")
         r = await _download_with_limit(_FailingFile(), 100_000, "Photo", _FakeUpdate())
-        if r is not None or not captured_replies or "Failed to download" not in captured_replies[-1]:
-            log.warning(f"  [FAIL] failing file: expected None + 'Failed to download' reply, got {r!r} {captured_replies!r}")
+        if r is not None or not captured_replies or DOWNLOAD_FAILURE_MESSAGE not in captured_replies[-1]:
+            log.warning(f"  [FAIL] failing file: expected None + the download-failure reply, got {r!r} {captured_replies!r}")
             dl_ok = False
         elif "download_as_chunks" in captured_replies[-1]:
             log.warning(f"  [FAIL] download_as_chunks still mentioned in error: {captured_replies[-1]!r}")
             dl_ok = False
         else:
-            log.info("  [OK] download exception -> 'Failed to download' reply (no download_as_chunks mention)")
+            log.info("  [OK] download exception -> the download-failure reply (no download_as_chunks mention)")
 
         # Case 4: file_size missing + download returns oversized buf -> post-check rejects.
         captured_replies.clear()
