@@ -363,9 +363,16 @@ def test_no_handler_body_is_left_inline():
 
 def test_the_result_cap_is_applied_by_the_caller():
     """The cap belongs where the message is built, because only there does
-    the protocol shape exist."""
+    the protocol shape exist.
+
+    And the cut is marked: a tool result that is shorter than the text
+    says nothing about what is missing from it, and a model that cannot
+    see that answers as if it had seen the whole thing. The behavioural
+    half of this -- the real loop, a real tool call, and the message the
+    model gets -- is in tests/test_truncation_markers.py.
+    """
     src = loop_source()
-    assert "outcome.text[:MAX_TOOL_RESULT_CHARS]" in src
+    assert "condense(outcome.text, MAX_TOOL_RESULT_CHARS)" in src
 
 
 def test_the_ledger_is_appended_only_when_present():

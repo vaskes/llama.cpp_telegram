@@ -20,6 +20,13 @@ Telegram document. The reach is exactly the model's own reach: the
 sandbox user can already read whatever the model can read, so this
 hands the model nothing it did not have.
 
+The bytes come through the sandbox's file door (`GET /files?path=`),
+which is a stream of raw bytes, not text. The previous route -- base64
+through the terminal pane -- was bounded by the pane's scrollback, and
+when the pane overflowed it dropped the head silently, so the payload
+decoded into garbage. The file the model produced has to arrive as the
+file the model produced, and a binary has no text form to fall back on.
+
 The definition lives here, apart from the dispatcher, for the same
 reason `personal_tools/bash_command.py` holds its own definition: one
 place decides what the model is TOLD it can call, and one place
@@ -49,7 +56,11 @@ def send_file_tool_def() -> dict:
                 "file first, then call this with its path. Do NOT paste the "
                 "contents into the chat and do NOT send base64 -- the user "
                 "gets the file itself, and the bytes do not have to fit in "
-                "a message."
+                "a message. The file has to be finished and on disk: the "
+                "sandbox serves files that exist, not downloads in flight. "
+                "If the file is over the sandbox's own size limit the call "
+                "comes back with its real size, so read the answer before "
+                "retrying."
             ),
             "parameters": {
                 "type": "object",

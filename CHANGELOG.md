@@ -499,6 +499,58 @@ pointed into it. Two of them carried uncommitted work — a
 `tests/test_polling_integration.py` — and both were saved to the backup
 directory before the worktrees were removed.
 
+### A file leaves the sandbox through a door, not through a pane
+
+The `send_file` tool used to ask the sandbox for the file's **base64**,
+through the terminal pane, and read the payload back out of stdout
+between two markers. That route was bounded by the pane's scrollback
+(~400 KB, so about 675 KB of a real file), paid four thirds of the file
+in size, put the payload into the model's context — and, when the pane
+overflowed, dropped the **head** silently, so the payload decoded into
+garbage with nothing in the answer to say so.
+
+The sandbox side now publishes a file door (`vaskes/OpenWebUI-bash-sandbox`
+v2.7.0): `GET /files/meta?path=` for the size and the limit,
+`GET /files?path=` for the raw bytes as a stream, and
+`DELETE /files?path=` to remove the copy in the workspace. The bot's
+half is `personal_tools/file_transport.py`, and the order is the one the
+sandbox documents:
+
+1. **meta first** — the size and the sandbox's own limit are known
+   before a byte is pulled, so a file nobody could deliver is never
+   downloaded, and a file over the limit is refused with its real size
+   instead of a vague failure;
+2. **the bytes are streamed** into a temp file and hashed on the way, so
+   the digest of what was delivered is the digest of what is on disk;
+3. **the delivery** — a Telegram document, as a reply to the message
+   the question came from, so it lands in the topic and not in General;
+4. **the purge** — the sandbox copy is deleted, so the artifact lives in
+   one place. A failure to delete is reported, not raised: the file is
+   already in the chat.
+
+Two limits, and the smaller one wins: the sandbox's `AGENT_BINARY_LIMIT`
+(default 2 MiB) and Telegram's `sendDocument` (50 MB through the public
+Bot API).
+
+### Every cut says so
+
+The stdout of a command used to be the whole session transcript, and it
+was cut in four places without a word to the reader: the tool result
+the model reads, the stdout the ledger keeps, the transcript the chat
+shows, and the command output the model reads. A model that cannot see
+that it is looking at a fragment answers as if it had seen the whole
+thing; a user who reads a truncated transcript believes the command
+printed exactly that.
+
+The sandbox's stdout is now **this command's output and only this
+command's**, and it carries its own markers: one at the end for a cut
+tail, and one on the **first line** saying that the beginning did not
+survive the scrollback. The bot keeps the head and the tail of a long
+output, drops the middle, and says how much it dropped
+(`llm_truncation.py`). The head is not a preference: it is where the
+sandbox's warning lives, and a cut that keeps the tail would throw that
+warning away and show a fragment as if it were the whole thing.
+
 ## [v0.13.0-stable] — 2026-10-23 — Context memory, the dispatch split, and review waves 1–8
 
 **Status:** shipped and deployed. 194 commits since `v0.12.0-stable`; 107 of

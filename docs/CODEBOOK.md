@@ -392,11 +392,13 @@ no *other* definition, that every top-level function in that one file is
 either marked or on an allowlist with a stated reason, and that a marker
 naming a renamed function goes red.
 
-The 500-line threshold itself is enforced by nothing. Three of the five
-production modules over 500 lines have a section map; `storage.py` has
-one marker for 940 lines, `bash_command.py` has two for 590, and
-`llm_iteration.py` has none for 544. Writing this rule down as `AUTO`
-would have been a claim with no check behind it — see D-1.
+The 500-line threshold itself is enforced by nothing. Six production
+modules are over 500 lines; four carry section markers
+(`handlers.py` with 19, `context_budget.py` with 4, `bash_command.py`
+with 2, `storage.py` with 1 for 940 lines), and two carry none
+(`llm_iteration.py`, 550 lines, and `selftest_llm.py`, 784). Writing
+this rule down as `AUTO` would have been a claim with no check behind it
+— see D-1.
 
 **S-3 — One concept, one owning module.** `AUTO`
 `call_llama` talks to the engine and nothing else. Transport lives in
@@ -589,6 +591,31 @@ log, because the log could not distinguish "empty" from "unknown".
 
 A log line that lies about what it knows is worse than no log line: it
 is a false lead, and false leads cost more than silence.
+
+**X-3 — A cut says so, and keeps the end that carries the warning.**
+`AUTO`
+
+Every truncation in this repository used to be silent. The text was
+shorter and the reader could not tell that anything was missing: a
+model that reads a truncated tool result answers as if it had seen the
+whole thing, and a user who reads a truncated transcript believes the
+command printed exactly that.
+
+The sandbox side fixed its half of this in v2.7.0 — its stdout carries
+two markers, and one of them sits on the **first line**, saying that
+the beginning of the output did not survive the scrollback. The bot's
+half is `llm_truncation.condense`: it keeps the head and the tail,
+drops the middle, and says how much it dropped.
+
+The head is not a preference. It is where the sandbox's warning lives.
+A cut that keeps the tail throws that warning away and shows a fragment
+as if it were the whole thing — the exact defect the sandbox had just
+fixed, reintroduced one layer up. The tail is kept for the opposite
+reason: it is what the command printed last, and what the model quotes
+back when it pastes the output into its answer.
+
+Checked by `tests/test_truncation_markers.py`: four cut paths, and the
+sandbox's own marker surviving the bot's cut.
 
 ---
 
@@ -788,10 +815,12 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_edit_removal.py` | 6 | The edit-replace feature is gone, and stays gone |
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
 
-| `test_console_output_in_chat.py` | 7 | The console output goes into the chat; it is not a file |
-| `test_send_file_tool.py` | 8 | A file from the sandbox reaches the chat as a document |
+| `test_console_output_in_chat.py` | 9 | The console output goes into the chat; it is not a file |
+| `test_send_file_tool.py` | 12 | A file from the sandbox reaches the chat as a document |
+| `test_file_transport.py` | 13 | The file door: the bytes, the digest, the purge |
+| `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
 
-140 test files in total; the table above is the ones that guard a rule in
+143 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

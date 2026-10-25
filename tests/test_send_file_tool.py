@@ -2,27 +2,33 @@
 
 The operator asked for a zip, then for a 10 KB binary, and both times
 the bytes stayed in the sandbox: the only channel from the bot to the
-chat was the model's text, and a binary has no text form. What
-arrived instead was 180 lines of base64 in a message and two `.txt`
-documents full of console output.
+chat was the model's text, and a binary has no text form. What arrived
+instead was 180 lines of base64 in a message and two `.txt` documents
+full of console output.
 
 This tool is the other channel. The model creates the file in the
 sandbox and calls `send_file` with its path; the bot fetches the bytes
-through the same side-car and sends them as a Telegram document.
+through the sandbox's file door and sends them as a Telegram document.
+
+The route changed on 2026-10-25, when the sandbox side shipped the file
+door (`vaskes/OpenWebUI-bash-sandbox` v2.7.0). Before that the bytes
+came back as base64 through the terminal pane, and the pane was bounded
+by the scrollback: it lost the **head** silently when it overflowed, so
+the payload decoded into garbage. The tests below drive the real
+dispatcher over the real transport, against a fake door -- so what is
+pinned is the path the production path takes.
 
 What is pinned here:
 
   * the document that goes out is the file's bytes, not its text;
-  * the fetch goes through the sandbox's own exec, so the reach is
-    the model's own reach;
-  * a path that is not a file, a fetch that fails, and a file that is
-    too big for the channel all produce a message the model can read
-    and act on, instead of an exception;
-  * the tool is advertised only when the sandbox is -- no sandbox, no
-    way to send a file out of it.
+  * the bytes come through the file door and not through the shell;
+  * the sandbox copy is deleted after the delivery -- one copy, not two;
+  * the size is known before the bytes are pulled, so a file nobody
+    could deliver is never downloaded;
+  * a file that is too big, missing or refused produces a message the
+    model can read and act on, instead of an exception.
 """
-import base64
-import shlex
+import hashlib
 import sys
 from pathlib import Path
 
@@ -33,20 +39,32 @@ if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
 import llm_dispatch  # noqa: E402
+from file_door_fake import FakeSandbox, install  # noqa: E402
 from llm_dispatch import DispatchDeps, execute_tool  # noqa: E402
+
+PAYLOAD = bytes(range(256)) * 40          # 10240 bytes, not text
+PATH = "/workspace/random10k.bin"
 
 
 class _FakeBot:
     def __init__(self):
         self.documents = []
+        self.events = []
 
     async def send_document(self, **kwargs):
+        self.events.append("send_document")
         self.documents.append(kwargs)
         return SimpleMessage()
 
 
+class SimpleDocument:
+    """What Telegram answers with: the channel's own id for the file."""
+    file_id = "BQACAgIAAxFILEID"
+
+
 class SimpleMessage:
     message_id = 1
+    document = SimpleDocument()
 
 
 def _deps(bot=None):
@@ -62,54 +80,30 @@ def _deps(bot=None):
 
 
 @pytest.fixture
-def sandbox(monkeypatch):
-    """A stand-in for the sandbox: the file the model 'created'."""
-    state = {"files": {}, "commands": []}
-
-    async def fake_call(command, *, session_id=None, timeout=70.0,
-                        chat_type="private", chat_id=None):
-        state["commands"].append(command)
-        if "base64 -w0" in command:
-            # The real sandbox is a persistent tmux session: its stdout
-            # is the whole pane, with the echoed command and the
-            # previous session's output in it too. The fake reproduces
-            # that, because the extraction is the thing under test.
-            args = shlex.split(command)
-            path = next(a for a in args if a.startswith("/")).rstrip(";")
-            token = command.split('"_""')[-1].strip('"')
-            pane = [
-                "ubuntu@sandbox:/workspace$ " + command,
-                "LLAMABOT_SFB_" + token,
-            ]  # the markers are printed with a leading newline
-            if path in state["files"]:
-                encoded = base64.b64encode(state["files"][path]).decode()
-                # The pane is a terminal: long lines are wrapped. The
-                # fake wraps them too, or the extraction would be
-                # tested against a shape the sandbox never produces.
-                pane.extend(encoded[i:i + 76]
-                            for i in range(0, len(encoded), 76))
-            else:
-                pane.append("bash: base64: No such file or directory")
-            pane.append("LLAMABOT_SFE_" + token)
-            pane.append("ubuntu@sandbox:/workspace$ ")
-            return {"ok": True, "stdout": "\n".join(pane), "stderr": "",
-                    "exit_code": 0, "duration_ms": 1}
-        return {"ok": True, "stdout": "", "stderr": "",
-                "exit_code": 0, "duration_ms": 1}
+def sandbox(monkeypatch, tmp_path):
+    """The sandbox's file door, and a bot that records what it sent."""
+    fake = FakeSandbox()
+    install(monkeypatch, fake, tmp_path)
 
     import personal_tools.bash_command as bc
-    monkeypatch.setattr(bc, "call_bash_command", fake_call)
     monkeypatch.setattr(bc, "is_enabled_for_active_profile", lambda: True)
-    return state
+
+    # The shell door must stay shut: the file travels over HTTP, and a
+    # base64 dump through the pane is the route this replaced.
+    async def no_shell(command, **kwargs):
+        raise AssertionError(
+            f"the file went through the shell: {command}")
+
+    monkeypatch.setattr(bc, "call_bash_command", no_shell)
+    return fake
 
 
 async def test_the_file_is_sent_as_a_document(sandbox):
     """The whole point: the bytes travel, not a description of them."""
-    sandbox["files"]["/workspace/random10k.bin"] = bytes(range(256)) * 40
+    sandbox.files[PATH] = PAYLOAD
     deps = _deps()
 
-    outcome = await execute_tool("send_file", {"path": "/workspace/random10k.bin"},
-                                 deps)
+    outcome = await execute_tool("send_file", {"path": PATH}, deps)
 
     assert outcome.empty is False, (
         "sending a file is progress; an empty result would count the "
@@ -118,46 +112,121 @@ async def test_the_file_is_sent_as_a_document(sandbox):
     assert len(deps.bot.documents) == 1
     sent = deps.bot.documents[0]
     payload = sent["document"].input_file_content
-    assert payload == sandbox["files"]["/workspace/random10k.bin"], (
+    assert payload == PAYLOAD, (
         "the document has to carry the file's bytes")
     assert sent["chat_id"] == deps.chat_id
 
 
-def _sent_bytes(sent):
-    return sent["document"].input_file_content
+async def test_the_ledger_carries_the_pointer(sandbox):
+    """The pointer is the channel's own id for the file, not the path in
+    the sandbox: the path dies with the sandbox, and the channel's id
+    can be re-sent without pulling the bytes again."""
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+
+    outcome = await execute_tool("send_file", {"path": PATH}, deps)
+
+    entry = outcome.ledger
+    assert entry is not None, "a delivered file left no trace in the ledger"
+    assert entry["name"] == "send_file"
+    assert entry["size"] == len(PAYLOAD)
+    assert entry["sha256"] == hashlib.sha256(PAYLOAD).hexdigest()
+    assert entry["file_id"] == "BQACAgIAAxFILEID", (
+        "the pointer is the channel's id, not the path in the sandbox")
+
+
+async def test_the_digest_is_of_what_was_delivered(sandbox):
+    """The number the model can check against its own sha256sum."""
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+
+    outcome = await execute_tool("send_file", {"path": PATH}, deps)
+
+    digest = hashlib.sha256(PAYLOAD).hexdigest()
+    assert digest in outcome.text, (
+        f"the tool result does not carry the digest: {outcome.text}")
+
+
+async def test_the_file_travels_through_the_file_door(sandbox):
+    """Not through the shell. The pane route was bounded by the
+    scrollback and lost the head silently when it overflowed."""
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+
+    await execute_tool("send_file", {"path": PATH}, deps)
+
+    routes = [route for _, route, _ in sandbox.requests]
+    assert "/files" in routes, f"the file door was not used: {routes}"
+    assert "/bash" not in routes, f"the shell door was used: {routes}"
+
+
+async def test_the_size_is_known_before_the_bytes_are_pulled(sandbox):
+    """The meta door exists so that a file nobody could deliver is
+    never downloaded."""
+    sandbox.files[PATH] = PAYLOAD
+    sandbox.limit = 100
+    deps = _deps()
+
+    outcome = await execute_tool("send_file", {"path": PATH}, deps)
+
+    assert "10240" in outcome.text and "100" in outcome.text, outcome.text
+    routes = [route for method, route, _ in sandbox.requests
+              if method == "GET"]
+    assert routes == ["/files/meta"], (
+        "the file was pulled even though the sandbox says it is over "
+        f"the limit: {sandbox.requests}")
+    assert deps.bot.documents == []
+
+
+async def test_a_file_over_the_channel_limit_is_refused(sandbox, monkeypatch):
+    """Telegram's sendDocument takes 50 MB through the public Bot API.
+    A file over that cannot be delivered, and it is not downloaded to
+    find out."""
+    sandbox.files[PATH] = PAYLOAD
+    sandbox.limit = 0            # the sandbox does not care
+    deps = _deps()
+
+    async def lying_meta(path, **kwargs):
+        return {"name": "huge.bin", "path": path,
+                "size": llm_dispatch.MAX_SEND_FILE_BYTES + 1,
+                "mtime": 0, "mime": "application/octet-stream", "limit": 0}
+
+    import personal_tools.file_transport as ft
+    monkeypatch.setattr(ft, "file_meta", lying_meta)
+
+    outcome = await execute_tool("send_file", {"path": "/workspace/huge.bin"},
+                                 deps)
+
+    assert "sendDocument" in outcome.text, outcome.text
+    assert str(llm_dispatch.MAX_SEND_FILE_BYTES) in outcome.text, outcome.text
+    assert deps.bot.documents == []
+
+
+async def test_the_sandbox_copy_is_deleted_after_the_delivery(sandbox):
+    """One copy, not two: the sandbox is a scratchpad, the delivery is
+    the artifact."""
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+    deps.bot.events = []
+
+    outcome = await execute_tool("send_file", {"path": PATH}, deps)
+
+    assert "the sandbox copy was removed" in outcome.text, outcome.text
+    assert PATH not in sandbox.files, (
+        "the scratch copy is still in the workspace")
+    assert sandbox.paths("DELETE") == [PATH]
 
 
 async def test_the_document_lands_in_the_topic_of_the_question(sandbox):
     """A forum supergroup: a plain send lands in General, a reply lands
-    in the topic the question came from."""
-    sandbox["files"]["/workspace/a.bin"] = b"x" * 10
+    in the topic the user asked in."""
+    sandbox.files[PATH] = b"x" * 10
     deps = _deps()
-    await execute_tool("send_file", {"path": "/workspace/a.bin"}, deps)
+    await execute_tool("send_file", {"path": PATH}, deps)
     sent = deps.bot.documents[0]
     assert sent.get("reply_to_message_id") == deps.current_message_id, (
         "without the reply the document lands in General, not in the "
         "topic the user asked in")
-
-
-async def test_the_fetch_goes_through_the_sandbox(sandbox):
-    """The bot does not read the file itself; it asks the sandbox, the
-    same way the model does."""
-    sandbox["files"]["/workspace/a.bin"] = b"y" * 10
-    deps = _deps()
-    await execute_tool("send_file", {"path": "/workspace/a.bin"}, deps)
-    assert sandbox["commands"], "the file was never fetched"
-    assert "base64 -w0" in sandbox["commands"][0]
-
-
-async def test_a_path_with_a_quote_in_it_is_quoted(sandbox):
-    """The path comes from the model and goes into a shell command."""
-    weird = "/workspace/it's here.bin"
-    sandbox["files"][weird] = b"z" * 4
-    deps = _deps()
-    outcome = await execute_tool("send_file", {"path": weird}, deps)
-    assert "sent" in outcome.text, (
-        f"a path with a quote broke the fetch: {outcome.text}")
-    assert sandbox["commands"][0].count("'") >= 2
 
 
 async def test_a_missing_file_says_so(sandbox):
@@ -169,57 +238,25 @@ async def test_a_missing_file_says_so(sandbox):
         "the model has to be able to tell the user WHICH file failed")
 
 
-async def test_the_fetch_ignores_the_rest_of_the_pane(sandbox):
-    """The pane holds everything the session ever printed. A base64
-    dump from an earlier turn is in there, and it must not be mistaken
-    for this file."""
-    sandbox["files"]["/workspace/new.bin"] = b"NEW" * 10
+async def test_a_file_that_is_too_big_says_so(sandbox):
+    """The message names the real size, not a generic failure."""
+    sandbox.files[PATH] = PAYLOAD
+    sandbox.limit = 10
     deps = _deps()
-    outcome = await execute_tool("send_file", {"path": "/workspace/new.bin"},
-                                 deps)
-    assert "sent new.bin" in outcome.text, outcome.text
-    payload = deps.bot.documents[0]["document"].input_file_content
-    assert payload == b"NEW" * 10
-
-
-async def test_the_markers_are_not_in_the_echoed_command(sandbox):
-    """The command line is echoed into the same pane as the output. If
-    the marker appears in the echo, the extraction finds the echo
-    first and reads the command instead of the file."""
-    sandbox["files"]["/workspace/a.bin"] = b"q" * 8
-    deps = _deps()
-    await execute_tool("send_file", {"path": "/workspace/a.bin"}, deps)
-    command = sandbox["commands"][-1]
-    assert "LLAMABOT_SFB_" not in command, (
-        "the marker has to be split, or the echoed command line carries "
-        f"it and the extraction reads the command instead of the file: "
-        f"{command}")
-
-
-async def test_a_file_that_is_too_big_says_so(monkeypatch):
-    """The channel has a ceiling: the sandbox caps its captured output
-    at 1 MB, and base64 is four thirds of the file."""
-    import personal_tools.bash_command as bc
-
-    async def fake_call(command, *, session_id=None, timeout=70.0,
-                        chat_type="private", chat_id=None):
-        token = command.split('"_""')[-1].strip('"')
-        pane = "\n".join([
-            "ubuntu@sandbox:/workspace$ " + command,
-            "LLAMABOT_SFB_" + token,
-            "A" * (llm_dispatch.MAX_SEND_FILE_BASE64_CHARS + 10),
-            "LLAMABOT_SFE_" + token,
-        ])
-        return {"ok": True, "stdout": pane, "stderr": "",
-                "exit_code": 0, "duration_ms": 1}
-
-    monkeypatch.setattr(bc, "call_bash_command", fake_call)
-    monkeypatch.setattr(bc, "is_enabled_for_active_profile", lambda: True)
-    deps = _deps()
-    outcome = await execute_tool("send_file", {"path": "/workspace/big.bin"},
-                                 deps)
-    assert "too large" in outcome.text
+    outcome = await execute_tool("send_file", {"path": PATH}, deps)
+    assert "10240" in outcome.text, outcome.text
     assert deps.bot.documents == []
+
+
+async def test_the_temp_file_is_removed(sandbox, tmp_path):
+    """The pulled file is litter if it stays in the bot's container."""
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+
+    await execute_tool("send_file", {"path": PATH}, deps)
+
+    assert list(tmp_path.iterdir()) == [], (
+        f"the temp file stayed behind: {list(tmp_path.iterdir())}")
 
 
 async def test_no_path_says_so(monkeypatch):

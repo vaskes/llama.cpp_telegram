@@ -57,7 +57,7 @@ EXCEPTIONS = {
     ),
     "run_one": (
         "llm_iteration.py",
-        338,
+        343,
         "2026-10-25",
         "One tool-loop iteration, but nine concerns in the body. Open "
         "debt item 08, which is the item about splitting exactly this. "
@@ -65,7 +65,9 @@ EXCEPTIONS = {
         "accumulator (it was a local of the iteration, so the tools of "
         "a turn never reached the answer) and by the non-streaming "
         "ending, which now carries the same tools the streaming one "
-        "does.",
+        "does. It grew again the same day by the marked cut: the tool "
+        "result the model reads is now condensed with a marker, so the "
+        "model can tell a fragment from a whole.",
         "Split when debt item 08 is picked up; it names this function.",
     ),
     "handle_photo": (

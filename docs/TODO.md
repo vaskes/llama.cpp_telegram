@@ -101,34 +101,6 @@ the load now, so the only thing missing is a pair of human eyes -- the
 machine half of it was done on 2026-10-24 (see above), and the operator has
 already done steps 1, 2, 3 and 5.
 
-### A binary file from the sandbox cannot reach the chat
-
-**Status:** open since 2026-10-24, found by the operator's human test on
-production.
-
-**What happens now:** the model CAN make a real file in the sandbox. Proven
-on production at 19:57: the model ran `bash_command`, built
-`/workspace/probe/probe.zip` (273 bytes, md5 e6e347b8..., containing
-`note.txt` and `math.txt`) and reported the path, the size and the md5.
-Before the fix (`c7d32ae`) that very call was refused by the argument
-screen.
-
-**Why the user still does not get the file:** the only channel from the bot
-to the chat is the answer's TEXT. A code block becomes a document (the
-answer-files feature); a zip has no text form, so the bot can only report
-the path and offer base64. The model itself said so: "могу лишь показать
-содержимое или путь. Если хочешь -- дам base64 прямо в сообщении".
-
-**Decision needed:** is that acceptable, or is a file-transfer path wanted?
-
-* (a) accept it -- the bot reports path/size/md5 and the user asks for
-  base64 if they want the bytes;
-* (b) the bot fetches the file from the sandbox and sends it as a document.
-  The sandbox proxy would have to serve the file back, and the bot would
-  need a way to ask for it by path -- a feature, not a bug fix;
-* (c) base64 in the answer -- the answer-files feature would deliver it as
-  a `.b64` document, and the user decodes it by hand.
-
 ### The context blocker is not closed — and its list is growing
 
 **Status:** open. The operator restated this after the 2026-10-23 test
@@ -363,6 +335,7 @@ Not repeated here; each line points at the record.
 | `prompts.py` prose → `prompt_text/` | `TECH-DEBT.md` #12 |
 | Env-var name validation | `TECH-DEBT.md` #11 |
 | The edit-replace feature, removed | `CHANGELOG.md` § Unreleased; `docs/tech-debt/10-*.md` |
+| A binary file from the sandbox reaches the chat | `CHANGELOG.md` § Unreleased; `docs/BASH-SANDBOX.md` § Moving a file out of the sandbox |
 | T66.1 — the guaranteed minimum, decided | `docs/tickets/README.md` (open question 3); `docs/tickets/TICKET-T66-*.md` |
 | T70.5 — chunked summaries with a "СВЕДЕНО" marker | `CHANGELOG.md` § Unreleased; `docs/tickets/TICKET-T70-*.md` |
 | T70.6 — the reasoning cap lives on the engine | `CHANGELOG.md` § Unreleased; `docs/CALL_LLAMA.md` |
@@ -374,6 +347,33 @@ Not repeated here; each line points at the record.
 
 The items below were decided and are done. They are here because the
 *reasoning* is worth keeping, not because they are pending.
+
+### A binary file from the sandbox cannot reach the chat
+
+**Status:** ✅ **closed 2026-10-25.** Option (b) was built: the sandbox's
+file door, shipped on the sandbox side as
+`vaskes/OpenWebUI-bash-sandbox` v2.7.0 (`ae4730e`).
+**Where:** `telegram-bot/personal_tools/file_transport.py`,
+`telegram-bot/llm_dispatch.py` (`_execute_send_file`),
+`docs/BASH-SANDBOX.md` § "Moving a file out of the sandbox".
+
+The model creates the file and calls `send_file` with its path. The bot
+asks the sandbox what the file is (size, limit), pulls the bytes as a
+stream, hashes them, sends them as a Telegram document in the topic the
+question came from, and then deletes the sandbox copy.
+
+**What it replaced:** base64 through the terminal pane. That route was
+bounded by the pane's scrollback (~400 KB of real file), paid four
+thirds of the file in size, put the payload into the model's context,
+and -- when the pane overflowed -- dropped the **head** silently, so the
+payload decoded into garbage with nothing in the answer to say so. The
+door has no such ceiling: the smaller of the sandbox's
+`AGENT_BINARY_LIMIT` and Telegram's 50 MB is the real one.
+
+**The one-copy rule:** the delivery is the copy that counts, the
+workspace is a scratchpad, so the sandbox copy is deleted after the
+delivery. A file that lives in two places at once lives in the one
+nobody is looking at as often as in the one they are.
 
 ### T70.5 — what if the summary itself does not fit in the context window?
 

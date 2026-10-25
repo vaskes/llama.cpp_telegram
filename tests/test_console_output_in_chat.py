@@ -154,23 +154,31 @@ def test_a_model_echo_of_the_transcript_is_not_a_file():
     assert "uname -a" in prose
 
 
-async def test_the_ledger_does_not_carry_the_whole_pane(monkeypatch):
+async def test_the_ledger_does_not_carry_the_whole_output(monkeypatch):
     """The ledger is written to the database and to the log.
 
-    The sandbox's stdout is a whole terminal pane, and on production one
+    The sandbox's stdout is one command's output, and on production one
     call measured 118 KB of it. A ledger that carries all of it turns
     every command into a hundred kilobytes of rows and log lines -- and
     the log is a bind-mount that outlives the container. So the ledger
-    keeps a bounded tail: the end of the pane, which is the command
-    that just ran and what it printed.
+    keeps a bounded piece of it, and says what it dropped.
+
+    Which piece is a decision, and it changed on 2026-10-25 with the
+    sandbox's v2.7.0. The stdout used to be a whole terminal pane, so
+    the ledger kept the tail: the end was the command that had just
+    run. Now the stdout is that command's output and nothing else, and
+    the beginning is the part that carries the sandbox's own marker
+    ("the beginning of this output no longer fits in the session
+    scrollback"). A ledger that keeps the tail throws that marker away
+    and shows a fragment as if it were the whole thing.
     """
-    pane = ("HEAD_MARKER the very first line of the pane\n"
-            + "filler line\n" * 5000
-            + "TAIL_MARKER the command that just ran printed this\n")
+    output = ("HEAD_MARKER the very first line of the output\n"
+              + "filler line\n" * 5000
+              + "TAIL_MARKER the command that just ran printed this\n")
 
     async def fake_call(command, *, session_id=None, timeout=70.0,
                         chat_type="private", chat_id=None):
-        return {"ok": True, "stdout": pane, "stderr": "",
+        return {"ok": True, "stdout": output, "stderr": "",
                 "exit_code": 0, "duration_ms": 1}
 
     import personal_tools.bash_command as bc
@@ -191,34 +199,38 @@ async def test_the_ledger_does_not_carry_the_whole_pane(monkeypatch):
     stored = outcome.ledger["stdout"]
     assert len(stored) <= llm_dispatch.MAX_LEDGER_STDOUT_CHARS, (
         f"the ledger kept {len(stored)} characters of a "
-        f"{len(pane)}-character pane")
+        f"{len(output)}-character output")
     assert "TAIL_MARKER" in stored, (
-        "the ledger must keep the end of the pane -- that is the output "
-        "of the command")
-    assert "HEAD_MARKER" not in stored, (
-        "the ledger must not keep the head of the pane -- that is the "
-        "history of previous commands")
+        "the ledger must keep the end of the output -- that is what the "
+        "command printed last, and what the model quotes back")
+    assert "HEAD_MARKER" in stored, (
+        "the ledger must keep the head of the output -- that is where the "
+        "sandbox's own marker about a lost beginning lives")
+    assert "characters were dropped from the middle" in stored, (
+        "the ledger shows a cut as if it were the whole output")
 
 
-def test_the_transcript_shows_the_tail_of_the_pane():
-    """Same reason: the chat shows what the command printed, and the
-    printed part is the end of the pane."""
-    pane = ("HEAD_MARKER the very first line of the pane\n"
-            + "filler line\n" * 5000
-            + "TAIL_MARKER the command that just ran printed this\n")
+def test_the_transcript_shows_both_ends_of_the_output():
+    """Same reason as the ledger: the chat shows what the command
+    printed, and it has to say when what it shows is not all of it."""
+    output = ("HEAD_MARKER the very first line of the output\n"
+              + "filler line\n" * 5000
+              + "TAIL_MARKER the command that just ran printed this\n")
     result = {
         "text": "Готово.",
         "executed_tools": [
             {"name": "bash_command",
              "args": {"command": "echo hi"},
              "iter": 0,
-             "stdout": pane},
+             "stdout": output},
         ],
     }
     answer = unwrap_answer(result)
     assert "TAIL_MARKER" in answer.text
-    assert "HEAD_MARKER" not in answer.text, (
-        "the transcript showed the scrollback instead of the output")
+    assert "HEAD_MARKER" in answer.text, (
+        "the transcript dropped the head of the output -- that is where "
+        "the sandbox's marker about a lost beginning lives")
+    assert "characters were dropped from the middle" in answer.text
 
 
 if __name__ == "__main__":

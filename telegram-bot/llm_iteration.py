@@ -56,6 +56,7 @@ from llm_stream import stream_iteration
 from llm_thinking import push_thinking
 from llm_toolargs import ArgsRejected, parse_tool_args
 from llm_toolcalls import normalize_tool_calls
+from llm_truncation import condense
 from logconf import get_logger
 from tool_isolation import KNOWN_TOOL_NAMES
 
@@ -437,7 +438,12 @@ class ToolLoop:
             self.msgs.append({
                 'role': 'tool',
                 'tool_call_id': tc_id,
-                'content': outcome.text[:MAX_TOOL_RESULT_CHARS],
+                # The cut is marked, not silent. A tool result that is
+                # shorter than the text says nothing about what is
+                # missing, and a model that cannot see that it is
+                # looking at a fragment answers as if it had seen the
+                # whole thing.
+                'content': condense(outcome.text, MAX_TOOL_RESULT_CHARS),
             })
 
         # T49: removed the early-return on saw_unavailable_tool. The

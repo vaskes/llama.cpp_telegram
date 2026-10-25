@@ -268,19 +268,89 @@ anything within the sandbox's policy:
   - Run for more than 60 seconds per command (sandbox
     timeout; bot also has a 70s httpx timeout on top).
 
+## Moving a file out of the sandbox
+
+Text goes through the shell; **bytes have their own door**.
+
+The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.0`)
+publishes three routes next to the shell:
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/files/meta?path=P` | size, name, mtime, and the sandbox's own size limit |
+| GET | `/files?path=P` | the file's **raw bytes**, streamed |
+| DELETE | `/files?path=P` | remove the file from the sandbox (204) |
+
+The bot's `send_file` tool is the courier: the model creates a file in
+the sandbox, calls `send_file` with its path, and the bot pulls the
+bytes, sends them as a Telegram document, and then deletes the sandbox
+copy. One copy of the artifact survives -- the delivery.
+
+The order is not a detail:
+
+1. **meta first.** The size and the sandbox's limit are known before a
+   byte is pulled, so a file nobody could deliver is never downloaded.
+2. **the bytes are streamed** into a temp file in the bot's container,
+   and hashed on the way through. The digest of what was delivered is
+   then the digest of what is on disk, and the model can compare it with
+   its own `sha256sum`.
+3. **the delivery.** The file is handed over as a file object, not as
+   a bytes object the bot had to hold.
+4. **the purge.** `DELETE /files` removes the scratch copy. A failure
+   here is reported, not raised: the file is already in the chat.
+
+Two limits, and the smaller one wins:
+
+| Limit | Value | Who sets it |
+|---|---|---|
+| Sandbox | `AGENT_BINARY_LIMIT`, default `2048k` (2 MiB), `0` = unlimited | the sandbox's env |
+| Channel | `sendDocument` accepts **50 MB** through the public Bot API (2000 MB with a local `telegram-bot-api`) | Telegram |
+
+A file over the sandbox's limit comes back as a 413 whose message names
+its real size, so the bot can say "the file is 3 MB, the sandbox allows
+2 MB" instead of failing vaguely.
+
+**This replaced base64 through the terminal pane.** That route was
+bounded by the pane's scrollback (~400 KB), paid four thirds of the
+file in size, put the payload into the model's context, and -- when the
+pane overflowed -- dropped the **head** silently, so the payload
+decoded into garbage with nothing in the answer to say so.
+
+### The stdout contract
+
+The sandbox's `stdout` is **this command's output and only this
+command's** (since v2.7.0; before that it was the whole session
+transcript). It is bounded by `AGENT_STDOUT_LIMIT` (default 512 KiB),
+and it says when it was cut:
+
+| Marker | Where | What it means |
+|---|---|---|
+| `[output truncated at N bytes]` | at the end | the **tail** was cut; the beginning is intact |
+| `[the beginning of this output no longer fits in the session scrollback — what follows is only its tail]` | on the **first line** | the beginning is gone; what follows is a tail, not an answer |
+
+The bot keeps the beginning of the output for exactly this reason: a
+cut that keeps the tail would throw that first line away, and the chat
+would show a fragment as if it were the whole thing. Every cut the bot
+makes itself is marked too (`llm_truncation.py`).
+
 ## Compatibility
 
 | Sandbox tag | Bot tag | Notes |
 |---|---|---|
 | `a3fa2f2` (v2.3.0) | `5659ed6` (v0.11.0-pre) | Tested together. |
-| `04be1d8` (v2.4.5) | `6901827` (v0.12.0-stable) | Tested together. Current pin. |
-| older tags | any | Not tested. May have API changes. |
+| `04be1d8` (v2.4.5) | `6901827` (v0.12.0-stable) | Tested together. |
+| `ae4730e` (v2.7.0) | this branch | The file door and the stdout contract. |
 
 The bot treats the sandbox as a black box: it sends JSON over
 HTTP and gets JSON back. As long as the wire format is
 preserved, the bot and sandbox can be upgraded independently.
 The pinned tags are the operator's guarantee that they have
 been smoke-tested together.
+
+**The file door needs v2.7.0.** With an older sandbox the `/files`
+routes do not exist, and `send_file` reports that the sandbox refused
+the file -- the bot does not fall back to base64, because the whole
+point of the door is that the bytes arrive intact.
 
 ## Tests
 

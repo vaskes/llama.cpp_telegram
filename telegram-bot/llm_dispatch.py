@@ -37,12 +37,10 @@ uniform signal to key on. It is kept as its own function because it is
 pure and because it is the kind of predicate that will be wrong one day
 and should then be changed in one place with one test.
 """
-import base64
 import os
-import secrets
-import shlex
 from typing import Any, NamedTuple, Optional
 
+from llm_truncation import condense
 from rating import _execute_react_to_message
 
 UNAVAILABLE_TOOL_MESSAGE = (
@@ -67,11 +65,15 @@ SESSION_ID_TEMPLATE = "chat-{chat_id}"
 
 MAX_TOOL_RESULT_CHARS = 12000
 
-#: How much base64 the send_file path may fetch. The sandbox caps its
-#: captured output at 1 MB, and base64 is four thirds of the file, so
-#: this is the ceiling of the channel rather than a policy: a file
-#: bigger than this cannot come out of the sandbox this way.
-MAX_SEND_FILE_BASE64_CHARS = 900_000
+#: The channel's own ceiling for a document.
+#:
+#: Telegram's public Bot API accepts 50 MB in `sendDocument` (2000 MB with
+#: a local telegram-bot-api). The sandbox has its own limit -- the one
+#: `AGENT_BINARY_LIMIT` sets -- and the smaller of the two is the one
+#: that can actually be used. This is the channel's half of that
+#: statement, and it is checked BEFORE the bytes are pulled, so a file
+#: nobody could have delivered is never downloaded.
+MAX_SEND_FILE_BYTES = 50 * 1024 * 1024
 
 
 class DispatchDeps(NamedTuple):
@@ -214,53 +216,39 @@ async def _execute_bash(args, deps: DispatchDeps) -> ToolExecution:
 #: How much of the sandbox's output the ledger keeps.
 #:
 #: The ledger is written to the database and to the log, once per tool
-#: call. The sandbox's stdout is a whole terminal pane -- the echoed
-#: command, the output, the prompt and every command the session ran
-#: before -- and on production it measured 118 KB for a single call. A
-#: ledger that carries the whole pane turns every command into a
-#: hundred kilobytes of database rows and log lines, and the log is a
-#: bind-mount that outlives the container.
+#: call, and the log is a bind-mount that outlives the container. A
+#: ledger that carries a whole command's output turns every command
+#: into kilobytes of database rows and log lines.
 MAX_LEDGER_STDOUT_CHARS = 2000
 
 
 def _ledger_stdout(stdout: str) -> str:
-    """The tail of the sandbox's output, bounded.
+    """The command's output, bounded, with the cut marked.
 
-    The tail, because that is the end that matters: the command that
-    just ran and what it printed. The head is the scrollback of what
-    the session did before, which is not what the command printed and
-    not what the chat should show.
+    The sandbox's stdout is this command's output and only this
+    command's (sandbox v2.7.0). It used to be a whole terminal pane --
+    the echoed command, the prompt, and every command the session ran
+    before -- which is why this used to keep the tail: the tail was the
+    part that belonged to the command that just ran.
+
+    Now the head is the part that belongs to the command. The sandbox
+    prints its "the beginning of this output no longer fits in the
+    session scrollback" marker on the FIRST line, and a ledger that
+    keeps the tail throws that marker away: the chat is shown a fragment
+    as if it were the whole thing, which is the defect the sandbox fixed
+    on its side. `condense` keeps both ends and says what it dropped in
+    between, so the marker survives and the end the model quotes back
+    survives too.
     """
-    if len(stdout) <= MAX_LEDGER_STDOUT_CHARS:
-        return stdout
-    marker = ("[... the pane's earlier characters were dropped: "
-              f"{len(stdout)} characters in total ...]\n")
-    keep = MAX_LEDGER_STDOUT_CHARS - len(marker)
-    if keep <= 0:
-        return marker[:MAX_LEDGER_STDOUT_CHARS]
-    return marker + stdout[-keep:]
+    return condense(stdout, MAX_LEDGER_STDOUT_CHARS)
 
 
-def _extract_between_markers(text: str, begin: str, end: str):
-    """The lines between two markers, or None.
-
-    The sandbox's stdout is a terminal pane, not a pipe: it holds the
-    command that was echoed, the output, the prompt, and every command
-    the session ran before. A fetch has to pick its own output out of
-    that, and a marker pair is what makes it possible to say WHICH
-    output -- the model's earlier base64 dumps are in the same pane.
-    """
-    lines = text.splitlines()
-    start = None
-    for index, line in enumerate(lines):
-        if line.strip() == begin:
-            start = index + 1
-    if start is None:
-        return None
-    for index in range(start, len(lines)):
-        if lines[index].strip() == end:
-            return "\n".join(lines[start:index])
-    return None
+def _as_int(value, default: int = 0) -> int:
+    """An int from the sandbox's metadata, or the default."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
@@ -275,6 +263,16 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
     So the bot fetches the bytes and sends them. The fetch is the same
     sandbox the model writes into, through the same side-car, so the
     file travels no further than the model could have read it itself.
+
+    The route is the sandbox's file door (`GET /files?path=`), not
+    base64 through the terminal pane. The pane route was bounded by the
+    scrollback -- it lost the *head* silently when it overflowed, so the
+    payload decoded into garbage -- and it paid four thirds of the file
+    in size for the privilege.
+
+    The order is the one the sandbox side documents: ask what the file
+    is, pull it, deliver it, and then delete the sandbox copy. The
+    delivery is the copy that counts; the workspace is a scratchpad.
     """
     path = str(args.get("path", "") or "").strip()
     if not path:
@@ -282,6 +280,7 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
 
     try:
         from personal_tools import bash_command as _bc
+        from personal_tools import file_transport as _ft
     except Exception as e:
         return ToolExecution(text=f"[send_file unavailable: {e!r}]")
 
@@ -292,83 +291,76 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
             "allowlist) and AGENT_STACK_TOKEN.]"
         ))
 
-    # shlex.quote: the path comes from the model, and it goes into a
-    # shell command. The sandbox user can already read anything the
-    # model can read, so the reach is the same -- but the quoting is
-    # not optional.
-    quoted = shlex.quote(path)
-    token = secrets.token_hex(8)
-    begin = f"LLAMABOT_SFB_{token}"
-    end = f"LLAMABOT_SFE_{token}"
-    # The marker is built from pieces, so the ECHOED command line does
-    # not contain it: the sandbox is a persistent tmux session and its
-    # stdout is the whole pane -- the command line, the output, the
-    # prompt and everything the session printed before. A marker that
-    # appears in the echo would be found first, and the fetch would
-    # read the command instead of the file.
-    # The leading \\n on both markers is not decoration. The pane is a
-    # terminal: it wraps long lines, and whatever the session printed
-    # before may not end with a newline -- so a marker printed without
-    # one can land in the middle of a line, and the extraction, which
-    # compares whole lines, would never find it. `base64 -w0` prints no
-    # trailing newline at all, which is how the end marker ended up
-    # glued to the last line of the payload.
-    response = await _bc.call_bash_command(
-        f"printf '\\n%s\\n' \"LLAMABOT_SFB\"\"_\"\"{token}\"; "
-        f"base64 -w0 {quoted}; "
-        f"printf '\\n%s\\n' \"LLAMABOT_SFE\"\"_\"\"{token}\"",
-        session_id=SESSION_ID_TEMPLATE.format(chat_id=deps.chat_id),
-        chat_type=deps.chat_type,
-        chat_id=deps.chat_id,
-    )
-    if not response.get("ok"):
-        return ToolExecution(text=(
-            f"[send_file: could not read {path}: "
-            f"{response.get('error', 'unknown error')}]"))
-
-    encoded = _extract_between_markers(
-        response.get("stdout") or "", begin, end)
-    if encoded is None:
-        return ToolExecution(text=(
-            f"[send_file: {path} is empty, missing, or not a regular file]"))
-    encoded = encoded.strip()
-
-    # The sandbox caps its captured output at 1 MB, and base64 is four
-    # thirds of the file, so this is the real ceiling of the path --
-    # not a number the bot invented.
-    if len(encoded) > MAX_SEND_FILE_BASE64_CHARS:
-        return ToolExecution(text=(
-            f"[send_file: {path} is too large to fetch "
-            f"({len(encoded)} bytes of base64, the limit is "
-            f"{MAX_SEND_FILE_BASE64_CHARS})]"))
-
-    # The pane wraps long lines, so the payload arrives broken into
-    # ~76-character pieces. The whitespace goes before the decode, and
-    # the decode still validates: a line of shell error text is not
-    # base64 and must not be accepted as an empty file.
-    compact = "".join(encoded.split())
+    # 1. What the file is, before the bytes. The sandbox knows its own
+    #    limit, and a file that is over it is refused with its real
+    #    size -- so the model can be told the numbers instead of
+    #    watching a transfer die halfway.
     try:
-        payload = base64.b64decode(compact, validate=True)
-    except Exception as e:
-        return ToolExecution(text=(
-            f"[send_file: could not read or decode {path}: {e!r}]"))
+        meta = await _ft.file_meta(path)
+    except _ft.FileTransportError as e:
+        return ToolExecution(text=f"[send_file: {path}: {e.message}]")
 
-    name = os.path.basename(path) or "file.bin"
+    name = str(meta.get("name") or os.path.basename(path) or "file.bin")
+    size = _as_int(meta.get("size"))
+    limit = _as_int(meta.get("limit"))
+    if limit and size > limit:
+        return ToolExecution(text=(
+            f"[send_file: {name} is {size} bytes; the sandbox allows "
+            f"{limit} bytes]"))
+    if size > MAX_SEND_FILE_BYTES:
+        return ToolExecution(text=(
+            f"[send_file: {name} is {size} bytes; Telegram's sendDocument "
+            f"accepts at most {MAX_SEND_FILE_BYTES} bytes]"))
+
+    # 2. The bytes: streamed into a temp file, hashed on the way. A file
+    #    that is too big for the channel never gets this far.
     try:
-        from telegram import InputFile
-        await deps.bot.send_document(
-            chat_id=deps.chat_id,
-            document=InputFile(payload, filename=name),
-            # The reply keeps the document in the topic the question
-            # came from -- in a forum supergroup a plain send lands in
-            # General.
-            reply_to_message_id=deps.current_message_id,
-        )
+        fetched = await _ft.fetch_to_temp(path)
+    except _ft.FileTransportError as e:
+        return ToolExecution(text=f"[send_file: {path}: {e.message}]")
+
+    # 3. The delivery. The file is handed over as a file object, not as
+    #    a bytes object the bot had to hold: the bytes are pulled once,
+    #    into a file, and the upload reads that file. (PTB reads the
+    #    file into memory when it builds the request -- that is its own
+    #    behaviour, measured in telegram/_utils/files.py -- so this is
+    #    one copy at upload time rather than a copy per stage.)
+    sent = None
+    try:
+        with open(fetched.path, "rb") as handle:
+            from telegram import InputFile
+            sent = await deps.bot.send_document(
+                chat_id=deps.chat_id,
+                document=InputFile(handle, filename=fetched.name),
+                # The reply keeps the document in the topic the question
+                # came from -- in a forum supergroup a plain send lands
+                # in General.
+                reply_to_message_id=deps.current_message_id,
+            )
     except Exception as e:
         return ToolExecution(text=f"[send_file: sending {name} failed: {e!r}]")
+    finally:
+        try:
+            os.unlink(fetched.path)
+        except OSError:
+            pass
 
-    return ToolExecution(text=(
-        f"[send_file: sent {name} ({len(payload)} bytes) to the chat]"))
+    # 4. One copy. The file is in the chat; the scratch copy in the
+    #    workspace is the one that goes.
+    purge_note = await _ft.purge(path)
+
+    # The pointer is Telegram's own id for the delivered file, not the
+    # path in the sandbox: the path dies with the sandbox, and the
+    # channel's id can be re-sent without pulling the bytes again.
+    file_id = getattr(getattr(sent, "document", None), "file_id", None)
+
+    return ToolExecution(
+        text=(f"[send_file: sent {name} ({fetched.size} bytes, "
+              f"sha256 {fetched.sha256}) to the chat; {purge_note}]"),
+        ledger=_entry("send_file", args, deps.iteration,
+                      size=fetched.size, sha256=fetched.sha256,
+                      file_id=file_id),
+    )
 
 
 def _finish(result, ledger: dict, deps: DispatchDeps) -> ToolExecution:

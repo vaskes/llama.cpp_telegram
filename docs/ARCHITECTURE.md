@@ -15,7 +15,7 @@ telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
 ├── handlers.py            # handle_text/photo/voice/document (1381 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   495 lines file, 338 in the function
+│                          #   495 lines file, 343 in the function
 ├── dispatch.py            # routing, lifecycle, concurrency caps (369)
 ├── dispatch_group.py      # human-to-human reply absorb (108)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
@@ -43,9 +43,10 @@ telegram-bot/
 ├── http_clients.py        # the shared httpx helpers (87)
 ├── logconf.py             # logging configuration (129)
 ├── selftest.py            # in-tree selftest entry (239) + 7 selftest_*.py leaves
-├── llm_*.py               # 19 leaf modules, one decision each
+├── llm_*.py               # 21 leaf modules, one decision each
 └── personal_tools/
-    └── bash_command.py    # T38: bash execution via sandbox side-car
+    ├── bash_command.py    # T38: bash execution via sandbox side-car
+    └── file_transport.py  # the file door: pull bytes out, purge the copy
 ```
 
 54 top-level modules, 134 test files, 2235 tests collected in a checkout.
@@ -61,9 +62,9 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       382  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
+  llm_dispatch.py       374  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
-  llm_iteration.py      544  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
+  llm_iteration.py      550  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
   call_llama.py         495  call_llama
   llm_loop_guard.py     170  Nudge, Abort, LoopGuard
@@ -73,7 +74,7 @@ tests, none of which build a full `call_llama`.
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         307  StreamOutcome, stream_iteration, _fallback_to_nonstream
   llm_abort.py             64  finalize_aborted_turn
-  llm_result.py           178  Answer, unwrap_answer
+  llm_result.py           175  Answer, unwrap_answer
   llm_artifact.py         487  Artifact, extract_files
   llm_files.py            144  send_files
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape
@@ -81,7 +82,8 @@ tests, none of which build a full `call_llama`.
   llm_toolargs.py       215  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
-  llm_sendfile.py         68  send_file_tool_def
+  llm_sendfile.py         79  send_file_tool_def
+  llm_truncation.py      119  condense
 ```
 
 The split is by *decision*, not by size. Three of them answer "should

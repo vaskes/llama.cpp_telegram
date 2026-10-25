@@ -60,6 +60,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from llm_artifact import Artifact, extract_files
+from llm_truncation import condense
 
 __all__ = ["Answer", "unwrap_answer"]
 
@@ -132,16 +133,12 @@ def _format_executed_tools(executed_tools) -> str:
         # that took production down twice.
         out = printed.rstrip("\n")
         if out.strip():
-            if len(out) > MAX_TRANSCRIPT_OUTPUT_CHARS:
-                # The tail, not the head. The sandbox's stdout is a
-                # terminal pane: its head is the scrollback of what the
-                # session did before, and its tail is the command that
-                # just ran and what it printed. The model reads the
-                # same end (tool_result_to_text keeps the last 8000
-                # characters), so the chat and the model see the same
-                # thing.
-                out = (out[-MAX_TRANSCRIPT_OUTPUT_CHARS:]
-                       + "\n[... the output was truncated ...]")
+            # The cut is marked, and it keeps both ends. The sandbox
+            # prints its "the beginning no longer fits" marker on the
+            # first line, and the end is what the model quotes back --
+            # so the middle is what goes. The user sees that something
+            # was dropped instead of a transcript that looks complete.
+            out = condense(out, MAX_TRANSCRIPT_OUTPUT_CHARS)
             lines.append(out)
     lines.append("```")
     return "\n".join(lines)
