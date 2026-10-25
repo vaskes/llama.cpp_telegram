@@ -44,6 +44,22 @@ The bot's claims follow the side-car, as they must:
   * the documents quote the side-car's own compose file, so the knob
     and its default come from the side-car and not from memory.
 
+### A command that ran past the side-car's limit came back as an empty success
+
+The side-car's proxy answers a failed upstream call with HTTP 200 and
+`{"error": "sandbox-agent request failed: <reason>"}`. The bot read
+that envelope as a command with no output: the model saw an empty
+result, no error, and a command the side-car had stopped waiting for.
+And for a timeout the reason is empty, so the text ended with a colon
+and nothing at all — read as it stands, it blames the side-car, which
+was alive the whole time.
+
+The envelope is a failure now, and the failure names its cause: the
+side-car enforces a 60-second per-command limit, and the proxy stops
+waiting at the very same second, so a command that runs past the limit
+loses its answer on the way. The bot says that, and it says that the
+side-car is up.
+
 ### The bot delivered the file twice
 
 The operator asked for an HTML file. The model wrote it in the sandbox

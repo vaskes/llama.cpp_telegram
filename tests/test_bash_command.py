@@ -207,3 +207,56 @@ def test_tool_result_to_text_marks_timeout(personal_with_token):
     r = {"ok": True, "stdout": "", "stderr": "", "exit_code": 124, "duration_ms": 60000, "timed_out": True}
     text = personal_with_token.tool_result_to_text(r)
     assert "TIMED_OUT" in text
+
+
+@pytest.mark.asyncio
+async def test_the_proxy_error_envelope_is_a_failure_not_an_empty_success(
+        personal_with_token):
+    """A 200 with an "error" key is a failure.
+
+    The proxy answers a failed upstream call with HTTP 200 and
+    ``{"error": "sandbox-agent request failed: <reason>"}``. The bot
+    used to read that as a command that produced no output: the model
+    saw an empty result, no error, and a command that the side-car had
+    stopped waiting for.
+    """
+    class FakeResp:
+        status_code = 200
+        text = ""
+        def json(self):
+            return {"error": "sandbox-agent request failed: "}
+    class FakeClient:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def post(self, *a, **kw): return FakeResp()
+    with patch("personal_tools.bash_command.httpx.AsyncClient", FakeClient):
+        result = await personal_with_token.call_bash_command(
+            "sudo -n apt-get install -y bc", chat_type="private")
+    assert result["ok"] is False, (
+        "the error envelope was read as a successful command with no "
+        "output")
+    assert "60-second" in result["error"], (
+        "an empty reason means the side-car stopped waiting at its own "
+        f"per-command limit; the message has to say that: {result['error']!r}")
+
+
+@pytest.mark.asyncio
+async def test_a_sidecar_error_keeps_its_reason(personal_with_token):
+    """A reason that survived the trip is carried, not swallowed."""
+    class FakeResp:
+        status_code = 200
+        text = ""
+        def json(self):
+            return {"error": "sandbox-agent request failed: ConnectError('refused')"}
+    class FakeClient:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def post(self, *a, **kw): return FakeResp()
+    with patch("personal_tools.bash_command.httpx.AsyncClient", FakeClient):
+        result = await personal_with_token.call_bash_command(
+            "ls", chat_type="private")
+    assert result["ok"] is False
+    assert "ConnectError" in result["error"], (
+        f"the reason was dropped: {result['error']!r}")

@@ -411,6 +411,33 @@ def is_enabled_for_active_profile() -> bool:
     return True
 
 
+def _sandbox_error_text(raw: str) -> str:
+    """Turn the side-car's error envelope into a sentence with a cause.
+
+    The proxy answers a failed upstream call with HTTP 200 and
+    ``{"error": "sandbox-agent request failed: <reason>"}``. For a
+    timeout the reason is empty, so the text ends with a colon and
+    nothing at all -- and read as it stands it blames the side-car.
+    The side-car is fine: it enforces a 60-second per-command limit,
+    and the proxy stops waiting at the very same second, so a command
+    that runs past the limit loses its answer on the way. The name of
+    the culprit has to survive the trip.
+
+    An empty result and a failure look the same on the wire, and the
+    bot used to pass the empty one on as a success: the model saw no
+    output, no error, and a command that had been killed.
+    """
+    text = raw.strip()
+    prefix = "sandbox-agent request failed:"
+    if text.startswith(prefix) and not text[len(prefix):].strip():
+        return (
+            "the sandbox side-car stopped waiting for the command (its "
+            "60-second per-command limit; the side-car is up, and the "
+            "command may still be running in the session)"
+        )
+    return f"the sandbox side-car failed: {text}"
+
+
 async def call_bash_command(
     command: str,
     *,
@@ -550,6 +577,11 @@ async def call_bash_command(
         data = r.json()
     except json.JSONDecodeError:
         return {"ok": False, "error": f"sandbox returned non-JSON: {r.text[:500]}"}
+    if data.get("error"):
+        # The proxy's failure envelope arrives with a 200 and an "error"
+        # key and nothing else. Reading it as a successful command with
+        # no output turns a lost answer into a silent empty result.
+        return {"ok": False, "error": _sandbox_error_text(str(data["error"]))}
     return {
         "ok": True,
         "stdout": data.get("stdout", ""),
