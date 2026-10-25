@@ -1,6 +1,6 @@
 """The courier: a file out of the sandbox, and one copy left behind.
 
-The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.0`)
+The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.1`)
 publishes a file door next to its shell door. This file tests the bot's
 half of that contract -- the half that used to be base64 through a
 terminal pane, with a ceiling of about 675 KB and a silent loss of the
@@ -121,29 +121,34 @@ async def test_a_refused_path_says_so(sandbox):
     assert "outside the workspace" in caught.value.message, caught.value.message
 
 
-async def test_a_side_car_without_the_file_door_says_so(monkeypatch):
+async def test_a_side_car_without_the_file_door_says_so(sandbox):
     """A sandbox older than v2.7.0 has no /files/meta route at all. It
     answers 404, and saying "no such file" there would blame the file
     for the side-car's age."""
-    import personal_tools.file_transport as ft
-
-    def no_door(request):
-        return httpx.Response(404, json={"detail": "Not Found"})
-
-    real_client = httpx.AsyncClient
-
-    def factory(*args, **kwargs):
-        kwargs["transport"] = httpx.MockTransport(no_door)
-        return real_client(*args, **kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", factory)
-    monkeypatch.setattr(ft, "AGENT_STACK_URL", "http://sandbox.test")
-    monkeypatch.setattr(ft, "AGENT_STACK_TOKEN", "test-token")
+    sandbox.has_door = False
+    sandbox.version = "2.5.0"
 
     with pytest.raises(ft.FileTransportError) as caught:
         await ft.file_meta(PATH)
 
     assert "v2.7.0" in caught.value.message, caught.value.message
+    assert "2.5.0" in caught.value.message, caught.value.message
+
+
+async def test_a_missing_file_on_a_current_side_car_says_no_such_file(sandbox):
+    """From v2.7.1 the proxy relays the agent's status, so a missing file
+    is a plain 404 -- and a 404 is also what an old side-car answers for
+    a route it does not have. The side-car's version tells the two
+    apart, and the file gets the blame for the one it is guilty of."""
+    sandbox.quirk_meta = False
+    sandbox.version = "2.7.1"
+
+    with pytest.raises(ft.FileTransportError) as caught:
+        await ft.file_meta("/workspace/nope.bin")
+
+    message = caught.value.message
+    assert "no such file" in message, message
+    assert "file door" not in message, message
 
 
 async def test_the_proxies_own_quirk_is_read(sandbox):

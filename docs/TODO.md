@@ -352,7 +352,7 @@ The items below were decided and are done. They are here because the
 
 **Status:** ✅ **closed 2026-10-25.** Option (b) was built: the sandbox's
 file door, shipped on the sandbox side as
-`vaskes/OpenWebUI-bash-sandbox` v2.7.0 (`ae4730e`).
+`vaskes/OpenWebUI-bash-sandbox` v2.7.1 (`c8d70ef`).
 **Where:** `telegram-bot/personal_tools/file_transport.py`,
 `telegram-bot/llm_dispatch.py` (`_execute_send_file`),
 `docs/BASH-SANDBOX.md` § "Moving a file out of the sandbox".

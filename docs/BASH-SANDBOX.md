@@ -272,7 +272,7 @@ anything within the sandbox's policy:
 
 Text goes through the shell; **bytes have their own door**.
 
-The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.0`)
+The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.1`)
 publishes three routes next to the shell:
 
 | Method | Path | What it does |
@@ -339,7 +339,7 @@ makes itself is marked too (`llm_truncation.py`).
 |---|---|---|
 | `a3fa2f2` (v2.3.0) | `5659ed6` (v0.11.0-pre) | Tested together. |
 | `04be1d8` (v2.4.5) | `6901827` (v0.12.0-stable) | Tested together. |
-| `ae4730e` (v2.7.0) | this branch | The file door and the stdout contract. |
+| `c8d70ef` (v2.7.1) | this branch | The file door and the stdout contract; v2.7.1 relays the door's real status instead of flattening every failure into a 200. |
 
 The bot treats the sandbox as a black box: it sends JSON over
 HTTP and gets JSON back. As long as the wire format is

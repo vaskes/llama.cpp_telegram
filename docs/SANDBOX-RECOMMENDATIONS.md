@@ -3,8 +3,9 @@
 > **Status: dated handoff, not a live checklist.** This document was issued
 > on 2026-10-14 against `llama.cpp_telegram` `v0.11.0-pre` and
 > `OpenWebUI-bash-sandbox` `v2.3.0` (tag `a3fa2f2`). The bot now pins
-> sandbox **v2.7.0** (tag `ae4730e`) -- v2.4.5 closed several of the items
-> below, and v2.7.0 added the file door the bot's `send_file` needs. Read
+> sandbox **v2.7.1** (tag `c8d70ef`) -- v2.4.5 closed several of the items
+> below, v2.7.0 added the file door the bot's `send_file` needs, and v2.7.1
+> made the door relay the agent's real status. Read
 > it as the state of the sandbox at `v2.3.0`, and check the sandbox repo's
 > own changelog before acting on any item here.
 >

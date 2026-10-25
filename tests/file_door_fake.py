@@ -1,7 +1,7 @@
 """A fake sandbox file door, for the tests that need one.
 
 The bot's half of the sandbox contract (`vaskes/OpenWebUI-bash-sandbox`,
-tag `v2.7.0`) is HTTP: `GET /files/meta`, `GET /files`, `DELETE /files`,
+tag `v2.7.1`) is HTTP: `GET /files/meta`, `GET /files`, `DELETE /files`,
 all with a bearer token. The tests drive the real httpx stack through
 `httpx.MockTransport`, so the code under test does its real streaming,
 its real status handling and its real error mapping -- only the socket
@@ -9,10 +9,12 @@ is replaced.
 
 What the fake reproduces, because the contract depends on it:
 
-* the proxy's meta route answers **200 with `{"error": ...}`** when the
-  agent refused the path. That is the proxy's own behaviour (see
-  `openapi_proxy.py`, `file_meta`), and a client that only looks at
-  the status code reads it as a success with no metadata in it.
+* the proxy's meta route answered **200 with `{"error": ...}`** when the
+  agent refused the path -- that was the proxy's own behaviour in v2.7.0
+  (see `openapi_proxy.py`, `file_meta`), and a client that only looks at
+  the status code read it as a success with no metadata in it. v2.7.1
+  relays the status instead, so the fake can answer either way
+  (`quirk_meta`).
 * a file over the limit comes back as **413**, and its detail names the
   real size -- the number the model needs.
 * a file that is not there is a **404** on the download and on the
@@ -40,6 +42,13 @@ class FakeSandbox:
         self.tokens: list[str | None] = []
         self.delete_status = 204
         self.meta_body = None     # override the meta answer wholesale
+        self.version = "2.7.1"    # what /api/config says
+        self.has_door = True      # False: an old side-car, no routes
+        # v2.7.0 answered 200 with {"error": ...} when the agent refused
+        # the path; v2.7.1 relays the agent's status instead. The default
+        # is the older shape, because that is the one a client has to
+        # survive -- a test that wants the newer one says so.
+        self.quirk_meta = True
 
     # -- what the tests look at ---------------------------------------
 
@@ -68,10 +77,22 @@ class FakeSandbox:
             self.files.pop(target)
             return httpx.Response(204)
 
+        if route.endswith("/api/config"):
+            return httpx.Response(200, json={
+                "name": "sandbox-agent",
+                "version": self.version,
+                "features": {"system": False},
+            })
+
         if route.endswith("/files/meta"):
+            if not self.has_door:
+                return httpx.Response(404, json={"detail": "Not Found"})
             if self.meta_body is not None:
                 return httpx.Response(200, json=self.meta_body)
             if target not in self.files:
+                if not self.quirk_meta:
+                    return httpx.Response(
+                        404, json={"detail": f"file not found: {target}"})
                 # The proxy answers 200 and puts the agent's error
                 # document into "error" as a string.
                 return httpx.Response(200, json={"error": json.dumps(

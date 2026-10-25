@@ -510,7 +510,7 @@ overflowed, dropped the **head** silently, so the payload decoded into
 garbage with nothing in the answer to say so.
 
 The sandbox side now publishes a file door (`vaskes/OpenWebUI-bash-sandbox`
-v2.7.0): `GET /files/meta?path=` for the size and the limit,
+v2.7.1): `GET /files/meta?path=` for the size and the limit,
 `GET /files?path=` for the raw bytes as a stream, and
 `DELETE /files?path=` to remove the copy in the workspace. The bot's
 half is `personal_tools/file_transport.py`, and the order is the one the
@@ -531,6 +531,12 @@ sandbox documents:
 Two limits, and the smaller one wins: the sandbox's `AGENT_BINARY_LIMIT`
 (default 2 MiB) and Telegram's `sendDocument` (50 MB through the public
 Bot API).
+
+The pin moved to **v2.7.1** (`c8d70ef`), which relays the door's real
+status instead of flattening every failure into a 200 with an `error`
+key. The bot reads both shapes, and it asks the side-car for its version
+before it calls a missing file a missing file: before v2.7.0 there was
+no door at all, and a 404 meant "this side-car has never heard of one".
 
 ### Every cut says so
 

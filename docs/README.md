@@ -30,7 +30,7 @@ root first, then this file, then the document your question points at.
 | [WEBHOOK.md](WEBHOOK.md) | Webhook transport: when, how, security, fallback | live |
 | [RATING_RULES.md](RATING_RULES.md) | The rating scale and how replies are parsed | live |
 | [WELCOME_MESSAGE.en.md](WELCOME_MESSAGE.en.md) / [.ru.md](WELCOME_MESSAGE.ru.md) | The copy the bot greets with | live |
-| [SANDBOX-RECOMMENDATIONS.md](SANDBOX-RECOMMENDATIONS.md) | A dated handoff **to the sandbox repo's** maintainer | dated — issued against sandbox v2.3.0, current pin is v2.7.0 (the file door) |
+| [SANDBOX-RECOMMENDATIONS.md](SANDBOX-RECOMMENDATIONS.md) | A dated handoff **to the sandbox repo's** maintainer | dated — issued against sandbox v2.3.0, current pin is v2.7.1 (the file door) |
 
 ### Where the work stands
 

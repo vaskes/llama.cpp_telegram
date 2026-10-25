@@ -20,7 +20,9 @@ the suite has to notice:
   * the ledger goes back to keeping the tail, and the sandbox's marker
     about a lost beginning goes with it;
   * the transcript is cut without a word;
-  * the command output the model reads is cut without a word.
+  * the command output the model reads is cut without a word;
+  * the side-car's version is not asked, so a 404 from a side-car that
+    has never heard of a file door is reported as a missing file.
 
 **Group B -- the tripwires.** Each mutation removes the tripwire *and*
 the behaviour it is supposed to catch, and the suite has to go
@@ -140,6 +142,11 @@ MUTATIONS = [
          r"            out = condense\(out, MAX_TRANSCRIPT_OUTPUT_CHARS\)\n",
          "            out = out[-MAX_TRANSCRIPT_OUTPUT_CHARS:]\n", 1),
     ]),
+    ("the side-car's version is not asked", "CAUGHT", [
+        (TRANSPORT,
+         r"            version = await _sidecar_version\(timeout=timeout\)\n",
+         "            version = None\n", 1),
+    ]),
     ("the command output the model reads is cut without a word", "CAUGHT", [
         (BASH,
          r"        parts\.append\(f\"stdout:\\n\{condense\(out, 8000\)\}\"\)\n",
@@ -189,6 +196,14 @@ MUTATIONS = [
          r"            f\"\[send_file: \{name\} is \{size\} bytes; Telegram's sendDocument \"\n"
          r"            f\"accepts at most \{MAX_SEND_FILE_BYTES\} bytes\]\"\)\)\n",
          "", 1),
+    ]),
+    ("the tripwire for the version is gone, and so is the probe", "SURVIVED", [
+        (TEST_TRANSPORT,
+         r"async def test_a_side_car_without_the_file_door_says_so\(sandbox\):",
+         "async def _disabled_test_a_side_car_without_the_file_door_says_so(sandbox):", 1),
+        (TRANSPORT,
+         r"            version = await _sidecar_version\(timeout=timeout\)\n",
+         "            version = None\n", 1),
     ]),
     ("the tripwire for the temp file is gone, and so is the cleanup",
      "SURVIVED", [

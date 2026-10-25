@@ -1,6 +1,6 @@
 """Getting a file out of the sandbox, and leaving one copy behind.
 
-The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.0`) publishes
+The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.1`) publishes
 a file door next to its shell door:
 
 | Method | Path             | What it does                             |
@@ -122,6 +122,47 @@ def _error_for_status(status: int, body: str) -> str:
     return f"HTTP {status}: {detail}"
 
 
+def _parse_version(value: Any) -> tuple[int, ...] | None:
+    """``"2.7.1"`` -> ``(2, 7, 1)``; anything else -> ``None``."""
+    if not isinstance(value, str):
+        return None
+    parts: list[int] = []
+    for chunk in value.strip().split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts) or None
+
+
+async def _sidecar_version(*, timeout: float = 10.0) -> tuple[int, ...] | None:
+    """The side-car's own version, if it will say.
+
+    The proxy answers ``/api/config`` with its version. It is the only
+    place that says how old the side-car is, and the difference is not
+    cosmetic: before v2.7.0 there was no file door at all, and from
+    v2.7.1 a missing file is a plain 404. One 404 means "there is no
+    such file"; the other means "this side-car has never heard of a
+    door". A client that confuses them blames the file for the age of
+    the side-car -- and the age of the side-car is the thing to fix.
+    """
+    url = f"{AGENT_STACK_URL}/api/config"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.get(url, headers=_headers())
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _parse_version(data.get("version"))
+
+
 async def file_meta(path: str, *, timeout: float = 30.0) -> dict[str, Any]:
     """What the sandbox knows about the file: its size, name and limit.
 
@@ -139,17 +180,22 @@ async def file_meta(path: str, *, timeout: float = 30.0) -> dict[str, Any]:
             f"the sandbox side-car is unreachable: {e!r}") from None
     if r.status_code != 200:
         if r.status_code == 404:
-            # The proxy's meta route answers 200 even when the agent
-            # refused the path -- the refusal is in the body. A 404 here
-            # is the route itself missing, which means the side-car is
-            # older than the file door (sandbox v2.7.0). Saying "no such
-            # file" there would blame the file for the side-car's age.
+            # Two different 404s live here. From v2.7.1 the proxy relays
+            # the agent's status, so a 404 means "no such file". Before
+            # the file door existed the route itself was missing, and the
+            # side-car answers 404 for that too. The side-car's own
+            # version tells the two apart -- and if it will not say, the
+            # file is the more likely explanation.
+            version = await _sidecar_version(timeout=timeout)
+            if version is not None and version < (2, 7, 0):
+                raise FileTransportError(
+                    "the sandbox side-car has no file door (it answered 404 "
+                    "for /files/meta and it is version "
+                    f"{'.'.join(str(n) for n in version)}) -- it is older "
+                    "than sandbox v2.7.0",
+                    status=404)
             raise FileTransportError(
-                "the sandbox side-car has no file door (it answered 404 "
-                "for /files/meta) -- it is older than sandbox v2.7.0",
-                status=404)
-        raise FileTransportError(
-            _error_for_status(r.status_code, r.text), status=r.status_code)
+                _error_for_status(r.status_code, r.text), status=r.status_code)
     try:
         data = r.json()
     except ValueError:
