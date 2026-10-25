@@ -277,6 +277,14 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
     path = str(args.get("path", "") or "").strip()
     if not path:
         return ToolExecution(text="[send_file: no path given]")
+    if not path.startswith("/"):
+        # The old route ran the path through the sandbox's shell, so a
+        # relative path was resolved against the session's cwd. The file
+        # door has no session: the sandbox resolves paths inside its
+        # workspace, and a relative path is not a path there.
+        return ToolExecution(text=(
+            f"[send_file: {path} is not an absolute path. Give the path "
+            f"inside the sandbox workspace, e.g. /workspace/{path}]"))
 
     try:
         from personal_tools import bash_command as _bc

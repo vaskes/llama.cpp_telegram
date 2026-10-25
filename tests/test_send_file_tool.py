@@ -259,6 +259,18 @@ async def test_the_temp_file_is_removed(sandbox, tmp_path):
         f"the temp file stayed behind: {list(tmp_path.iterdir())}")
 
 
+async def test_a_relative_path_says_so(sandbox):
+    """The file door has no session, so a relative path is not a path
+    there -- and saying so is more useful than a 404 about a file the
+    model can see."""
+    deps = _deps()
+    outcome = await execute_tool("send_file", {"path": "probe.zip"}, deps)
+    assert "absolute" in outcome.text, outcome.text
+    assert deps.bot.documents == []
+    assert sandbox.requests == [], (
+        "the request went out anyway: " f"{sandbox.requests}")
+
+
 async def test_no_path_says_so(monkeypatch):
     import personal_tools.bash_command as bc
     monkeypatch.setattr(bc, "is_enabled_for_active_profile", lambda: True)

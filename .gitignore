@@ -37,3 +37,6 @@ Thumbs.db
 # T69 — the operator's own bot persona. Identity, not code: it must never be
 # committed or rsynced out to other deployments. See docs/TICKETS T69.
 telegram-bot/persona.local.json
+
+# Local git worktrees (the skill puts them inside the clone)
+.worktrees/
