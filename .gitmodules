@@ -1,4 +1,4 @@
 [submodule "sandbox"]
 	path = sandbox
 	url = https://github.com/vaskes/OpenWebUI-bash-sandbox.git
-	branch = v2.4.5
+	branch = v2.7.0
