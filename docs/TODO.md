@@ -27,9 +27,9 @@
 
 | | |
 |---|---|
-| HEAD | 67 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file) |
-| Production | **deployed and verified** (2026-10-25 22:15). The bot container runs `72fee7b` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8 of its 9 checks (the ninth needs a second bot in the same chat). The bot's claims about the sandbox were checked on the deployed tree with a probe inside the container: the pinned version reads 2.9.1, the privilege mode reads on, the description the model reads carries the policy, a 403 comes back as a permission and a 401 as the token. The **side-car on the host is still v2.8.0** -- the repository pins **v2.9.1**, and the upgrade waits for the operator's light (it moves the base image to ubuntu:26.04 / python:3.14-slim). **`llama-qwen5090-256k` is `active`** (the operator starts it by hand) |
-| Pytest | `2506 passed, 1 skipped` locally (the live-sandbox file is excluded, as in CI) |
+| HEAD | 71 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file, the writable rootfs and the pin that follows it, the lost answer that came back as an empty success) |
+| Production | **deployed and verified** (2026-10-25 22:15). The bot container runs `72fee7b` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8 of its 9 checks (the ninth needs a second bot in the same chat). The bot's claims about the sandbox were checked on the deployed tree with a probe inside the container: the pinned version reads 2.9.1, the privilege mode reads on, the description the model reads carries the policy, a 403 comes back as a permission and a 401 as the token. The **side-car on the host is v2.10.1** (deployed 2026-10-26, base image `ubuntu:26.04` / `python:3.14-slim`) with a **writable rootfs** (`AGENT_READ_ONLY=false`) so a privileged root can `apt-get install`; the repository now pins the same version (`d23f84b`). **`llama-qwen5090-256k` is `active`** (the operator starts it by hand) |
+| Pytest | `2508 passed, 20 skipped` locally (the live-sandbox file is excluded, as in CI) |
 | CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `9752b06` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 58 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count did not move |
@@ -76,33 +76,6 @@ answer is still there. The deploy waits for the operator's word.
 from the live sandbox) and
 `scripts/mutation_harness_trace_dup.py` (eight mutations, five caught,
 three survived as intended).
-
-### The side-car on the production host is still v2.8.0 — the repository pins v2.9.1
-
-**Status:** open since 2026-10-25 19:20. The bot side is done: the
-repository pins the side-car at **v2.9.1** (`407b6a8`), the bot's claims
-about it live in one place and are checked against that pin
-(`72fee7b`), and the deployed bot reports a 403 as a permission and a
-401 as the token.
-
-**What the host runs:** `/opt/telegrambot/sandbox` is a standalone clone
-of the sandbox repository, and it is still on **v2.8.0** (`76c4ee5`) --
-the privilege-mode release. The bot's deploy does not touch it (it is not
-a submodule of the bot's clone), so it stays where it was until somebody
-moves it.
-
-**What the move costs:** v2.9.0 moves the side-car's base image to
-`ubuntu:26.04` and `python:3.14-slim`. That is not a patch bump on the
-production host, and it is the reason this waits for a word rather than a
-decision of mine. v2.9.1 itself is the small one: the file door opens
-the file before it sends the headers, so a file the agent cannot read is
-a **403** with a sentence that says what to do about it, instead of a
-200 with a Content-Length and no body behind it.
-
-**What the bot does until then:** the old symptom, unchanged -- the
-side-car truncates the body, the bot reads a short read, and it reports
-"the sandbox side-car is unreachable". The bot's side of that is fixed
-and waiting; the half that answers 403 is the side-car's.
 
 ### The answer-files feature has never been checked by a human — the machine check passed on the live engine
 
@@ -409,6 +382,7 @@ Not repeated here; each line points at the record.
 | T70.5 — chunked summaries with a "СВЕДЕНО" marker | `CHANGELOG.md` § Unreleased; `docs/tickets/TICKET-T70-*.md` |
 | T70.6 — the reasoning cap lives on the engine | `CHANGELOG.md` § Unreleased; `docs/CALL_LLAMA.md` |
 | Review waves 1–8 | `docs/archive/2026-10/`; `docs/review/README.md` |
+| The side-car on v2.10.1, with a writable rootfs | `CHANGELOG.md` § Unreleased; `docs/BASH-SANDBOX.md` § The sandbox's posture |
 
 ---
 
@@ -416,6 +390,50 @@ Not repeated here; each line points at the record.
 
 The items below were decided and are done. They are here because the
 *reasoning* is worth keeping, not because they are pending.
+
+### The side-car on the production host — v2.10.1, with a writable rootfs
+
+**Status:** ✅ **closed 2026-10-26.** The host runs the version the
+repository pins: **v2.10.1** (`093c025`). The pin moved with it
+(`d23f84b`), and the bot's claims about the sandbox — the version, the
+posture, the knobs — are checked against that pin by
+`tests/test_sandbox_contract.py`.
+
+**What moved:** `/opt/telegrambot/sandbox` is a standalone clone of the
+sandbox repository, and the bot's deploy does not touch it, so it was
+moved by hand: fetch the tag, check it out, rebuild both images
+(`--env-file` and `--build` included, or the old image and the old env
+stay silently), recreate. The base image moved with it
+(`ubuntu:26.04`, `python:3.14-slim`), and the file door now answers a
+file the agent cannot read with a **403** and a sentence that says what
+to do about it, instead of a 200 with a Content-Length and no body
+behind it.
+
+**The writable rootfs:** the operator asked for the agent to be able to
+`apt-get install`. The privilege mode makes a command root inside the
+container, and the container's root filesystem was read-only — a root
+that cannot write a byte of the filesystem cannot install a package
+(apt writes to `/var/lib/apt/lists`, `/var/lib/dpkg` and `/usr`). The
+side-car v2.10.0 made the rootfs the fourth switch of the privilege
+mode, `read_only: "${AGENT_READ_ONLY:-true}"`; the production
+deployment sets `AGENT_READ_ONLY=false`. The container is still the
+perimeter: the writable layer dies with the container, and the host's
+`ssh-keys` and `/opt/search` are still mounted read-only.
+
+**Measured on the host after the move:** `id` → uid 1000, `sudo -n id`
+→ uid 0, a write into `/usr` succeeds, `apt-get update` and
+`apt-get install -y python3-pip` (which pulls build-essential) finish
+in 28 seconds, and a root-owned 0600 file comes back from the door as
+a 403 with the "chmod 644" sentence while a readable one comes back
+whole.
+
+**What is still true and still bites:** the side-car's per-command limit
+is 60 seconds, and the proxy stops waiting at the very same second — so
+a command that runs past the limit loses its answer. The first
+`apt-get install` in a fresh container did exactly that. The bot now
+reports it as a failure with a cause instead of an empty success
+(`42d55db`); raising the limit is a change in the side-car's own
+repository.
 
 ### A binary file from the sandbox cannot reach the chat
 
