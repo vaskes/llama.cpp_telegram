@@ -179,7 +179,7 @@ def test_dispatch_group_chat_hides_bash_command():
     src = (REPO / "telegram-bot" / "commands" / "start_cmd.py").read_text(
         encoding="utf-8")
     assert "_is_group_chat" in src, "the /start handler must check _is_group_chat"
-    assert "Shell-команды (bash) недоступны" in src, (
+    assert "Shell commands (bash) are unavailable" in src, (
         "the /start handler must show 'bash unavailable' line in group "
         "chats. T52 #M4."
     )

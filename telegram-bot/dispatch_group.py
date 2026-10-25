@@ -38,7 +38,7 @@ async def _handle_reply_to_other_user(upd, bot) -> None:
     *seen*. The model reads it, thinks about it, and leaves a reaction via the
     react_to_message tool. What it must NOT do is answer, and the reasoning
     must not appear in the chat — the group is talking to itself, and a visible
-    "💭 думаю…" from the bot on someone else's message is noise.
+    "💭 thinking…" from the bot on someone else's message is noise.
 
     So: real LLM call, `silent=True`. Not a skip.
 

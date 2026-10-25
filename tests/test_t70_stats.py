@@ -165,7 +165,7 @@ def test_stats_reports_the_anchor_as_non_sliding():
     """The operator reads this in Telegram and should not have to wonder
     whether the window moves under him."""
     src = STATS_PY.read_text(encoding="utf-8")
-    assert "не скользит" in src, (
+    assert "does not slide" in src, (
         "/stats should state that the window is anchored at bot start, not "
         "sliding — that is the whole point of the anchored design"
     )
@@ -176,7 +176,7 @@ def test_stats_explains_history_is_kept():
     "big 'not sent' count could read as data loss; say plainly that it is "
     "stored."""
     src = STATS_PY.read_text()
-    assert "обучения" in src, (
+    assert "training" in src, (
         "/stats must tell the user that out-of-window history is still "
         "stored, not discarded"
     )

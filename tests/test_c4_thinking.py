@@ -106,7 +106,7 @@ async def test_ordinary_delta_edits_the_message(clock):
     assert await push("размышляю", msg) is True
     assert len(msg.edits) == 1
     assert "размышляю" in msg.edits[0][0]
-    assert msg.edits[0][0].startswith("💭 думаю…")
+    assert msg.edits[0][0].startswith("💭 thinking…")
 
 
 async def test_silent_never_touches_telegram(clock):

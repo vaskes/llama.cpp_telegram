@@ -149,13 +149,13 @@ EMPTY_RESPONSE_FALLBACK = (
 # written out three times in handlers.py, where a fix to the wording only
 # reached two of the three.
 EMPTY_RESPONSE_USER_FALLBACK = (
-    "\U0001F914 Не удалось получить ответ от модели. "
-    "Возможные причины: перегруженный длинный контекст, "
-    "сложный вопрос (предсказания, нишевые факты) или "
-    "временный сбой llama-server. Попробуй:\n"
-    "\u2022 /reset \u2014 очистить историю и начать с нуля\n"
-    "\u2022 Переформулировать вопрос\n"
-    "\u2022 Добавить больше деталей в вопрос"
+    "\U0001F914 Could not get an answer from the model. "
+    "Possible reasons: an overloaded long context, "
+    "a hard question (predictions, niche facts) or "
+    "a temporary llama-server failure. Try:\n"
+    "\u2022 /reset \u2014 clear the history and start over\n"
+    "\u2022 Rephrase the question\n"
+    "\u2022 Add more detail to the question"
 )
 
 MAX_DOC_BYTES = int(os.environ.get("MAX_DOC_BYTES", "5000000"))         # 5 MB

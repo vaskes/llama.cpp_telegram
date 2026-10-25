@@ -652,8 +652,8 @@ def is_context_overflow(error_text: str | None) -> bool:
 #: be wrong for exactly the deployments where re-anchoring works best. See
 #: docs/adr/ADR-0003-context-reanchoring.md.
 OVERFLOW_MESSAGE = (
-    "⚠️ Контекст исчерпан — движок отказался принимать запрос целиком.\n\n"
-    "Это значит, что накопленная история не помещается в окно модели. "
-    "Обычно помогает /reset в этом чате — он очищает историю этого "
-    "sub-talk, не затрагивая остальные."
+    "⚠️ Context exhausted — the engine refused the request as a whole.\n\n"
+    "This means the accumulated history no longer fits in the model's "
+    "window. Usually /reset in this chat helps — it clears the history of "
+    "this sub-talk, leaving the others alone."
 )

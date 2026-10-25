@@ -34,11 +34,12 @@ is what the user can act on:
     problem with a different advice (shorten the question);
   * the engine answered with an error -- anything else.
 
-Wording is Russian because the bot's other user-facing strings are
-Russian (`config.EMPTY_RESPONSE_USER_FALLBACK`,
-`context_budget.OVERFLOW_MESSAGE`, the thinking indicator), and a bot
-that switches languages depending on how it failed reads as two
-different products.
+Wording is English because the bot's own notices are English. That was
+not always true: on 2026-10-25 the bot's user-facing copy was half
+Russian and half English, sometimes inside one message (`/stats` had a
+Russian heading over an English body). A bot that switches languages
+depending on how it failed reads as two different products, so the
+operator's call was one language for everything the user reads.
 """
 from __future__ import annotations
 
@@ -58,47 +59,48 @@ __all__ = [
 #: The engine did not answer the connection. It is down, restarting, or
 #: not where the bot thinks it is.
 ENGINE_UNREACHABLE_MESSAGE = (
-    "🛠 Бот не смог связаться с языковым движком — он сейчас недоступен.\n\n"
-    "Обычно это значит, что движок выключен или перезапускается. "
-    "Попробуй ещё раз через минуту — если бот отвечает, а вопрос "
-    "длинный, попробуй сократить его."
+    "🛠 The bot could not reach the language engine — it is unavailable "
+    "right now.\n\n"
+    "Usually that means the engine is down or restarting. Try again in a "
+    "minute — if the bot answers but your question is long, try "
+    "shortening it."
 )
 
 #: The engine was there, but did not answer in time.
 ENGINE_TIMEOUT_MESSAGE = (
-    "⏳ Языковой движок не ответил вовремя.\n\n"
-    "Попробуй ещё раз, а если вопрос длинный или контекст огромный — "
-    "сократи его или начни новый диалог через /reset."
+    "⏳ The language engine did not answer in time.\n\n"
+    "Try again — and if the question is long or the context is huge, "
+    "shorten it or start a new conversation with /reset."
 )
 
 #: The engine answered, and the answer was an error.
 ENGINE_ERROR_MESSAGE = (
-    "⚠️ Языковой движок ответил ошибкой — ответ не получен.\n\n"
-    "Попробуй ещё раз через минуту. Если повторяется — сообщи "
-    "администратору: в логах есть подробности."
+    "⚠️ The language engine returned an error — no answer was produced.\n\n"
+    "Try again in a minute. If it keeps happening, tell the admin: the "
+    "details are in the logs."
 )
 
 #: Something broke in the bot itself, not in the engine. The handlers'
 #: catch-all replies used to carry the exception's own text.
 GENERIC_FAILURE_MESSAGE = (
-    "❌ Что-то сломалось на стороне бота. Попробуй ещё раз — если "
-    "повторяется, сообщи администратору: в логах есть подробности."
+    "❌ Something broke on the bot's side. Try again — if it keeps "
+    "happening, tell the admin: the details are in the logs."
 )
 
 #: The file could not be pulled from Telegram.
 DOWNLOAD_FAILURE_MESSAGE = (
-    "❌ Не удалось скачать файл. Попробуй ещё раз — если файл "
-    "большой, отправь его ещё раз поменьше."
+    "❌ Could not download the file. Try again — and if the file is "
+    "large, send a smaller one."
 )
 
 #: The sub-talk topic could not be created.
 TOPIC_CREATE_FAILURE_MESSAGE = (
-    "❌ Не удалось создать под-топик. Попробуй ещё раз."
+    "❌ Could not create the sub-talk topic. Try again."
 )
 
 #: The sub-talk topic could not be deleted.
 TOPIC_DELETE_FAILURE_MESSAGE = (
-    "❌ Не удалось удалить под-топик. Попробуй ещё раз."
+    "❌ Could not delete the sub-talk topic. Try again."
 )
 
 

@@ -426,8 +426,8 @@ def test_stats_shows_what_was_summarised(store, monkeypatch):
 
     asyncio.run(stats_cmd.stats(FakeUpdate(), None))
     text = sent["text"]
-    assert "сведено в сводки" in text, text
-    assert "не отправляется" not in text, (
+    assert "summarised" in text, text
+    assert "not sent" not in text, (
         "the old part is no longer simply not sent -- the line would be a lie"
     )
 

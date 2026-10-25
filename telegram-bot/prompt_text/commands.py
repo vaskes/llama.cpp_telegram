@@ -7,13 +7,13 @@ Every byte of the prompt text is preserved from `prompts.py`.
 The sha256 pins in tests/test_prompts.py check that.
 """
 BOT_COMMANDS = [
-    ("start",   "🏁 Начать работу, показать возможности"),
-    ("help",    "❓ Помощь по командам"),
-    ("here",    "📍 Показать текущий sub-talk"),
-    ("subs",    "📚 Список всех sub-talks (с кнопками)"),
-    ("newsub",  "➕ Создать новый sub-talk: /newsub <имя>"),
-    ("sub",     "↔️ Переключиться на sub-talk: /sub <имя>"),
-    ("delsub",  "🗑 Удалить sub-talk: /delsub <имя>"),
-    ("reset",   "🔄 Очистить сообщения в текущем sub-talk"),
-    ("stats",   "📊 Статистика и список sub-talks"),
+    ("start",   "🏁 Start working, show what the bot can do"),
+    ("help",    "❓ Help on the commands"),
+    ("here",    "📍 Show the current sub-talk"),
+    ("subs",    "📚 List all sub-talks (with buttons)"),
+    ("newsub",  "➕ Create a new sub-talk: /newsub <name>"),
+    ("sub",     "↔️ Switch to a sub-talk: /sub <name>"),
+    ("delsub",  "🗑 Delete a sub-talk: /delsub <name>"),
+    ("reset",   "🔄 Clear the messages in the current sub-talk"),
+    ("stats",   "📊 Stats and the list of sub-talks"),
 ]

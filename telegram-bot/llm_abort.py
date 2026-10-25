@@ -59,6 +59,6 @@ async def finalize_aborted_turn(*, label, response, abort_event, thinking,
         await turn.rollback('aborted')
 
     try:
-        await thinking.edit_text('⏹ Остановлено')
+        await thinking.edit_text('⏹ Stopped')
     except Exception:
         pass

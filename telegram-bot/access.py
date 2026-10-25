@@ -80,7 +80,7 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
     `finally` block, OR None if the wait timed out.
 
     v0.7.8: the previous version rejected the message with a
-    "Бот уже обрабатывает..." reply when the semaphore was
+    "bot is already busy" reply when the semaphore was
     locked. That was a fairness bug: the 3rd+ message from a
     user was dropped even though the bot was going to be free
     in a few seconds. The user had to manually re-send.
@@ -119,7 +119,7 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
             f"after {MAX_QUEUE_WAIT_SEC}s; dropping message")
         # v0.10.2 (Qwen wave-3): tell the user the bot is overloaded
         # instead of silently dropping. The user would otherwise see
-        # "💭 думаю…" and then nothing for 5 minutes.
+        # "💭 thinking…" and then nothing for 5 minutes.
         # Lazy import: handlers is upstream of this module, so a module-level
         # import would close the cycle the graph tripwire forbids. Lazy is the
         # only correct option here, and this is why the call has to live
@@ -137,7 +137,7 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
         # user's fault. But failing to deliver it has to be visible.
         try:
             from handlers import _reply
-            await _reply(update, "⚠️ Бот перегружен, попробуйте позже.")
+            await _reply(update, "⚠️ The bot is overloaded, try again later.")
         except Exception as e:
             # Structured on purpose. This is the one place where the bot
             # loses a user's message outright: the slot timed out, the notice

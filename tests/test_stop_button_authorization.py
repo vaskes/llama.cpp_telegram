@@ -35,14 +35,14 @@ CHAT_ID = -100999
 THINKING_MSG_ID = 4242
 AUTHOR_ID = 777          # the member whose turn it is
 STRANGER_ID = 555        # a different member of the same group
-REFUSAL = "Только автор сообщения может остановить обработку."
+REFUSAL = "Only the author of the message can stop the processing."
 
 
 def _stop_update(clicker_id=AUTHOR_ID, author_id=AUTHOR_ID, data="stop:thinking",
                  private=False):
     """A callback_query for the Stop button on the bot's thinking message.
 
-    The thinking message is the bot's own "💭 думаю…" message, sent as a
+    The thinking message is the bot's own "💭 thinking…" message, sent as a
     reply to the user's message -- so `reply_to_message.from_user.id` is
     the member whose turn it is.
 
@@ -66,7 +66,7 @@ def _stop_update(clicker_id=AUTHOR_ID, author_id=AUTHOR_ID, data="stop:thinking"
 
     original = MagicMock()          # the user's own message
     original.from_user.id = author_id
-    thinking = MagicMock()          # the bot's "💭 думаю…" message
+    thinking = MagicMock()          # the bot's "💭 thinking…" message
     thinking.message_id = THINKING_MSG_ID
     thinking.reply_to_message = original
 

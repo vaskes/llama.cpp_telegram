@@ -113,7 +113,7 @@ def test_call_llama_accepts_silent():
 
 
 def test_silent_suppresses_the_thinking_stream():
-    """push_thinking is the only thing that writes '💭 думаю…' into the chat.
+    """push_thinking is the only thing that writes '💭 thinking…' into the chat.
     `silent` must short-circuit it, before the Telegram call."""
     # push_thinking moved to llm_thinking.py in TECH-DEBT #3 Block C4. It
     # was a nested def, so this could only ever find it by parsing
@@ -157,7 +157,7 @@ def test_handler_passes_silent_true():
             assert "silent" in kw, "call_llama must be invoked with silent=..."
             assert isinstance(kw["silent"], ast.Constant) and kw["silent"].value is True, (
                 "the absorb path must pass silent=True — passing silent=False "
-                "shows the group's private chatter as a '💭 думаю…' message"
+                "shows the group's private chatter as a '💭 thinking…' message"
             )
             # No thinking message to update: nothing was sent to the chat.
             tm = kw.get("thinking_msg")

@@ -159,8 +159,8 @@ class LoopGuard:
         if self.last_empty >= 3:
             log.info(f"[loop] iter={iteration} 3 empty iters in a row; aborting")
             return Abort(
-                f'_(модель 3 итерации подряд не получила полезных данных от инструментов; '
-                f'останавливаю, чтобы не сжигать токены. '
+                f'_(the model got no useful data from the tools for 3 '
+                f'iterations in a row; stopping it to avoid burning tokens. '
                 f'finish_reason={finish_reason}, reasoning_chars={len(reasoning_tail)})\n\n'
                 f'{reasoning_tail}'
             )

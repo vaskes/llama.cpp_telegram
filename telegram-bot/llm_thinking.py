@@ -11,7 +11,7 @@ Six branches, all of them load-bearing:
 
   * silent       -- T65.1. A message addressed to another human in a
                     group. The model still reasons (that is the point),
-                    but "💭 думаю…" for a question nobody asked is noise.
+                    but "💭 thinking…" for a question nobody asked is noise.
   * no message   -- thinking_msg is None; there is nothing to edit.
   * empty text   -- no reasoning to show yet.
   * flood        -- Telegram refused an edit within the last 30s. Lay
@@ -41,7 +41,7 @@ THROTTLE_SEC = 5.0
 FLOOD_BACKOFF_SEC = 30.0
 # Telegram's body limit is 4096; leave room for the prefix and marker.
 MAX_PAYLOAD = 3800
-PREFIX = "💭 думаю…\n"
+PREFIX = "💭 thinking…\n"
 
 
 class ThinkingThrottle:

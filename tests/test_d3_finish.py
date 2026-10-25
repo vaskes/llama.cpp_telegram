@@ -70,10 +70,11 @@ def oracle_no_tools(content_buf, reasoning_buf, finish_reason, executed):
     if reasoning_buf:
         tail = reasoning_buf[-3500:]
         if finish_reason == "length":
-            what = ("модель потратила все токены на размышления, "
-                    "не оставив на сам ответ")
+            what = ("the model spent all the tokens on reasoning "
+                    "and left nothing for the answer")
         else:
-            what = ("модель закончила ответ в размышлениях и не выдала текст")
+            what = ("the model finished inside the reasoning "
+                    "and produced no text")
         return (
             f'[model returned an empty response. {what}; '
             f'finish_reason={finish_reason}; reasoning_chars={len(reasoning_buf)}]'
@@ -91,8 +92,9 @@ def oracle_hallucinated(content_buf, reasoning_buf, finish_reason, executed):
         return {"text": content_buf, "executed_tools": list(executed),
                 "aborted": False}
     return (
-        f'_(модель попыталась вызвать инструмент, хотя в этом turn\'е он не запрашивался; '
-        f'finish_reason={finish_reason}, content_chars={len(content_buf)})_\n\n'
+        f'_(the model tried to call a tool that was not requested in '
+        f'this turn; finish_reason={finish_reason}, '
+        f'content_chars={len(content_buf)})_\n\n'
         f'{reasoning_buf[-3500:] if reasoning_buf else "(no reasoning)"}'
     )
 
@@ -132,7 +134,7 @@ def test_the_tool_ledger_is_copied_not_aliased():
 def test_reasoning_alone_produces_the_explanatory_message():
     got = finish_without_tool_calls(content_buf="", reasoning_buf="думаю",
                                     finish_reason="length", executed_tools=[])
-    assert "модель потратила все токены на размышления" in got
+    assert "the model spent all the tokens on reasoning" in got
     assert "finish_reason=length" in got
     assert got.endswith("думаю")
 
@@ -164,7 +166,7 @@ def test_a_stop_does_not_claim_the_budget_was_spent():
                                     finish_reason="stop", executed_tools=[])
     assert "потратила все токены" not in got, (
         f"a stop is reported as an exhausted budget: {got[:160]!r}")
-    assert "закончила ответ в размышлениях" in got, (
+    assert "finished inside the reasoning" in got, (
         f"the honest wording is missing: {got[:160]!r}")
     assert "finish_reason=stop" in got
 
@@ -173,7 +175,7 @@ def test_a_length_still_reports_the_exhausted_budget():
     """finish_reason=length is the one case where the old wording was right."""
     got = finish_without_tool_calls(content_buf="", reasoning_buf="думаю",
                                     finish_reason="length", executed_tools=[])
-    assert "модель потратила все токены на размышления" in got, (
+    assert "the model spent all the tokens on reasoning" in got, (
         f"an exhausted budget is no longer reported: {got[:160]!r}")
 
 
@@ -250,7 +252,7 @@ def test_hallucination_with_nothing_says_so_explicitly():
     the whole point of this branch."""
     got = refuse_hallucinated_tools(content_buf="", reasoning_buf="",
                                     finish_reason="stop", executed_tools=[])
-    assert "модель попыталась вызвать инструмент" in got
+    assert "the model tried to call a tool" in got
     assert got.endswith("(no reasoning)")
     assert "\n\n\n" not in got
 
@@ -518,7 +520,7 @@ def test_fallback_handles_none_without_crashing():
 def test_fallback_explains_an_empty_content_with_reasoning():
     got = finish_fallback_empty(content="", reasoning="размышления",
                                 finish_reason="stop")
-    assert "fallback non-stream: content пустой" in got
+    assert "fallback non-stream: content empty" in got
     assert got.endswith("размышления")
 
 

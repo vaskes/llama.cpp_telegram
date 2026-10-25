@@ -78,4 +78,4 @@ async def test_overload_timeout_reaches_the_reply_helper():
         "the overload message never reached _reply -- the call is broken "
         "again, and the silent `except` is hiding it"
     )
-    assert "перегружен" in calls[0]
+    assert "overloaded" in calls[0]

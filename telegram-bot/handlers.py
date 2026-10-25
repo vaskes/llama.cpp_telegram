@@ -311,7 +311,7 @@ async def _open_thinking(update, *, label: str):
     computed it first and photo second; nothing reads it between, so both
     orders are the same turn and this pins one.
     """
-    thinking = await _reply(update, '💭 думаю…', reply_markup=_stop_button_markup())
+    thinking = await _reply(update, '💭 thinking…', reply_markup=_stop_button_markup())
     if thinking is None:
         log.warning(f"[{label}] could not send the thinking message after "
                     f"three timeouts; giving up on this update")
@@ -661,7 +661,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if bot_response.startswith(EMPTY_RESPONSE_PREFIX):
             log.info(f"[handle_photo] empty response, retrying once")
             try:
-                await thinking.edit_text('🔄 переспрашиваю…')
+                await thinking.edit_text('🔄 asking again…')
             except Exception:
                 pass
             retry_response = await call_llama(
@@ -1053,7 +1053,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if bot_response.startswith(EMPTY_RESPONSE_PREFIX):
                 log.info(f"[handle_document] empty response, retrying once")
                 try:
-                    await thinking.edit_text('🔄 переспрашиваю…')
+                    await thinking.edit_text('🔄 asking again…')
                 except Exception:
                     pass
                 retry_response = await call_llama(
@@ -1269,7 +1269,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if bot_response.startswith(EMPTY_RESPONSE_PREFIX):
                 log.info(f"[handle_text] empty response, retrying once")
                 try:
-                    await thinking.edit_text('🔄 переспрашиваю…')
+                    await thinking.edit_text('🔄 asking again…')
                 except Exception:
                     pass
                 retry_response = await call_llama(

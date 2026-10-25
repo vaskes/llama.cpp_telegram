@@ -94,11 +94,11 @@ def finish_without_tool_calls(*, content_buf: str, reasoning_buf: str,
         # claimed the budget in both cases, and for 18 tokens out of a
         # 65536-token budget that was simply false.
         if finish_reason == "length":
-            what = ("модель потратила все токены на размышления, "
-                    "не оставив на сам ответ")
+            what = ("the model spent all the tokens on reasoning "
+                    "and left nothing for the answer")
         else:
-            what = ("модель закончила ответ в размышлениях "
-                    "и не выдала текст")
+            what = ("the model finished inside the reasoning "
+                    "and produced no text")
         return (
             f'{EMPTY_RESPONSE_PREFIX} {what}; '
             f'finish_reason={finish_reason}; reasoning_chars={len(reasoning_buf)}]'
@@ -129,8 +129,8 @@ def refuse_hallucinated_tools(*, content_buf: str, reasoning_buf: str,
     if ending.kind == "content":
         return _answer_dict(ending, executed_tools)
     return (
-        f"_(модель попыталась вызвать инструмент, хотя в этом turn'е он не "
-        f"запрашивался; finish_reason={finish_reason}, "
+        f"_(the model tried to call a tool that was not requested in "
+        f"this turn; finish_reason={finish_reason}, "
         f"content_chars={len(content_buf)})_\n\n"
         f'{ending.reasoning_tail if ending.reasoning_tail else "(no reasoning)"}'
     )
@@ -159,7 +159,7 @@ def finish_fallback_empty(*, content, reasoning, finish_reason) -> str:
         return ending.content
     if ending.kind == "reasoning":
         return (
-            f'_(fallback non-stream: content пустой, '
+            f'_(fallback non-stream: content empty, '
             f'reasoning_chars={len(reasoning)})_\n\n'
             f'{ending.reasoning_tail}'
         )

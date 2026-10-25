@@ -119,7 +119,7 @@ async def test_an_unknown_attempt_is_rejected():
 
 async def test_the_thinking_message_says_stopped():
     _, thinking = await finalize("handle_text", abort=True)
-    assert thinking.edits == ["⏹ Остановлено"]
+    assert thinking.edits == ["⏹ Stopped"]
 
 
 async def test_a_dead_thinking_message_does_not_break_the_abort():
@@ -142,7 +142,7 @@ async def test_no_turn_means_no_rollback_and_no_crash():
     await finalize_aborted_turn(
         label="handle_photo", response=None, abort_event=FakeEvent(True),
         thinking=thinking, turn=None)
-    assert thinking.edits == ["⏹ Остановлено"]
+    assert thinking.edits == ["⏹ Stopped"]
 
 
 async def test_a_post_won_race_response_is_rolled_back_too():
@@ -240,7 +240,7 @@ def test_handlers_do_not_write_the_stopped_marker_themselves():
     hits = [n.lineno for n in ast.walk(ast.parse(
         (BOT / "handlers.py").read_text(encoding="utf-8")))
         if isinstance(n, ast.Constant) and isinstance(n.value, str)
-        and "Остановлено" in n.value]
+        and "Stopped" in n.value]
     assert not hits, hits
 
 

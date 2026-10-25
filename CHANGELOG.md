@@ -19,6 +19,37 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The bot's interface is in English now
+
+The operator's decision: every text the *user* reads is English. The
+bot's own voice stays Russian -- the persona, the summariser prompt,
+the way the model addresses the group. That is speech, not interface,
+and translating it would change the bot to fix a problem it does not
+have.
+
+What changed: the notices (`user_notice.py`), the "bot is overloaded"
+line, the "only the author can stop it" refusal, the "stopped" and
+"thinking" indicators, the empty-response fallback, the context
+overflow notice, the loop-guard diagnostics, the `/start` and `/stats`
+output, and the Telegram command menu — the last one is a content pin,
+so `tests/test_prompts.py` carries a new `BOT_COMMANDS` digest
+(`03d635c9d463329a`, was `785a53d39ee03f95`) on purpose.
+
+What did not change: the persona, the summariser prompt, the context
+header the model sees, the `СВЕДЕНО` database marker, and the Russian
+examples in the tool descriptions and the selftest scripts.
+
+`tests/test_ui_language.py` is the tripwire: every non-docstring string
+literal in `telegram-bot/` that contains Cyrillic must be covered by an
+allowlist entry that names the module **and** the fragment. A module
+nobody vouched for allows nothing, so a new module with Russian copy is
+red until someone says which kind of text it is; a mixed module
+(`context_budget.py`, which holds both a model-facing header and a
+user-facing notice) is protected by the fragment, not by the file. The
+allowlist cannot become a blanket: every entry must still match a
+literal in the file it vouches for, and the checker is exercised on a
+synthetic case.
+
 ### A dead engine answered the user with a Python repr
 
 The operator wrote "выведи hmtl" into the chat while the engine was

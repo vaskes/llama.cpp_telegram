@@ -619,6 +619,42 @@ sandbox's own marker surviving the bot's cut.
 
 ---
 
+### 3.7 The language of the bot
+
+**X-2 — Every text the user reads is English.**
+`JUDGEMENT`
+
+The operator's decision (2026-10-25). The bot's own voice is Russian —
+the persona, the summariser prompt, the way the model addresses the
+group — and that stays: it is speech, not UI. But the text the *user*
+reads — the notices, the buttons, the `/start` and `/stats` output, the
+Telegram command menu, the "the engine is unreachable" sentence — is
+English.
+
+The distinction is the same one that runs through this document: a
+string that reaches the user and a string that reaches the model are
+different artifacts, with different owners. The first is a promise; the
+second is a voice. Translating the second because the first is
+translated would change the bot's speech to fix a problem that the
+first one does not have.
+
+Checked by `tests/test_ui_language.py`: every non-docstring string
+literal in `telegram-bot/` that contains Cyrillic must be covered by an
+entry in that test's allowlist, which names the module **and** the
+fragment. A module that is not in the allowlist allows nothing, so a
+new module with Russian copy is red until someone says which of the
+two kinds of text it is. A mixed module is protected by the fragment:
+`context_budget.py` holds a model-facing header in Russian and a
+user-facing overflow notice in English, and a Russian overflow notice
+would not contain the header's fragment.
+
+The allowlist is not a blanket. Every entry must be a fragment that
+still exists in the file it vouches for, and the checker itself is
+exercised on a synthetic case — a tripwire that cannot fail is not a
+tripwire.
+
+---
+
 ## 4. Rules for the reviewer and the harness
 
 These are the ones that cost me personally, three waves running. They are about
@@ -821,8 +857,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_engine_failure_message.py` | 9 | What the user reads when the engine could not be reached |
 | `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |
 | `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
+| `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
 
-143 test files in total; the table above is the ones that guard a rule in
+144 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

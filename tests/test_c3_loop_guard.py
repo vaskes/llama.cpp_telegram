@@ -165,7 +165,7 @@ def test_two_empty_iterations_nudge_before_they_abort():
     assert "final answer now" in out.text
     out = tick(g, iteration=2, real_result=False)
     assert isinstance(out, Abort)
-    assert "3 итерации подряд" in out.text
+    assert "3 iterations in a row" in out.text
 
 
 def test_the_abort_carries_the_reasoning_tail():

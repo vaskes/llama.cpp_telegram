@@ -36,7 +36,7 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
       delsub:<name>  — confirm-then-delete (we delete immediately; no confirm step)
       stop:thinking  — abort the in-flight LLM call for the user
 
-    The Stop button is on every "💭 думаю…" message in both
+    The Stop button is on every "💭 thinking…" message in both
     private and group mode. The original user (the one whose
     message is being processed) is the only one allowed to
     stop it — identified via the thinking message's
@@ -99,7 +99,7 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.info(f"[callback stop] rejected: clicker={clicker_id} != "
                 f"original={original_user_id}")
             await update.callback_query.answer(
-                "Только автор сообщения может остановить обработку.",
+                "Only the author of the message can stop the processing.",
                 show_alert=True,
             )
             return
@@ -130,7 +130,7 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _edited_ok = False
             for _att in range(3):
                 try:
-                    await update.callback_query.edit_message_text("⏹ Уже завершено")
+                    await update.callback_query.edit_message_text("⏹ Already finished")
                     _edited_ok = True
                     break
                 except _RA as _e:
@@ -146,7 +146,7 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Delete the thinking message immediately so the user sees
         # the click took effect. We DELETE (not edit) so the inline
         # Stop button disappears with the message - editing would
-        # keep the button on the 'Остановлено' text, which looks
+        # keep the button on the 'Stopped' text, which looks
         # 'sticky' in the chat scroll. The handler's abort path
         # also tries to delete, but it's a no-op if the message is
         # already gone.
@@ -160,7 +160,7 @@ async def cmd_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.info(f"[callback stop] delete_message failed: {type(e).__name__}: {e!r}; falling back to edit")
             try:
                 await update.callback_query.edit_message_text(
-                    "⏹ Остановлено", reply_markup=None
+                    "⏹ Stopped", reply_markup=None
                 )
             except Exception as e2:
                 log.info(f"[callback stop] edit fallback also failed: {type(e2).__name__}: {e2!r}")

@@ -175,13 +175,13 @@ def test_every_handler_opens_the_thinking_turn_once(handler):
 
 @pytest.mark.parametrize("handler", ALL)
 def test_no_handler_posts_its_own_thinking_message(handler):
-    """`_reply(update, '💭 думаю…')` written out again means a second
+    """`_reply(update, '💭 thinking…')` written out again means a second
     thinking message and a second stop button."""
     fn = _fn(handler)
     stray = [n.lineno for n in ast.walk(fn)
              if isinstance(n, ast.Call)
              and isinstance(n.func, ast.Name) and n.func.id == "_reply"
-             and "думаю" in ast.unparse(n)]
+             and "thinking" in ast.unparse(n)]
     assert not stray, f"{handler}: {stray}"
 
 

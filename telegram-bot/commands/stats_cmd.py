@@ -62,10 +62,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         n_in = await in_window
         age = await oldest
         if window_days <= 0:
-            window_text = "без ограничения по времени"
+            window_text = "no time limit"
         else:
-            window_text = f"{window_days} дн. от старта бота (якорь не скользит)"
-        age_text = "—" if age is None else f"{int(age // 86400)} дн."
+            window_text = (f"{window_days} days since the bot started "
+                           f"(the anchor does not slide)")
+        age_text = "—" if age is None else f"{int(age // 86400)} d."
         old_total = max(0, stored - n_in)
         if policy["strategy"] == "summarize":
             # T70.5: the old part is no longer simply "not sent" -- part of it
@@ -75,19 +76,20 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 None, store.count_summarised, chat_id, thread_id
             )
             old_line = (
-                f' • Старше окна: {old_total} сообщ. '
-                f'(сведено в сводки: {n_summarised} в {n_sums} сводках, '
-                f'в контексте как есть: {max(0, old_total - n_summarised)})'
+                f' • Older than the window: {old_total} msgs '
+                f'(summarised: {n_summarised} in {n_sums} summaries, '
+                f'kept raw in the context: {max(0, old_total - n_summarised)})'
             )
         else:
-            old_line = f' • Старше окна (не отправляется): {old_total} сообщ.'
+            old_line = (f' • Older than the window (not sent): '
+                        f'{old_total} msgs.')
         return (
-            f' • В контексте сейчас: {n_in} сообщ.\n'
-            f' • Всего в базе: {stored} сообщ.\n'
+            f' • In the context now: {n_in} msgs\n'
+            f' • Total in the database: {stored} msgs\n'
             f'{old_line}\n'
-            f' • Окно памяти: {window_text}\n'
-            f' • Старейшее сообщение в базе: {age_text}\n'
-            f' • Стратегия: {policy["strategy"]}, потолок {policy["max_messages"]}'
+            f' • Memory window: {window_text}\n'
+            f' • Oldest message in the database: {age_text}\n'
+            f' • Strategy: {policy["strategy"]}, cap {policy["max_messages"]}'
         )
 
     # === Group mode: show topic count + total stored messages ===
@@ -111,7 +113,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f' • Current topic: #{update.message.message_thread_id} '
             f'({cur_count} stored message(s))\n'
             f' • Total stored messages across topics: {msg_total}\n'
-            f'\n🧠 Память (этот топик):\n{memory}'
+            f'\n🧠 Memory (this topic):\n{memory}'
         )
         return
     if await reject_if_unauthorized(update, context):
@@ -128,13 +130,14 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ) or "    (no sub-talks yet)"
     memory = await _memory_lines(user_id, thread_id, current_count)
     await _reply(update,
-        f'📊 **Статистика:**\n'
-        f'Активный sub-talk: "{thread_id}" — {current_count} сообщений\n'
-        f'Всего sub-talks: {len(subs)}\n'
+        f'📊 **Stats:**\n'
+        f'Active sub-talk: "{thread_id}" — {current_count} msgs\n'
+        f'Total sub-talks: {len(subs)}\n'
         f'{sub_lines}\n'
-        f'Модель: {MODEL}\n'
+        f'Model: {MODEL}\n'
         f'Tools: {len(tools)} from llama-server + 1 weather (custom)\n'
-        f'\n🧠 **Память:**\n{memory}\n'
-        f'\n💡 История хранится целиком (в т.ч. для будущего обучения). '
-        f'В контекст уходит только то, что попадает в окно выше.'
+        f'\n🧠 **Memory:**\n{memory}\n'
+        f'\n💡 The whole history is stored (including for future '
+        f'training). Only what fits the window above goes into the '
+        f'context.'
     )

@@ -49,24 +49,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # real per-chat guard is in call_bash_command (T52 #H1);
             # this is just honest user-facing copy.
             shell_line = (
-                chr(8226) + ' 🚫 **Shell-команды (bash) недоступны '
-                'в этом чате** — песочница включается только в '
-                'личке с ботом (by design, см. docs/BASH-SANDBOX.md).'
+                chr(8226) + ' 🚫 **Shell commands (bash) are unavailable '
+                'in this chat** — the sandbox is enabled only in a '
+                'private chat with the bot (by design, see '
+                'docs/BASH-SANDBOX.md).'
                 + chr(10)
             )
         else:
             shell_line = (
-                chr(8226) + ' 🐚 **Запускать shell-команды в '
-                'изолированной песочнице** (bash_command — личный '
-                'режим, доступен ТОЛЬКО здесь, в личке с ботом)'
+                chr(8226) + ' 🐚 **Run shell commands in an isolated '
+                'sandbox** (bash_command — personal mode, available '
+                'ONLY here, in a private chat with the bot)'
                 + chr(10)
             )
     else:
         shell_line = (
-            chr(8226) + ' 🚫 **Shell-команды (bash) — недоступны в '
-            'этом режиме**. Песочница включается только в personal '
-            '(LLAMABOT_DEPLOYMENT_PROFILE=personal) и недоступна в '
-            'публичных чатах. Это by design.' + chr(10)
+            chr(8226) + ' 🚫 **Shell commands (bash) — unavailable in '
+            'this mode**. The sandbox is enabled only in personal '
+            'mode (LLAMABOT_DEPLOYMENT_PROFILE=personal) and is '
+            'unavailable in public chats. This is by design.' + chr(10)
         )
     # T58: dev mode is invisible in the user-facing chat by
     # operator design (2026-10-14 11:19 MSK). No badge, no prefix,
@@ -75,15 +76,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # not in the chat. See BASH-SANDBOX.md "Dev mode" section
     # for the operator's exact requirements.
     await _reply(update,
-        chr(129302) + ' **LlamaBot v2 запущен!**' + chr(10) + chr(10) +
-        'Я могу:' + chr(10) +
-        chr(8226) + ' Отвечать на вопросы (с tool-calling)' + chr(10) +
-        chr(8226) + ' Искать в интернете ' + chr(127760) + chr(10) +
-        chr(8226) + ' Анализировать изображения (отправьте фото)' + chr(10) +
-        chr(8226) + ' Расшифровывать голосовые ' + chr(127908) + chr(10) +
-        chr(8226) + ' Читать документы (TXT, PDF)' + chr(10) +
+        chr(129302) + ' **LlamaBot v2 is up!**' + chr(10) + chr(10) +
+        'I can:' + chr(10) +
+        chr(8226) + ' Answer questions (with tool-calling)' + chr(10) +
+        chr(8226) + ' Search the internet ' + chr(127760) + chr(10) +
+        chr(8226) + ' Analyse images (send a photo)' + chr(10) +
+        chr(8226) + ' Transcribe voice messages ' + chr(127908) + chr(10) +
+        chr(8226) + ' Read documents (TXT, PDF)' + chr(10) +
         shell_line + chr(10) +
-        'Команды: /reset, /stats, /help'
+        'Commands: /reset, /stats, /help'
     )
 
 
