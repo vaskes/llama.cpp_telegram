@@ -27,12 +27,12 @@
 
 | | |
 |---|---|
-| HEAD | 56 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice) |
-| Production | **deployed and verified** (2026-10-25 14:23). The bot container runs `b8baf7b` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8/8. The sandbox side-car is **v2.7.1** (the file door), and the door was checked on the deployed tree without the model: 200000 bytes through `/files`, the delivered sha256 equal to the sandbox's, the sandbox copy deleted, the pointer in the ledger being the channel's `file_id`. **`llama-qwen5090-256k` is `active`** -- the operator had started it by hand by 14:20 |
-| Pytest | `2367 passed, 20 skipped` locally |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `b8baf7b` (`lint` + `Push on main`, both success) |
+| HEAD | 60 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode) |
+| Production | **deployed and verified** (2026-10-25 15:45). The bot container runs `6452b6f` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8/8. The sandbox side-car is **v2.7.1** (the file door), and the door was checked on the deployed tree without the model: 200000 bytes through `/files`, the delivered sha256 equal to the sandbox's, the sandbox copy deleted, the pointer in the ledger being the channel's `file_id`. **`llama-qwen5090-256k` is `active`** -- the operator had started it by hand by 14:20 |
+| Pytest | `2447 passed, 20 skipped` locally |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `6452b6f` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
-| Production modules | 54 `.py` files in `telegram-bot/` |
+| Production modules | 57 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
 | Open review cycle | none — waves 1–8 closed just before the `v0.13.0-stable` tag ("production-ready") |
 
@@ -304,8 +304,20 @@ lines with 17 `llm_*` leaf modules, and the tool loop is `ToolLoop.run_one`
 
 ### T-FREEZE-3 — `BOT_COMMANDS` mixes Russian and English
 
-Cosmetic and intentional: Russian descriptions with English technical terms
-("sub-talk"). Left as-is.
+**Closed, by decision (2026-10-25).** The operator ruled that every text
+the *user* reads is English, and the command menu is user-facing text --
+`setMyCommands` is what puts the descriptions next to the commands in the
+chat input. The descriptions are English now; the pin on the content
+changed with them (`785a53d39ee03f95` → `03d635c9d463329a`).
+
+The model's own voice stayed Russian: the persona, the summariser prompt
+and the context header are addressed to the model, not to the user.
+`tests/test_ui_language.py` draws that line mechanically -- a Cyrillic
+literal outside a docstring has to be vouched for by module and fragment.
+
+Fixing the text also exposed a defect the text was hiding: webhook mode
+never registered the menu at all, so the chat kept the previous run's
+menu. See `CHANGELOG.md` and `tests/test_webhook_menu_registration.py`.
 
 ### T-FREEZE-4 — `_RATING_PREFIX_RE` / `_EMOJI_CHAR_RE` were unified
 
