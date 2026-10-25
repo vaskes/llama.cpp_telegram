@@ -27,10 +27,10 @@
 
 | | |
 |---|---|
-| HEAD | 66 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract) |
+| HEAD | 67 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file) |
 | Production | **deployed and verified** (2026-10-25 22:15). The bot container runs `72fee7b` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8 of its 9 checks (the ninth needs a second bot in the same chat). The bot's claims about the sandbox were checked on the deployed tree with a probe inside the container: the pinned version reads 2.9.1, the privilege mode reads on, the description the model reads carries the policy, a 403 comes back as a permission and a 401 as the token. The **side-car on the host is still v2.8.0** -- the repository pins **v2.9.1**, and the upgrade waits for the operator's light (it moves the base image to ubuntu:26.04 / python:3.14-slim). **`llama-qwen5090-256k` is `active`** (the operator starts it by hand) |
-| Pytest | `2499 passed, 1 skipped` locally (the live-sandbox file is excluded, as in CI) |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `72fee7b` (`lint` + `Push on main`, both success) |
+| Pytest | `2506 passed, 1 skipped` locally (the live-sandbox file is excluded, as in CI) |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `9752b06` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 58 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count did not move |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
@@ -46,6 +46,36 @@ Sizes are `splitlines()`-based and are recomputed by
 
 These are not forgotten; they are parked on a question only the operator
 can answer. Each one records the decision that unblocks it.
+
+### The bot delivers a file twice — the fix is in the tree, production still has it
+
+**Measured by the operator, 2026-10-25.** He asked for an HTML file in the
+group chat. The document arrived — 595 bytes, the right bytes — and then a
+second message arrived carrying the same HTML as a code block: the
+transcript of the heredoc the model wrote the file with. A heredoc command
+carries the whole file in its own text, and the sandbox answers with the
+pane, which shows what was typed — so the file was in the transcript
+twice. The same thing happened with a `.sql` file. The user asked for a
+file and got the file and a copy of it.
+
+**What is done:** `9752b06` (`fix(chat): a delivered file is not delivered
+twice`). A file that reached the chat takes the transcript with it. Three
+things stay as they were: the transcript still goes to the chat when **no**
+file was delivered (there it is the only witness of what the model did —
+the operator's rule of 2026-10-24); a delivery that **failed** is not a
+delivery (its output is then the only witness); and the transcript still
+goes into what the bot remembers (`raw`) — delivery and memory are two
+artefacts. The files an answer carries — pulled out of the model's own
+text — are not counted as a delivered file.
+
+**What is not:** the production bot still runs `72fee7b`, so the double
+answer is still there. The deploy waits for the operator's word.
+
+**Verification:** `tests/test_trace_not_duplicating_a_delivered_file.py`
+(six tests, with the command taken from the production log and the output
+from the live sandbox) and
+`scripts/mutation_harness_trace_dup.py` (eight mutations, five caught,
+three survived as intended).
 
 ### The side-car on the production host is still v2.8.0 — the repository pins v2.9.1
 
