@@ -27,12 +27,12 @@
 
 | | |
 |---|---|
-| HEAD | 64 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness) |
-| Production | **deployed and verified** (2026-10-25 17:08). The bot container runs `87b1fdd` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8/8. The answer-formatting change was checked on the deployed tree with a probe inside the container: one message, `parse_mode: HTML`, the console output in a `<pre>`, the prose intact. The sandbox side-car is **v2.7.1** (the file door), and the door was checked on the deployed tree without the model: 200000 bytes through `/files`, the delivered sha256 equal to the sandbox's, the sandbox copy deleted, the pointer in the ledger being the channel's `file_id`. **`llama-qwen5090-256k` is `active`** -- the operator had started it by hand by 14:20 |
-| Pytest | `2482 passed, 20 skipped` locally |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `87b1fdd` (`lint` + `Push on main`, both success) |
+| HEAD | 66 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract) |
+| Production | **deployed and verified** (2026-10-25 22:15). The bot container runs `72fee7b` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8 of its 9 checks (the ninth needs a second bot in the same chat). The bot's claims about the sandbox were checked on the deployed tree with a probe inside the container: the pinned version reads 2.9.1, the privilege mode reads on, the description the model reads carries the policy, a 403 comes back as a permission and a 401 as the token. The **side-car on the host is still v2.8.0** -- the repository pins **v2.9.1**, and the upgrade waits for the operator's light (it moves the base image to ubuntu:26.04 / python:3.14-slim). **`llama-qwen5090-256k` is `active`** (the operator starts it by hand) |
+| Pytest | `2499 passed, 1 skipped` locally (the live-sandbox file is excluded, as in CI) |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `72fee7b` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
-| Production modules | 58 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) |
+| Production modules | 58 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count did not move |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
 | Open review cycle | none — waves 1–8 closed just before the `v0.13.0-stable` tag ("production-ready") |
 
@@ -46,6 +46,33 @@ Sizes are `splitlines()`-based and are recomputed by
 
 These are not forgotten; they are parked on a question only the operator
 can answer. Each one records the decision that unblocks it.
+
+### The side-car on the production host is still v2.8.0 — the repository pins v2.9.1
+
+**Status:** open since 2026-10-25 19:20. The bot side is done: the
+repository pins the side-car at **v2.9.1** (`407b6a8`), the bot's claims
+about it live in one place and are checked against that pin
+(`72fee7b`), and the deployed bot reports a 403 as a permission and a
+401 as the token.
+
+**What the host runs:** `/opt/telegrambot/sandbox` is a standalone clone
+of the sandbox repository, and it is still on **v2.8.0** (`76c4ee5`) --
+the privilege-mode release. The bot's deploy does not touch it (it is not
+a submodule of the bot's clone), so it stays where it was until somebody
+moves it.
+
+**What the move costs:** v2.9.0 moves the side-car's base image to
+`ubuntu:26.04` and `python:3.14-slim`. That is not a patch bump on the
+production host, and it is the reason this waits for a word rather than a
+decision of mine. v2.9.1 itself is the small one: the file door opens
+the file before it sends the headers, so a file the agent cannot read is
+a **403** with a sentence that says what to do about it, instead of a
+200 with a Content-Length and no body behind it.
+
+**What the bot does until then:** the old symptom, unchanged -- the
+side-car truncates the body, the bot reads a short read, and it reports
+"the sandbox side-car is unreachable". The bot's side of that is fixed
+and waiting; the half that answers 403 is the side-car's.
 
 ### The answer-files feature has never been checked by a human — the machine check passed on the live engine
 
