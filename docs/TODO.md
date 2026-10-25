@@ -27,9 +27,9 @@
 
 | | |
 |---|---|
-| HEAD | 71 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file, the writable rootfs and the pin that follows it, the lost answer that came back as an empty success) |
-| Production | **deployed and verified** (2026-10-25 22:15). The bot container runs `72fee7b` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8 of its 9 checks (the ninth needs a second bot in the same chat). The bot's claims about the sandbox were checked on the deployed tree with a probe inside the container: the pinned version reads 2.9.1, the privilege mode reads on, the description the model reads carries the policy, a 403 comes back as a permission and a 401 as the token. The **side-car on the host is v2.10.1** (deployed 2026-10-26, base image `ubuntu:26.04` / `python:3.14-slim`) with a **writable rootfs** (`AGENT_READ_ONLY=false`) so a privileged root can `apt-get install`; the repository now pins the same version (`d23f84b`). **`llama-qwen5090-256k` is `active`** (the operator starts it by hand) |
-| Pytest | `2508 passed, 20 skipped` locally (the live-sandbox file is excluded, as in CI) |
+| HEAD | 73 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file, the writable rootfs and the pin that follows it, the lost answer that came back as an empty success, the stdin trap that eats the side-car's end marker) |
+| Production | **deployed and verified** (2026-10-25 20:35). The bot container runs `9e9e27e` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 7 of its 9 checks with 0 failures (the round trip needs a second bot in the same chat, the summaries check is off). The bot's claims about the sandbox were checked on the deployed tree with a probe inside the container: the pinned version reads 2.10.1, the privilege mode reads on, the rootfs reads writable, and the side-car it talks to answers `2.10.1`. The **side-car on the host is v2.10.1** with a **writable rootfs** (`AGENT_READ_ONLY=false`): `sudo -n id` is uid 0, `/usr` is writable, `apt-get install` works, and a root-owned 0600 file comes back from the door as a 403 with the "chmod 644" sentence. The side-car's **stdin trap** is measured and documented: a command that reads stdin (apt-get does, through debconf) swallows the side-car's end marker and loses its answer -- `< /dev/null` answers in a second. **`llama-qwen5090-256k` is `active`** (the operator starts it by hand) |
+| Pytest | `2511 passed, 20 skipped` locally (the live-sandbox file is excluded, as in CI) |
 | CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `9752b06` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 58 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count did not move |
@@ -429,11 +429,20 @@ whole.
 
 **What is still true and still bites:** the side-car's per-command limit
 is 60 seconds, and the proxy stops waiting at the very same second — so
-a command that runs past the limit loses its answer. The first
-`apt-get install` in a fresh container did exactly that. The bot now
-reports it as a failure with a cause instead of an empty success
-(`42d55db`); raising the limit is a change in the side-car's own
-repository.
+a command that runs past the limit loses its answer. The bot reports
+that as a failure with a cause instead of an empty success (`42d55db`).
+
+**The stdin trap (measured, 2026-10-26):** the limit is not what
+usually bites. A command that **reads standard input** swallows the
+side-car's end marker — the marker lines of the *next* command showed
+up in the pane where the missing ones should have been, because
+debconf's readline frontend had read them as its own input. `apt-get
+install -y cowsay` therefore finished in a second, installed the
+package, and lost its answer; the same command with `< /dev/null`
+answered in one second. The bot's tool description now carries the
+trap and the way out (`9e9e27e`), and the error it reports when an
+answer is lost names it. The fix itself is the side-car's: run the
+command with its stdin closed, so the marker cannot be read away.
 
 ### A binary file from the sandbox cannot reach the chat
 
