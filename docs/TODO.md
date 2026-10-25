@@ -27,12 +27,12 @@
 
 | | |
 |---|---|
-| HEAD | 60 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode) |
-| Production | **deployed and verified** (2026-10-25 15:45). The bot container runs `6452b6f` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8/8. The sandbox side-car is **v2.7.1** (the file door), and the door was checked on the deployed tree without the model: 200000 bytes through `/files`, the delivered sha256 equal to the sandbox's, the sandbox copy deleted, the pointer in the ledger being the channel's `file_id`. **`llama-qwen5090-256k` is `active`** -- the operator had started it by hand by 14:20 |
-| Pytest | `2447 passed, 20 skipped` locally |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `6452b6f` (`lint` + `Push on main`, both success) |
+| HEAD | 62 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block) |
+| Production | **deployed and verified** (2026-10-25 17:08). The bot container runs `87b1fdd` with 0 restarts, `/healthz` is 200, the fatal scan is 0, the ERROR count is 0 and the smoke script passes 8/8. The answer-formatting change was checked on the deployed tree with a probe inside the container: one message, `parse_mode: HTML`, the console output in a `<pre>`, the prose intact. The sandbox side-car is **v2.7.1** (the file door), and the door was checked on the deployed tree without the model: 200000 bytes through `/files`, the delivered sha256 equal to the sandbox's, the sandbox copy deleted, the pointer in the ledger being the channel's `file_id`. **`llama-qwen5090-256k` is `active`** -- the operator had started it by hand by 14:20 |
+| Pytest | `2475 passed, 20 skipped` locally |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `87b1fdd` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
-| Production modules | 57 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) |
+| Production modules | 58 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
 | Open review cycle | none — waves 1–8 closed just before the `v0.13.0-stable` tag ("production-ready") |
 
