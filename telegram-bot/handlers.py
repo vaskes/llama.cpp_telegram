@@ -40,6 +40,9 @@ from llm_result import _format_executed_tools, unwrap_answer
 from user_notice import (DOWNLOAD_FAILURE_MESSAGE, GENERIC_FAILURE_MESSAGE)
 from llm_files import send_files
 from llm_abort import finalize_aborted_turn
+# The answers the bot sends are remembered, so the delete_messages tool
+# can take one back: the Bot API cannot list a chat's messages.
+from llm_delete import new_answer_group, remember_answer
 
 # TECH-DEBT #10 block C: the sender-label injection filter lives
 # in `prompt_guard.py`. See the module docstring for why it is
@@ -152,7 +155,7 @@ async def send_reply(update: Update, text: str, *, strip: bool = True,
         text = (text or '').strip()
     if not text or not text.strip():
         text = EMPTY_RESPONSE_FALLBACK
-    await _reply(update, text, parse_mode=parse_mode)
+    return await _reply(update, text, parse_mode=parse_mode)
 
 
 # === _send_answer_text ===
@@ -185,17 +188,26 @@ async def _send_answer_text(update: Update, text: str):
     """
     html = render_html(text)
     chunks = split_html(html, TELEGRAM_TEXT_CHUNK)
+    # The answer is remembered, so the delete_messages tool can take it
+    # back. The Bot API cannot list a chat's messages, so "my last
+    # answer" is only knowable from what the bot remembers sending.
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    group = new_answer_group()
     if not chunks:
         # Nothing but whitespace. send_reply turns it into the friendly
         # "no answer" message; sending nothing would leave the user
         # waiting for a turn that already ended.
-        await send_reply(update, text, parse_mode="HTML")
+        sent = await send_reply(update, text, parse_mode="HTML")
+        if sent is not None:
+            remember_answer(chat_id, sent.message_id, group)
         return
     for chunk in chunks:
         # strip=False: a chunk trimmed at the boundary loses the space
         # between the last word of this chunk and the first word of the
         # next one.
-        await send_reply(update, chunk, strip=False, parse_mode="HTML")
+        sent = await send_reply(update, chunk, strip=False, parse_mode="HTML")
+        if sent is not None:
+            remember_answer(chat_id, sent.message_id, group)
 
 # === _reply_active ===
 

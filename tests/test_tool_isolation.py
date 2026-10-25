@@ -39,6 +39,7 @@ def test_known_tool_names_includes_required_bot_tools():
         "react_to_message",
         "bash_command",
         "send_file",
+        "delete_messages",
     }
     missing = expected - set(KNOWN_TOOL_NAMES)
     extra = set(KNOWN_TOOL_NAMES) - expected

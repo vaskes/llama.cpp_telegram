@@ -150,6 +150,18 @@ async def execute_tool(name: str, args, deps: DispatchDeps) -> ToolExecution:
     if name == "send_file":
         return await _execute_send_file(args, deps)
 
+    if name == "delete_messages":
+        # The chat's own messages, removed by Telegram's own API. The
+        # bot's history is not touched: the record of what happened
+        # stays (the operator's rule, 2026-10-26).
+        from llm_delete import execute_delete_messages
+        text, extras = await execute_delete_messages(
+            args, bot=deps.bot, chat_id=deps.chat_id,
+            chat_type=deps.chat_type)
+        ledger = _entry("delete_messages", args, deps.iteration,
+                         **(extras or {}))
+        return _finish(text, ledger, deps)
+
     registry = deps.custom_tools or {}
     if name in registry:
         result = await registry[name](args)

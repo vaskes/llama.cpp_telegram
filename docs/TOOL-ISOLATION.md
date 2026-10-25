@@ -52,6 +52,8 @@ anything outside its whitelist.
        "donsetch_web_crawl",  "donsetch_web_screenshot",
        "react_to_message",
        "bash_command",
+       "send_file",
+       "delete_messages",
    })
    ```
 

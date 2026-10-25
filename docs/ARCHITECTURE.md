@@ -13,9 +13,9 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1402 lines)
+├── handlers.py            # handle_text/photo/voice/document (1414 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   495 lines file, 343 in the function
+│                          #   507 lines file, 343 in the function
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py      # human-to-human reply absorb (107)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
@@ -63,11 +63,11 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       382  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
+  llm_dispatch.py       394  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      550  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
-  call_llama.py         495  call_llama
+  call_llama.py         507  call_llama
   llm_loop_guard.py     170  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py        83  _tag_sender
@@ -85,6 +85,7 @@ tests, none of which build a full `call_llama`.
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
   llm_sendfile.py         79  send_file_tool_def
+  llm_delete.py          361  delete_messages_tool_def, execute_delete_messages, remember_answer
   llm_truncation.py      119  condense
 ```
 

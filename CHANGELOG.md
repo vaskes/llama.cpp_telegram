@@ -60,6 +60,40 @@ waiting at the very same second, so a command that runs past the limit
 loses its answer on the way. The bot says that, and it says that the
 side-car is up.
 
+### The bot can take a message back out of the chat
+
+The operator, 2026-10-26: "бот сейчас в канале админ, можно сделать
+ему инструмент чтобы он мог удалять сообщения в ТЕЛЕГРАММЕ ... чтобы он
+мог чистить историю сообщений". The bot is an administrator in the admin
+channel, and the channel could not be cleaned: it could post, it could
+react, and it could not take anything back. A wrong answer, a duplicated
+answer, a wall of console output — all of it stayed, and only a human
+with a phone could remove it.
+
+The new tool `delete_messages` removes messages from the chat the model
+is talking in. There is no `chat_id` parameter: the model's reach is the
+conversation it is in, the same reasoning the sandbox's `session_id`
+follows (T57 #S16). "My last answer" means the whole answer, even when
+it was sent as several messages — the Bot API cannot list a chat's
+messages, so the bot remembers what it sent.
+
+The rights are Telegram's, and the tool checks them before it deletes
+anything: a bot may delete its own messages anywhere, other people's
+messages only where it is an administrator, and only for 48 hours. A
+refusal is reported with Telegram's own words and never as "deleted".
+
+**The database is not touched.** The same message carried the rule:
+"sqlite наша священная корова — источник истины и всего того, что
+происходило в канале. Базу не трогаем." The chat is a surface, and
+what it shows can be taken back; the history is the record of what
+happened, and it stays. The module does not import the database at all,
+and the tripwire is on the import itself — a rule that a refactor could
+break by adding a write somewhere would not be a rule.
+
+The prompt learns the tool and loses a stale number: it said "these six
+tools" next to a list that moved, and a count next to a list goes stale
+the moment the list does.
+
 ### A command that reads standard input loses its answer
 
 The side-car runs a command in a tmux pane and knows the command is

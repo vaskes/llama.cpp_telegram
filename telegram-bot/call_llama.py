@@ -329,6 +329,18 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         # the only channel.)
         from llm_sendfile import send_file_tool_def
         bot_side_tool_defs.append(send_file_tool_def())
+    # delete_messages removes messages from the chat itself, so it does
+    # not need the sandbox. It is advertised only where the bot may
+    # actually delete something: in a private chat it owns the
+    # conversation, and in a group or a channel Telegram only lets an
+    # administrator delete other people's messages. The check is
+    # Telegram's and it costs an API call, so it is cached for five
+    # minutes (llm_delete.bot_may_delete).
+    if bot is not None and chat_id is not None:
+        from llm_delete import bot_may_delete, delete_messages_tool_def
+        may_delete, _why_not = await bot_may_delete(bot, chat_id, chat_type)
+        if may_delete:
+            bot_side_tool_defs.append(delete_messages_tool_def())
     all_tools = tools + bot_side_tool_defs
 
     # === Group context (always-injected system message) ===

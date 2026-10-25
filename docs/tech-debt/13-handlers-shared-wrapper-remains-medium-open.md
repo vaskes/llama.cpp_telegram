@@ -96,4 +96,4 @@ sides of the change in `tests/test_handler_skeleton.py`.
 - `tests/test_handler_middle.py` — block F: thinking, sender name,
   history and rating mode.
 
-<!-- current: handlers.py=1402 -->
+<!-- current: handlers.py=1414 -->

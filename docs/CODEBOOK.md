@@ -729,6 +729,34 @@ when no file was delivered and when the delivery failed, stays in the
 remembered answer, and the files out of the model's own text do not
 switch it off.
 
+**X-10 — The chat can be cleaned; the history cannot be rewritten.**
+`AUTO`
+`tests/test_delete_messages_tool.py`.
+
+The operator's rule, 2026-10-26, in his words: "sqlite наша священная
+корова -- источник истины и всего того, что происходило в канале. Базу
+не трогаем."
+
+He asked for a tool that removes messages from the Telegram chat — the
+bot is an administrator in the admin channel, and the channel could not
+be cleaned. The two halves of that request are not the same thing:
+
+  * the CHAT is a surface. What it shows can be taken back: Telegram
+    deletes a message, and the message is gone from the channel;
+  * the HISTORY is the record of what happened. It is what the bot
+    remembers, what the operator reads afterwards, and what a later
+    question about the channel is answered from. A tool that erased it
+    would leave the bot believing something the chat no longer shows.
+
+So `delete_messages` removes messages and touches nothing else. The
+module does not import the database, and the tripwire is on the import
+itself rather than on a code path: a rule that a refactor can break by
+adding a write somewhere is not a rule.
+
+Checked by `tests/test_delete_messages_tool.py`: the module imports no
+database module, and a delete with the store rigged to shout leaves it
+unshouted.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1077,8 +1105,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
+| `test_delete_messages_tool.py` | 24 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 
-151 test files in total; the table above is the ones that guard a rule in
+152 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

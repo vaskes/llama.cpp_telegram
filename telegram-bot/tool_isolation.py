@@ -72,6 +72,12 @@ KNOWN_TOOL_NAMES: frozenset[str] = frozenset({
     # has no text form. Without this name in the list the isolation
     # layer soft-rejects the call and the model loops on it.
     "send_file",
+    # delete_messages: implemented in llm_delete.py, removes messages
+    # from the chat the model is talking in. It reaches no further than
+    # that chat -- there is no chat_id parameter, so the model's reach
+    # is the conversation it is in. The bot's own database is NOT
+    # touched: the history is the record of what happened.
+    "delete_messages",
 })
 
 
