@@ -218,5 +218,65 @@ async def test_the_pull_does_not_read_the_file_into_memory(sandbox):
     assert Path(fetched.path).stat().st_size == len(PAYLOAD)
 
 
+async def test_a_file_the_agent_cannot_read_is_a_permission_not_a_transport(
+        sandbox):
+    """A 403 is the file's mode, not a broken connection.
+
+    Before the sandbox v2.9.1 the door opened the file lazily, after
+    the 200 and the Content-Length were already on the wire, so this
+    case came back as a truncated body. The client read that as a
+    broken connection and said "the sandbox side-car is unreachable" --
+    the wrong component -- and the operator went to look at the network
+    instead of at the file's mode.
+    """
+    path = "/workspace/root-only.bin"
+    sandbox.files[path] = b"not yours"
+    sandbox.unreadable.add(path)
+
+    with pytest.raises(ft.FileTransportError) as caught:
+        await ft.fetch_to_temp(path)
+
+    message = caught.value.message
+    assert "cannot read" in message, message
+    assert "chmod" in message, (
+        f"the advice has to reach the operator: {message!r}")
+    assert "unreachable" not in message.lower(), message
+    assert "token" not in message.lower(), message
+
+
+async def test_the_meta_door_refuses_an_unreadable_file_the_same_way(sandbox):
+    """The meta door asks about the file before the bytes are pulled.
+
+    If the meta door answered 200 for a file the agent cannot read, the
+    bot would learn the size and then fail on the download -- and the
+    failure would look like a transport problem again.
+    """
+    path = "/workspace/root-only.bin"
+    sandbox.files[path] = b"not yours"
+    sandbox.unreadable.add(path)
+
+    with pytest.raises(ft.FileTransportError) as caught:
+        await ft.file_meta(path)
+
+    assert "cannot read" in caught.value.message, caught.value.message
+
+
+async def test_a_refused_token_is_a_token_problem(sandbox):
+    """The proxy answers 401 for a token it does not accept.
+
+    That is what makes a 403 readable as a permission: the two
+    refusals come from different sides and mean different things.
+    """
+    sandbox.reject_token = True
+    sandbox.files[PATH] = PAYLOAD
+
+    with pytest.raises(ft.FileTransportError) as caught:
+        await ft.fetch_to_temp(PATH)
+
+    message = caught.value.message
+    assert "token" in message.lower(), message
+    assert "cannot read" not in message, message
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

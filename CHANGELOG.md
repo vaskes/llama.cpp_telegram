@@ -19,6 +19,48 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The bot's claims about the sandbox were three versions out of date
+
+The operator turned the sandbox's privilege mode on (side-car v2.8.0): a
+command inside the sandbox's container can become root there. The bot's
+docstring went on describing that container as non-root with an empty
+capability set and no-new-privileges — three claims, all false from that
+moment — and the tool description the *model* reads went on telling it
+that sudo was off the table. Nothing noticed, because nothing compared
+the claim with the thing the claim was about.
+
+The posture now lives in one place, `telegram-bot/personal_tools/sandbox_contract.py`,
+and everything else points at it:
+
+  * the pinned version and the posture are there, and
+    `tests/test_sandbox_contract.py` compares them with the side-car the
+    repo actually pins (the submodule's own source says which version it
+    is);
+  * the tool description is built from the contract, so the sentence the
+    model reads cannot drift from what the code believes. It says what
+    is true — sudo works in there — and keeps the policy: that is a
+    policy and not a wall, and the container is the boundary;
+  * the documents quote the contract's posture verbatim, and the
+    sandbox's own numbers (`mem_limit: 4g`, `pids_limit: 256`, the three
+    posture knobs) are read out of the pinned side-car's compose file
+    rather than remembered.
+
+A refusal now names the component that refused. The side-car answers 401
+for a token it does not accept and **403** for a file it cannot read; the
+bot used to answer a 403 with "the sandbox rejected AGENT_STACK_TOKEN",
+and a truncated body with "the sandbox side-car is unreachable" — the
+wrong component in both cases. The operator ends up at the file's mode
+instead of at the network.
+
+The meta door's refusal is no longer read as metadata, either. Only the
+404 was handled there, so a 403 (or a 401, or a 502) fell through to the
+metadata parser — and the bot then believed it knew the size of a file
+nobody had described.
+
+The side-car pin moves with it: **v2.7.1 → v2.9.1**, the release in
+which a file the agent cannot read is refused with a status instead of a
+truncated 200.
+
 ### The bot stopped answering after a reboot, and the fix is a boot order
 
 On 2026-10-25 the host rebooted. The bot container came up before the

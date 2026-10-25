@@ -199,10 +199,17 @@ path in the entire bot**. The defence layers are:
      match `[A-Za-z0-9._-]{1,128}` to prevent the LLM from
      crafting IDs that escape the sandbox's session-id parser.
   5. **Sandbox containment** (vaskes/OpenWebUI-bash-sandbox).
-     The side-car runs as a non-root user, `cap_drop: ALL`,
-     `no-new-privileges`, `pids_limit: 256`, `mem_limit: 2G`,
-     read-only fs, 60s per-command timeout. 92 upstream tests
-     in that repo, 3-wave reviewed.
+     The side-car's posture is the sandbox's own compose file, and the
+     bot does not keep a second copy of it: the pinned version and the
+     posture live in `telegram-bot/personal_tools/sandbox_contract.py`, and
+     `tests/test_sandbox_contract.py` compares them with the sandbox
+     this repo actually pins.
+
+     The side-car runs in a container with a read-only rootfs: /workspace is the only writable mount, and the host's ssh-keys and /opt/search are mounted read-only.
+
+     The agent's own process runs as uid 1000 and the container drops SYS_ADMIN, so there are no mounts and no namespaces to be had from inside.
+
+     The privilege mode is ON: a command may become root inside the container, so the container is the perimeter and what is inside it is the blast radius.
   6. **AGENT_STACK_TOKEN bearer auth** between the bot and the
      sandbox side-car. A leaked token is the only way for an
      attacker to reach the sandbox without going through the

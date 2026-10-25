@@ -84,14 +84,13 @@ side-car**, NOT in the bot. The bot's responsibility is:
                            │ tmux send-keys
                            ▼
                   ┌──────────────────────┐
-                  │  sandbox-agent       │    ← runs in hardened
-                  │  container           │       container:
-                  │                      │       read-only fs,
-                  │  /workspace (writable)       cap_drop ALL,
-                  │  everything else (ro)        no-new-privileges,
-                  │                      │       pids_limit,
-                  │                      │       mem_limit,
-                  └──────────────────────┘       rate limit
+                  │  sandbox-agent       │    ← runs in a container whose
+                  │  container           │       posture is decided by the
+                  │                      │       sandbox's own compose
+                  │  /workspace (writable)       file -- see "The
+                  │  everything else (ro)        sandbox's posture" below
+                  │                      │
+                  └──────────────────────┘
 ```
 
 The bot does not know what is inside the sandbox. It treats
@@ -202,19 +201,48 @@ The bot's contribution to safety is small but crucial:
 | **Per-chat session** | `session_id` is derived from `chat_id`, not from the user. Two users in the same chat share the sandbox session (which is the desired behaviour — they see the same cwd, env, history). Two different chats do NOT share sessions. The bot does NOT add `user_id` to the session, so cross-user state injection via session id is impossible. |
 | **Tool history in chat** | The bot renders the executed bash commands in a `\`\`\`bash ... \`\`\`` block in its final answer (T44), so the user can see what was actually run. |
 
-The sandbox side-car's contribution to safety is the rest:
+The sandbox side-car's contribution to safety is the rest. Every value
+below is the sandbox's own, quoted from the compose file it ships
+(`sandbox/docker-compose.production.yml` in this repo, as a submodule);
+the bot does not have its own opinion about them:
 
-  - `cap_drop: ALL` and `no-new-privileges` so a process inside
-    cannot escalate.
+  - The stock posture is an empty capability set and new privileges
+    denied, so a process inside cannot escalate. Both are switches:
+    `cap_drop: ${AGENT_CAP_DROP:-ALL}` and
+    `no-new-privileges:${AGENT_NO_NEW_PRIVILEGES:-true}`.
   - `read_only: true` at the rootfs level so the host system
     is not writable from inside.
-  - `/workspace` is the only writable mount; size-limited.
+  - `/workspace` is the only writable host mount; size-limited.
   - `pids_limit: 256` so fork bombs are contained.
-  - `mem_limit: 2G` so memory-exhaustion attacks die.
+  - `mem_limit: 4g` so memory-exhaustion attacks die.
   - Per-command 60s timeout, killed at the tmux level so a
     hung process cannot block the bot forever.
   - Per-session rate limit (60 rpm) so a runaway loop does
     not DoS the side-car.
+
+### The sandbox's posture
+
+The side-car runs in a container with a read-only rootfs: /workspace is the only writable mount, and the host's ssh-keys and /opt/search are mounted read-only.
+
+The agent's own process runs as uid 1000 and the container drops SYS_ADMIN, so there are no mounts and no namespaces to be had from inside.
+
+The privilege mode is ON: a command may become root inside the container, so the container is the perimeter and what is inside it is the blast radius.
+
+Those three sentences are not written here by hand: they come from
+`telegram-bot/personal_tools/sandbox_contract.py`, which holds the pinned version and
+the posture, and `tests/test_sandbox_contract.py` checks that this
+document still quotes them. A paraphrase would be a second copy of the
+truth, and a second copy is how the old claim went stale.
+
+The privilege mode is a deployment decision, made by three variables in
+the side-car's env file: `AGENT_ALLOW_SUDO=1`,
+`AGENT_NO_NEW_PRIVILEGES=false`, `AGENT_CAP_DROP=SYS_ADMIN`. The
+compose file's own defaults are `AGENT_ALLOW_SUDO:-0`,
+`AGENT_CAP_DROP:-ALL` and `AGENT_NO_NEW_PRIVILEGES:-true` — the stock
+posture, in which a command cannot become root at all. The production
+deployment on llmhost1 runs the privilege mode; it is a private
+deployment in a secured environment, and the sandbox's own
+`docs/SECURITY.md` says what that costs.
 
 Operator's responsibility:
 
@@ -257,8 +285,13 @@ anything within the sandbox's policy:
 
 ## What it cannot do
 
-  - Touch anything outside `/workspace` (read-only mount
-    policy at the container level).
+  - Write to the host outside `/workspace`: the rootfs is read-only and
+    `/workspace` is the only writable host mount. Inside the container
+    it can write to the container's own tmpfs (`/tmp`, `/run`), which
+    dies with the container.
+  - Become root inside the sandbox's container? It can: that is the
+    privilege mode, and the container is the line that holds. See "The
+    sandbox's posture" above.
   - Survive the sandbox container restart (the `/workspace`
     is a named volume that persists; the tmux session and
     running processes do not).
@@ -272,8 +305,9 @@ anything within the sandbox's policy:
 
 Text goes through the shell; **bytes have their own door**.
 
-The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.1`)
-publishes three routes next to the shell:
+The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, at the version this
+repo pins -- see `telegram-bot/personal_tools/sandbox_contract.py`) publishes three
+routes next to the shell:
 
 | Method | Path | What it does |
 |---|---|---|
@@ -339,7 +373,8 @@ makes itself is marked too (`llm_truncation.py`).
 |---|---|---|
 | `a3fa2f2` (v2.3.0) | `5659ed6` (v0.11.0-pre) | Tested together. |
 | `04be1d8` (v2.4.5) | `6901827` (v0.12.0-stable) | Tested together. |
-| `c8d70ef` (v2.7.1) | this branch | The file door and the stdout contract; v2.7.1 relays the door's real status instead of flattening every failure into a 200. |
+| `c8d70ef` (v2.7.1) | `fcef3d5` | The file door and the stdout contract; v2.7.1 relays the door's real status instead of flattening every failure into a 200. |
+| `34eca7d` (v2.9.1) | this branch | The privilege mode, and a file the agent cannot read refused with a 403 instead of a truncated 200. |
 
 The bot treats the sandbox as a black box: it sends JSON over
 HTTP and gets JSON back. As long as the wire format is

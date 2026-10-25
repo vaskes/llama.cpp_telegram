@@ -1,8 +1,9 @@
 """A fake sandbox file door, for the tests that need one.
 
 The bot's half of the sandbox contract (`vaskes/OpenWebUI-bash-sandbox`,
-tag `v2.7.1`) is HTTP: `GET /files/meta`, `GET /files`, `DELETE /files`,
-all with a bearer token. The tests drive the real httpx stack through
+the version this repo pins -- see `sandbox_contract.py`) is HTTP:
+`GET /files/meta`, `GET /files`, `DELETE /files`, all with a bearer
+token. The tests drive the real httpx stack through
 `httpx.MockTransport`, so the code under test does its real streaming,
 its real status handling and its real error mapping -- only the socket
 is replaced.
@@ -17,6 +18,11 @@ What the fake reproduces, because the contract depends on it:
   (`quirk_meta`).
 * a file over the limit comes back as **413**, and its detail names the
   real size -- the number the model needs.
+* a file the agent cannot read comes back as **403**, with a detail
+  that says what to do about it ("make it readable, e.g. chmod 644").
+  Before the sandbox v2.9.1 the door opened the file lazily, after the
+  200 and the Content-Length were on the wire, so this case arrived as a
+  truncated body and every client called it an unreachable side-car.
 * a file that is not there is a **404** on the download and on the
   delete, and the delete of a file that is not there is not a failure:
   "make sure this is gone" is satisfied.
@@ -31,6 +37,8 @@ from functools import partial
 
 import httpx
 
+from personal_tools.sandbox_contract import SANDBOX_PINNED_VERSION
+
 
 class FakeSandbox:
     """The sandbox's file door, in memory."""
@@ -42,13 +50,22 @@ class FakeSandbox:
         self.tokens: list[str | None] = []
         self.delete_status = 204
         self.meta_body = None     # override the meta answer wholesale
-        self.version = "2.7.1"    # what /api/config says
+        self.version = SANDBOX_PINNED_VERSION  # what /api/config says
         self.has_door = True      # False: an old side-car, no routes
         # v2.7.0 answered 200 with {"error": ...} when the agent refused
         # the path; v2.7.1 relays the agent's status instead. The default
         # is the older shape, because that is the one a client has to
         # survive -- a test that wants the newer one says so.
         self.quirk_meta = True
+        # paths the agent's own process cannot read (a root-owned 0600
+        # file, for example). The door refuses them with a 403.
+        self.unreadable: set[str] = set()
+        # True: the proxy refuses the bearer token with a 401. That is
+        # the proxy's own answer (openapi_proxy.py answers 401 for a
+        # token it does not accept), and it is why a 403 from the agent
+        # can be read as a permission and not as an authentication
+        # problem.
+        self.reject_token = False
 
     # -- what the tests look at ---------------------------------------
 
@@ -66,6 +83,9 @@ class FakeSandbox:
         target = request.url.params.get("path", "")
         self.requests.append((method, route, target))
         self.tokens.append(request.headers.get("authorization"))
+
+        if self.reject_token:
+            return httpx.Response(401, json={"detail": "invalid token"})
 
         if method == "DELETE":
             if self.delete_status != 204:
@@ -89,6 +109,8 @@ class FakeSandbox:
                 return httpx.Response(404, json={"detail": "Not Found"})
             if self.meta_body is not None:
                 return httpx.Response(200, json=self.meta_body)
+            if target in self.unreadable:
+                return httpx.Response(403, json={"detail": self._denied(target)})
             if target not in self.files:
                 if not self.quirk_meta:
                     return httpx.Response(
@@ -107,6 +129,8 @@ class FakeSandbox:
                 "limit": self.limit,
             })
 
+        if target in self.unreadable:
+            return httpx.Response(403, json={"detail": self._denied(target)})
         if target not in self.files:
             return httpx.Response(404, json={"detail": f"file not found: {target}"})
         data = self.files[target]
@@ -116,6 +140,21 @@ class FakeSandbox:
                 f"{self.limit} bytes")})
         return httpx.Response(200, content=data,
                               headers={"content-type": "application/octet-stream"})
+
+    @staticmethod
+    def _denied(target: str) -> str:
+        """The sandbox's own words for a file it cannot read.
+
+        Copied from the agent's refusal, so the client is tested against
+        the sentence a real deployment produces -- including the advice,
+        which is the part that has to reach the operator.
+        """
+        return (
+            f"permission denied: the sandbox agent cannot read "
+            f"{os.path.basename(target)}. The file's owner or mode does "
+            f"not allow it (a root-owned 0600 file, for example); make "
+            f"it readable, e.g. chmod 644."
+        )
 
 
 def install(monkeypatch, sandbox: FakeSandbox, tmp_path) -> FakeSandbox:

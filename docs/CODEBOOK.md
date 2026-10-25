@@ -777,6 +777,56 @@ while the plain messages do not.
 
 ---
 
+### 3.9 A claim about another service
+
+**X-8 — A claim about another service lives in one place, and a tripwire
+compares it with the pin.**
+`AUTO`
+
+The bot talks to a side-car it does not contain. Everything the bot
+knows about that side-car's *posture* — what it drops, whether a command
+may become root, how long it may run — is a claim about code that lives
+in another repository, and it changes when that repository changes.
+
+On 2026-10-25 the operator turned the sandbox's privilege mode on. The
+bot's docstring went on describing the container as non-root with an
+empty capability set and no-new-privileges — three claims, all false
+from that moment — and the tool description the model reads went on
+telling it that sudo was off the table. Nothing noticed, because nothing
+compared the claim with the thing the claim was about.
+
+Three things follow, and the tripwire checks all of them:
+
+* **the facts live in one module** — `telegram-bot/personal_tools/sandbox_contract.py`
+  holds the pinned version and the posture. A second copy of a fact is
+  a second thing to forget;
+* **the documents quote it, they do not paraphrase it** — the prose
+  carries the contract's sentences verbatim, so a change to the contract
+  has to be carried into the documents instead of quietly diverging from
+  them;
+* **the sandbox's own numbers are read from the sandbox** — the tripwire
+  takes `mem_limit`, `pids_limit` and the three posture knobs out of
+  the pinned submodule's compose file and checks that the document quotes
+  them. A number about the sandbox comes from the sandbox.
+
+The same failure has a second half, and it is the half that reaches the
+user: **a refusal has to name the component that refused.** The sandbox
+answers 401 for a token it does not accept and 403 for a file it cannot
+read; before v2.9.1 the second case arrived as a truncated body, and the
+bot called it an unreachable side-car. The operator then looked at the
+network instead of at the file's mode. A short read is a transport; a
+403 is a permission.
+
+Checked by `tests/test_sandbox_contract.py` and
+`tests/test_file_transport.py`: the contract's version is the version the
+pinned sandbox declares, the privilege mode is only claimed by a sandbox
+that has it, the description the model reads says what is true about
+sudo and keeps the policy, the documents carry the contract's posture and
+the sandbox's own defaults, the old claim does not come back, a 403 is a
+permission, and a 401 is the token.
+
+---
+
 ## 4. Rules for the reviewer and the harness
 
 These are the ones that cost me personally, three waves running. They are about
@@ -976,7 +1026,8 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 
 | `test_console_output_in_chat.py` | 9 | The console output goes into the chat; it is not a file |
 | `test_send_file_tool.py` | 14 | A file from the sandbox reaches the chat as a document |
-| `test_file_transport.py` | 15 | The file door: the bytes, the digest, the purge, the version |
+| `test_file_transport.py` | 18 | The file door: the bytes, the digest, the purge, the version |
+| `test_sandbox_contract.py` | 9 | The bot's claims about the sandbox match the sandbox we run |
 | `test_engine_failure_message.py` | 9 | What the user reads when the engine could not be reached |
 | `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |
 | `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
@@ -984,7 +1035,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
 
-149 test files in total; the table above is the ones that guard a rule in
+150 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

@@ -1,13 +1,32 @@
 """Getting a file out of the sandbox, and leaving one copy behind.
 
-The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.1`) publishes
-a file door next to its shell door:
+The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, at the version this
+repo pins -- see `sandbox_contract.py`) publishes a file door next to
+its shell door:
 
 | Method | Path             | What it does                             |
 |--------|------------------|------------------------------------------|
 | GET    | `/files/meta?path=P` | size, name, mtime, and the sandbox's own limit |
 | GET    | `/files?path=P`  | the file's **raw bytes**, streamed        |
 | DELETE | `/files?path=P`  | remove the file from the sandbox (204)   |
+
+A refusal is a status, and the statuses mean different things:
+
+| Status | What it means |
+|---|---|
+| 401 | the bearer token was refused -- the bot's own configuration is wrong |
+| 403 | the agent cannot read the file: its owner or mode does not allow it |
+| 404 | there is no such file |
+| 413 | the file is over the sandbox's own size limit |
+
+The 403 is the one this module used to get wrong, and it got it wrong
+because the sandbox did. Before the sandbox v2.9.1 the door opened the
+file lazily, after the 200 and the Content-Length were already on the
+wire, so a file the agent could not read came back as a truncated body.
+The client read that as a broken connection and said "the sandbox
+side-car is unreachable" -- which sends the operator to look at the
+network instead of at the file's mode. A short read is a transport; a
+403 is a permission.
 
 Before that, the only way out was base64 through the terminal pane, and
 that path had a ceiling of roughly 675 KB of real file: base64 is four
@@ -114,9 +133,17 @@ def _error_for_status(status: int, body: str) -> str:
         return f"the sandbox refused the file: {detail}"
     if status == 400:
         return f"the sandbox refused the path: {detail}"
-    if status in (401, 403):
-        return (f"the sandbox rejected AGENT_STACK_TOKEN (HTTP {status}); "
+    if status == 401:
+        return (f"the sandbox rejected AGENT_STACK_TOKEN (HTTP 401); "
                 f"check the token in the bot's environment")
+    if status == 403:
+        # The token is not in question: the proxy answers 401 for a bad
+        # token, and the agent answers 403 for a file it cannot read.
+        # Before the sandbox v2.9.1 this was a truncated body, and the
+        # client called it an unreachable side-car -- a diagnosis that
+        # sends the operator to the network instead of to the file's
+        # mode. The detail names the file and says what to do about it.
+        return f"the sandbox refused to read the file: {detail}"
     if status == 502:
         return f"the sandbox agent is unreachable: {detail}"
     return f"HTTP {status}: {detail}"
@@ -194,8 +221,14 @@ async def file_meta(path: str, *, timeout: float = 30.0) -> dict[str, Any]:
                     f"{'.'.join(str(n) for n in version)}) -- it is older "
                     "than sandbox v2.7.0",
                     status=404)
-            raise FileTransportError(
-                _error_for_status(r.status_code, r.text), status=r.status_code)
+        # Any other refusal belongs here, not inside the 404 branch: a
+        # 403 (the agent cannot read the file), a 401 (the token) and a
+        # 502 (the agent is down) were all falling through to the
+        # metadata parser, which read the error document as if it were
+        # a description of the file. The bot then believed it knew the
+        # size of a file it had not been told about.
+        raise FileTransportError(
+            _error_for_status(r.status_code, r.text), status=r.status_code)
     try:
         data = r.json()
     except ValueError:

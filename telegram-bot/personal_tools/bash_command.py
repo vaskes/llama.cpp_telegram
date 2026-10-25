@@ -8,9 +8,12 @@ forwards each call to the vaskes/OpenWebUI-bash-sandbox openapi-proxy
 side-car over HTTP with a bearer token.
 
 We do NOT execute commands locally. All shell execution is delegated
-to the sandbox side-car which runs as a non-root user with read-only
-fs, cap_drop ALL, no-new-privileges, pids_limit, mem_limit, rate
-limit, and persistent tmux sessions per session_id.
+to the sandbox side-car, which runs in a container of its own. What
+that container allows is not written here: the pinned version and the
+posture live in `sandbox_contract.py`, and the operator-facing version
+of the same facts is in docs/BASH-SANDBOX.md. This paragraph used to
+describe the posture in prose, and it went stale the day the operator
+turned the sandbox's privilege mode on.
 
 Profile gate
 ------------
@@ -40,6 +43,7 @@ from typing import Any
 import httpx
 
 from llm_truncation import condense
+from personal_tools.sandbox_contract import SUDO_POLICY
 
 
 # Tool definition that goes into llama-server's request body. The model
@@ -66,10 +70,7 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
             "this tool def would otherwise drift. Use it for: "
             "running scripts, inspecting files in /workspace, "
             "git operations, building projects, fetching public "
-            "web pages with curl/wget. Do NOT use it for: anything "
-            "that would need sudo, anything that needs to write "
-            "outside /workspace, or anything that needs to run for "
-            "more than a minute."
+            "web pages with curl/wget. " + SUDO_POLICY
         ),
         "parameters": {
             "type": "object",
@@ -177,10 +178,13 @@ _T51_RATE_LIMIT_TTL_SEC = 3600  # 1 hour idle -> evict
 #     the LLM cannot choose a session_id).
 #   * T58 dev mode itself: requires BOTH env vars; refuses
 #     if allowlist is empty; refuses for unlisted chats.
-#   * Sandbox containment (vaskes/OpenWebUI-bash-sandbox):
-#     non-root, cap_drop ALL, no-new-privileges, pids_limit 256,
-#     mem_limit 2G, read-only fs, 60s per-command timeout,
-#     OPENAPI_PROXY_RATE_LIMIT_RPM=60.
+#   * Sandbox containment (vaskes/OpenWebUI-bash-sandbox): the
+#     container's posture is in sandbox_contract.py -- a read-only
+#     rootfs, /workspace writable, SYS_ADMIN dropped, a pids limit, a
+#     memory limit, a per-command timeout and a rate limit -- and the
+#     privilege mode, which lets a command become root inside that
+#     container. Dev mode changes none of that: it only decides which
+#     chat the model is in.
 #
 # In short: dev mode lets you run bash in a supergroup.
 # It does NOT let the model do anything that the personal
