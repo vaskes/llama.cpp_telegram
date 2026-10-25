@@ -141,6 +141,14 @@ def test_the_menu_registrar_publishes_the_command_list():
     class _FakeDispatcher:
         def __init__(self):
             self.bot = _FakeBot()
+            self.init_calls = 0
+
+        async def initialize(self):
+            # The registrar no longer builds the Application itself: it
+            # asks for one that is ready, and a ready one has finished
+            # initializing. So the fake has to finish initializing too.
+            self.init_calls += 1
+            self._initialized = True
 
     dispatcher = _FakeDispatcher()
 

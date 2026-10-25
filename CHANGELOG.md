@@ -19,6 +19,43 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The bot stopped answering after a reboot, and the fix is a boot order
+
+On 2026-10-25 the host rebooted. The bot container came up before the
+host's DNS did, so the Application never finished initializing — and the
+bot went on serving traffic it could not answer.
+
+It looked healthy: `/healthz` returned 200, the webhook accepted every
+update, and the log said "setMyCommands failed (non-fatal)". What
+actually happened: the registry was published *before* the Application
+was initialized, so a half-built Application sat in it, and every update
+read that instead of building its own — and died on `app.bot.id` with
+"ExtBot is not properly initialized".
+
+The messages were not delayed, either. The webhook answered Telegram
+with 200, and Telegram does not retry a 200, so every message was
+dropped. Nothing brought the bot back except a human restarting the
+container.
+
+Three changes:
+
+  * the Application reaches the registry only after it has finished
+    initializing, and only one place builds and publishes it. The
+    publish-after-initialize property was already stated by a tripwire —
+    but for the lazy dispatch path, while production boots through the
+    other one;
+  * the server binds its socket *after* the bot is ready, and a
+    readiness failure at boot is fatal: the process exits, the restart
+    policy brings it back, and the operator sees a flapping container
+    instead of a green one that eats traffic;
+  * the initialization is retried, because a host that has just rebooted
+    usually has its DNS a second or two later — and a bot that gives up
+    in that window needs an operator to notice.
+
+A menu that fails to register is still not fatal. The bot not being
+able to reach Telegram is a different thing, and the two no longer
+share an `except`.
+
 ### The console output is a native Telegram code block
 
 The bash output is text in the message — which is right, because sending

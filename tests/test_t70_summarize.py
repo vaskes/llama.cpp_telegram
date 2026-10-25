@@ -353,12 +353,18 @@ def test_boot_hook_exists_for_process_modes():
     assert "def start_summarise_on_boot" in src
     # One assertion per entry point, not a count in one file: block E put
     # the webhook entry point in `dispatch_webhook.py`.
+    #
+    # On 2026-10-25 both entry points moved one step further: they go
+    # through `ensure_application_ready`, which is where the Application is
+    # built and the boot hook went with it. The assertion is the chain.
+    helper = (BOT_DIR / "dispatch_webhook.py").read_text()
     polling = (BOT_DIR / "dispatch.py").read_text()
-    webhook = (BOT_DIR / "dispatch_webhook.py").read_text()
-    assert "start_summarise_on_boot()" in polling, (
-        "the boot hook no longer fires from the polling entry point")
-    assert "start_summarise_on_boot()" in webhook, (
-        "the boot hook no longer fires from the webhook entry point")
+    assert "start_summarise_on_boot()" in helper, (
+        "the place that builds the Application no longer fires the boot hook")
+    assert "ensure_application_ready" in polling, (
+        "the polling entry point no longer goes through the build")
+    assert "ensure_application_ready" in helper, (
+        "the webhook entry point no longer goes through the build")
 
 
 def test_summarisation_failure_never_breaks_the_bot():

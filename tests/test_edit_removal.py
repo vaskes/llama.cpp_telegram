@@ -97,6 +97,7 @@ class _Harness:
     async def run(self, upd, monkeypatch):
         import dispatch
         import dispatch_polling
+        import dispatch_webhook
 
         harness = self
         registry = {}
@@ -114,7 +115,8 @@ class _Harness:
             add_error_handler=lambda fn: None,
         )
 
-        monkeypatch.setattr(dispatch, "_build_application", lambda **kw: app)
+        monkeypatch.setattr(dispatch_webhook, "_build_application",
+                            lambda **kw: app)
         monkeypatch.setattr(dispatch_polling, "set_dispatcher",
                             lambda a: registry.__setitem__("app", a))
         monkeypatch.setattr(dispatch_polling, "get_dispatcher",

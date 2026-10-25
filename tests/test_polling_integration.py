@@ -112,6 +112,7 @@ def _run_loop(batches, dispatch_update, monkeypatch, spawn=None):
     the loop actually handed off.
     """
     dispatch, polling, _ = load_modules()
+    import dispatch_webhook
     shutdown_event = asyncio.Event()
     client = _FakeClient(batches, shutdown_event)
 
@@ -119,8 +120,10 @@ def _run_loop(batches, dispatch_update, monkeypatch, spawn=None):
         return client
 
     monkeypatch.setattr(polling.httpx, "AsyncClient", _client_factory)
-    monkeypatch.setattr(dispatch, "_start_reanchor_scheduler", lambda: None)
-    monkeypatch.setattr(dispatch, "_start_summarise_on_boot", lambda: None)
+    monkeypatch.setattr(dispatch_webhook, "start_reanchor_scheduler",
+                        lambda: None)
+    monkeypatch.setattr(dispatch_webhook, "start_summarise_on_boot",
+                        lambda: None)
     if spawn is not None:
         monkeypatch.setattr(polling, "_spawn_dispatch", spawn)
 
@@ -140,6 +143,7 @@ def _run_loop(batches, dispatch_update, monkeypatch, spawn=None):
 def load_modules():
     import dispatch
     import dispatch_polling
+    import dispatch_webhook
     import llm_iteration
     return dispatch, dispatch_polling, llm_iteration
 
@@ -361,6 +365,7 @@ def test_concurrent_updates_build_exactly_one_application(monkeypatch):
     """
     import dispatch
     import dispatch_polling
+    import dispatch_webhook
 
     built = []
     schedulers = []
@@ -385,10 +390,10 @@ def test_concurrent_updates_build_exactly_one_application(monkeypatch):
             dispatch._dispatch_update({"update_id": i}) for i in range(10)],
             return_exceptions=True)
 
-    monkeypatch.setattr(dispatch, "_build_application", _FakeApp)
-    monkeypatch.setattr(dispatch, "_start_reanchor_scheduler",
+    monkeypatch.setattr(dispatch_webhook, "_build_application", _FakeApp)
+    monkeypatch.setattr(dispatch_webhook, "start_reanchor_scheduler",
                         lambda: schedulers.append("reanchor"))
-    monkeypatch.setattr(dispatch, "_start_summarise_on_boot",
+    monkeypatch.setattr(dispatch_webhook, "start_summarise_on_boot",
                         lambda: schedulers.append("summarise"))
 
     asyncio.new_event_loop().run_until_complete(go())

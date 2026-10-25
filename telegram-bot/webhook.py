@@ -197,6 +197,42 @@ async def run(*, register_bot_menu) -> None:
             "rejects every request, so the bot would appear healthy and "
             "answer nothing.")
 
+    # The bot has to be ready BEFORE the socket is bound.
+    #
+    # A webhook that answers 200 for an update it cannot serve loses
+    # that update: Telegram does not retry a 200. On 2026-10-25 the host
+    # rebooted, the bot came up before the host's DNS did, the
+    # Application never finished initializing -- and every message was
+    # accepted with a 200 and dropped, with nothing in the log but a
+    # misleading "setMyCommands failed (non-fatal)".
+    #
+    # So the registrar runs first, and its two failures are told apart:
+    #
+    #   * `ApplicationNotReady` -- the bot cannot reach Telegram, so it
+    #     cannot answer. Fatal: the server must not come up as a bot
+    #     that answers nothing. The process exits, the restart policy
+    #     brings it back, and Telegram keeps the updates queued until
+    #     then.
+    #   * anything else -- the command menu did not register. Non-fatal,
+    #     like the polling path: Telegram caches setMyCommands across
+    #     restarts, so the menu is cheap to re-register later, and the
+    #     user can type /command by hand meanwhile.
+    #
+    # The command menu is user-facing text, and Telegram caches it across
+    # restarts: whatever was registered last is what the user sees. The
+    # polling path registers it in `_prepare_runtime`; webhook mode used
+    # to return from `main()` before that, so the menu kept the text of
+    # the last run that had registered one -- the Russian one, long after
+    # the UI was translated. Registering it here is what makes the
+    # translation reach the chat input.
+    from dispatch_webhook import ApplicationNotReady
+    try:
+        await register_bot_menu()
+    except ApplicationNotReady:
+        raise
+    except Exception as exc:
+        log.info("[main] setMyCommands failed (non-fatal): %r", exc)
+
     app = make_app()
     runner = web.AppRunner(app)
     await runner.setup()
@@ -208,21 +244,6 @@ async def run(*, register_bot_menu) -> None:
         config.WEBHOOK_HOST, config.WEBHOOK_PORT, config.WEBHOOK_PATH,
         _MAX_BODY_BYTES // 1024,
     )
-    # The command menu is user-facing text, and Telegram caches it across
-    # restarts: whatever was registered last is what the user sees. The
-    # polling path registers it in `_prepare_runtime`; webhook mode used
-    # to return from `main()` before that, so the menu kept the text of
-    # the last run that had registered one -- the Russian one, long after
-    # the UI was translated. Registering it here is what makes the
-    # translation reach the chat input.
-    #
-    # Non-fatal, like the polling path: if the network is down at boot
-    # the user can still type /command by hand, and Telegram caches
-    # setMyCommands across restarts, so re-registering is cheap.
-    try:
-        await register_bot_menu()
-    except Exception as exc:
-        log.info("[main] setMyCommands failed (non-fatal): %r", exc)
     # SIGTERM/SIGINT set `config.SHUTDOWN_EVENT` -- the SAME object the
     # ToolLoop abort guard reads in `llm_iteration`. This used to build a
     # private `asyncio.Event()` here, so in webhook mode (i.e.

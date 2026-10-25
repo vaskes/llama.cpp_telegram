@@ -16,11 +16,11 @@ telegram-bot/
 ├── handlers.py            # handle_text/photo/voice/document (1402 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   495 lines file, 343 in the function
-├── dispatch.py            # routing, lifecycle, concurrency caps (375)
+├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py      # human-to-human reply absorb (107)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
-├── dispatch_webhook.py    # PTB assembly + handler registration (325)
-├── webhook.py             # aiohttp server + secret check (245)
+├── dispatch_webhook.py    # PTB assembly + handler registration (429)
+├── webhook.py             # aiohttp server + secret check (266)
 ├── commands/              # the slash-command handlers, as a package
 ├── context_budget.py      # which persisted messages reach the engine (658)
 ├── summarize.py           # summarise out-of-window history, in chunks (317)

@@ -80,6 +80,7 @@ class _Harness:
     async def run(self, upd, monkeypatch):
         import dispatch
         import dispatch_polling
+        import dispatch_webhook
 
         registry = {}
         harness = self
@@ -107,7 +108,7 @@ class _Harness:
             initialize=_initialize,
             add_error_handler=lambda fn: None,
         )
-        monkeypatch.setattr(dispatch, "_build_application", _build)
+        monkeypatch.setattr(dispatch_webhook, "_build_application", _build)
         monkeypatch.setattr(dispatch, "_handle_reply_to_other_user", _absorb)
         monkeypatch.setattr(dispatch_polling, "set_dispatcher",
                             lambda a: registry.__setitem__("app", a))
@@ -128,9 +129,11 @@ def _no_boot_jobs(monkeypatch):
     """`_dispatch_update` starts the reanchor scheduler and the boot
     summariser on first build. Neither belongs in a unit test, and the
     summariser walks every thread on a single-GPU box."""
-    import dispatch
-    monkeypatch.setattr(dispatch, "_start_reanchor_scheduler", lambda: None)
-    monkeypatch.setattr(dispatch, "_start_summarise_on_boot", lambda: None)
+    import dispatch_webhook
+    monkeypatch.setattr(dispatch_webhook, "start_reanchor_scheduler",
+                        lambda: None)
+    monkeypatch.setattr(dispatch_webhook, "start_summarise_on_boot",
+                        lambda: None)
 
 
 

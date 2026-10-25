@@ -115,6 +115,7 @@ def wired(monkeypatch):
     """A dispatch module whose Application build is observable."""
     import dispatch
     import dispatch_polling
+    import dispatch_webhook
 
     built = []
     registry = {}
@@ -131,9 +132,17 @@ def wired(monkeypatch):
         built.append(app)
         return app
 
-    monkeypatch.setattr(dispatch, "_build_application", _build)
-    monkeypatch.setattr(dispatch, "_start_reanchor_scheduler", lambda: None)
-    monkeypatch.setattr(dispatch, "_start_summarise_on_boot", lambda: None)
+    # The build lives in `dispatch_webhook` -- it owns the Application
+    # assembly, and `ensure_application_ready` is the one place that
+    # builds, initializes and publishes. The lazy dispatch path and the
+    # boot path both go through it, which is the whole point: the two
+    # call sites used to disagree about the publish order, and the one
+    # that production boots through was the one that got it wrong.
+    monkeypatch.setattr(dispatch_webhook, "_build_application", _build)
+    monkeypatch.setattr(dispatch_webhook, "start_reanchor_scheduler",
+                        lambda: None)
+    monkeypatch.setattr(dispatch_webhook, "start_summarise_on_boot",
+                        lambda: None)
     return built, registry
 
 

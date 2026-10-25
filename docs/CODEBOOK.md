@@ -643,6 +643,50 @@ the registrar it is handed, the wiring hands it the real one, a
 registrar that raises does not take the server down, and the list that
 reaches Telegram is the pinned one.
 
+**X-7 — A bot that cannot answer must not accept traffic.**
+`JUDGEMENT`
+
+X-4 is about a startup side effect happening at all. This is about the
+order: *before* the bot can answer, and *after* the bot can no longer
+answer.
+
+On 2026-10-25 the host rebooted. The bot container came up before the
+host's DNS did, so the Application never finished initializing. The
+registry was published anyway — the half-built Application sat there —
+and the failure was logged as "setMyCommands failed (non-fatal)".
+
+From that moment the bot was a zombie: it answered `/healthz` with 200,
+it accepted every update, and it could not answer a single one. Every
+update died on `app.bot.id` with "ExtBot is not properly initialized".
+And because the webhook returned 200, Telegram did not retry: the
+messages were *dropped*, not delayed. The bot stayed deaf until a human
+restarted the container.
+
+Three things were wrong, and each one is a rule of its own:
+
+  * **the publish order** — an Application reaches the registry only
+    after it has finished initializing. A registry that can hold a
+    half-built Application is a registry that can hand one to a reader.
+    `tests/test_c3_initialize_failure.py` stated this property for the
+    lazy dispatch path; the path production boots through had the
+    opposite order, and no tripwire pointed at it;
+  * **the failure weight** — a bot that cannot reach Telegram cannot
+    answer, and a bot that cannot answer must not come up as a server.
+    The server binds its socket *after* the bot is ready, and a
+    readiness failure at boot is fatal: the process exits, the restart
+    policy brings it back, and the operator sees a flapping container
+    rather than a green one that eats traffic;
+  * **the retry** — a host that has just rebooted usually has its DNS a
+    second or two later. The bot retries the initialization instead of
+    needing an operator to notice.
+
+Checked by `tests/test_application_readiness.py`: a failed boot
+publishes nothing, a transient failure is retried, the dispatch path
+repairs an uninitialized Application instead of trusting it, a bot that
+cannot answer does not bind its socket, and the readiness criterion is
+the real one — an Application that has not finished initializing cannot
+read `app.bot.id`.
+
 ---
 
 ### 3.7 The language of the bot
@@ -926,6 +970,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_dispatch_group_seam.py` | 4 | The seam a group-absorb extraction needs |
 | `test_signal_handler_ownership.py` | 3 | One signal policy, two modes |
 | `test_c3_initialize_failure.py` | 2 | The publish-after-initialize ordering |
+| `test_application_readiness.py` | 6 | A bot that cannot answer must not accept traffic |
 | `test_edit_removal.py` | 6 | The edit-replace feature is gone, and stays gone |
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
 
@@ -939,7 +984,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
 
-148 test files in total; the table above is the ones that guard a rule in
+149 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

@@ -205,12 +205,21 @@ def test_dispatch_starts_the_scheduler():
     # Since block E those entry points are different files, so this reads
     # both and asserts one call in each. A count in a single file would be
     # the easy fix and a dead one: it cannot see an entry point that moved.
+    #
+    # On 2026-10-25 the calls moved again -- one more step: both entry
+    # points now go through `ensure_application_ready`, which is where the
+    # Application is built, initialized and published, and the starter went
+    # with the build. So the assertion is the chain: the starter is called
+    # where the build lives, and both entry points reach that place.
+    helper = (BOT_DIR / "dispatch_webhook.py").read_text()
     polling = (BOT_DIR / "dispatch.py").read_text()
-    webhook = (BOT_DIR / "dispatch_webhook.py").read_text()
-    assert "start_reanchor_scheduler()" in polling, (
-        "the polling entry point no longer starts the reanchor scheduler")
-    assert "start_reanchor_scheduler()" in webhook, (
-        "the webhook entry point no longer starts the reanchor scheduler")
+    assert "start_reanchor_scheduler()" in helper, (
+        "the place that builds the Application no longer starts the "
+        "reanchor scheduler")
+    assert "ensure_application_ready" in polling, (
+        "the polling entry point no longer goes through the build")
+    assert "ensure_application_ready" in helper, (
+        "the webhook entry point no longer goes through the build")
 
 
 def test_scheduler_does_not_use_ptb_create_task():

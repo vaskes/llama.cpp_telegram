@@ -57,11 +57,11 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    375 lines, 3 top-level defs  <- was 1612
+dispatch.py    355 lines, 3 top-level defs  <- was 1612
 dispatch_group.py 108 lines, human-to-human reply absorb
 dispatch_polling.py   326 lines, startup + getUpdates loop
-dispatch_webhook.py   325 lines, PTB assembly + handlers
-webhook.py             224 lines, aiohttp server + secret check
+dispatch_webhook.py   429 lines, PTB assembly + handlers
+webhook.py             266 lines, aiohttp server + secret check
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   478 lines, ToolLoop owns the iteration, 17 llm_* leaf modules
 handlers.py    1381 lines
@@ -101,7 +101,7 @@ the 1940-line figure below it is the size it *started* from.
 Recorded so the question stops resurfacing at every review.
 
 - **Going past 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
-  **Met, in block G: `dispatch.py` is 345 lines** (375 as of 2026-10-25 --
+  **Met, in block G: `dispatch.py` is 345 lines** (355 as of 2026-10-25 --
   369 after the edit-replace feature was removed on 2026-10-24, since the
   feature went and the guard that took its place is longer than the code
   it replaced, then +6 lines when webhook mode was given the command-menu

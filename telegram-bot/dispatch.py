@@ -25,9 +25,8 @@ from telegram.ext import (
 
 import storage
 import dispatch_polling
+import dispatch_webhook
 from context_budget import get_budget
-from reanchor import start_reanchor_scheduler as _start_reanchor_scheduler
-from reanchor import start_summarise_on_boot as _start_summarise_on_boot
 from selftest import _selftest
 # TECH-DEBT #10 block D: the polling path moved to `dispatch_polling.py`,
 # which also owns the Application registry.
@@ -36,7 +35,6 @@ from selftest import _selftest
 from dispatch_group import _handle_reply_to_other_user
 from dispatch_webhook import (
     _attach_handlers,
-    _build_application,
     _handle_chat_member_update,
     _register_bot_menu,
     _webhook_auto_register_sync,
@@ -256,43 +254,25 @@ _app_init_lock = asyncio.Lock()
 
 async def _dispatch_update(upd_dict):
     app = dispatch_polling.get_dispatcher()
-    if app is None:
+    # The registry holds only initialized Applications: `dispatch_webhook`
+    # publishes after `initialize()` succeeded, and a failed
+    # initialization publishes nothing. The second half of that check is
+    # here because the property is what the whole bot rests on --
+    # `app.bot.id` raises "ExtBot is not properly initialized" on an
+    # Application that never finished initializing, and that id is read
+    # on every single update.
+    if app is None or not dispatch_webhook._is_initialized(app):
         # Double-checked locking: inside the lock another coroutine may
         # already have published an Application, and then that one --
         # the instance that ran initialize() -- is the one to use.
         async with _app_init_lock:
             app = dispatch_polling.get_dispatcher()
-            if app is None:
-                # W2-H2. Without base_url the PTB Bot talks to api.telegram.org
-                # no matter what TELEGRAM_API says, so sendMessage, editMessageText,
-                # getMe, setMyCommands, set_message_reaction and every file
-                # download all bypass the override. The v0.10.2 env override only
-                # ever covered the raw-httpx getUpdates loop. Without this line a
-                # smoke test against a mock server sends half its traffic to the
-                # real Telegram.
-                app = _build_application()
-
-                async def log_error(update, context):
-                    err = context.error
-                    log.exception(
-                        f"[handler error] {type(err).__name__}: {err!r}")
-
-                app.add_error_handler(log_error)
-                # PTB 21 requires Application.initialize() before process_update.
-                # We do not call app.start() — the hand-rolled polling loop drives
-                # dispatch. initialize() sets up the application context.
-                #
-                # Exactly once. Twice here for two waves was harmless -- PTB opens
-                # with `if self._initialized: return` -- but a duplicate makes
-                # "removed" and "added a redundant one" identical in the diff.
-                await app.initialize()
-                # Written through the polling module's setter, not by rebinding an
-                # imported name: it owns the registry, and a rebind here would only
-                # touch this module's copy of the binding.
-                dispatch_polling.set_dispatcher(app)
-                log.info("[dispatch] Application initialized (lazy)")
-                _start_reanchor_scheduler()
-                _start_summarise_on_boot()
+            if app is None or not dispatch_webhook._is_initialized(app):
+                # One builder, one place that knows the invariant. The
+                # Application is built and initialized there, and
+                # published only if that worked.
+                app = await dispatch_webhook.ensure_application_ready()
+                log.info("[dispatch] Application ready")
 
     # `app` is live from here on: either it came from the registry, or the
     # branch above built and published it. Every read below goes through

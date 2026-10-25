@@ -262,7 +262,7 @@ surface or bookkeeping and stayed when it picks a handler:
 | module | lines | what |
 |---|---|---|
 | `dispatch_polling.py` | 306 | signals, runtime prep, the getUpdates loop, the task factory, and the Application registry |
-| `dispatch_webhook.py` | 327 | Application assembly, handler registration, the command menu, chat-member bookkeeping |
+| `dispatch_webhook.py` | 429 | Application assembly, handler registration, the command menu, chat-member bookkeeping |
 | `dispatch_group.py` | 108 | the human-to-human reply absorb path |
 
 (`dispatch_edit.py` — the edited-message rewrite, 108 lines — was the fourth
@@ -344,5 +344,5 @@ declares a `global` its module does not have.
 **Depends on** item 8 being finished first, so the command handlers did
 not move against a moving `call_llama` signature.
 
-<!-- current: dispatch.py=375, handlers.py=1402 -->
-<!-- current: dispatch_polling.py=326, dispatch_webhook.py=325 -->
+<!-- current: dispatch.py=355, handlers.py=1402 -->
+<!-- current: dispatch_polling.py=326, dispatch_webhook.py=429 -->

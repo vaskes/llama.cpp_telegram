@@ -19,6 +19,8 @@ Reads the Application from `dispatch_polling`'s registry, in one
 direction only. Nothing in the polling path imports from here.
 """
 
+import asyncio
+
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -185,44 +187,146 @@ def _build_application() -> Application:
            .base_url(TELEGRAM_API) \
            .build()
     _attach_handlers(app)
+
+    async def _log_error(update, context):
+        err = context.error
+        log.exception(f"[handler error] {type(err).__name__}: {err!r}")
+
+    # The error handler belongs to the assembly, not to the call site:
+    # `dispatch._dispatch_update` used to attach it while it built the
+    # Application, and the boot path never had one -- so a handler that
+    # raised was logged in one mode and swallowed in the other.
+    app.add_error_handler(_log_error)
     return app
+
+class ApplicationNotReady(RuntimeError):
+    """The bot could not reach Telegram, so it cannot answer anybody.
+
+    A separate class, because the two failures it used to be confused
+    with are not the same kind of failure:
+
+    * the command menu did not register -- Telegram keeps the old menu
+      and the user can still type the commands by hand. Non-fatal.
+    * the Application never finished initializing -- the bot cannot
+      read its own id, cannot send a message, cannot answer. Fatal:
+      a bot that cannot answer must not sit there accepting traffic.
+
+    On 2026-10-25 the host rebooted and came up before its DNS did. The
+    bot's `initialize()` failed on `getMe`, the failure was logged as
+    "setMyCommands failed (non-fatal)", and the bot went on serving
+    traffic it could not answer. Telegram got a 200 for every message
+    and did not retry, so the messages were lost -- and nothing brought
+    the bot back except a human restarting the container.
+    """
+
+
+#: How hard to try to reach Telegram at boot. A host that has just
+#: rebooted usually has its DNS a second or two later; a bot that gives
+#: up in that window needs an operator to notice and restart it.
+_INIT_ATTEMPTS = 5
+_INIT_DELAY_SECONDS = 2.0
+
+
+def _is_initialized(app) -> bool:
+    """True when the Application can actually talk to Telegram.
+
+    PTB 21's `Application.initialize()` awaits `bot.initialize()` FIRST
+    and sets `self._initialized` LAST (verified against the installed
+    PTB, and quoted in `tests/test_c3_initialize_failure.py`). So the
+    flag is the honest question to ask: a True flag means `getMe`
+    succeeded, which is what makes `app.bot.id` readable -- and the bot
+    reads that id on every single update, to tell whether a reply is
+    addressed to somebody else.
+
+    An Application in the registry that has not finished initializing is
+    a zombie: it looks ready and answers nothing. The check fails
+    closed: an object without the flag is not ready.
+    """
+    return bool(getattr(app, "_initialized", False))
+
+
+async def ensure_application_ready(
+    *,
+    attempts: int = _INIT_ATTEMPTS,
+    delay: float = _INIT_DELAY_SECONDS,
+) -> Application:
+    """Return an initialized Application, or raise `ApplicationNotReady`.
+
+    The invariant this function exists to keep: **the registry holds
+    only initialized Applications**. `tests/test_c3_initialize_failure.py`
+    states that property for the lazy dispatch path; this is the same
+    property for the path production boots through, which is where it
+    was broken.
+
+    So: initialize first, publish second. A failed initialization leaves
+    nothing in the registry, the next update builds (or repairs) and
+    initializes again, and the retry is a real retry -- PTB sets
+    `_initialized` last, so a raise leaves it False.
+
+    And if Telegram cannot be reached at all, do not publish a bot that
+    cannot answer: raise. The caller decides what to do with that; at
+    boot it is fatal, because a bot that cannot answer must not keep
+    the webhook port open looking healthy.
+    """
+    last_error: Exception | None = None
+    app = dispatch_polling.get_dispatcher()
+    built = app is None
+    if built:
+        app = _build_application()
+    for attempt in range(1, attempts + 1):
+        if _is_initialized(app):
+            dispatch_polling.set_dispatcher(app)
+            return app
+        try:
+            await app.initialize()
+        except Exception as exc:  # noqa: BLE001 - the point is to retry
+            last_error = exc
+            log.warning(
+                "[telegram] initialize failed (attempt %d/%d): %r",
+                attempt, attempts, exc)
+            if attempt < attempts:
+                await asyncio.sleep(delay)
+            continue
+        dispatch_polling.set_dispatcher(app)
+        if built:
+            # Started after the initialization, because they need the
+            # running loop and a live app. The Application is built
+            # exactly once per process, so these start exactly once.
+            start_reanchor_scheduler()
+            start_summarise_on_boot()
+        log.info("[telegram] application initialized")
+        return app
+    raise ApplicationNotReady(
+        f"could not initialize the Telegram application in {attempts} "
+        f"attempts: {last_error!r}"
+    ) from last_error
+
 
 async def _register_bot_menu():
     # Late import: BOT_COMMANDS lives in bot.py; bot.py imports this
     # module, so we resolve at call time to break the cycle.
     """Register the bot's command menu with Telegram via setMyCommands.
 
-    Called once at startup. Failures are non-fatal — if the network
-    is briefly down at boot, the user can still type /command
-    manually; the menu just won't show until next restart. Once
-    set, the menu persists in Telegram's cache across restarts
-    (re-registering is idempotent and cheap).
+    Called once at startup. Two failures, two different weights:
+
+    * the Application could not be initialized -- the bot cannot answer
+      anybody. That raises `ApplicationNotReady`, and the caller treats
+      it as fatal.
+    * the menu itself did not register -- Telegram keeps the old menu
+      and the user can still type `/command` by hand, so it is
+      non-fatal. Once set, the menu persists in Telegram's cache across
+      restarts (re-registering is idempotent and cheap).
+
+    The Application is published to the registry only after it is
+    initialized. Publishing first was the 2026-10-25 production defect:
+    the half-built Application sat in the registry, every update then
+    read it instead of building its own, and every update died on
+    `app.bot.id` with "ExtBot is not properly initialized" -- while the
+    webhook answered Telegram with 200, so the messages were dropped
+    rather than retried.
     """
     from telegram import BotCommand
-    _dispatcher = dispatch_polling.get_dispatcher()
-    if _dispatcher is None:
-        # Build the dispatcher eagerly so we can call setMyCommands.
-        # Same construction as _dispatch_update; both call sites
-        # end up at the same Application instance.
-        # W2-H2. Without base_url the PTB Bot talks to api.telegram.org
-        # no matter what TELEGRAM_API says, so sendMessage, editMessageText,
-        # getMe, setMyCommands, set_message_reaction and every file
-        # download all bypass the override. The v0.10.2 env override only
-        # ever covered the raw-httpx getUpdates loop. Without this line a
-        # smoke test against a mock server sends half its traffic to the
-        # real Telegram.
-        app = _build_application()
-        dispatch_polling.set_dispatcher(app)
-        _dispatcher = app
-        # PTB 21 requires Application.initialize() before process_update.
-        # We do not run app.start() — the hand-rolled polling loop drives
-        # everything — but initialize() sets up the application context.
-        await _dispatcher.initialize()
-        # T68: in `soft` mode the re-anchor scheduler lives in this process.
-        # In the other modes this is a no-op log line. Started after
-        # initialize() because it needs the running loop and a live app.
-        start_reanchor_scheduler()
-        start_summarise_on_boot()
+    _dispatcher = await ensure_application_ready()
     await _dispatcher.bot.set_my_commands(
         [BotCommand(c, d) for c, d in BOT_COMMANDS],
         scope=None,  # default scope covers all private chats

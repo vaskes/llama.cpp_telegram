@@ -197,10 +197,22 @@ def test_the_application_is_published_for_everyone_else_to_find():
             "the command menu no longer reads the registry, so a null "
             "dispatcher makes it build a second Application"
         )
-        assert "dispatch_polling.set_dispatcher(" in \
+        # The publisher moved with the build: `ensure_application_ready`
+        # builds, initializes and publishes, and both entry points go
+        # through it. The assertion is the chain -- the dispatch path
+        # reaches the publisher, and the publisher writes to the
+        # registry -- because a check that only names one file cannot
+        # see an entry point that moved.
+        assert "dispatch_webhook.ensure_application_ready" in \
             (BOT / "dispatch.py").read_text(encoding="utf-8"), (
-            "_dispatch_update no longer publishes the Application; the "
-            "command menu would build its own"
+            "_dispatch_update no longer goes through the build; the "
+            "Application it publishes would be a different instance from "
+            "the one the command menu uses"
+        )
+        assert "dispatch_polling.set_dispatcher(" in \
+            (BOT / "dispatch_webhook.py").read_text(encoding="utf-8"), (
+            "the build no longer publishes the Application; the command "
+            "menu would build its own"
         )
     finally:
         dispatch_polling.set_dispatcher(saved)
