@@ -60,6 +60,28 @@ waiting at the very same second, so a command that runs past the limit
 loses its answer on the way. The bot says that, and it says that the
 side-car is up.
 
+### A command that reads standard input loses its answer
+
+The side-car runs a command in a tmux pane and knows the command is
+over because a marker it printed after it shows up in the pane. A
+command that **reads standard input** reads that marker instead — apt-get
+and dpkg do it through debconf's readline frontend — so the marker never
+arrives, the side-car waits out its 60-second limit, and the answer is
+lost even though the command itself finished.
+
+Measured on the production host: `apt-get install -y cowsay` answered
+nothing after 60 seconds (the package *was* installed), and the same
+command with `< /dev/null` answered in one second. The pane showed the
+marker lines of the next command where the missing ones should have
+been — debconf had read them as its own input.
+
+The bot now says so where it matters: the tool description the model
+reads carries the trap and the way out (`< /dev/null`), and the error
+the bot reports when an answer is lost names it instead of leaving the
+model to wait out a minute and try again. The fix itself belongs in the
+side-car — run the command with its stdin closed — and is not the
+bot's to make.
+
 ### The bot delivered the file twice
 
 The operator asked for an HTML file. The model wrote it in the sandbox

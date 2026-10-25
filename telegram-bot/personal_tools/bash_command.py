@@ -43,7 +43,7 @@ from typing import Any
 import httpx
 
 from llm_truncation import condense
-from personal_tools.sandbox_contract import SUDO_POLICY
+from personal_tools.sandbox_contract import STDIN_POLICY, SUDO_POLICY
 
 
 # Tool definition that goes into llama-server's request body. The model
@@ -70,7 +70,7 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
             "this tool def would otherwise drift. Use it for: "
             "running scripts, inspecting files in /workspace, "
             "git operations, building projects, fetching public "
-            "web pages with curl/wget. " + SUDO_POLICY
+            "web pages with curl/wget. " + SUDO_POLICY + " " + STDIN_POLICY
         ),
         "parameters": {
             "type": "object",
@@ -423,6 +423,14 @@ def _sandbox_error_text(raw: str) -> str:
     that runs past the limit loses its answer on the way. The name of
     the culprit has to survive the trip.
 
+    There is a second way to lose the answer, and it is the common
+    one: the side-car knows a command is over because a marker it
+    printed after it shows up in the pane, and a command that reads
+    standard input reads that marker instead. apt-get does it through
+    debconf -- the install succeeds in a second and the answer is lost
+    all the same. The message says so, because a timeout with no
+    advice sends the model around the same loop.
+
     An empty result and a failure look the same on the wire, and the
     bot used to pass the empty one on as a success: the model saw no
     output, no error, and a command that had been killed.
@@ -431,9 +439,10 @@ def _sandbox_error_text(raw: str) -> str:
     prefix = "sandbox-agent request failed:"
     if text.startswith(prefix) and not text[len(prefix):].strip():
         return (
-            "the sandbox side-car stopped waiting for the command (its "
-            "60-second per-command limit; the side-car is up, and the "
-            "command may still be running in the session)"
+            "the sandbox side-car did not answer within its 60-second "
+            "per-command limit (a command that reads standard input "
+            "swallows the side-car's end marker -- apt-get and dpkg do "
+            "it through debconf -- so retry it with `< /dev/null`)"
         )
     return f"the sandbox side-car failed: {text}"
 

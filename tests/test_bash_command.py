@@ -239,6 +239,10 @@ async def test_the_proxy_error_envelope_is_a_failure_not_an_empty_success(
     assert "60-second" in result["error"], (
         "an empty reason means the side-car stopped waiting at its own "
         f"per-command limit; the message has to say that: {result['error']!r}")
+    assert "/dev/null" in result["error"], (
+        "a command that reads stdin swallows the side-car's end marker, "
+        "and the message has to offer the way out: "
+        f"{result['error']!r}")
 
 
 @pytest.mark.asyncio
@@ -260,3 +264,20 @@ async def test_a_sidecar_error_keeps_its_reason(personal_with_token):
     assert result["ok"] is False
     assert "ConnectError" in result["error"], (
         f"the reason was dropped: {result['error']!r}")
+
+
+def test_the_tool_description_carries_the_stdin_policy(personal_with_token):
+    """The model has to know about the stdin trap before it hits it.
+
+    The side-car knows a command is over because a marker it printed
+    after the command shows up in the pane. A command that reads
+    standard input reads that marker instead -- apt-get does it
+    through debconf -- and the answer is lost even though the command
+    finished. A description that does not say so sends the model
+    around the same loop: install, wait a minute, time out, install.
+    """
+    desc = personal_with_token.BASH_COMMAND_TOOL_DEF["function"]["description"]
+    assert "/dev/null" in desc, (
+        "the tool description does not mention the stdin trap")
+    assert "standard input" in desc, (
+        "the tool description does not say what the trap is")

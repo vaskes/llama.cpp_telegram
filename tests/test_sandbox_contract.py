@@ -43,6 +43,7 @@ from personal_tools.sandbox_contract import (  # noqa: E402
     PRIVILEGE_MODE_SUPPORTED,
     SANDBOX_PINNED_VERSION,
     SANDBOX_POSTURE_LINES,
+    STDIN_POLICY,
     SUDO_POLICY,
     WRITABLE_ROOTFS,
 )
@@ -170,6 +171,21 @@ def test_the_tool_description_says_what_is_true_about_sudo():
         assert "runs without it" in desc, (
             "without the privilege mode the description has to say that "
             "the sandbox cannot do it at all")
+
+
+def test_the_tool_description_carries_the_stdin_policy():
+    """The model reads the description, and the stdin trap is in it.
+
+    A command that reads standard input swallows the side-car's end
+    marker, and its answer is lost. The description is the only place
+    the model can learn that before it waits out a minute.
+    """
+    desc = _description()
+    assert STDIN_POLICY in desc, (
+        "the tool description no longer carries the contract's stdin "
+        "sentence -- the model reads the description, not the contract")
+    assert "/dev/null" in desc, (
+        "the description has to offer the way out, not just the trap")
 
 
 def test_the_operator_facing_prose_carries_the_contract_posture():

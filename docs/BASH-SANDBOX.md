@@ -374,6 +374,21 @@ cut that keeps the tail would throw that first line away, and the chat
 would show a fragment as if it were the whole thing. Every cut the bot
 makes itself is marked too (`llm_truncation.py`).
 
+### The stdin trap
+
+The side-car knows a command is over because a marker it printed after
+the command shows up in the pane. A command that **reads standard
+input** reads that marker instead — apt-get and dpkg do it through
+debconf's readline frontend — and the answer is lost, even though the
+command itself finished. Measured on the production host: `apt-get
+install -y cowsay` lost its answer after the side-car's 60-second
+limit, and the same command with `< /dev/null` answered in one second.
+
+The bot says so in the tool description the model reads, and in the
+error it reports when the answer is lost. The fix belongs in the
+side-car (run the command with its stdin closed); until it is there,
+`< /dev/null` is the way out.
+
 ## Compatibility
 
 | Sandbox tag | Bot tag | Notes |

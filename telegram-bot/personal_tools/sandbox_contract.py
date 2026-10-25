@@ -59,6 +59,7 @@ __all__ = [
     "SANDBOX_POSTURE",
     "SANDBOX_POSTURE_LINES",
     "SUDO_POLICY",
+    "STDIN_POLICY",
 ]
 
 SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
@@ -152,3 +153,30 @@ def _sudo_policy() -> str:
 
 
 SUDO_POLICY = _sudo_policy()
+
+
+def _stdin_policy() -> str:
+    """The side-car's stdin trap, in a sentence the model can use.
+
+    The side-car runs a command in a tmux pane and knows that the
+    command is over because a marker it printed after it shows up in
+    the pane. A command that reads standard input reads that marker
+    instead: apt-get reads stdin through debconf's readline frontend,
+    and the answer is lost even though the command itself finished in a
+    second. Measured on the production host: `apt-get install -y
+    cowsay` lost its answer after 60 seconds, and the same command
+    with `< /dev/null` answered in one.
+
+    So the sentence tells the model what to do, instead of leaving it
+    to watch a minute pass and then see a timeout.
+    """
+    return (
+        "Run a command that reads standard input with `< /dev/null` "
+        "(apt-get and dpkg read stdin through debconf, and a command "
+        "that reads stdin swallows the side-car's end marker -- the "
+        "command succeeds but its answer is lost after the side-car's "
+        "timeout)."
+    )
+
+
+STDIN_POLICY = _stdin_policy()
