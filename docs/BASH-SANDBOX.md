@@ -210,8 +210,13 @@ the bot does not have its own opinion about them:
     denied, so a process inside cannot escalate. Both are switches:
     `cap_drop: ${AGENT_CAP_DROP:-ALL}` and
     `no-new-privileges:${AGENT_NO_NEW_PRIVILEGES:-true}`.
-  - `read_only: true` at the rootfs level so the host system
-    is not writable from inside.
+  - `read_only: "${AGENT_READ_ONLY:-true}"` at the rootfs level, so
+    the stock posture does not let anything write to the container's
+    own filesystem. The production deployment sets
+    `AGENT_READ_ONLY=false`: a privileged root that cannot write a
+    byte of the filesystem cannot install a package (apt-get writes to
+    /var/lib/apt/lists, /var/lib/dpkg and /usr). The container is
+    still the perimeter -- the writable layer dies with the container.
   - `/workspace` is the only writable host mount; size-limited.
   - `pids_limit: 256` so fork bombs are contained.
   - `mem_limit: 4g` so memory-exhaustion attacks die.
@@ -222,7 +227,7 @@ the bot does not have its own opinion about them:
 
 ### The sandbox's posture
 
-The side-car runs in a container with a read-only rootfs: /workspace is the only writable mount, and the host's ssh-keys and /opt/search are mounted read-only.
+The side-car runs in a container whose rootfs is writable in this deployment (AGENT_READ_ONLY=false), so a root inside it can install packages; /workspace is the workspace mount, and the host's ssh-keys and /opt/search are mounted read-only.
 
 The agent's own process runs as uid 1000 and the container drops SYS_ADMIN, so there are no mounts and no namespaces to be had from inside.
 
@@ -234,15 +239,17 @@ the posture, and `tests/test_sandbox_contract.py` checks that this
 document still quotes them. A paraphrase would be a second copy of the
 truth, and a second copy is how the old claim went stale.
 
-The privilege mode is a deployment decision, made by three variables in
+The privilege mode is a deployment decision, made by four variables in
 the side-car's env file: `AGENT_ALLOW_SUDO=1`,
-`AGENT_NO_NEW_PRIVILEGES=false`, `AGENT_CAP_DROP=SYS_ADMIN`. The
-compose file's own defaults are `AGENT_ALLOW_SUDO:-0`,
-`AGENT_CAP_DROP:-ALL` and `AGENT_NO_NEW_PRIVILEGES:-true` — the stock
-posture, in which a command cannot become root at all. The production
-deployment on llmhost1 runs the privilege mode; it is a private
-deployment in a secured environment, and the sandbox's own
-`docs/SECURITY.md` says what that costs.
+`AGENT_NO_NEW_PRIVILEGES=false`, `AGENT_CAP_DROP=SYS_ADMIN` and
+`AGENT_READ_ONLY=false`. The compose file's own defaults are
+`AGENT_ALLOW_SUDO:-0`, `AGENT_CAP_DROP:-ALL`,
+`AGENT_NO_NEW_PRIVILEGES:-true` and `AGENT_READ_ONLY:-true` — the
+stock posture, in which a command cannot become root at all and the
+rootfs is read-only. The production deployment on llmhost1 runs the
+privilege mode with a writable rootfs; it is a private deployment in a
+secured environment, and the sandbox's own `docs/SECURITY.md` says what
+that costs.
 
 Operator's responsibility:
 
@@ -375,6 +382,7 @@ makes itself is marked too (`llm_truncation.py`).
 | `04be1d8` (v2.4.5) | `6901827` (v0.12.0-stable) | Tested together. |
 | `c8d70ef` (v2.7.1) | `fcef3d5` | The file door and the stdout contract; v2.7.1 relays the door's real status instead of flattening every failure into a 200. |
 | `34eca7d` (v2.9.1) | this branch | The privilege mode, and a file the agent cannot read refused with a 403 instead of a truncated 200. |
+| `093c025` (v2.10.1) | this branch | The writable rootfs knob (`AGENT_READ_ONLY`), the fourth setting of the privilege mode: a privileged root that cannot write the filesystem cannot install a package. |
 
 The bot treats the sandbox as a black box: it sends JSON over
 HTTP and gets JSON back. As long as the wire format is

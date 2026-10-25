@@ -19,6 +19,31 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The sandbox got a writable rootfs, and the bot's claims followed it
+
+The operator wants the agent inside the sandbox to be able to install
+packages. It could not: the privilege mode lets a command become root
+inside the container, and the container's root filesystem was read-only.
+A root that cannot write a byte of the filesystem cannot `apt-get
+install` anything — apt writes to `/var/lib/apt/lists`, `/var/lib/dpkg`
+and `/usr`, and gets "Read-only file system" for all three.
+
+The side-car v2.10.0 turned the root filesystem into the fourth switch
+of the privilege mode: `read_only: "${AGENT_READ_ONLY:-true}"`. The
+stock posture is unchanged; the production deployment sets
+`AGENT_READ_ONLY=false`. The container is still the perimeter — the
+writable layer dies with the container, and the host's `ssh-keys` and
+`/opt/search` are still mounted read-only.
+
+The bot's claims follow the side-car, as they must:
+
+  * the pin moves **v2.9.1 → v2.10.1**;
+  * the contract's posture says the rootfs is writable and names the
+    knob that decides it, instead of calling it a read-only rootfs in
+    words;
+  * the documents quote the side-car's own compose file, so the knob
+    and its default come from the side-car and not from memory.
+
 ### The bot delivered the file twice
 
 The operator asked for an HTML file. The model wrote it in the sandbox
@@ -74,7 +99,7 @@ and everything else points at it:
     is true — sudo works in there — and keeps the policy: that is a
     policy and not a wall, and the container is the boundary;
   * the documents quote the contract's posture verbatim, and the
-    sandbox's own numbers (`mem_limit: 4g`, `pids_limit: 256`, the three
+    sandbox's own numbers (`mem_limit: 4g`, `pids_limit: 256`, the
     posture knobs) are read out of the pinned side-car's compose file
     rather than remembered.
 

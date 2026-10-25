@@ -14,6 +14,13 @@ three false from that moment -- and nothing in the tree noticed. A
 claim in a docstring that nobody checks is not a claim; it is a finding
 nobody wrote down.
 
+On 2026-10-26 the operator gave the production deployment a writable
+rootfs as well (sandbox v2.10.0, `AGENT_READ_ONLY=false`): a
+privileged root that cannot write a byte of the filesystem cannot
+install a package, and apt-get is exactly what a privileged root is
+for. The container stays the perimeter -- the writable layer dies with
+the container.
+
 So the posture lives here, once:
 
 * `SANDBOX_PINNED_VERSION` -- the tag this repo pins as a submodule.
@@ -48,6 +55,7 @@ __all__ = [
     "SANDBOX_PINNED_VERSION",
     "PRIVILEGE_MODE_SUPPORTED",
     "PRIVILEGE_MODE",
+    "WRITABLE_ROOTFS",
     "SANDBOX_POSTURE",
     "SANDBOX_POSTURE_LINES",
     "SUDO_POLICY",
@@ -58,7 +66,7 @@ SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
 # The tag this repo pins as a submodule. Keep it equal to the pin in the
 # tree and to the version the submodule's own source declares: a bump of
 # one without the others is a red test, not a quiet drift.
-SANDBOX_PINNED_VERSION = "2.9.1"
+SANDBOX_PINNED_VERSION = "2.10.1"
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -90,15 +98,26 @@ PRIVILEGE_MODE_SUPPORTED = _version_tuple(SANDBOX_PINNED_VERSION) >= (2, 8, 0)
 # version has; the deployment decides whether it is switched on.
 PRIVILEGE_MODE = True
 
+# Whether the container's root filesystem is writable in the deployment
+# this bot talks to. A deployment fact too, and a knob the sandbox
+# added in v2.10.0: `read_only: "${AGENT_READ_ONLY:-true}"`. The stock
+# posture is a read-only rootfs; the production deployment sets
+# AGENT_READ_ONLY=false, because a privileged root that cannot write a
+# byte of the filesystem cannot install a package (apt-get writes to
+# /var/lib/apt/lists, /var/lib/dpkg and /usr). The container is still
+# the perimeter: the writable layer dies with the container.
+WRITABLE_ROOTFS = True
+
 # The operator-facing paragraph, one sentence per line. The documents
 # quote these lines verbatim -- a tripwire checks that they still carry
 # them -- so the prose cannot drift away from what the code believes.
 # A paraphrase would be a second copy, and a second copy is how the
 # sentence went stale in the first place.
 SANDBOX_POSTURE_LINES = (
-    "The side-car runs in a container with a read-only rootfs: "
-    "/workspace is the only writable mount, and the host's ssh-keys and "
-    "/opt/search are mounted read-only.",
+    "The side-car runs in a container whose rootfs is writable in this "
+    "deployment (AGENT_READ_ONLY=false), so a root inside it can install "
+    "packages; /workspace is the workspace mount, and the host's "
+    "ssh-keys and /opt/search are mounted read-only.",
     "The agent's own process runs as uid 1000 and the container drops "
     "SYS_ADMIN, so there are no mounts and no namespaces to be had from "
     "inside.",

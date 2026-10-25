@@ -44,6 +44,7 @@ from personal_tools.sandbox_contract import (  # noqa: E402
     SANDBOX_PINNED_VERSION,
     SANDBOX_POSTURE_LINES,
     SUDO_POLICY,
+    WRITABLE_ROOTFS,
 )
 import personal_tools.file_transport as ft  # noqa: E402
 import personal_tools.bash_command as bc  # noqa: E402
@@ -79,6 +80,8 @@ COMPOSE_KNOBS = (
      re.compile(r"\$\{AGENT_CAP_DROP:-([^}]+)\}")),
     ("AGENT_NO_NEW_PRIVILEGES",
      re.compile(r"\$\{AGENT_NO_NEW_PRIVILEGES:-([^}]+)\}")),
+    ("AGENT_READ_ONLY",
+     re.compile(r"\$\{AGENT_READ_ONLY:-([^}]+)\}")),
 )
 
 
@@ -202,6 +205,31 @@ def test_a_posture_is_stated_through_the_sandbox_knobs_and_not_in_prose():
                     f"{path.name} states the sandbox's posture in prose on "
                     f"line {number}: {line.strip()!r}. Name the knob that "
                     "sets it instead.")
+
+
+def test_a_writable_rootfs_is_stated_through_its_knob():
+    """The rootfs is a knob, and the prose has to name it.
+
+    v2.10.0 turned the root filesystem into a switch:
+    `read_only: "${AGENT_READ_ONLY:-true}"`. A document that says
+    "read-only rootfs" in words carries a second copy of the truth --
+    and in the production deployment that copy is false, because the
+    rootfs is writable there so a privileged root can install
+    packages.
+    """
+    joined = " ".join(SANDBOX_POSTURE_LINES)
+    if WRITABLE_ROOTFS:
+        assert "AGENT_READ_ONLY" in joined, (
+            "the deployment runs with a writable rootfs, so the posture "
+            "has to name the knob that says so")
+        assert "read-only rootfs" not in joined, (
+            "the posture still calls the rootfs read-only, and in this "
+            "deployment it is not")
+    for doc in DOCS:
+        text = doc.read_text(encoding="utf-8")
+        assert "read-only rootfs" not in text, (
+            f"{doc.name} still calls the rootfs read-only; the rootfs is "
+            "a knob now (AGENT_READ_ONLY), and the deployment sets it")
 
 
 def test_the_old_posture_claim_does_not_come_back():
