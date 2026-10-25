@@ -16,7 +16,7 @@ telegram-bot/
 ├── handlers.py            # handle_text/photo/voice/document (1384 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   495 lines file, 343 in the function
-├── dispatch.py            # routing, lifecycle, concurrency caps (369)
+├── dispatch.py            # routing, lifecycle, concurrency caps (375)
 ├── dispatch_group.py      # human-to-human reply absorb (108)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
 ├── dispatch_webhook.py    # PTB assembly + handler registration (325)

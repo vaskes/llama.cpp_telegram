@@ -188,7 +188,13 @@ def main():
                 url=_config.WEBHOOK_URL,
                 secret_token=_config.WEBHOOK_SECRET_TOKEN,
             )
-        asyncio.run(_webhook_run())
+        # The command menu is registered by the webhook server itself,
+        # at startup: the polling path does it in `_prepare_runtime`, and
+        # webhook mode returns from `main()` before that point, so the
+        # menu Telegram shows was whatever the last run that registered
+        # one had set. Passing the registrar in keeps the wiring visible
+        # here instead of hiding an import inside the server.
+        asyncio.run(_webhook_run(register_bot_menu=_register_bot_menu))
         return
 
     # W6-H2 follow-up. This used to be:

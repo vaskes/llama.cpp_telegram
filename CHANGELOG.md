@@ -19,6 +19,33 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The command menu was never registered in the mode production runs in
+
+The English menu below was deployed, and the menu in the chat stayed
+Russian — because in webhook mode the bot never registered it at all.
+
+`setMyCommands` is what puts `/reset`, `/stats` and the rest into the
+chat input, and Telegram caches it across restarts: the menu the user
+sees is whatever the last run that registered one had set. The polling
+path registers it in `dispatch_polling._prepare_runtime`; webhook mode
+returned from `dispatch.main()` before that point.
+
+The suite was green throughout. `tests/test_prompts.py` pins the *text*
+of `BOT_COMMANDS`, and nothing pinned the *registration* — a pin on the
+content cannot notice that the content is never sent.
+
+The webhook server now takes the registrar as a parameter and calls it
+at startup, and `dispatch.main()` hands it the real one. The
+registration is non-fatal: a bot that cannot reach Telegram at boot
+still serves `/healthz` and the traffic that does arrive.
+
+`tests/test_webhook_menu_registration.py` covers it: the server calls
+the registrar it is handed, the wiring hands it the real registrar, a
+registrar that raises does not take the server down, and the list that
+reaches Telegram is the pinned one. Both halves were mutated to prove
+they bite — removing the call and removing the argument each turn the
+right test red.
+
 ### The bot's interface is in English now
 
 The operator's decision: every text the *user* reads is English. The

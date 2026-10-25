@@ -166,8 +166,14 @@ def make_app() -> web.Application:
     return app
 
 
-async def run() -> None:
+async def run(*, register_bot_menu) -> None:
     """Start the aiohttp server. Returns when the server stops.
+
+    `register_bot_menu` is the registrar the bot uses to publish its
+    command menu to Telegram (see `dispatch_webhook._register_bot_menu`).
+    It is a parameter, not an import, for the same reason
+    `dispatch_polling._poll_loop` takes one: this module must not depend
+    on the dispatch layer, and the wiring stays visible at the call site.
 
     Refuses to start without `WEBHOOK_SECRET_TOKEN`. `_check_secret` is
     already fail-closed -- an empty expected token matches nothing -- so
@@ -202,6 +208,21 @@ async def run() -> None:
         config.WEBHOOK_HOST, config.WEBHOOK_PORT, config.WEBHOOK_PATH,
         _MAX_BODY_BYTES // 1024,
     )
+    # The command menu is user-facing text, and Telegram caches it across
+    # restarts: whatever was registered last is what the user sees. The
+    # polling path registers it in `_prepare_runtime`; webhook mode used
+    # to return from `main()` before that, so the menu kept the text of
+    # the last run that had registered one -- the Russian one, long after
+    # the UI was translated. Registering it here is what makes the
+    # translation reach the chat input.
+    #
+    # Non-fatal, like the polling path: if the network is down at boot
+    # the user can still type /command by hand, and Telegram caches
+    # setMyCommands across restarts, so re-registering is cheap.
+    try:
+        await register_bot_menu()
+    except Exception as exc:
+        log.info("[main] setMyCommands failed (non-fatal): %r", exc)
     # SIGTERM/SIGINT set `config.SHUTDOWN_EVENT` -- the SAME object the
     # ToolLoop abort guard reads in `llm_iteration`. This used to build a
     # private `asyncio.Event()` here, so in webhook mode (i.e.

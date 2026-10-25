@@ -617,11 +617,37 @@ back when it pastes the output into its answer.
 Checked by `tests/test_truncation_markers.py`: four cut paths, and the
 sandbox's own marker surviving the bot's cut.
 
+**X-4 — A startup side effect happens in every mode that starts.**
+`JUDGEMENT`
+
+X-1 is about a feature that lives inside one transport. This is the
+other half: a side effect that only one transport performs is a side
+effect the *other* transport never gets.
+
+The command menu is the example. `setMyCommands` is what puts `/reset`,
+`/stats` and the rest into the chat input, with their descriptions, and
+Telegram caches it across restarts — so the menu the user sees is
+whatever the last run that registered one had set. The polling path
+registers it in `dispatch_polling._prepare_runtime`. Webhook mode, the
+mode production runs in, returned from `dispatch.main()` before that
+point, and never registered anything.
+
+The English translation of `BOT_COMMANDS` was deployed on 2026-10-25,
+the menu in the chat was still the Russian one, and the whole suite was
+green: `tests/test_prompts.py` pins the *text* of the menu, and nothing
+pinned the *registration*. A pin on the content cannot notice that the
+content is never sent.
+
+Checked by `tests/test_webhook_menu_registration.py`: the server calls
+the registrar it is handed, the wiring hands it the real one, a
+registrar that raises does not take the server down, and the list that
+reaches Telegram is the pinned one.
+
 ---
 
 ### 3.7 The language of the bot
 
-**X-2 — Every text the user reads is English.**
+**X-5 — Every text the user reads is English.**
 `JUDGEMENT`
 
 The operator's decision (2026-10-25). The bot's own voice is Russian —
@@ -858,8 +884,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |
 | `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
 | `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
+| `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 
-144 test files in total; the table above is the ones that guard a rule in
+145 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

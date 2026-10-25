@@ -57,7 +57,7 @@ Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
 bot.py          124 lines, 4 import blocks, __all__ present
-dispatch.py    369 lines, 3 top-level defs  <- was 1612
+dispatch.py    375 lines, 3 top-level defs  <- was 1612
 dispatch_group.py 108 lines, human-to-human reply absorb
 dispatch_polling.py   326 lines, startup + getUpdates loop
 dispatch_webhook.py   325 lines, PTB assembly + handlers
@@ -101,10 +101,12 @@ the 1940-line figure below it is the size it *started* from.
 Recorded so the question stops resurfacing at every review.
 
 - **Going past 400 lines.** Item 10's ticket asked for 1612 → ≤ 400.
-  **Met, in block G: `dispatch.py` is 345 lines** (369 after the
-  edit-replace feature was removed on 2026-10-24 -- the feature went, and
-  the guard that took its place is longer than the code it replaced --
-  and the stale marker comment that named the deleted module was
+  **Met, in block G: `dispatch.py` is 345 lines** (375 as of 2026-10-25 --
+  369 after the edit-replace feature was removed on 2026-10-24, since the
+  feature went and the guard that took its place is longer than the code
+  it replaced, then +6 lines when webhook mode was given the command-menu
+  registrar on 2026-10-25 -- the feature went, and
+  the stale marker comment that named the deleted module was
   corrected on 2026-10-24). It
   was not for six
   blocks. This entry said "Done: 405" for three waves while the size

@@ -54,7 +54,10 @@ def test_webhook_mode_never_reaches_the_polling_signal_handlers(monkeypatch):
     installed = []
     polled = []
 
-    async def _fake_webhook_run():
+    async def _fake_webhook_run(**kwargs):
+        # The registrar arrives as a keyword argument (the webhook
+        # server registers the command menu at startup); the fake only
+        # records that the webhook path was taken.
         polled.append("webhook.run")
 
     async def _fake_install(shutdown_event):
