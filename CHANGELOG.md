@@ -19,6 +19,34 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The side-car's stdin trap is fixed, and the bot's warning went with it
+
+The sandbox's v2.10.2 (`4a6c465`) closes the two failures the bot's
+own handoff measured on the production host: a command that reads
+standard input now gets EOF instead of the protocol lines (the command
+runs inside a brace group whose stdin is `/dev/null`), and the proxy
+waits longer than the exec limit it asked for, so the answer that says
+"this timed out" survives the trip. The limit is a knob now —
+`AGENT_EXEC_TIMEOUT`, 5..600 seconds, default 60.
+
+Measured on the host after the move: `read x` through the proxy answers
+in **0 seconds** (`exit_code: 1`, `timed_out: false`) where it used to
+sit for 60 seconds and come back with an empty reason.
+
+The bot followed, and the pin moved with it (`2c83d97`):
+
+  * the tool description no longer warns about the stdin trap. A
+    warning for a bug that no longer exists is a stale claim about the
+    side-car, and it teaches the model a workaround it does not need;
+  * an empty error reason no longer means "the side-car is unwell" —
+    the proxy of v2.10.2 names the cause, so the bot carries the
+    reason through, and an empty reason now names what it really means
+    (a proxy older than the version the bot pins);
+  * the bot's own HTTP timeout went from 70 s to 90 s, because the
+    proxy now waits 75 s and the bot must not drop the answer the
+    proxy is still holding. It is derived from the contract, not
+    written down twice.
+
 ### The sandbox got a writable rootfs, and the bot's claims followed it
 
 The operator wants the agent inside the sandbox to be able to install
