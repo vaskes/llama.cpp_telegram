@@ -1162,6 +1162,31 @@ output, drops the middle, and says how much it dropped
 sandbox's warning lives, and a cut that keeps the tail would throw that
 warning away and show a fragment as if it were the whole thing.
 
+### The chunk summaries moved out of `storage.py`
+
+`storage.py` was 940 lines against the 1000-line module limit (CODEBOOK
+S-6). The next feature -- recording the Telegram id of every message the
+bot stores, so that a message can be found again and taken back out of
+the chat -- needed ninety more lines than that, and a module over the
+limit is debt that has to be registered in `docs/tech-debt/`, which is
+not where a new feature goes.
+
+So the summaries moved, and the concept that moved with them is the one
+they always were: the old part of the history is stored twice over, as
+messages (the source of truth, never deleted) and as chunk summaries
+(the compressed form the model actually reads), linked by
+`messages.summary_id`. That is now `storage_summaries.py`, mixed into
+the store as `SummaryStore`.
+
+**The mixin is deliberate.** Every call site in the tree says
+`store.get_summaries(chat_id, thread_id)`, and every one of them still
+does. A move that rewrites the call sites is a refactor of the callers;
+this one is a move. The methods need two things from the store they are
+mixed into -- the connection and the DB clock -- and both are set by
+`Storage.__init__`.
+
+`storage.py` is 782 lines, and the summary module is 198.
+
 ## [v0.13.0-stable] — 2026-10-23 — Context memory, the dispatch split, and review waves 1–8
 
 **Status:** shipped and deployed. 194 commits since `v0.12.0-stable`; 107 of

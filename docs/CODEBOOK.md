@@ -395,7 +395,7 @@ naming a renamed function goes red.
 The 500-line threshold itself is enforced by nothing. Six production
 modules are over 500 lines; four carry section markers
 (`handlers.py` with 19, `context_budget.py` with 4, `bash_command.py`
-with 2, `storage.py` with 1 for 940 lines), and two carry none
+with 2, `storage.py` with 1 for 782 lines), and two carry none
 (`llm_iteration.py`, 571 lines, and `selftest_llm.py`, 784). Writing
 this rule down as `AUTO` would have been a claim with no check behind it
 — see D-1.

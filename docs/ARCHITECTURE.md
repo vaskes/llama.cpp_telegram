@@ -34,7 +34,8 @@ telegram-bot/
 ├── limits.py              # profile-based token/timeout limits (359)
 ├── config.py              # env-var read at import time (354)
 ├── state.py               # per-chat runtime state (225)
-├── storage.py             # SQLite: messages, threads, topics, summaries (940)
+├── storage.py             # SQLite: messages, threads, topics (782)
+├── storage_summaries.py   # the chunk summaries of T70.5 (198)
 ├── persistence.py         # conversation-history assembly (173)
 ├── turn.py                # one turn's persist/rollback ledger (158)
 ├── access.py              # authorisation and group policy (304)
@@ -50,7 +51,7 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, purge the copy
 ```
 
-58 top-level modules, 151 test files, 2526 tests collected in a checkout.
+59 top-level modules, 155 test files, 2622 tests collected in a checkout.
 CI collects 2507 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
@@ -415,9 +416,12 @@ topics exist for the current chat.
   * The webhook authentication and request size limits are
     in [WEBHOOK.md](WEBHOOK.md).
   * The history persistence layer is `storage.py` (SQLite: messages,
-    threads, topics, and the chunk summaries of T70.5) with the async
-    wrappers in `persistence.py` and the policy that decides *which*
-    messages are sent in `context_budget.py`.
+    threads, topics) with the async wrappers in `persistence.py` and
+    the policy that decides *which* messages are sent in
+    `context_budget.py`. The chunk summaries of T70.5 are their own
+    module, `storage_summaries.py`, mixed into the store: the old
+    history is stored twice over, and the summary half needed room
+    `storage.py` did not have.
 
 ### The `summarize` strategy, in one paragraph
 
