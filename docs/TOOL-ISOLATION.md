@@ -54,6 +54,7 @@ anything outside its whitelist.
        "bash_command",
        "send_file",
        "delete_messages",
+       "search_messages",
    })
    ```
 

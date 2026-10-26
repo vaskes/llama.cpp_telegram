@@ -15,7 +15,7 @@ telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
 ├── handlers.py            # handle_text/photo/voice/document (1473 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   512 lines file, 358 in the function, 345 in the loop
+│                          #   520 lines file, 366 in the function, 345 in the loop
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py      # human-to-human reply absorb (140)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
@@ -30,7 +30,7 @@ telegram-bot/
 ├── prompts.py             # module constants only (75); the prose is in prompt_text/
 ├── prompt_text/           # the prompt prose, split by topic
 ├── rating.py              # rate-this-message reaction tool (235)
-├── tool_isolation.py      # KNOWN_TOOL_NAMES whitelist (150)
+├── tool_isolation.py      # KNOWN_TOOL_NAMES whitelist (164)
 ├── limits.py              # profile-based token/timeout limits (359)
 ├── config.py              # env-var read at import time (354)
 ├── state.py               # per-chat runtime state (225)
@@ -45,7 +45,7 @@ telegram-bot/
 ├── http_clients.py        # the shared httpx helpers (87)
 ├── logconf.py             # logging configuration (141)
 ├── selftest.py            # in-tree selftest entry (239) + 7 selftest_*.py leaves
-├── llm_*.py               # 21 leaf modules, one decision each
+├── llm_*.py               # 23 leaf modules, one decision each
 └── personal_tools/
     ├── bash_command.py    # T38: bash execution via sandbox side-car
     └── file_transport.py  # the file door: pull bytes out, purge the copy
@@ -64,11 +64,11 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       401  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
+  llm_dispatch.py       419  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      571  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
-  call_llama.py         507  call_llama
+  call_llama.py         520  call_llama
   llm_loop_guard.py     185  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py        83  _tag_sender
@@ -86,7 +86,8 @@ tests, none of which build a full `call_llama`.
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
   llm_sendfile.py         79  send_file_tool_def
-  llm_delete.py          792  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal
+  llm_delete.py          842  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal, requested_ids
+  llm_history.py          256  search_messages_tool_def, run_search, known_ids
   llm_truncation.py      119  condense
 ```
 
@@ -94,6 +95,12 @@ The split is by *decision*, not by size. Three of them answer "should
 this call be allowed at all" (`llm_toolargs`, `llm_toolcalls`,
 `llm_dispatch`), two answer "how does this iteration end"
 (`llm_finish`, `llm_loop_guard`), and the rest are transport.
+
+`llm_history` and `llm_delete` are the two that touch the chat itself:
+one reads the bot's own record of the chat, the other takes messages out
+of it. They are kept apart on purpose -- the delete tool is handed the
+ids it may act on and never reaches the database, so a deletion in the
+chat cannot reach the record.
 
 `llm_markup` is the smallest module here and exists for one reason:
 `_stop_button_markup` was defined in `access.py`, which sits in an
@@ -154,7 +161,7 @@ The cycle:
 ## Tools the bot can execute
 
 The bot has a **whitelist** (`KNOWN_TOOL_NAMES` in
-`tool_isolation.py`) of 6 tools it will dispatch. llama-server may
+`tool_isolation.py`) of 9 tools it will dispatch. llama-server may
 have many more tools loaded (via `--agent --mcp-servers-config`),
 but any tool name not in the whitelist is **renamed to
 `__rejected__`** with a synthetic tool result that lists the
@@ -168,6 +175,9 @@ available tools. The model can then retry with a whitelisted tool.
 | `donsetch_web_screenshot` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
 | `react_to_message` | Telegram Bot API `set_message_reaction` | always | — |
 | `bash_command` | HTTP POST to vaskes/OpenWebUI-bash-sandbox side-car | **personal profile ONLY + private chat ONLY** | T38, T52 #H1, T52 #M1, T52 #S2/S3 |
+| `send_file` | reads a file out of the same sandbox side-car | personal profile ONLY | T57 |
+| `delete_messages` | Telegram Bot API `deleteMessage` | where the bot may delete (admin, or a private chat) | the ids it may use are vouched for |
+| `search_messages` | reads the bot's own record of the chat | always | a read: the record is not a scratch pad |
 
 All other tool names (incl. llama-server's built-in
 `exec_shell_command`, `read_file`, `write_file`, etc.) are

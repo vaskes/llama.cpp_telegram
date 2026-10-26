@@ -78,6 +78,14 @@ KNOWN_TOOL_NAMES: frozenset[str] = frozenset({
     # is the conversation it is in. The bot's own database is NOT
     # touched: the history is the record of what happened.
     "delete_messages",
+    # search_messages: implemented in llm_history.py, reads the bot's own
+    # record of the chat it is in. It is a READ: the tool looks in the
+    # messages table and returns what it finds, and it reaches no chat
+    # other than the one it is in -- there is no chat_id parameter. The
+    # ids it returns are the ones the delete tool may act on, because
+    # the record is where a message said hours ago survives with its id
+    # attached.
+    "search_messages",
 })
 
 

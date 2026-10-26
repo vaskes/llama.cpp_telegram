@@ -32,7 +32,7 @@
 | Pytest | `2593 passed, 20 skipped` locally (the live-sandbox file is excluded, as in CI) |
 | CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `61c5fea` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
-| Production modules | 58 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count did not move |
+| Production modules | 61 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count did not move |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
 | Open review cycle | none — waves 1–8 closed just before the `v0.13.0-stable` tag ("production-ready") |
 

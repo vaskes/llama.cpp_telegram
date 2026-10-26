@@ -366,7 +366,7 @@ There are four, and it is worth reading what they are:
 
 | Function | Lines | What it is |
 |---|---|---|
-| `call_llama` | 358 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
+| `call_llama` | 366 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
 | `run_one` | 345 | One tool-loop iteration, nine concerns. Debt item 08. |
 | `handle_photo` | 252 | One concern plus a media path. Debt item 13. |
 | `handle_text` | 214 | Not debt. Same shape as `handle_photo`. |
@@ -810,6 +810,37 @@ model filled the gap with a story about rights. The three rules above
 came out of the same turn, and each of them is now checked by a
 tripwire rather than by the memory of whoever reads this next.
 
+**X-11 — The record knows which message each row came from, and the
+search is a read.**
+`AUTO`
+`tests/test_message_search.py`, `tests/test_telegram_id_recorded.py`,
+`tests/test_chat_history_search.py`.
+
+The operator's rule, 2026-10-27: the bot must be able to find a message
+it was sent — by its text, by who wrote it — and take that message back
+out of the chat, while the row in the database stays. Three parts, and
+each of them is a rule of its own:
+
+  * **the id is written when the message is written.** The Bot API
+    cannot list a chat's messages, so an id the bot did not store is an
+    id the bot will never have again. The `messages` table therefore
+    carries `telegram_message_id`, and every handler that stores a
+    message stores the id of the message it came from;
+  * **the search is a read, and the record is not a scratch pad.** The
+    `search_messages` tool looks in the messages table and returns what
+    it finds. It writes nothing, and it is scoped to the chat it is
+    in;
+  * **the delete tool is handed the ids, and never looks them up.** It
+    does not import the database and it does not import the module that
+    reads it: the dispatcher asks the record what it holds and passes
+    the answer in. A deletion in the chat must not be able to reach the
+    record — not to change it, and not to read it either.
+
+The consequence that matters: the ids the tool may act on are now the
+ids the record holds, not only the ones the live update carried. The
+guard did not move — an id the record does not hold is still refused,
+and it is still refused before Telegram is asked to do anything.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1161,8 +1192,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_delete_messages_tool.py` | 35 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 | `test_message_search.py` | 11 | The store keeps the Telegram id of every message, and can be searched by text and by sender |
 | `test_telegram_id_recorded.py` | 5 | Every message the bot stores carries the Telegram id it came from |
+| `test_chat_history_search.py` | 12 | The bot's own record of the chat, and what it buys |
 
-157 test files in total; the table above is the ones that guard a rule in
+158 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

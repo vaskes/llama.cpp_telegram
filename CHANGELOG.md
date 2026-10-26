@@ -1217,6 +1217,40 @@ the shape of a message id is a trap with the operator's own messages in
 it; the prefix now says `[reply to @name]`, and a person without a
 username is named by their first name.
 
+### The bot can find a message it was sent, and take it back out of the chat
+
+The operator's rule (2026-10-27), the whole of it: the bot must be able
+to find a message it was sent -- by its text, by who wrote it -- and
+take that message back out of the chat, **while the row in the database
+stays**. The database is the bot's own record of what happened and it is
+on its way to becoming a training set; a row that vanishes because a
+message was deleted in the chat is a hole in that record.
+
+So there is a new tool, `search_messages`. It reads the bot's own record
+of the chat -- the messages it was sent, the ones it absorbed from the
+group, its own answers -- and filters it informally: a substring of the
+body, a substring of the sender's display name, or nothing at all for
+the newest messages of the chat. The filters fold the case, Russian
+included: SQLite's own `lower()` and `LIKE` know ASCII only, so the
+search registers a `casefold` function on the connection.
+
+**The ids the delete tool may use have grown, and the guard has not
+moved.** Before this, the ids in reach were the ones the live update
+carried (the message just written, the message replied to) and the bot's
+own messages. Now the record is a third source: the dispatcher asks it
+what it holds and hands the answer to the tool as a parameter. An id the
+record does NOT hold is still refused, and still refused before Telegram
+is asked to do anything -- a made-up id is a real attempt to delete
+somebody else's message, and the bot is an administrator.
+
+**The delete tool cannot reach the record.** It does not import the
+database and it does not import the module that reads it. A deletion in
+the chat must not be able to reach the record -- not to change it, and
+not to read it either.
+
+**The record survives the deletion.** The message leaves the chat; the
+row stays. That is the operator's rule, and it now has a tripwire on it.
+
 ## [v0.13.0-stable] — 2026-10-23 — Context memory, the dispatch split, and review waves 1–8
 
 **Status:** shipped and deployed. 194 commits since `v0.12.0-stable`; 107 of

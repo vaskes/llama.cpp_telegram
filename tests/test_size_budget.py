@@ -46,12 +46,14 @@ MODULE_LIMIT = 1000
 EXCEPTIONS = {
     "call_llama": (
         "call_llama.py",
-        358,
+        366,
         "2026-10-22",
         "Carries a DO NOT REFACTOR notice with its own trigger; the "
         "transport, the four response buffers and the abort state across "
         "iterations are three unrelated concerns in one body. Open debt "
-        "item 03.",
+        "item 03. It grew again on 2026-10-27 by the advertisement of the "
+        "search tool (eight lines), which is the same kind of change: one "
+        "more thing the model is told it can do.",
         "Split when the engine transport can be moved behind a seam "
         "without the abort state crossing the boundary with it.",
     ),

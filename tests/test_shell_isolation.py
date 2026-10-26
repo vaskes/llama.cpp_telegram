@@ -57,6 +57,7 @@ def test_known_tool_names_exact_set():
         "bash_command",
         "send_file",
         "delete_messages",
+        "search_messages",
     })
     assert KNOWN_TOOL_NAMES == expected, \
         f"KNOWN_TOOL_NAMES changed: {KNOWN_TOOL_NAMES!r}"

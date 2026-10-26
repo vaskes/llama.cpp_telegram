@@ -159,14 +159,32 @@ async def execute_tool(name: str, args, deps: DispatchDeps) -> ToolExecution:
         # The chat's own messages, removed by Telegram's own API. The
         # bot's history is not touched: the record of what happened
         # stays (the operator's rule, 2026-10-26).
-        from llm_delete import execute_delete_messages
+        #
+        # The ids the tool may act on are looked up HERE and handed to it
+        # as a parameter. The tool does not read the database -- it cannot,
+        # and that is checked -- and a deletion in the chat must not
+        # reach the record.
+        from llm_delete import execute_delete_messages, requested_ids
+        from llm_history import known_ids
+        vouched = await known_ids(deps.chat_id, requested_ids(args))
         text, extras = await execute_delete_messages(
             args, bot=deps.bot, chat_id=deps.chat_id,
             chat_type=deps.chat_type,
             reply_to_message_id=deps.reply_to_message_id,
-            current_message_id=deps.current_message_id)
+            current_message_id=deps.current_message_id,
+            known_ids=vouched)
         ledger = _entry("delete_messages", args, deps.iteration,
                          **(extras or {}))
+        return _finish(text, ledger, deps)
+
+    if name == "search_messages":
+        # The bot's own record of this chat: the messages it was sent,
+        # the ones it absorbed from the group, and its own answers. It is
+        # a read; the record is not a scratch pad.
+        from llm_history import run_search
+        text, extras = await run_search(args, chat_id=deps.chat_id)
+        ledger = _entry("search_messages", args, deps.iteration,
+                        **(extras or {}))
         return _finish(text, ledger, deps)
 
     registry = deps.custom_tools or {}

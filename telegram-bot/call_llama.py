@@ -345,6 +345,14 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 chat_id=chat_id,
                 reply_to_message_id=reply_to_message_id,
                 current_message_id=current_message_id))
+    # search_messages reads the bot's own record of the chat, so it needs
+    # neither the sandbox nor any Telegram rights: the record is there in
+    # every chat, and it is the only place a message said hours ago
+    # survives with its id attached (the Bot API cannot list a chat's
+    # messages). It is advertised always -- a search that finds nothing
+    # says so, and the model has to be able to look before it answers.
+    from llm_history import search_messages_tool_def
+    bot_side_tool_defs.append(search_messages_tool_def())
     all_tools = tools + bot_side_tool_defs
 
     # === Group context (always-injected system message) ===

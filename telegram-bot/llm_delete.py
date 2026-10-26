@@ -309,13 +309,20 @@ def own_ids(chat_id: Any) -> list[int]:
 
 def authorized_ids(chat_id: Any,
                    reply_to_message_id: Any = None,
-                   current_message_id: Any = None) -> set[int]:
+                   current_message_id: Any = None,
+                   known_ids: Optional[set[int]] = None) -> set[int]:
     """The ids this tool is allowed to delete in this chat.
 
-    Two sources, and both of them are verifiable:
+    Three sources, and all of them are verifiable:
 
     - the ids of the bot's own messages (the registry);
-    - the id of the message the user replied to (the turn's context).
+    - the id of the message the user replied to, and the id of the
+      message the user just wrote (the turn's context);
+    - the ids the bot's own record of the chat holds, which the
+      dispatcher looked up in the database before it got here (the
+      `known_ids` parameter). That is how a message said three hours
+      ago becomes an id the tool may act on: the search tool found it
+      by its text, and the record says it is a message of this chat.
 
     Everything else is a number the model produced on its own. The bot
     is an administrator in the chat where this tool lives, so a number
@@ -330,6 +337,11 @@ def authorized_ids(chat_id: Any,
     48-hour window) came back to the user as a story about the bot
     not being an administrator. It IS one. The refusal never named the
     real cause, so the model invented one.
+
+    The database is NOT read from here. The tool is handed the ids it
+    may use and never touches the store: the record of the chat and
+    the chat itself are two different things, and a deletion in the
+    second must not reach the first.
     """
     allowed = set(own_ids(chat_id))
     for extra in (reply_to_message_id, current_message_id):
@@ -339,7 +351,32 @@ def authorized_ids(chat_id: Any,
             allowed.add(int(extra))
         except (TypeError, ValueError):
             pass
+    for extra in (known_ids or ()):
+        try:
+            allowed.add(int(extra))
+        except (TypeError, ValueError):
+            pass
     return allowed
+
+
+def requested_ids(args: dict) -> list[int]:
+    """The message ids the model asked to delete, and nothing else.
+
+    Lenient on purpose, and this is the AUTHORISATION side of the
+    question: which of these ids does the bot's own record hold? The
+    other side -- is this call well formed at all? -- is answered by
+    the tool itself, which reports the reason and stops.
+    """
+    raw = (args or {}).get("message_ids")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    ids: list[int] = []
+    for item in raw:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return ids
 
 
 def telegram_refusal(exc: Exception, *,
@@ -573,7 +610,9 @@ def delete_messages_tool_def(*, chat_id: Any = None,
         )
     described += (
         "\nNEVER invent a message id. Only pass an id that is listed "
-        "above. The bot is an "
+        "above, or one that `search_messages` returned for this chat -- "
+        "the bot's own record of the chat is what it can vouch for. The "
+        "bot is an "
         "administrator here, so a made-up id is a real attempt to "
         "delete somebody else's message, and an id the bot does not "
         "know is refused without touching anything. Telegram also "
@@ -606,12 +645,14 @@ def delete_messages_tool_def(*, chat_id: Any = None,
                         "items": {"type": "integer"},
                         "description": (
                             "Telegram message ids to delete exactly. Use it "
-                            "only for the ids listed in this description: "
-                            "the message the user just wrote, the message "
-                            "the user replied to, or the bot's own "
-                            "messages. An id that is not listed is "
-                            "refused without touching anything. It wins "
-                            "over `count`."
+                            "only for the ids listed in this description, "
+                            "or for the ones `search_messages` returned "
+                            "for this chat: the message the user just "
+                            "wrote, the message the user replied to, the "
+                            "bot's own messages, or a message the bot's own "
+                            "record of the chat holds. An id that is not "
+                            "one of those is refused without touching "
+                            "anything. It wins over `count`."
                         ),
                     },
                 },
@@ -664,6 +705,7 @@ async def execute_delete_messages(
     chat_type: str,
     reply_to_message_id: Any = None,
     current_message_id: Any = None,
+    known_ids: Optional[set[int]] = None,
 ) -> tuple[str, Optional[dict]]:
     """Delete messages from the current chat.
 
@@ -672,10 +714,15 @@ async def execute_delete_messages(
     the bot's history, and nothing here writes to the database.
 
     An id the bot cannot vouch for is refused HERE, before Telegram is
-    asked to do anything: the bot's own messages and the message the
-    user replied to are the only ids in reach. The bot is an
-    administrator in the chat where this tool lives, so an id the model
-    made up would be a real attempt to delete a stranger's message.
+    asked to do anything: the bot's own messages, the message the user
+    replied to, the message the user just wrote, and the ids the bot's
+    own record of the chat holds are the only ids in reach. The bot is
+    an administrator in the chat where this tool lives, so an id the
+    model made up would be a real attempt to delete a stranger's
+    message.
+
+    `known_ids` is handed in rather than looked up: the tool does not
+    read the database, and the deletion does not touch the record.
     """
     args = args or {}
     count, count_problem = _parse_count(args.get("count"))
@@ -685,7 +732,8 @@ async def execute_delete_messages(
     if ids_problem:
         return f"[delete_messages: {ids_problem}]", None
 
-    allowed = authorized_ids(chat_id, reply_to_message_id, current_message_id)
+    allowed = authorized_ids(chat_id, reply_to_message_id, current_message_id,
+                              known_ids)
     unknown: list[int] = []
 
     if ids:
@@ -787,6 +835,8 @@ def _unknown_ids_text(unknown: list[int], chat_id: Any,
         "A made-up id would be a real attempt to delete somebody else's "
         "message -- the bot is an administrator here -- so it was not "
         "passed to Telegram. Reply to the message you mean, so the bot "
-        "learns its id, or use `count` to take back the bot's own last "
-        "answer.]"
+        "learns its id; or use `search_messages` to find it in the bot's "
+        "own record of this chat, which holds the ids of the messages "
+        "the bot was sent; or use `count` to take back the bot's own "
+        "last answer.]"
     )

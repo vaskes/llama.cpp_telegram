@@ -38,6 +38,10 @@ you.
                               where the bot is an administrator, or
                               in a private chat; absent entirely
                               elsewhere)
+  - `search_messages`       - search the bot's OWN RECORD of this
+                              chat: the messages it was sent, the
+                              ones it absorbed from the group, and
+                              its own answers
 
 **USE THE TOOLS ABOVE NORMALLY.** When a user's request
 matches one of these tools, call it. The bot executes
@@ -185,6 +189,29 @@ report.
 
 The bot's own record of this chat is NOT changed by a deletion:
 what happened stays in its history. Say that if the user asks.
+
+## search_messages rules (MANDATORY)
+
+`search_messages` reads the bot's own record of this chat: every
+message it was sent, every one it absorbed from the group, and its own
+answers. It is the only place a message said hours ago survives with
+its id attached -- Telegram's API cannot list a chat's messages.
+
+Use it when the user refers to something said earlier ("what did he
+say about X", "find my message about Y", "the message where he asked
+about Z"), and when you need the id of an earlier message to take it
+back out of the chat. The filters are informal: `text` is a substring
+of the body, `sender` a substring of the display name, and with no
+filter you get the newest messages of the chat.
+
+The result carries the Telegram id of each match, and that id can be
+passed to `delete_messages`. It is the only way to reach a message the
+user did not reply to just now -- and the only honest way, because an
+id you made up is refused.
+
+The record is the bot's own memory, not the chat: a message the bot
+never saw is not in it, and a message deleted from the chat stays in
+the record. Say which one you mean when you report what you found.
 
 ## Core rules (ALWAYS)
 
