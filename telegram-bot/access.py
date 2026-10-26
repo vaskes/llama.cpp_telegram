@@ -159,6 +159,38 @@ async def _check_user_slot(chat_id: int, user_id: int, update):
         return None
 
 
+def real_reply_to(update):
+    """The message the user actually replied to, or None.
+
+    In a forum topic Telegram attaches an IMPLICIT reply to every message
+    that answers nothing else: the topic's creation message. The Bot API
+    server adds that reply itself (core.telegram.org/api/forum: "The Bot
+    API server adds that reply itself"), and a topic's id EQUALS the id of
+    the service message that created it -- so the implicit reply carries
+    the topic id, which looks exactly like a message id.
+
+    Measured on the operator's chat (2026-10-26, topic 25): a plain
+    message arrived with reply_to_message.message_id == 25 ==
+    message_thread_id. The delete tool then advertised id 25 as "the
+    message the user replied to", the model tried to delete it, and
+    Telegram refused ("Message can't be deleted") -- a service message is
+    not deletable. It also made the bot treat a plain message in a topic
+    created by a human as a reply to another human.
+
+    So the implicit reply is not something the user pointed at, and its
+    id must never reach the model as one. A real reply inside the topic
+    carries a chat-wide id, which is not the topic id.
+    """
+    message = getattr(update, "message", None)
+    replied = getattr(message, "reply_to_message", None)
+    if replied is None:
+        return None
+    thread_id = getattr(message, "message_thread_id", None)
+    if thread_id is not None and getattr(replied, "message_id", None) == thread_id:
+        return None
+    return replied
+
+
 def _is_reply_to_other_user(update, bot_id: int) -> bool:
     """True if the message is a reply to another human's message in
     a group, and should therefore be skipped.
@@ -187,7 +219,10 @@ def _is_reply_to_other_user(update, bot_id: int) -> bool:
     msg = update.message
     if msg is None:
         return False
-    rtm = msg.reply_to_message
+    # The implicit topic reply (see real_reply_to) is not a reply to
+    # anybody: without this a plain message in a topic created by a human
+    # looks like a reply to that human, and the bot swallows it.
+    rtm = real_reply_to(update)
     if rtm is None:
         return False
     if not _is_group_chat(update):

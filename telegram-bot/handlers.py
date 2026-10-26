@@ -78,7 +78,7 @@ from chat_utils import (
 from telegram_format import render_html, split_html
 from access import (
     _check_user_slot, _is_reply_to_other_user, _should_mute_in_group,
-    is_authorized, reject_if_unauthorized,
+    is_authorized, real_reply_to, reject_if_unauthorized,
 )
 from llm_markup import _stop_button_markup
 import storage
@@ -170,9 +170,15 @@ def _reply_to_message_id(update: Update):
     only one the bot can learn. A reply to a message in ANOTHER chat
     (a forwarded one) carries an id that means nothing here, so it is
     dropped.
+
+    The implicit topic reply (real_reply_to) is dropped too: it is the
+    topic's creation message, its id is the topic id, and no user ever
+    pointed at it. On 2026-10-26 it was handed to the model as "the
+    message the user replied to" (id 25), and the model tried to delete
+    a service message that Telegram will not delete.
     """
     message = getattr(update, "message", None)
-    replied = getattr(message, "reply_to_message", None)
+    replied = real_reply_to(update)
     if replied is None:
         return None
     chat = getattr(update, "effective_chat", None)
