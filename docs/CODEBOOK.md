@@ -1105,7 +1105,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
-| `test_delete_messages_tool.py` | 24 | A message can be taken back out of the chat -- and the bot's own history is not touched |
+| `test_delete_messages_tool.py` | 25 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 
 152 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.

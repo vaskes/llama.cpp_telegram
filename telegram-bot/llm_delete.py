@@ -186,8 +186,16 @@ async def _check_admin(bot: Any, chat_id: int) -> tuple[bool, str]:
         me = await _bot_user(bot)
         member = await bot.get_chat_member(chat_id, me.id)
     except Exception as e:
-        return False, (f"the bot could not read its own rights in this "
-                       f"chat ({type(e).__name__}: {e})")
+        # The check is INCONCLUSIVE, not negative. The bot is in this
+        # chat by construction -- it just received an update from it --
+        # so a failure to read the rights is a quirk of the chat (a
+        # channel can answer differently from a group), not a verdict.
+        # Hiding the tool because of a quirk would leave the operator
+        # with a tool that does not exist and no explanation. Telegram
+        # has the last word on what may be deleted anyway.
+        return True, (f"the bot could not read its own rights in this "
+                      f"chat ({type(e).__name__}: {e}) -- Telegram will "
+                      f"have the last word")
     status = getattr(member, "status", "") or ""
     if status == "creator":
         return True, ""

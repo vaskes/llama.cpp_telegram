@@ -187,6 +187,25 @@ async def test_an_administrator_without_the_right_still_gets_the_tool():
 
 
 @pytest.mark.asyncio
+async def test_unreadable_rights_do_not_hide_the_tool():
+    """An inconclusive check is not a refusal.
+
+    The bot is in the chat by construction -- it just received an
+    update from it -- so a failure to read the rights is a quirk of
+    the chat, not a verdict. Hiding the tool because of a quirk would
+    leave the operator with a tool that does not exist and no
+    explanation. Telegram has the last word on what may be deleted.
+    """
+    from llm_delete import bot_may_delete
+    bot = _FakeBot(member_error=RuntimeError("Chat not found"))
+    allowed, why = await bot_may_delete(bot, 100, "channel")
+    assert allowed is True, (
+        "the bot is in this chat by construction, so a failed rights "
+        "check must not take the tool away")
+    assert "could not read" in why
+
+
+@pytest.mark.asyncio
 async def test_the_rights_are_checked_once_and_cached():
     """The check costs an API call; it is not asked twice in a row."""
     from llm_delete import bot_may_delete
