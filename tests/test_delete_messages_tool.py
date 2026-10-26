@@ -168,12 +168,22 @@ async def test_a_plain_member_may_not_delete():
 
 
 @pytest.mark.asyncio
-async def test_an_administrator_without_the_right_may_not_delete():
+async def test_an_administrator_without_the_right_still_gets_the_tool():
+    """Half a right is still a right, and the operator is told which half.
+
+    An administrator without the "delete messages" right may take back
+    the bot's own messages and may not touch anyone else's. The tool
+    stays available -- it is how the bot cleans up after itself -- and
+    the note says what it cannot do.
+    """
     from llm_delete import bot_may_delete
     bot = _FakeBot(status="administrator", can_delete=False)
     allowed, why = await bot_may_delete(bot, 100, "supergroup")
-    assert allowed is False
+    assert allowed is True, (
+        "the bot may still take back its own messages, so the tool is "
+        "worth advertising")
     assert "delete messages" in why
+    assert "own messages" in why
 
 
 @pytest.mark.asyncio

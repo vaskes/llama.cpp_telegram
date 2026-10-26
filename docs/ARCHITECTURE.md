@@ -85,7 +85,7 @@ tests, none of which build a full `call_llama`.
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
   llm_sendfile.py         79  send_file_tool_def
-  llm_delete.py          361  delete_messages_tool_def, execute_delete_messages, remember_answer
+  llm_delete.py          371  delete_messages_tool_def, execute_delete_messages, remember_answer
   llm_truncation.py      119  condense
 ```
 

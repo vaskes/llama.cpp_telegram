@@ -194,13 +194,19 @@ async def _check_admin(bot: Any, chat_id: int) -> tuple[bool, str]:
     if status == "administrator":
         # `can_delete_messages` is reported for supergroups and
         # channels. A basic group does not have the field at all, and
-        # there an administrator may delete any message -- so only an
-        # explicit False is a refusal.
+        # there an administrator may delete any message.
+        #
+        # An administrator WITHOUT the right is still an administrator:
+        # it may take back its own messages, and that is half the tool.
+        # The right decides the other half -- other people's messages.
+        # So the tool stays available, and the operator is told which
+        # half they have.
         right = getattr(member, "can_delete_messages", None)
         if right is None or right:
             return True, ""
-        return False, ("the bot is an administrator here, but without the "
-                       "\"delete messages\" right")
+        return True, ("the bot is an administrator here, but without the "
+                      "\"delete messages\" right: it can take back its own "
+                      "messages, not other people's")
     return False, (f"the bot is not an administrator in this chat (status: "
                    f"{status or 'unknown'}), so it cannot delete other "
                    f"people's messages here")
@@ -351,11 +357,15 @@ async def execute_delete_messages(
         detail = "; ".join(f"{mid}: {why}" for mid, why in failed)
         text = (f"[delete_messages: nothing was deleted ({detail}). "
                 f"Telegram's rules, not mine.]")
+        if reason:
+            text = text[:-1] + f" {reason}.]"
     else:
         detail = "; ".join(f"{mid}: {why}" for mid, why in failed)
         text = (f"[delete_messages: deleted {len(deleted)} of "
                 f"{len(targets)} message(s) from {scope}; Telegram refused "
                 f"the rest -- {detail}]")
+        if reason:
+            text = text[:-1] + f" ({reason}).]"
 
     extras = {"deleted": deleted, "failed": [mid for mid, _ in failed]}
     return text, extras
