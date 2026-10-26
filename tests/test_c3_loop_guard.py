@@ -122,7 +122,7 @@ def test_the_same_call_twice_in_a_row_aborts():
     assert tick(g, iteration=0, current_calls=call) is None
     out = tick(g, iteration=1, current_calls=call)
     assert isinstance(out, Abort)
-    assert "stuck in a loop" in out.text
+    assert "twice in a row" in out.text
     assert "get_weather" in out.text, "the message names the tool that looped"
 
 
@@ -498,3 +498,31 @@ def test_an_abort_returns_before_the_summarize_call():
         "return, or an else, means a stuck model pays for one more "
         "request before it is stopped"
     )
+
+def test_the_abort_is_spoken_in_the_bots_voice():
+    """The operator's chat got this:
+
+        [bot: the model asked for the same tool call twice in a row
+        (delete_messages), so the bot stopped rather than repeat itself.
+        What the tool said: [delete_messages: refused -- ...]]
+
+    A debug sentence with the tool's whole output glued to it. The
+    wording IS the contract here: the bot is the one who stopped, and
+    the tool's reason is what the user needs to read.
+    """
+    guard = LoopGuard(budget_sec=600.0)
+    guard.prev_calls = [("delete_messages", '{"message_ids": [3267]}')]
+    outcome = guard.tick(
+        iteration=1,
+        current_calls=[("delete_messages", '{"message_ids": [3267]}')],
+        elapsed=1.0,
+        iter_had_real_result=False,
+        final_fallback=None,
+        reasoning_tail="",
+        finish_reason="tool_calls",
+        last_tool_text="[delete_messages: refused -- nothing was deleted.]",
+    )
+    assert isinstance(outcome, Abort)
+    assert outcome.text.startswith("[bot: I stopped the turn"), outcome.text
+    assert "delete_messages" in outcome.text, outcome.text
+    assert "nothing was deleted" in outcome.text, outcome.text

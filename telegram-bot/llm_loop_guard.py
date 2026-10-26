@@ -133,14 +133,15 @@ class LoopGuard:
             # bot's problem, not the user's.
             if last_tool_text:
                 return Abort(
-                    f'[bot: the model asked for the same tool call twice '
-                    f'in a row ({current_calls[0][0]}), so the bot stopped '
-                    f'rather than repeat itself. What the tool said: '
-                    f'{last_tool_text}]'
+                    f'[bot: I stopped the turn -- the model asked to run '
+                    f'{current_calls[0][0]} twice in a row, and a third try '
+                    f'would not have told you anything new. What the tool '
+                    f'said: {last_tool_text}]'
                 )
             return Abort(
-                f'[bot: the model asked for the same tool call twice in a row '
-                f'({current_calls[0][0]}). It is stuck in a loop. '
+                f'[bot: I stopped the turn -- the model asked to run '
+                f'{current_calls[0][0]} twice in a row, and a third try '
+                f'would not have told you anything new. '
                 f'Final answer so far: {final_fallback or "(none)"}]'
             )
         self.prev_calls = current_calls

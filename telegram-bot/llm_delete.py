@@ -763,9 +763,17 @@ def _unknown_ids_text(unknown: list[int], chat_id: Any,
     It names the way out, because a refusal that only says "no" is a
     dead end for the model and for the user behind it: the message the
     user replied to IS in reach, and its id is right there.
+
+    It does NOT list the ids of the bot's own messages. The live test of
+    2026-10-26 showed what that costs: the operator's chat got a
+    refusal with sixteen ids in it, and the whole thing -- the bot's
+    internals and all -- was the answer to "delete this message". The
+    ids are in the tool's description, where the model reads them
+    anyway; here they would only be noise.
     """
     own = own_ids(chat_id)
-    known = ", ".join(str(m) for m in own) if own else "none"
+    known = (f"its own last {len(own)} messages (their ids are in this "
+             f"tool's description)" if own else "no messages of its own yet")
     reply = (str(reply_to_message_id)
              if reply_to_message_id is not None else "none")
     current = (str(current_message_id)
@@ -773,12 +781,12 @@ def _unknown_ids_text(unknown: list[int], chat_id: Any,
     return (
         "[delete_messages: refused -- nothing was deleted. The id(s) "
         + ", ".join(str(u) for u in unknown)
-        + " are not messages the bot knows in this chat. It knows its "
-        "own messages (ids " + known + "), the message the user just "
-        "wrote (id " + current + ") and the message the user replied "
-        "to (id " + reply + "). A made-up id would be a real attempt to "
-        "delete somebody else's message -- the bot is an administrator "
-        "here -- so it was not passed to Telegram. Reply to the message "
-        "you mean, so the bot learns its id, or use `count` to take "
-        "back the bot's own last answer.]"
+        + " are not messages the bot knows in this chat. It knows "
+        + known + ", the message the user just wrote (id " + current
+        + ") and the message the user replied to (id " + reply + "). "
+        "A made-up id would be a real attempt to delete somebody else's "
+        "message -- the bot is an administrator here -- so it was not "
+        "passed to Telegram. Reply to the message you mean, so the bot "
+        "learns its id, or use `count` to take back the bot's own last "
+        "answer.]"
     )

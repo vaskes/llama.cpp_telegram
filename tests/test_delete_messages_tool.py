@@ -838,3 +838,27 @@ async def test_the_current_message_id_is_refused_when_it_is_not_the_turn():
         "delete_messages", {"message_ids": [9999]}, deps)
     assert bot.deleted == [], bot.deleted
     assert "refused" in result.text
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_does_not_dump_the_bots_own_message_ids():
+    """The refusal is the answer the operator reads in the chat.
+
+    Live test of 2026-10-26: the chat got a refusal with sixteen of the
+    bot's own message ids in it -- a wall of ids, in a message that was
+    supposed to say what went wrong. The ids are in the tool's
+    description, where the model reads them anyway; in the answer to a
+    human they are noise.
+    """
+    from llm_delete import execute_delete_messages, new_answer_group, \
+        remember_answer
+    remember_answer(100, 3213, new_answer_group())
+    bot = _FakeBot()
+    text, extras = await execute_delete_messages(
+        {"message_ids": [706]}, bot=bot, chat_id=100,
+        chat_type="supergroup", reply_to_message_id=3220)
+    assert "3213" not in text, (
+        "the bot's own ids are in the tool description, not in the "
+        "answer the operator reads")
+    assert "706" in text, text
+    assert "3220" in text, text

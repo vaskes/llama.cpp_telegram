@@ -174,6 +174,47 @@ Both new cases are in the in-tree selftest as well, so the bot checks
 them at every start — the matrix that runs in production, not only in the
 test suite.
 
+### The answer survived the deletion of the message it answered
+
+The same test run showed the bot losing its own answer. The model deleted
+the message the operator had just written — correct, that is what was
+asked — and the bot then tried to *reply* to that message, which no
+longer exists: `BadRequest: Message to be replied not found`, over and
+over, and no answer in the chat.
+
+Telegram has an answer for exactly this case, and it was already in the
+API: `allow_sending_without_reply` — send the message even if the quoted
+one is not found. The quote is lost; the answer is not. The bot now uses
+it, and the log keeps the fact of what happened.
+
+Only that one refusal gets the fallback. A message that is too long, or a
+chat the bot may not write to, is still raised: answering with something
+the user cannot see is worse than an error.
+
+### The answer the operator reads is no longer a dump
+
+Two things made the bot's answer unreadable in the same test run, and
+both were the bot's own words rather than the model's.
+
+The loop guard stopped a model that asked for the same call twice, and
+the user got the debug sentence that does it:
+
+    [bot: the model asked for the same tool call twice in a row
+    (delete_messages), so the bot stopped rather than repeat itself.
+    What the tool said: ...]
+
+It now says it as the bot: *I stopped the turn — the model asked to run
+delete_messages twice in a row, and a third try would not have told you
+anything new.* The tool's own words still follow, because the reason is
+the part the user needs.
+
+And the refusal itself was a wall of ids: sixteen of the bot's own
+message ids, in the answer to "delete this message". The ids are in the
+tool's description, where the model reads them anyway; the answer to a
+human now says how many of the bot's own messages are in reach, and
+names the two ids that matter — the message the user just wrote and the
+message they replied to.
+
 ### The side-car's stdin trap is fixed, and the bot's warning went with it
 
 The sandbox's v2.10.2 (`4a6c465`) closes the two failures the bot's
