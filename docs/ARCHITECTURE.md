@@ -15,7 +15,7 @@ telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
 ├── handlers.py            # handle_text/photo/voice/document (1442 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   510 lines file, 356 in the function, 343 in the loop
+│                          #   511 lines file, 357 in the function, 344 in the loop
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py      # human-to-human reply absorb (107)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
@@ -63,9 +63,9 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       394  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
+  llm_dispatch.py       400  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
-  llm_iteration.py      550  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
+  llm_iteration.py      556  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
   call_llama.py         507  call_llama
   llm_loop_guard.py     170  Nudge, Abort, LoopGuard
@@ -85,7 +85,7 @@ tests, none of which build a full `call_llama`.
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
   llm_sendfile.py         79  send_file_tool_def
-  llm_delete.py          547  delete_messages_tool_def, execute_delete_messages, remember_answer
+  llm_delete.py          755  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal
   llm_truncation.py      119  condense
 ```
 

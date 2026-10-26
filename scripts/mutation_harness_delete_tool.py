@@ -24,7 +24,17 @@ back, and the suite has to notice:
   * the module reaches for the database;
   * the prompt forgets the tool, so the model never calls it;
   * the tool grows a chat_id parameter, and the model's reach stops
-    being the conversation it is in.
+    being the conversation it is in;
+  * an id the bot cannot vouch for reaches Telegram -- the bot is an
+    administrator, so a number the model made up is a real attempt to
+    delete a stranger's message (the live failure of 2026-10-26);
+  * the message the user replied to stops being in reach, or stops
+    travelling from the turn to the tool;
+  * Telegram's refusal is reported without naming the cause, so the
+    model explains it its own way -- it told the operator the bot was
+    not an administrator, and the bot was one;
+  * the description stops saying whose message an id is, and the model
+    reads the bot's own ids as the user's.
 
 **Group B -- the tripwires.** Each mutation removes a tripwire *and* the
 behaviour it is supposed to catch, and the suite has to go **green**. A
@@ -71,6 +81,7 @@ TARGETS = [
 SUITE_TIMEOUT = 300
 
 TOOL = ROOT / "telegram-bot" / "llm_delete.py"
+DISPATCH = ROOT / "telegram-bot" / "llm_dispatch.py"
 ISOLATION = ROOT / "telegram-bot" / "tool_isolation.py"
 PROMPT = ROOT / "telegram-bot" / "prompt_text" / "group_context.py"
 TEST_TOOL = ROOT / "tests" / "test_delete_messages_tool.py"
@@ -93,8 +104,8 @@ MUTATIONS = [
     ]),
     ("the administrator's right is not checked", "CAUGHT", [
         (TOOL,
-         r"    allowed, reason = await _check_admin\(bot, key\)\n",
-         "    allowed, reason = True, \"\"\n", 1),
+         r"    rights = await _check_admin\(bot, key\)\n",
+         "    rights = Rights(True, True, \"\")\n", 1),
     ]),
     ("the cap on one call is gone", "CAUGHT", [
         (TOOL,
@@ -147,6 +158,39 @@ MUTATIONS = [
         (HANDLERS,
          r"    return getattr\(replied, \"message_id\", None\)\n",
          "    return None\n", 1),
+    ]),
+    # --- group A: the ids the bot may touch (2026-10-26, live) ---
+    ("an invented id reaches Telegram", "CAUGHT", [
+        (TOOL,
+         r"        unknown = \[i for i in ids if i not in allowed\]\n"
+         r"        targets = \[i for i in ids if i in allowed\]\n",
+         "        unknown = []\n"
+         "        targets = list(ids)\n", 1),
+    ]),
+    ("the message the user replied to is out of reach", "CAUGHT", [
+        (TOOL,
+         r"    allowed = authorized_ids\(chat_id, reply_to_message_id\)\n",
+         "    allowed = authorized_ids(chat_id, None)\n", 1),
+    ]),
+    ("the reply-to id does not reach the tool", "CAUGHT", [
+        (DISPATCH,
+         r"            reply_to_message_id=deps\.reply_to_message_id\)\n",
+         "            reply_to_message_id=None)\n", 1),
+    ]),
+    ("the cause of Telegram's refusal is guessed", "CAUGHT", [
+        (TOOL,
+         r"may_delete=rights\.others\)\n",
+         "may_delete=True)\n", 1),
+    ]),
+    ("the description does not say whose message an id is", "CAUGHT", [
+        (TOOL,
+         r"These are the BOT's messages, not the user's\.",
+         "These are YOUR messages.", 1),
+    ]),
+    ("the pointed-at id is not in the description", "CAUGHT", [
+        (TOOL,
+         r"delete it with message_ids=\[\{reply_to_message_id\}\]\.",
+         "delete it.", 1),
     ]),
 
     # --- group B: the tripwires ------------------------------------
@@ -207,9 +251,12 @@ MUTATIONS = [
         (TEST_TOOL,
          r"(?m)^async def test_it_refuses_where_the_bot_may_not_delete\(\):\n",
          "async def test_it_refuses_where_the_bot_may_not_delete():\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^async def test_an_administrator_without_the_right_is_told_about_the_right\(\):\n",
+         "async def test_an_administrator_without_the_right_is_told_about_the_right():\n    return\n", 1),
         (TOOL,
-         r"    allowed, reason = await _check_admin\(bot, key\)\n",
-         "    allowed, reason = True, \"\"\n", 1),
+         r"    rights = await _check_admin\(bot, key\)\n",
+         "    rights = Rights(True, True, \"\")\n", 1),
     ]),
     ("the log tripwires are gone, and the log is not written",
      "SURVIVED", [
@@ -225,9 +272,59 @@ MUTATIONS = [
         (TEST_TOOL,
          r"(?m)^def test_a_restart_does_not_reuse_a_group_id\(tmp_path\):\n",
          "def test_a_restart_does_not_reuse_a_group_id(tmp_path):\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^def test_the_journal_keeps_the_ids_across_a_restart\(tmp_path\):\n",
+         "def test_the_journal_keeps_the_ids_across_a_restart(tmp_path):\n    return\n", 1),
         (TOOL,
          r"            fh\.write\(f\"\{chat_id\}\\t\{message_id\}\\t\{group\}\\n\"\)\n",
          "            pass\n", 1),
+    ]),
+    ("the invented-id tripwires are gone, and invented ids reach Telegram",
+     "SURVIVED", [
+        (TEST_TOOL,
+         r"(?m)^async def test_an_invented_id_is_refused_without_asking_telegram\(\):\n",
+         "async def test_an_invented_id_is_refused_without_asking_telegram():\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^async def test_a_known_id_goes_through_and_an_invented_one_does_not\(\):\n",
+         "async def test_a_known_id_goes_through_and_an_invented_one_does_not():\n    return\n", 1),
+        (TOOL,
+         r"        unknown = \[i for i in ids if i not in allowed\]\n"
+         r"        targets = \[i for i in ids if i in allowed\]\n",
+         "        unknown = []\n"
+         "        targets = list(ids)\n", 1),
+    ]),
+    ("the reply-to tripwires are gone, and the reply-to id is out of reach",
+     "SURVIVED", [
+        (TEST_TOOL,
+         r"(?m)^async def test_the_message_the_user_replied_to_can_be_deleted\(\):\n",
+         "async def test_the_message_the_user_replied_to_can_be_deleted():\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher\(\):\n",
+         "async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher():\n    return\n", 1),
+        (TOOL,
+         r"    allowed = authorized_ids\(chat_id, reply_to_message_id\)\n",
+         "    allowed = authorized_ids(chat_id, None)\n", 1),
+    ]),
+    ("the plumbing tripwire is gone, and the reply-to id stops travelling",
+     "SURVIVED", [
+        (TEST_TOOL,
+         r"(?m)^async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher\(\):\n",
+         "async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher():\n    return\n", 1),
+        (DISPATCH,
+         r"            reply_to_message_id=deps\.reply_to_message_id\)\n",
+         "            reply_to_message_id=None)\n", 1),
+    ]),
+    ("the cause tripwire is gone, and the cause is guessed wrong",
+     "SURVIVED", [
+        (TEST_TOOL,
+         r"(?m)^def test_the_refusal_names_the_cause_telegram_gave\(\):\n",
+         "def test_the_refusal_names_the_cause_telegram_gave():\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^async def test_an_administrator_without_the_right_is_told_about_the_right\(\):\n",
+         "async def test_an_administrator_without_the_right_is_told_about_the_right():\n    return\n", 1),
+        (TOOL,
+         r"may_delete=rights\.others\)\n",
+         "may_delete=True)\n", 1),
     ]),
     ("the whitelist tripwire is gone, and the tool is not registered",
      "SURVIVED", [

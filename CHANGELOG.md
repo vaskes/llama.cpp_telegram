@@ -19,6 +19,50 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The delete tool stopped guessing, and started naming the cause
+
+The operator tested the `delete_messages` tool in LlmChatPlace on
+2026-10-26 and it failed in a way worth writing down. "Delete this
+message of mine" came back as: *the bot is not an administrator here,
+so it cannot delete your message.* The bot **is** an administrator,
+with the delete right — measured on the production host, `status:
+administrator`, `can_delete_messages: True`.
+
+What actually happened, in three steps:
+
+  * the log of the bot's own message ids was empty for that whole
+    deployment window, so the tool description carried no ids at all;
+  * a model with no id invents one. It answered with ids **706** and
+    **707** — numbers three hundred messages too old for Telegram's
+    48-hour window — and it told the operator a story about
+    administrator rights that Telegram's own words did not say;
+  * the tool passed those invented ids to Telegram. The bot is an
+    administrator, so an invented id is a real attempt to delete a
+    stranger's message.
+
+Three rules came out of it, and each one has a tripwire that the
+mutation harness proves is load-bearing:
+
+  * **the tool only touches ids it can vouch for** — the bot's own
+    messages, and the message the user replied to. An id outside that
+    set is refused by the bot itself, without Telegram being asked,
+    and the refusal names the way out ("reply to the message you
+    mean"). Nothing the model made up can reach the API;
+  * **the description says whose message an id is.** "The ids of YOUR
+    last messages" was read from the user's side — the model took the
+    bot's own ids for the user's. The pointed-at id now comes first,
+    in its own bullet, with the call to make;
+  * **a refusal names the cause.** "Message can't be deleted" has two
+    causes, and the bot knows which one applies: the 48-hour window
+    (the bot has the right) or the right itself (it is an
+    administrator without it). Telegram's own words stay in the
+    report — the model relays a cause instead of inventing one.
+
+The journal of ids also stopped failing silently: a log that cannot be
+written is now a warning in the bot's log, and every process says how
+many ids it loaded at start-up. The empty log of that deployment
+window is why the description had nothing to offer the model.
+
 ### The side-car's stdin trap is fixed, and the bot's warning went with it
 
 The sandbox's v2.10.2 (`4a6c465`) closes the two failures the bot's

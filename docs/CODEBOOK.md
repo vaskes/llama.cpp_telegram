@@ -396,7 +396,7 @@ The 500-line threshold itself is enforced by nothing. Six production
 modules are over 500 lines; four carry section markers
 (`handlers.py` with 19, `context_budget.py` with 4, `bash_command.py`
 with 2, `storage.py` with 1 for 940 lines), and two carry none
-(`llm_iteration.py`, 550 lines, and `selftest_llm.py`, 784). Writing
+(`llm_iteration.py`, 556 lines, and `selftest_llm.py`, 784). Writing
 this rule down as `AUTO` would have been a claim with no check behind it
 — see D-1.
 
@@ -773,6 +773,25 @@ the tool could not name one of them.
 messages to delete" is a dead end for the user; the same message names
 the way out — reply to the message, or use `count` for the bot's own
 last answer.
+
+**Handing the ids over is not the whole rule.** The second live test
+(2026-10-26 14:01) had the reply-to id in the description and the
+model still answered with ids it had made up — and the bot is an
+administrator, so an invented id is a real attempt to delete a
+stranger's message. So the tool does not only carry the ids: it
+**refuses an id it cannot vouch for**, before Telegram is asked to do
+anything. The ids it can vouch for are the bot's own messages and the
+message the user replied to; both are facts, not numbers a model
+produced. A refusal says which ids it does know, so the model has
+somewhere to go.
+
+**A refusal must name the cause, not the words.** "Message can't be
+deleted" has two causes and the bot knows which one applies: the
+48-hour window when it holds the delete right, the right itself when
+it is an administrator without it. Telegram's own words stay in the
+report — but the model relays a cause instead of inventing one. It
+invented one on 2026-10-26: it told the operator the bot was not an
+administrator, and the bot was one.
 
 ---
 

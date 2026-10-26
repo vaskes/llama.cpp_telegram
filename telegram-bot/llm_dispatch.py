@@ -90,6 +90,11 @@ class DispatchDeps(NamedTuple):
     iteration: int
     custom_tools: dict
     donsetch_tools: dict
+    # The id of the message the user replied to, when they replied to
+    # one. It is the only id of ANOTHER person's message the bot can
+    # know, and the delete tool may only touch ids it can vouch for
+    # (see llm_delete.authorized_ids).
+    reply_to_message_id: Any = None
 
 
 class ToolExecution(NamedTuple):
@@ -157,7 +162,8 @@ async def execute_tool(name: str, args, deps: DispatchDeps) -> ToolExecution:
         from llm_delete import execute_delete_messages
         text, extras = await execute_delete_messages(
             args, bot=deps.bot, chat_id=deps.chat_id,
-            chat_type=deps.chat_type)
+            chat_type=deps.chat_type,
+            reply_to_message_id=deps.reply_to_message_id)
         ledger = _entry("delete_messages", args, deps.iteration,
                          **(extras or {}))
         return _finish(text, ledger, deps)

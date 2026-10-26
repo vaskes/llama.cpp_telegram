@@ -101,7 +101,7 @@ class ToolLoop:
                  bot, chat_id, current_message_id, chat_type,
                  shutdown_event, abort_event, thinking_msg, silent: bool,
                  use_stream: bool, throttle, guard, loop_start: float,
-                 custom_tools: dict):
+                 custom_tools: dict, reply_to_message_id=None):
         # --- the turn's inputs ---
         self.msgs = msgs
         self.max_tokens = max_tokens
@@ -119,6 +119,11 @@ class ToolLoop:
         self.guard = guard
         self.loop_start = loop_start
         self.custom_tools = custom_tools
+        # The id of the message the user replied to. The delete tool
+        # needs it at EXECUTION time, not only in the tool description:
+        # it is the one id of another person's message the bot may
+        # touch, and it arrives with the turn.
+        self.reply_to_message_id = reply_to_message_id
 
         # --- what crosses iterations, and nothing else ---
         self.accumulated_reasoning = ""
@@ -392,7 +397,8 @@ class ToolLoop:
                             chat_type=self.chat_type,
                             iteration=iteration,
                             custom_tools=self.custom_tools,
-                            donsetch_tools=DONSETCH_TOOLS)
+                            donsetch_tools=DONSETCH_TOOLS,
+                            reply_to_message_id=self.reply_to_message_id)
         log.info(f"[loop] iter={iteration} tool_calls={len(tool_calls)} "
                  f"finish={finish_reason} "
                  f"content_chars={len(content_buf)} "

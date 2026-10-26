@@ -339,8 +339,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
     # minutes (llm_delete.bot_may_delete).
     if bot is not None and chat_id is not None:
         from llm_delete import bot_may_delete, delete_messages_tool_def
-        may_delete, _why_not = await bot_may_delete(bot, chat_id, chat_type)
-        if may_delete:
+        rights = await bot_may_delete(bot, chat_id, chat_type)
+        if rights.allowed:
             bot_side_tool_defs.append(delete_messages_tool_def(
                 chat_id=chat_id,
                 reply_to_message_id=reply_to_message_id))
@@ -496,6 +496,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         thinking_msg=thinking_msg, silent=silent, use_stream=use_stream,
         throttle=_throttle, guard=guard, loop_start=loop_start,
         custom_tools=CUSTOM_TOOLS,
+        reply_to_message_id=reply_to_message_id,
     ).run()
 
 

@@ -152,10 +152,18 @@ def test_the_tool_description_carries_the_ids_the_model_needs():
 
 
 def test_the_tool_description_says_what_the_reply_means():
+    """The pointed-at id has to be unmistakable.
+
+    On 2026-10-26 the description carried the reply-to id and the
+    model still answered with numbers it had made up. So the id comes
+    first, it is named as the message the user is pointing at, and the
+    sentence says what to do with it.
+    """
     from llm_delete import delete_messages_tool_def
     desc = delete_messages_tool_def(
         chat_id=100, reply_to_message_id=699)["function"]["description"]
-    assert "replied to the message with id 699" in desc, desc
+    assert "pointing at has id 699" in desc, desc
+    assert "message_ids=[699]" in desc, desc
 
 
 def test_the_recent_ids_are_the_bots_own_messages_newest_first():
@@ -296,17 +304,20 @@ def test_the_registry_forgets_what_was_deleted():
 async def test_an_administrator_with_the_right_may_delete():
     from llm_delete import bot_may_delete
     bot = _FakeBot(status="administrator", can_delete=True)
-    allowed, why = await bot_may_delete(bot, 100, "supergroup")
-    assert allowed is True, why
+    rights = await bot_may_delete(bot, 100, "supergroup")
+    assert rights.allowed is True, rights.reason
+    assert rights.others is True, (
+        "an administrator with the delete right may delete other "
+        "people's messages here")
 
 
 @pytest.mark.asyncio
 async def test_a_plain_member_may_not_delete():
     from llm_delete import bot_may_delete
     bot = _FakeBot(status="member")
-    allowed, why = await bot_may_delete(bot, 100, "supergroup")
-    assert allowed is False
-    assert "administrator" in why
+    rights = await bot_may_delete(bot, 100, "supergroup")
+    assert rights.allowed is False
+    assert "administrator" in rights.reason
 
 
 @pytest.mark.asyncio
@@ -320,12 +331,16 @@ async def test_an_administrator_without_the_right_still_gets_the_tool():
     """
     from llm_delete import bot_may_delete
     bot = _FakeBot(status="administrator", can_delete=False)
-    allowed, why = await bot_may_delete(bot, 100, "supergroup")
-    assert allowed is True, (
+    rights = await bot_may_delete(bot, 100, "supergroup")
+    assert rights.allowed is True, (
         "the bot may still take back its own messages, so the tool is "
         "worth advertising")
-    assert "delete messages" in why
-    assert "own messages" in why
+    assert "delete messages" in rights.reason
+    assert "own messages" in rights.reason
+    assert rights.others is False, (
+        "and it may NOT delete other people's messages here -- the "
+        "refusal it gets from Telegram is about that, not about the age "
+        "of the message")
 
 
 @pytest.mark.asyncio
@@ -340,11 +355,14 @@ async def test_unreadable_rights_do_not_hide_the_tool():
     """
     from llm_delete import bot_may_delete
     bot = _FakeBot(member_error=RuntimeError("Chat not found"))
-    allowed, why = await bot_may_delete(bot, 100, "channel")
-    assert allowed is True, (
+    rights = await bot_may_delete(bot, 100, "channel")
+    assert rights.allowed is True, (
         "the bot is in this chat by construction, so a failed rights "
         "check must not take the tool away")
-    assert "could not read" in why
+    assert "could not read" in rights.reason
+    assert rights.others is None, (
+        "the check failed, it did not answer -- that is not the same as "
+        "'no'")
 
 
 @pytest.mark.asyncio
@@ -361,8 +379,8 @@ async def test_the_rights_are_checked_once_and_cached():
 async def test_a_private_chat_needs_no_administrator():
     from llm_delete import bot_may_delete
     bot = _FakeBot(status="member")
-    allowed, why = await bot_may_delete(bot, 100, "private")
-    assert allowed is True, why
+    rights = await bot_may_delete(bot, 100, "private")
+    assert rights.allowed is True, rights.reason
 
 
 # === the executor ===
@@ -401,12 +419,203 @@ async def test_count_removes_that_many_answers():
 async def test_explicit_ids_win_over_count():
     from llm_delete import execute_delete_messages, new_answer_group, \
         remember_answer
+    remember_answer(100, 77, new_answer_group())
     remember_answer(100, 11, new_answer_group())
     bot = _FakeBot()
     await execute_delete_messages(
         {"count": 1, "message_ids": [77]}, bot=bot, chat_id=100,
         chat_type="supergroup")
     assert bot.deleted == [(100, 77)]
+
+
+# === ids the bot may touch ===
+
+
+@pytest.mark.asyncio
+async def test_an_invented_id_is_refused_without_asking_telegram():
+    """The production case, 2026-10-26 14:01 MSK.
+
+    The operator said "delete this message of mine" in LlmChatPlace.
+    The model answered with ids 706 and 707 -- numbers it had made up
+    -- and the bot is an administrator there, so asking Telegram to
+    delete them would be a real attempt to delete a stranger's
+    message. The tool refuses them itself, and nothing is deleted.
+    """
+    from llm_delete import execute_delete_messages, new_answer_group, \
+        remember_answer
+    remember_answer(100, 3213, new_answer_group())
+    bot = _FakeBot()
+    text, extras = await execute_delete_messages(
+        {"message_ids": [706, 707]}, bot=bot, chat_id=100,
+        chat_type="supergroup", reply_to_message_id=3220)
+    assert bot.deleted == [], "an invented id must not reach Telegram"
+    assert "refused" in text
+    assert "706" in text and "707" in text
+    assert "3220" in text, (
+        "the refusal names the id that IS in reach, or the model has "
+        "nowhere to go")
+
+
+@pytest.mark.asyncio
+async def test_the_message_the_user_replied_to_can_be_deleted():
+    """The way "delete this one" is meant to work."""
+    from llm_delete import execute_delete_messages
+    bot = _FakeBot()
+    text, extras = await execute_delete_messages(
+        {"message_ids": [3220]}, bot=bot, chat_id=100,
+        chat_type="supergroup", reply_to_message_id=3220)
+    assert bot.deleted == [(100, 3220)]
+    assert "deleted 1" in text
+
+
+@pytest.mark.asyncio
+async def test_the_bots_own_messages_can_be_deleted_by_id():
+    from llm_delete import execute_delete_messages, new_answer_group, \
+        remember_answer
+    remember_answer(100, 3213, new_answer_group())
+    bot = _FakeBot()
+    await execute_delete_messages(
+        {"message_ids": [3213]}, bot=bot, chat_id=100,
+        chat_type="supergroup")
+    assert bot.deleted == [(100, 3213)]
+
+
+@pytest.mark.asyncio
+async def test_a_known_id_goes_through_and_an_invented_one_does_not():
+    """Half right is still right for the half that is right."""
+    from llm_delete import execute_delete_messages, new_answer_group, \
+        remember_answer
+    remember_answer(100, 3213, new_answer_group())
+    bot = _FakeBot()
+    text, extras = await execute_delete_messages(
+        {"message_ids": [3213, 706]}, bot=bot, chat_id=100,
+        chat_type="supergroup")
+    assert bot.deleted == [(100, 3213)]
+    assert extras["refused"] == [706]
+    assert "706" in text
+
+
+def test_the_refusal_names_the_cause_telegram_gave():
+    """"Message can't be deleted" has two causes, and the bot knows which.
+
+    The live test: the model explained Telegram's refusal as "the bot
+    is not an administrator here" -- and the bot WAS an administrator,
+    with the delete right. The real cause was Telegram's 48-hour
+    window. The bot's own rights are known here, so the two are told
+    apart instead of guessed at.
+    """
+    from llm_delete import telegram_refusal
+    exc = RuntimeError("Message can't be deleted")
+    with_right = telegram_refusal(exc, may_delete=True)
+    assert "Message can't be deleted" in with_right, (
+        "Telegram's own words stay in the report")
+    assert "48 hours" in with_right
+    without_right = telegram_refusal(exc, may_delete=False)
+    assert "48 hours" not in without_right
+    assert "not allowed" in without_right
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_without_the_right_is_told_about_the_right():
+    """The cause of Telegram's refusal must match the rights the bot has.
+
+    The live failure of 2026-10-26: the model explained "Message can't
+    be deleted" as "the bot is not an administrator here", and the bot
+    WAS one. The other half of that story is the bot that IS an
+    administrator but has no delete right -- there Telegram's refusal
+    is about the right, not about the 48-hour window.
+    """
+    from llm_delete import execute_delete_messages, new_answer_group, \
+        remember_answer
+    remember_answer(100, 11, new_answer_group())
+    bot = _FakeBot(status="administrator", can_delete=False, fail_ids={11})
+    text, extras = await execute_delete_messages(
+        {}, bot=bot, chat_id=100, chat_type="supergroup")
+    assert bot.deleted == []
+    assert "48 hours" not in text, (
+        "the bot has no delete right here, so the refusal is about the "
+        "right and not about the age of the message")
+    assert "not allowed" in text
+
+
+def test_a_message_that_is_gone_is_named_as_gone():
+    from llm_delete import telegram_refusal
+    text = telegram_refusal(RuntimeError("Message to delete not found"),
+                            may_delete=True)
+    assert "gone" in text
+    assert "not found" in text
+
+
+def test_the_description_leads_with_the_id_the_user_points_at():
+    """The ids come first, and each says whose message it is.
+
+    "YOUR last messages" was read from the user's side -- the model
+    took the bot's own ids for the user's messages. The wording now
+    says whose message each id is.
+    """
+    from llm_delete import delete_messages_tool_def, new_answer_group, \
+        remember_answer
+    remember_answer(100, 3213, new_answer_group())
+    description = delete_messages_tool_def(
+        chat_id=100, reply_to_message_id=3220)["function"]["description"]
+    assert description.index("3220") < description.index("3213"), (
+        "the id the user points at comes first")
+    assert "BOT's messages" in description
+    assert "YOUR last messages" not in description
+
+
+def test_the_description_says_so_when_the_bot_knows_no_ids():
+    """The deployment window of 2026-10-26: the id log was empty, so
+    the description carried no ids at all, and the model made some up.
+    Now it says what it does not know."""
+    from llm_delete import delete_messages_tool_def
+    description = delete_messages_tool_def(
+        chat_id=100, reply_to_message_id=3220)["function"]["description"]
+    assert "does not know their ids" in description
+
+
+@pytest.mark.asyncio
+async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher():
+    """The id has to arrive at EXECUTION time, not only in the description.
+
+    The description is built in `call_llama`; the tool runs in the
+    dispatcher. If the id stops travelling between them, the model is
+    told about a message the tool may not touch -- and the model, which
+    cannot tell the difference, invents an id instead.
+    """
+    from llm_dispatch import DispatchDeps, execute_tool
+    bot = _FakeBot()
+    deps = DispatchDeps(bot=bot, chat_id=100, current_message_id=5,
+                         chat_type="supergroup", iteration=1,
+                         custom_tools={}, donsetch_tools={},
+                         reply_to_message_id=3220)
+    result = await execute_tool("delete_messages", {"message_ids": [3220]},
+                                deps)
+    assert bot.deleted == [(100, 3220)], (
+        "the reply-to id must reach the tool, or 'delete this one' has "
+        "no id to work with")
+
+
+def test_the_journal_keeps_the_ids_across_a_restart(tmp_path):
+    """The ids of the bot's own messages must survive a deploy.
+
+    Measured on production, 2026-10-26: the log of ids was empty for
+    a whole deployment window, the tool description carried no ids
+    because of it, and the model answered "delete this message" with
+    numbers it had made up. The log is the bot's memory of its own
+    messages; it lives next to the database, not inside it.
+    """
+    import llm_delete
+    group = llm_delete.new_answer_group()
+    llm_delete.remember_answer(100, 3213, group)
+    written = (tmp_path / "sent_messages.jsonl").read_text(encoding="utf-8")
+    assert "3213" in written
+    # a restart: the memory is gone, the log is not
+    llm_delete._SENT.clear()
+    llm_delete._LOG_LOADED = False
+    llm_delete._GROUP_SEQ = 0
+    assert llm_delete.recent_ids(100) == [3213]
+    assert 3213 in llm_delete.authorized_ids(100)
 
 
 @pytest.mark.asyncio
