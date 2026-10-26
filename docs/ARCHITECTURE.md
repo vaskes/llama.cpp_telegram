@@ -13,11 +13,11 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1468 lines)
+├── handlers.py            # handle_text/photo/voice/document (1473 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   512 lines file, 358 in the function, 345 in the loop
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
-├── dispatch_group.py      # human-to-human reply absorb (107)
+├── dispatch_group.py      # human-to-human reply absorb (140)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
 ├── dispatch_webhook.py    # PTB assembly + handler registration (429)
 ├── webhook.py             # aiohttp server + secret check (266)
@@ -36,8 +36,8 @@ telegram-bot/
 ├── state.py               # per-chat runtime state (225)
 ├── storage.py             # SQLite: messages, threads, topics (876)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (198)
-├── persistence.py         # conversation-history assembly (173)
-├── turn.py                # one turn's persist/rollback ledger (158)
+├── persistence.py         # conversation-history assembly (181)
+├── turn.py                # one turn's persist/rollback ledger (165)
 ├── access.py              # authorisation and group policy (304)
 ├── chat_utils.py          # chat-shape and command-argument helpers (163)
 ├── telegram_format.py     # the answer as HTML: a code block becomes <pre> (169)

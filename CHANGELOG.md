@@ -1187,6 +1187,36 @@ mixed into -- the connection and the DB clock -- and both are set by
 
 `storage.py` is 782 lines, and the summary module is 198.
 
+### The record knows which message each row came from
+
+The operator's rule (2026-10-27): the bot must be able to find a message
+it was sent -- by its text, by who wrote it -- and take that message back
+out of the chat, **while the row in the database stays**. The database is
+the bot's own record of what happened, and it is on its way to becoming a
+training set; a row that vanishes because a message was deleted in the
+chat is a hole in that record.
+
+So the `messages` table grows a column: `telegram_message_id`, the id of
+the Telegram message the row came from. The handlers store it when they
+store the message -- the Bot API cannot list a chat's messages, so an id
+the bot did not write down is an id the bot will never have again. It is
+NULL for the bot's own answers: they are persisted before they are sent,
+so their id does not exist yet.
+
+**The group-absorb path now stores both sides of the exchange.** Until
+now it stored only the reply, with the message that was replied to named
+in a prefix -- enough for the model to read, and not enough to find. "The
+message where he said X" was not in the record at all, so the bot could
+not take it back out of the chat. The target is written as its own row,
+with its own id, and first, because it is the older of the two.
+
+**The prefix no longer carries a user id.** It said `[reply to
+id=286293081]`, and on 2026-10-26 the model read those digits out of the
+record and handed them to the delete tool as a message id. A user id in
+the shape of a message id is a trap with the operator's own messages in
+it; the prefix now says `[reply to @name]`, and a person without a
+username is named by their first name.
+
 ## [v0.13.0-stable] — 2026-10-23 — Context memory, the dispatch split, and review waves 1–8
 
 **Status:** shipped and deployed. 194 commits since `v0.12.0-stable`; 107 of

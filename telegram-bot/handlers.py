@@ -969,7 +969,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         thinking, sender_name = opened
         abort_event = asyncio.Event()
         _register_abort_event(chat_id, thinking.message_id, abort_event)
-        await turn.persist(transcript, role='user', sender_name=sender_name)
+        await turn.persist(transcript, role='user', sender_name=sender_name,
+                           telegram_message_id=update.message.message_id)
         history, rating_active = await _turn_context(
             update, chat_id, thread_id, label='handle_voice')
         # T1 (P0-1): global LLM concurrency cap.
@@ -1117,7 +1118,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             thinking, sender_name = opened
             abort_event = asyncio.Event()
             _register_abort_event(chat_id, thinking.message_id, abort_event)
-            await turn.persist(user_content, role='user', sender_name=sender_name)
+            await turn.persist(user_content, role='user',
+                               sender_name=sender_name,
+                               telegram_message_id=update.message.message_id)
             history, rating_active = await _turn_context(
                 update, chat_id, thread_id, label='handle_document')
             # T1 (P0-1): global LLM concurrency cap.
@@ -1324,7 +1327,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             thinking, sender_name = opened
             abort_event = early_event
             _register_abort_event(chat_id, thinking.message_id, abort_event)
-            await turn.persist(user_message, role='user', sender_name=sender_name)
+            await turn.persist(user_message, role='user',
+                               sender_name=sender_name,
+                               telegram_message_id=update.message.message_id)
             # Refresh the registry entry so the abort_event and the
             # recorded size match (the EARLY-RECORD used text_bytes
             # of the raw message; LATE-RECORD uses the same value but

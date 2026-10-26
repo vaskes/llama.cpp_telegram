@@ -37,7 +37,8 @@ if TYPE_CHECKING:
 
 
 async def persist(chat_id: int, thread_id: str, role: str, content,
-                  sender_name: str | None = None):
+                  sender_name: str | None = None,
+                  telegram_message_id: int | None = None):
     """Append a message to the thread's history in the DB.
 
     `content` is whatever the message has - a string for text,
@@ -50,6 +51,12 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     (and so /stats / analysis can attribute messages). Only
     meaningful for role='user'; pass None for assistant / system
     rows.
+
+    `telegram_message_id` (optional) is the id of the Telegram
+    message this row came from. It is what lets the bot find that
+    message again -- by its text, by who wrote it -- and take it back
+    out of the chat later, while this row stays where it is: the
+    record of what happened is not the same thing as the chat.
     """
     msg = {"role": role, "content": content}
     # Returns the new row's id (added 2026-10-22). Turn needs it: a
@@ -58,6 +65,7 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     return await asyncio.to_thread(
         storage.get_store().add_message, chat_id, thread_id, role,
         json.dumps(msg, ensure_ascii=False), None, sender_name,
+        telegram_message_id,
     )
 
 

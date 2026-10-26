@@ -82,12 +82,15 @@ EXCEPTIONS = {
     ),
     "handle_text": (
         "handlers.py",
-        212,
+        214,
         "2026-10-23",
         "Not a debt item -- same shape as handle_photo, and registered only "
         "because it crossed 200 lines while nobody was looking. The reason "
         "it is here at all is that the crossing was invisible, which is "
-        "what this file exists to catch.",
+        "what this file exists to catch. It grew again on 2026-10-27, by "
+        "the Telegram id of the message being stored with the row (two "
+        "lines) -- the same shape of change, and the same kind of "
+        "invisible.",
         "Split only together with the other three handlers, never alone.",
     ),
 }

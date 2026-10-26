@@ -64,18 +64,25 @@ class Turn:
         self._row_ids: list[int] = []
 
     async def persist(self, content, *, role: str = "user",
-                      sender_name: str | None = None) -> None:
+                      sender_name: str | None = None,
+                      telegram_message_id: int | None = None) -> None:
         """Write the user turn. Sets the flag BEFORE awaiting.
 
         The flag goes first on purpose: if persist raises halfway, `persisted`
         is already true and the rollback attempts a delete rather than
         assuming nothing was written. The safe direction is to attempt an undo
         that might be a no-op, never to skip an undo that was needed.
+
+        `telegram_message_id` is the id of the Telegram message this turn
+        came from, when the handler knows it. It is stored with the row, so
+        the bot can find that message again later and take it back out of
+        the chat without the row going anywhere.
         """
         from persistence import persist as _persist
         self.persisted = True
         row_id = await _persist(self.chat_id, self.thread_id, role, content,
-                                sender_name=sender_name)
+                                sender_name=sender_name,
+                                telegram_message_id=telegram_message_id)
         self.rows += 1
         if row_id is not None:
             self._row_ids.append(int(row_id))

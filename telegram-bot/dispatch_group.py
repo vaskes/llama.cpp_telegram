@@ -31,6 +31,23 @@ from persistence import (
 log = get_logger(__name__)
 
 
+def _name_of(user) -> str:
+    """How a person is named in the record.
+
+    Never a bare number. On 2026-10-26 the model read the digits out of
+    "[reply to id=286293081]" -- a USER id -- and handed them to the
+    delete tool as a MESSAGE id. A user id is not a message id, and a
+    record that carries one in the shape the other one has is a trap
+    with the operator's own messages in it.
+    """
+    if user is None:
+        return "unknown"
+    username = getattr(user, "username", None)
+    if username:
+        return f"@{username}"
+    return getattr(user, "first_name", None) or "unknown"
+
+
 async def _handle_reply_to_other_user(upd, bot) -> None:
     """T65.1 — a human replied to another human in a group.
 
@@ -51,28 +68,44 @@ async def _handle_reply_to_other_user(upd, bot) -> None:
     msg = upd.message
     rtm = msg.reply_to_message
     rtm_from = rtm.from_user if rtm and rtm.from_user else None
-    tag = (
-        f"@{rtm_from.username}" if rtm_from and rtm_from.username
-        else f"id={rtm_from.id}" if rtm_from else "?"
-    )
+    tag = _name_of(rtm_from)
     chat_id = upd.effective_chat.id
     thread_id = str(getattr(msg, "message_thread_id", None) or "main")
     who = msg.from_user
-    sender = (
-        f"@{who.username}" if getattr(who, "username", None)
-        else (getattr(who, "first_name", None) or "unknown")
-    )
+    sender = _name_of(who)
     log.info(f"[dispatch] reply-to-other-user: absorbing silently "
         f"(reply_to={tag}, chat={chat_id}, thread={thread_id}) "
         f"update_id={upd.update_id}")
 
     # 1. Persist. ALWAYS, and before anything that can fail — this is the part
     #    the ticket is really about.
+    #
+    #    1a. The message that was replied TO. It is a message of this chat as
+    #        well, and until now the record carried only the reply, with the
+    #        target named in a prefix. That is enough for the model to read
+    #        and not enough to find: "the message where he said X" was not
+    #        in the record, so the bot could not take it back out of the
+    #        chat. The target is written as its own row, with its own id --
+    #        and first, because it is the older of the two.
+    if rtm is not None and rtm.message_id is not None:
+        target_body = rtm.text or rtm.caption or ""
+        if target_body:
+            try:
+                await _persist_message(
+                    chat_id, thread_id, "user", target_body,
+                    sender_name=_name_of(rtm.from_user),
+                    telegram_message_id=rtm.message_id,
+                )
+            except Exception as exc:
+                log.info(f"[dispatch] persist of the replied-to message "
+                    f"failed: {exc!r}")
+    #    1b. The reply itself.
     body = msg.text or msg.caption or ""
     content = f"[reply to {tag}] {body}" if tag else body
     try:
         await _persist_message(
             chat_id, thread_id, "user", content, sender_name=sender,
+            telegram_message_id=msg.message_id,
         )
     except Exception as exc:
         log.info(f"[dispatch] persist failed for reply-to-other-user: {exc!r}")
