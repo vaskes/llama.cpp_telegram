@@ -31,14 +31,18 @@ administrator`, `can_delete_messages: True`.
 What actually happened, in three steps:
 
   * the log of the bot's own message ids was empty for that whole
-    deployment window, so the tool description carried no ids at all;
-  * a model with no id invents one. It answered with ids **706** and
-    **707** — numbers three hundred messages too old for Telegram's
-    48-hour window — and it told the operator a story about
-    administrator rights that Telegram's own words did not say;
-  * the tool passed those invented ids to Telegram. The bot is an
-    administrator, so an invented id is a real attempt to delete a
-    stranger's message.
+    deployment window, so the tool description carried no ids at all,
+    and a model with no id invents one — in the first live test it
+    answered with ids **701**, **702** and **703**;
+  * in the second live test the description *did* carry the id the
+    user replied to, and the model used it. That id was real: Telegram
+    did not say "not found", it said "Message can't be deleted",
+    because the message was older than 48 hours. The model filled the
+    gap nobody named with a story about administrator rights;
+  * the tool passed every id it was given to Telegram, including one
+    it could not vouch for. The bot is an administrator, so an id
+    nobody vouched for is a real attempt to delete a stranger's
+    message.
 
 Three rules came out of it, and each one has a tripwire that the
 mutation harness proves is load-bearing:
@@ -57,6 +61,16 @@ mutation harness proves is load-bearing:
     (the bot has the right) or the right itself (it is an
     administrator without it). Telegram's own words stay in the
     report — the model relays a cause instead of inventing one.
+
+The three rules are now proven on the production tree, on the real
+engine and against the real Telegram: a replay of the operator's
+failing turn on the live model took the id out of the description and
+deleted exactly that message; the same turn with a message older than
+48 hours came back as *"Telegram says your message is older than 48
+hours, that is Telegram's rule, delete it yourself"* — the true
+cause, and something to act on; and a turn where the user named an id
+the bot does not know came back as *"reply to that message and I will
+see its id"* — no call to the API at all.
 
 The journal of ids also stopped failing silently: a log that cannot be
 written or read is now a warning in the bot's log, and the bot says how

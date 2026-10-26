@@ -774,11 +774,10 @@ messages to delete" is a dead end for the user; the same message names
 the way out — reply to the message, or use `count` for the bot's own
 last answer.
 
-**Handing the ids over is not the whole rule.** The second live test
-(2026-10-26 14:01) had the reply-to id in the description and the
-model still answered with ids it had made up — and the bot is an
-administrator, so an invented id is a real attempt to delete a
-stranger's message. So the tool does not only carry the ids: it
+**Handing the ids over is not the whole rule.** A model that was
+handed an id can also produce one of its own, and the bot is an
+administrator, so an id nobody vouched for is a real attempt to delete
+a stranger's message. So the tool does not only carry the ids: it
 **refuses an id it cannot vouch for**, before Telegram is asked to do
 anything. The ids it can vouch for are the bot's own messages and the
 message the user replied to; both are facts, not numbers a model
@@ -792,6 +791,16 @@ it is an administrator without it. Telegram's own words stay in the
 report — but the model relays a cause instead of inventing one. It
 invented one on 2026-10-26: it told the operator the bot was not an
 administrator, and the bot was one.
+
+The live test of 2026-10-26 14:01 is worth keeping for what it
+actually was. The tool description did carry the id the user replied
+to, and the model **used it** — the id really existed, and Telegram's
+answer was "Message can't be deleted" because that message was older
+than 48 hours. The id the model tried next existed as well. So the
+defect was never the id: it was that nobody named the cause, so the
+model filled the gap with a story about rights. The three rules above
+came out of the same turn, and each of them is now checked by a
+tripwire rather than by the memory of whoever reads this next.
 
 ---
 
