@@ -158,6 +158,31 @@ async def send_reply(update: Update, text: str, *, strip: bool = True,
     return await _reply(update, text, parse_mode=parse_mode)
 
 
+# === _reply_to_message_id ===
+
+
+def _reply_to_message_id(update: Update):
+    """The id of the message the user replied to, if it is in this chat.
+
+    "Delete this one" is how a message usually gets asked away, and
+    the reply is where the id lives: the Bot API cannot list a chat's
+    messages, so the id of the message under the user's finger is the
+    only one the bot can learn. A reply to a message in ANOTHER chat
+    (a forwarded one) carries an id that means nothing here, so it is
+    dropped.
+    """
+    message = getattr(update, "message", None)
+    replied = getattr(message, "reply_to_message", None)
+    if replied is None:
+        return None
+    chat = getattr(update, "effective_chat", None)
+    replied_chat = getattr(replied, "chat", None)
+    if chat is not None and replied_chat is not None:
+        if getattr(replied_chat, "id", None) != getattr(chat, "id", None):
+            return None
+    return getattr(replied, "message_id", None)
+
+
 # === _send_answer_text ===
 
 
@@ -664,7 +689,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rating_active = _is_rating_active(update)
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
+            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, use_stream=False, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type, reply_to_message_id=_reply_to_message_id(update))
             answer = unwrap_answer(_result)
             bot_response = answer.text
         # None-safe: when user clicks Stop, call_llama returns None.
@@ -700,6 +725,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rating_active=rating_active, abort_event=abort_event,
                 bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
                 chat_type=update.effective_chat.type,
+                reply_to_message_id=_reply_to_message_id(update),
             )
             if retry_response is None or abort_event.is_set():
                 await finalize_aborted_turn(
@@ -922,7 +948,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update, chat_id, thread_id, label='handle_voice')
         # T1 (P0-1): global LLM concurrency cap.
         async with _get_global_llm_sem():
-            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
+            _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=transcript, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type, reply_to_message_id=_reply_to_message_id(update))
             answer = unwrap_answer(_result)
             bot_response = answer.text
         # v0.8.0: handle_voice had no abort check at all (handle_photo/
@@ -1070,7 +1096,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update, chat_id, thread_id, label='handle_document')
             # T1 (P0-1): global LLM concurrency cap.
             async with _get_global_llm_sem():
-                _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
+                _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_CAPTION, user_text=caption, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type, reply_to_message_id=_reply_to_message_id(update))
                 answer = unwrap_answer(_result)
                 bot_response = answer.text
             if bot_response is None or abort_event.is_set():
@@ -1092,6 +1118,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     abort_event=abort_event,
                     bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
                     chat_type=update.effective_chat.type,
+                reply_to_message_id=_reply_to_message_id(update),
                 )
                 if retry_response is None or abort_event.is_set():
                     await finalize_aborted_turn(
@@ -1286,7 +1313,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 50 different users in a group can only cause 4
             # concurrent LLM forwards on the same GPU.
             async with _get_global_llm_sem():
-                _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type)
+                _result = await call_llama(history, max_tokens=limits.MAX_TOKENS_DEFAULT, user_text=user_message, thinking_msg=thinking, rating_active=rating_active, abort_event=abort_event, bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id, chat_type=update.effective_chat.type, reply_to_message_id=_reply_to_message_id(update))
                 answer = unwrap_answer(_result)
                 bot_response = answer.text
             if bot_response is None or abort_event.is_set():
@@ -1308,6 +1335,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     abort_event=abort_event,
                     bot=context.bot, chat_id=chat_id, current_message_id=update.message.message_id,
                     chat_type=update.effective_chat.type,
+                reply_to_message_id=_reply_to_message_id(update),
                 )
                 if retry_response is None or abort_event.is_set():
                     await finalize_aborted_turn(

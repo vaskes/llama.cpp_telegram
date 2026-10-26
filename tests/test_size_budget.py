@@ -46,7 +46,7 @@ MODULE_LIMIT = 1000
 EXCEPTIONS = {
     "call_llama": (
         "call_llama.py",
-        353,
+        356,
         "2026-10-22",
         "Carries a DO NOT REFACTOR notice with its own trigger; the "
         "transport, the four response buffers and the abort state across "
@@ -72,7 +72,7 @@ EXCEPTIONS = {
     ),
     "handle_photo": (
         "handlers.py",
-        251,
+        252,
         "2026-10-23",
         "One concern (a photo) plus a media path. Same shape as the other "
         "three handlers, so the repetition is the point -- a fix to the "
@@ -82,7 +82,7 @@ EXCEPTIONS = {
     ),
     "handle_text": (
         "handlers.py",
-        211,
+        212,
         "2026-10-23",
         "Not a debt item -- same shape as handle_photo, and registered only "
         "because it crossed 200 lines while nobody was looking. The reason "

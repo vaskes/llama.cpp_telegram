@@ -156,6 +156,7 @@ async def call_llama(
     *,
     chat_type: str,
     silent: bool = False,
+    reply_to_message_id=None,
 ):
     """Call llama.cpp with a tool-calling loop and live reasoning stream.
 
@@ -340,7 +341,9 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         from llm_delete import bot_may_delete, delete_messages_tool_def
         may_delete, _why_not = await bot_may_delete(bot, chat_id, chat_type)
         if may_delete:
-            bot_side_tool_defs.append(delete_messages_tool_def())
+            bot_side_tool_defs.append(delete_messages_tool_def(
+                chat_id=chat_id,
+                reply_to_message_id=reply_to_message_id))
     all_tools = tools + bot_side_tool_defs
 
     # === Group context (always-injected system message) ===

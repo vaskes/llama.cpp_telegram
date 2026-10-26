@@ -74,6 +74,7 @@ TOOL = ROOT / "telegram-bot" / "llm_delete.py"
 ISOLATION = ROOT / "telegram-bot" / "tool_isolation.py"
 PROMPT = ROOT / "telegram-bot" / "prompt_text" / "group_context.py"
 TEST_TOOL = ROOT / "tests" / "test_delete_messages_tool.py"
+HANDLERS = ROOT / "telegram-bot" / "handlers.py"
 TEST_ISOLATION = ROOT / "tests" / "test_tool_isolation.py"
 TEST_SHELL = ROOT / "tests" / "test_shell_isolation.py"
 
@@ -132,6 +133,21 @@ MUTATIONS = [
          "                    },\n"
          "                    \"count\": {\n", 1),
     ]),
+    ("the log of what the bot sent is not written", "CAUGHT", [
+        (TOOL,
+         r"            fh\.write\(f\"\{chat_id\}\\t\{message_id\}\\t\{group\}\\n\"\)\n",
+         "            pass\n", 1),
+    ]),
+    ("the ids are not in the tool description", "CAUGHT", [
+        (TOOL,
+         r"    known = recent_ids\(chat_id\)\n",
+         "    known = []\n", 1),
+    ]),
+    ("the id of the message the user replied to is dropped", "CAUGHT", [
+        (HANDLERS,
+         r"    return getattr\(replied, \"message_id\", None\)\n",
+         "    return None\n", 1),
+    ]),
 
     # --- group B: the tripwires ------------------------------------
     ("the no-chat_id tripwire is gone, and the tool has a chat_id",
@@ -167,6 +183,9 @@ MUTATIONS = [
         (TEST_TOOL,
          r"(?m)^async def test_it_deletes_the_bots_last_answer\(\):\n",
          "async def test_it_deletes_the_bots_last_answer():\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^def test_the_ids_survive_a_restart\(tmp_path\):\n",
+         "def test_the_ids_survive_a_restart(tmp_path):\n    return\n", 1),
         (TOOL,
          r"        if current is not None and group != current and len\(order\) >= count:\n            break\n",
          "        if len(order) >= count:\n            break\n", 1),
@@ -191,6 +210,24 @@ MUTATIONS = [
         (TOOL,
          r"    allowed, reason = await _check_admin\(bot, key\)\n",
          "    allowed, reason = True, \"\"\n", 1),
+    ]),
+    ("the log tripwires are gone, and the log is not written",
+     "SURVIVED", [
+        (TEST_TOOL,
+         r"(?m)^def test_the_ids_survive_a_restart\(tmp_path\):\n",
+         "def test_the_ids_survive_a_restart(tmp_path):\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^def test_a_deleted_message_leaves_the_log\(tmp_path\):\n",
+         "def test_a_deleted_message_leaves_the_log(tmp_path):\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^def test_the_log_is_the_bot_s_own_memory_and_not_the_database\(tmp_path\):\n",
+         "def test_the_log_is_the_bot_s_own_memory_and_not_the_database(tmp_path):\n    return\n", 1),
+        (TEST_TOOL,
+         r"(?m)^def test_a_restart_does_not_reuse_a_group_id\(tmp_path\):\n",
+         "def test_a_restart_does_not_reuse_a_group_id(tmp_path):\n    return\n", 1),
+        (TOOL,
+         r"            fh\.write\(f\"\{chat_id\}\\t\{message_id\}\\t\{group\}\\n\"\)\n",
+         "            pass\n", 1),
     ]),
     ("the whitelist tripwire is gone, and the tool is not registered",
      "SURVIVED", [

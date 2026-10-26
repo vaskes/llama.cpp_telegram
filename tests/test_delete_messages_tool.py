@@ -59,14 +59,156 @@ class _FakeBot:
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry():
+def _clean_registry(tmp_path):
     """The registry is module state; every test starts from nothing."""
     import llm_delete
     llm_delete._SENT.clear()
     llm_delete._admin_cache.clear()
+    llm_delete._LOG_LOADED = False
+    llm_delete._GROUP_SEQ = 0
+    # The log lives next to the database in the deployment. A test
+    # writes into its own directory, never into the real one.
+    llm_delete.SENT_LOG_PATH = str(tmp_path / "sent_messages.jsonl")
     yield
     llm_delete._SENT.clear()
     llm_delete._admin_cache.clear()
+    llm_delete._LOG_LOADED = False
+    llm_delete._GROUP_SEQ = 0
+
+
+# === the log of what the bot sent ===
+
+
+def test_the_ids_survive_a_restart(tmp_path):
+    """A restart empties the memory, and the channel does not stop.
+
+    The operator asked for the last four messages to be taken back
+    right after a deploy, and the tool could not name one of them:
+    the ids of the bot's own messages were only ever in memory. They
+    are now in a log as well, and the log is not the database.
+    """
+    import llm_delete
+    group = llm_delete.new_answer_group()
+    llm_delete.remember_answer(100, 501, group)
+    llm_delete.remember_answer(100, 502, group)
+
+    # a restart: the memory is gone, the log is not
+    llm_delete._SENT.clear()
+    llm_delete._LOG_LOADED = False
+    llm_delete._GROUP_SEQ = 0
+
+    assert llm_delete.recent_ids(100) == [502, 501]
+    assert llm_delete._answer_groups(100, 1) == [[502, 501]]
+
+
+def test_a_restart_does_not_reuse_a_group_id(tmp_path):
+    """Two answers sharing a group would be deleted as one."""
+    import llm_delete
+    group = llm_delete.new_answer_group()
+    llm_delete.remember_answer(100, 501, group)
+    llm_delete._SENT.clear()
+    llm_delete._LOG_LOADED = False
+    llm_delete._GROUP_SEQ = 0
+    assert llm_delete.new_answer_group() != group
+
+
+def test_the_log_is_the_bot_s_own_memory_and_not_the_database(tmp_path):
+    """The log holds ids. The database keeps the record, untouched."""
+    import llm_delete
+    group = llm_delete.new_answer_group()
+    llm_delete.remember_answer(100, 501, group)
+    written = (tmp_path / "sent_messages.jsonl").read_text(encoding="utf-8")
+    assert written.strip() == "100\t501\t%d" % group
+    assert "conversation" not in written.lower()
+
+
+def test_a_deleted_message_leaves_the_log(tmp_path):
+    """The log says what the bot may still take back."""
+    import llm_delete
+    group = llm_delete.new_answer_group()
+    llm_delete.remember_answer(100, 501, group)
+    llm_delete.remember_answer(100, 502, group)
+    llm_delete.forget_messages(100, [501])
+    written = (tmp_path / "sent_messages.jsonl").read_text(encoding="utf-8")
+    assert "501" not in written
+    assert "502" in written
+
+
+# === the ids the model is shown ===
+
+
+def test_the_tool_description_carries_the_ids_the_model_needs():
+    """A model with an id uses it. A model without one invents one."""
+    from llm_delete import (delete_messages_tool_def, new_answer_group,
+                             remember_answer)
+    group = new_answer_group()
+    remember_answer(100, 701, group)
+    remember_answer(100, 702, group)
+    desc = delete_messages_tool_def(
+        chat_id=100, reply_to_message_id=699)["function"]["description"]
+    assert "701" in desc and "702" in desc, desc
+    assert "699" in desc, desc
+    assert "NEVER invent" in desc, desc
+
+
+def test_the_tool_description_says_what_the_reply_means():
+    from llm_delete import delete_messages_tool_def
+    desc = delete_messages_tool_def(
+        chat_id=100, reply_to_message_id=699)["function"]["description"]
+    assert "replied to the message with id 699" in desc, desc
+
+
+def test_the_recent_ids_are_the_bots_own_messages_newest_first():
+    from llm_delete import (new_answer_group, recent_ids, remember_answer)
+    group = new_answer_group()
+    remember_answer(100, 701, group)
+    remember_answer(100, 702, group)
+    assert recent_ids(100) == [702, 701]
+    assert recent_ids(999) == []
+    assert recent_ids(None) == []
+
+
+# === the id of the message the user replied to ===
+
+
+class _FakeChat:
+    def __init__(self, chat_id):
+        self.id = chat_id
+
+
+class _FakeMessage:
+    def __init__(self, message_id, chat_id, reply_to=None):
+        self.message_id = message_id
+        self.chat = _FakeChat(chat_id)
+        self.reply_to_message = reply_to
+
+
+class _FakeUpdate:
+    def __init__(self, message, chat_id):
+        self.message = message
+        self.effective_chat = _FakeChat(chat_id)
+
+
+def test_the_reply_to_id_is_read_from_the_update():
+    """\"Delete this one\" is how a message is usually asked away."""
+    from handlers import _reply_to_message_id
+    bot_message = _FakeMessage(703, 100)
+    update = _FakeUpdate(_FakeMessage(704, 100, reply_to=bot_message), 100)
+    assert _reply_to_message_id(update) == 703
+
+
+def test_a_reply_to_another_chat_is_dropped():
+    """The id of a message in another chat means nothing here."""
+    from handlers import _reply_to_message_id
+    foreign = _FakeMessage(703, 200)
+    update = _FakeUpdate(_FakeMessage(704, 100, reply_to=foreign), 100)
+    assert _reply_to_message_id(update) is None
+
+
+def test_a_message_without_a_reply_has_no_anchor():
+    from handlers import _reply_to_message_id
+    update = _FakeUpdate(_FakeMessage(704, 100), 100)
+    assert _reply_to_message_id(update) is None
 
 
 # === the definition the model is shown ===

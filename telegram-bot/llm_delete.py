@@ -37,12 +37,26 @@ HOW "MY LAST ANSWER" IS FOUND
 The Bot API cannot list a chat's messages, so the only way to know what
 the bot sent is to remember it. `remember_answer` is called by the
 answer path (`handlers._send_answer_text`) and keeps the last 50 sent
-answers per chat, in memory, in this process. A restart empties it, and
-then the tool says it does not know the ids -- which is the truth, and
-the operator can pass them instead.
+answers per chat, in memory, in this process -- and, since
+2026-10-26, on disk as well, in a small log of ids.
+
+THE LOG IS NOT THE DATABASE
+The log holds ids and nothing else: which messages the bot sent, so
+that the tool can take them back after a restart. The operator's rule
+about the database stands unchanged -- the database is the record of
+what happened in the chat, and this module does not import it. The log
+is the bot's own memory of its own actions, and it lives next to the
+database file, not inside it.
+
+Without the log a restart empties the registry, and the tool says it
+does not know the ids -- the truth, but useless to the operator who
+wants the last four messages gone. The operator hit exactly that on
+2026-10-26: the bot was redeployed, the channel had four bot messages
+in it, and the tool could not name a single one of them.
 """
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict, deque
 from typing import Any, Optional
@@ -53,7 +67,15 @@ __all__ = [
     "remember_answer",
     "new_answer_group",
     "bot_may_delete",
+    "recent_ids",
 ]
+
+
+#: Where the bot's own sends are remembered across a restart. NOT the
+#: database: the database is the record of what happened in the chat,
+#: and the operator's rule is that nothing writes to it. This file
+#: holds no content -- only the ids of the messages the bot sent.
+SENT_LOG_PATH = "/app/data/sent_messages.jsonl"
 
 
 #: How many of the bot's own sent messages are remembered per chat. A
@@ -79,6 +101,91 @@ _SENT: dict[int, deque[tuple[int, int]]] = defaultdict(deque)
 
 _GROUP_SEQ = 0
 
+#: Whether the log has been read into the registry already. One read
+#: per process: the log is a startup thing, not a per-call thing.
+_LOG_LOADED = False
+
+
+# === The log of what the bot sent ===
+
+
+def _log_path() -> str:
+    return SENT_LOG_PATH
+
+
+def _load_log() -> None:
+    """Read the log into the registry, once per process.
+
+    A restart empties the memory, and the operator's channel does not
+    stop talking while the bot is down. The log is what the bot sent
+    before the restart, so the tool can still name those messages.
+    """
+    global _LOG_LOADED, _GROUP_SEQ
+    if _LOG_LOADED:
+        return
+    _LOG_LOADED = True
+    try:
+        with open(_log_path(), "r", encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) != 3:
+                    continue
+                try:
+                    chat = int(parts[0])
+                    message = int(parts[1])
+                    group = int(parts[2])
+                except ValueError:
+                    continue
+                queue = _SENT[chat]
+                queue.append((message, group))
+                while len(queue) > _MAX_KEPT_PER_CHAT:
+                    queue.popleft()
+                if group > _GROUP_SEQ:
+                    # The group counter must not reuse a group id from
+                    # the log: two different answers sharing a group
+                    # would be deleted as one.
+                    _GROUP_SEQ = group
+    except OSError:
+        # No log yet, or it cannot be read. The tool then knows only
+        # what it sends from here on -- which it says out loud.
+        return
+    _rewrite_log()
+
+
+def _append_log(chat_id: int, message_id: int, group: int) -> None:
+    """Write one sent message to the log."""
+    try:
+        with open(_log_path(), "a", encoding="utf-8") as fh:
+            fh.write(f"{chat_id}\t{message_id}\t{group}\n")
+    except OSError:
+        # The log is a convenience, not the chat's record. If it cannot
+        # be written, the tool still works for this process.
+        return
+
+
+def _rewrite_log() -> None:
+    """Write the registry back to the log, dropping what was forgotten.
+
+    The log grows with every answer, so it is rewritten when the
+    registry is loaded and when something is deleted. The write goes
+    through a temporary file, so a crash mid-write cannot leave a
+    half-written log behind.
+    """
+    path = _log_path()
+    tmp = f"{path}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            for chat, queue in _SENT.items():
+                for message, group in queue:
+                    fh.write(f"{chat}\t{message}\t{group}\n")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return
+
 
 def new_answer_group() -> int:
     """Start a new answer group.
@@ -89,6 +196,7 @@ def new_answer_group() -> int:
     not a fragment of it.
     """
     global _GROUP_SEQ
+    _load_log()
     _GROUP_SEQ += 1
     return _GROUP_SEQ
 
@@ -102,26 +210,58 @@ def remember_answer(chat_id: Any, message_id: Any, group: int) -> None:
         msg = int(message_id)
     except (TypeError, ValueError):
         return
+    _load_log()
     queue = _SENT[key]
     queue.append((msg, int(group)))
     while len(queue) > _MAX_KEPT_PER_CHAT:
         queue.popleft()
+    _append_log(key, msg, int(group))
+
+
+def recent_ids(chat_id: Any, limit: int = 10) -> list[int]:
+    """The ids of the bot's own recent messages in this chat, newest first.
+
+    The model is shown these, because a model that wants to delete a
+    message and has no id will invent one. Invented ids are not a
+    small mistake: the bot is an administrator, so it would really try
+    to delete a stranger's message.
+    """
+    if chat_id is None:
+        return []
+    try:
+        key = int(chat_id)
+    except (TypeError, ValueError):
+        return []
+    _load_log()
+    queue = _SENT.get(key)
+    if not queue:
+        return []
+    return [message for message, _ in list(reversed(queue))[:limit]]
 
 
 def forget_messages(chat_id: Any, message_ids: list[int]) -> None:
     """Drop messages that are gone from the chat, so the next round does
     not try to delete them again."""
-    key = int(chat_id)
+    try:
+        key = int(chat_id)
+    except (TypeError, ValueError):
+        return
     queue = _SENT.get(key)
     if not queue:
         return
     dead = {int(m) for m in message_ids}
     _SENT[key] = deque(entry for entry in queue if entry[0] not in dead)
+    _rewrite_log()
 
 
 def _answer_groups(chat_id: Any, count: int) -> list[list[int]]:
     """The last `count` answers, newest first, each as its message ids."""
-    queue = _SENT.get(int(chat_id))
+    try:
+        key = int(chat_id)
+    except (TypeError, ValueError):
+        return []
+    _load_log()
+    queue = _SENT.get(key)
     if not queue:
         return []
     order: list[int] = []
@@ -223,28 +363,53 @@ async def _check_admin(bot: Any, chat_id: int) -> tuple[bool, str]:
 # === The tool ===
 
 
-def delete_messages_tool_def() -> dict:
-    """The definition the model is shown for `delete_messages`."""
+def delete_messages_tool_def(*, chat_id: Any = None,
+                              reply_to_message_id: Any = None) -> dict:
+    """The definition the model is shown for `delete_messages`.
+
+    The description carries the ids the bot actually knows: the ids of
+    its own last messages in this chat, and the id of the message the
+    user replied to. A model that has an id will use it; a model
+    without one will invent one, and the bot is an administrator, so an
+    invented id is a real attempt to delete a stranger's message.
+    """
+    known = recent_ids(chat_id)
+    described = (
+        "Delete messages from this Telegram chat. Use it when the "
+        "user asks you to take something back: \"delete your last "
+        "answer\", \"remove that message\", \"clean up the channel\". By "
+        "default it removes YOUR own last answer in this chat (the "
+        "whole answer, even if it was sent as several messages); "
+        "`count` removes that many of your answers, newest first. "
+        "`message_ids` removes exactly the messages with those "
+        "Telegram ids -- use it when the user names an id. The bot "
+        "can only delete other people's messages where it is an "
+        "administrator, and Telegram only lets it delete messages "
+        "less than 48 hours old, so a refusal is Telegram's answer and "
+        "not yours. The bot's own record of the chat is NOT touched: "
+        "what happened stays in its history."
+    )
+    if known:
+        described += (
+            " The ids of YOUR last messages in this chat are: "
+            + ", ".join(str(m) for m in known)
+            + ". Use those ids, or use `count`."
+        )
+    if reply_to_message_id is not None:
+        described += (
+            f" The user replied to the message with id "
+            f"{reply_to_message_id} -- that is the message they mean "
+            f"when they say \"this one\" or \"that message\"."
+        )
+    described += (
+        " NEVER invent a message id: use only the ids you were given "
+        "here or the ones the user named. If you have no id, ask for it."
+    )
     return {
         "type": "function",
         "function": {
             "name": "delete_messages",
-            "description": (
-                "Delete messages from this Telegram chat. Use it when the "
-                "user asks you to take something back: \"delete your last "
-                "answer\", \"remove that message\", \"clean up the "
-                "channel\". By default it removes YOUR own last answer in "
-                "this chat (the whole answer, even if it was sent as "
-                "several messages); `count` removes that many of your "
-                "answers, newest first. `message_ids` removes exactly the "
-                "messages with those Telegram ids -- use it when the user "
-                "names an id. The bot can only delete other people's "
-                "messages where it is an administrator, and Telegram only "
-                "lets it delete messages less than 48 hours old, so a "
-                "refusal is Telegram's answer and not yours. The bot's own "
-                "record of the chat is NOT touched: what happened stays in "
-                "its history."
-            ),
+            "description": described,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -336,8 +501,11 @@ async def execute_delete_messages(
         groups = _answer_groups(chat_id, count)
         if not groups:
             return ("[delete_messages: I do not know which messages to "
-                    "delete. Ask me to delete my last answer, or give me "
-                    "the Telegram message id.]"), None
+                    "delete. I know the ids of the messages I sent "
+                    "recently, and of nothing else. If the user replied "
+                    "to a message, delete that one -- its id is in my "
+                    "tool description. Otherwise ask the user for the "
+                    "id, or use `count` to take back my last answer.]"), None
         targets = [msg for group in groups for msg in group]
         scope = f"my last {len(groups)} answer(s)"
 
