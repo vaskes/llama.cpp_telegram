@@ -110,6 +110,14 @@ the prompt says so in as many words, because the model had already
 copied the previous turn's story over a refusal that had nothing to do
 with Telegram.
 
+Checked on the production tree afterwards, on the live engine and
+against the real Telegram: the operator's own wording -- "delete the
+message I just wrote", sent as a reply to an old message of the bot's
+-- now takes the id of the message just written, and the message is
+gone. And "delete someone else's last message", where the id is not
+in the bot's reach, now ends with the model asking which message it
+is, rather than an invented id and a loop.
+
 ### The side-car's stdin trap is fixed, and the bot's warning went with it
 
 The sandbox's v2.10.2 (`4a6c465`) closes the two failures the bot's
