@@ -544,6 +544,23 @@ def test_the_refusal_names_the_cause_telegram_gave():
     assert "not allowed" in without_right
 
 
+def test_the_refusal_does_not_assert_a_cause_telegram_did_not_name():
+    """The bot must not claim to know why Telegram refused.
+
+    Live test of 2026-10-26 19:14: the operator's message was an hour
+    old, and the bot told him it was "older than 48 hours". Telegram's
+    answer is the same for a message outside the 48-hour window and
+    for an id that is not a message of this chat at all -- and the bot
+    cannot tell them apart, so it must not pick one.
+    """
+    from llm_delete import telegram_refusal
+    text = telegram_refusal(RuntimeError("Message can't be deleted"),
+                            may_delete=True)
+    assert "did not" in text and "say why" in text, text
+    assert "probably not the one the user meant" in text, text
+    assert "and this one is older" not in text, text
+
+
 @pytest.mark.asyncio
 async def test_an_administrator_without_the_right_is_told_about_the_right():
     """The cause of Telegram's refusal must match the rights the bot has.

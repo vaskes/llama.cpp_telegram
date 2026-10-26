@@ -60,7 +60,13 @@ mutation harness proves is load-bearing:
     causes, and the bot knows which one applies: the 48-hour window
     (the bot has the right) or the right itself (it is an
     administrator without it). Telegram's own words stay in the
-    report — the model relays a cause instead of inventing one.
+    report — the model relays a cause instead of inventing one. And
+    where the bot cannot know the cause it says so: Telegram gives
+    the same answer for a message outside the 48-hour window and for
+    an id that is not a message of this chat, and at 19:14 the bot
+    told the operator his one-hour-old message was "older than 48
+    hours". The refusal now names the 48-hour rule as the usual
+    reason and leaves the rest unclaimed.
 
 The three rules are now proven on the production tree, on the real
 engine and against the real Telegram: a replay of the operator's

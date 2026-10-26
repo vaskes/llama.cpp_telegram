@@ -364,8 +364,14 @@ def telegram_refusal(exc: Exception, *,
                 f"the id belongs to another chat)")
     if "can't be deleted" in low or "cannot be deleted" in low:
         if may_delete is True:
-            return (f"{raw} -- Telegram only lets a bot delete messages "
-                    f"sent in the last 48 hours, and this one is older")
+            return (f"{raw} -- Telegram refused to delete it and did not "
+                    f"say why. The bot holds the delete right in this chat, "
+                    f"so the usual reason is the 48-hour window: a bot may "
+                    f"only delete messages sent in the last 48 hours. "
+                    f"Telegram refuses ids that are not messages of this "
+                    f"chat as well, so if the message is fresh the id is "
+                    f"probably not the one the user meant: reply to it "
+                    f"again, so the bot learns the real id")
         if may_delete is False:
             return (f"{raw} -- the bot is not allowed to delete other "
                     f"people's messages here")

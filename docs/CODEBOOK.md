@@ -792,6 +792,14 @@ report — but the model relays a cause instead of inventing one. It
 invented one on 2026-10-26: it told the operator the bot was not an
 administrator, and the bot was one.
 
+And where the bot cannot know the cause, it says so. "Message can't
+be deleted" is the same answer for a message outside the 48-hour
+window and for an id that is not a message of this chat, and the bot
+cannot tell them apart: at 19:14 on 2026-10-26 it told the operator
+his one-hour-old message was "older than 48 hours". The refusal now
+names the 48-hour rule as the usual reason and leaves the rest
+unclaimed.
+
 The live test of 2026-10-26 14:01 is worth keeping for what it
 actually was. The tool description did carry the id the user replied
 to, and the model **used it** — the id really existed, and Telegram's
