@@ -125,11 +125,15 @@ async def check_noise_filter() -> bool:
 async def check_reply_to_other_user() -> bool:
     # === Reply-to-other-user filter ===
     # Verifies that _is_reply_to_other_user() correctly classifies
-    # the four cases:
+    # the cases:
     #   - top-level message → False (bot responds)
     #   - reply to bot's own message → False (bot responds)
     #   - reply to another human in a group → True (bot skips)
     #   - command in reply context → False (commands always work)
+    #   - reply to the user's OWN message → False (that is a request
+    #     to the bot, and it is how the user points at a message)
+    #   - the implicit topic reply → False (the topic's own creation
+    #     message is not a reply to anybody)
     # Plus a private-chat baseline: reply to anyone → False (1:1).
     log.info('[selftest] running reply-to-other-user filter test...')
     rpl_ok = True
@@ -137,8 +141,11 @@ async def check_reply_to_other_user() -> bool:
     # .reply_to_message. _is_group_chat reads chat.type and chat.is_forum.
     class _RU:
         """Minimal Update-like object for _is_reply_to_other_user tests."""
-        def __init__(self, chat_type, is_forum, from_id, rtm_from_id=None, text="hi"):
-            self.message = _RM(chat_type, is_forum, from_id, rtm_from_id, text) if from_id is not None else None
+        def __init__(self, chat_type, is_forum, from_id, rtm_from_id=None, text="hi",
+                     thread_id=None, rtm_message_id=None):
+            self.message = (_RM(chat_type, is_forum, from_id, rtm_from_id, text,
+                                thread_id, rtm_message_id)
+                            if from_id is not None else None)
             # _is_group_chat reads update.effective_chat, so expose it
             self.effective_chat = self.message.chat if self.message else None
     class _RC:
@@ -146,15 +153,17 @@ async def check_reply_to_other_user() -> bool:
             self.type = chat_type
             self.is_forum = is_forum
     class _RM:
-        def __init__(self, chat_type, is_forum, from_id, rtm_from_id, text):
+        def __init__(self, chat_type, is_forum, from_id, rtm_from_id, text,
+                     thread_id=None, rtm_message_id=None):
             self.chat = _RC(chat_type, is_forum)
             self.from_user = _User(from_id) if from_id is not None else None
             if rtm_from_id is not None:
-                self.reply_to_message = _RM_dummy(rtm_from_id)
+                self.reply_to_message = _RM_dummy(rtm_from_id, rtm_message_id)
             else:
                 self.reply_to_message = None
             self.text = text
             self.caption = None
+            self.message_thread_id = thread_id
     class _User:
         def __init__(self, uid):
             self.id = uid
@@ -162,24 +171,32 @@ async def check_reply_to_other_user() -> bool:
             self.username = None
             self.first_name = "x"
     class _RM_dummy:
-        def __init__(self, from_id):
+        def __init__(self, from_id, message_id=None):
             self.from_user = _User(from_id)
             self.text = "orig"
+            self.message_id = message_id
     BOT_ID = 999_999_001
     cases = [
-        # (label, group_type, is_forum, from_id, rtm_from_id, text, expected)
-        ("top-level group: human, no reply", "supergroup", True, 10, None, "hello", False),
-        ("reply to bot in group: human", "supergroup", True, 10, BOT_ID, "ok", False),
-        ("reply to another human in group", "supergroup", True, 10, 20, "agreed", True),
-        ("command in reply to other human", "supergroup", True, 10, 20, "/reset", False),
-        ("command in reply to bot", "supergroup", True, 10, BOT_ID, "/newsub foo", False),
-        ("top-level private: human, no reply", "private", False, 10, None, "hello", False),
-        ("reply in private: to bot", "private", False, 10, BOT_ID, "hi", False),
-        ("forum General: top-level", "supergroup", True, 10, None, "ok", False),
-        ("forum General: reply to human", "supergroup", True, 10, 20, "right", True),
+        # (label, group_type, is_forum, from_id, rtm_from_id, text, expected,
+        #  thread_id, rtm_message_id)
+        ("top-level group: human, no reply", "supergroup", True, 10, None, "hello", False, None, None),
+        ("reply to bot in group: human", "supergroup", True, 10, BOT_ID, "ok", False, None, None),
+        ("reply to another human in group", "supergroup", True, 10, 20, "agreed", True, None, None),
+        ("command in reply to other human", "supergroup", True, 10, 20, "/reset", False, None, None),
+        ("command in reply to bot", "supergroup", True, 10, BOT_ID, "/newsub foo", False, None, None),
+        ("top-level private: human, no reply", "private", False, 10, None, "hello", False, None, None),
+        ("reply in private: to bot", "private", False, 10, BOT_ID, "hi", False, None, None),
+        ("forum General: top-level", "supergroup", True, 10, None, "ok", False, None, None),
+        ("forum General: reply to human", "supergroup", True, 10, 20, "right", True, None, None),
+        # The two cases the live test of 2026-10-26 found: a reply to the
+        # user's own message, and the implicit reply every message in a
+        # topic carries (the topic's creation message, whose id IS the
+        # topic id).
+        ("reply to your own message", "supergroup", True, 10, 10, "delete that", False, 42, 3307),
+        ("forum topic: the implicit topic reply", "supergroup", True, 10, 20, "ok", False, 42, 42),
     ]
-    for label, gtype, iforum, fid, rtm_id, txt, expected in cases:
-        upd = _RU(gtype, iforum, fid, rtm_id, txt)
+    for label, gtype, iforum, fid, rtm_id, txt, expected, thread_id, rtm_mid in cases:
+        upd = _RU(gtype, iforum, fid, rtm_id, txt, thread_id, rtm_mid)
         got = _is_reply_to_other_user(upd, BOT_ID)
         if got != expected:
             log.warning(f"  [FAIL] {label}: got={got} expected={expected}")

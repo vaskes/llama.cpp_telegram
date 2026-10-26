@@ -124,6 +124,56 @@ gone. And "delete someone else's last message", where the id is not
 in the bot's reach, now ends with the model asking which message it
 is, rather than an invented id and a loop.
 
+### The forum topic's own id was being offered to the model as a message id
+
+The operator ran the delete tool by hand in LlmChatPlace on 2026-10-26,
+19:41. Three tests, one pass and two failures, and the failures had the
+same cause.
+
+In a forum topic, Telegram attaches an **implicit reply** to every message
+that answers nothing else: the topic's creation message. A topic's id
+*equals* the id of the service message that created it, so that implicit
+reply carries the **topic id** — and a topic id looks exactly like a
+message id. Measured on the operator's chat (topic 25): a plain message
+arrived with `reply_to_message.message_id == 25 ==
+message_thread_id`.
+
+So the bot told the model *"the message the user replied to has id 25"*,
+the model dutifully tried to delete it, and Telegram refused — a service
+message is not deletable ("Message can't be deleted"). The model then
+reported that refusal as if it were about the message the operator had
+pointed at. The same implicit reply also made a plain message in a topic
+created by a human look like a reply to that human, so the bot swallowed
+it (`reply-to-other-user: absorbing silently`).
+
+`access.real_reply_to()` is the one place that decides what counts as a
+reply: a reply whose id equals the topic id is the topic's own creation
+message and is dropped. Both the delete tool's id and the group-policy
+check read the reply through it now.
+
+### A reply to your own message is the bot's business
+
+The operator's second failure in the same test run had nothing to do with
+Telegram. He replied to his own message to highlight it, and the bot
+answered:
+
+    [dispatch] reply-to-other-user: absorbing silently (reply_to=id=286293081)
+
+The group policy (T65.1) says a human replying to another human must not
+pull the bot into the exchange. But a reply to **your own** message
+addresses nobody else — and it is exactly the gesture that points the bot
+at a message: "delete this one", "what did I mean by that". The rule now
+reads the reply as such: a self-reply is a request to the bot, and the id
+of the highlighted message travels with it.
+
+The rule itself is not weakened: a reply to somebody else's message is
+still swallowed, and so is a reply in a topic that the bot did not get
+the id of.
+
+Both new cases are in the in-tree selftest as well, so the bot checks
+them at every start — the matrix that runs in production, not only in the
+test suite.
+
 ### The side-car's stdin trap is fixed, and the bot's warning went with it
 
 The sandbox's v2.10.2 (`4a6c465`) closes the two failures the bot's

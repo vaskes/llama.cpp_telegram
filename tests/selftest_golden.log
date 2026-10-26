@@ -63,6 +63,8 @@
 [OK] reply in private: to bot: skip=False
 [OK] forum General: top-level: skip=False
 [OK] forum General: reply to human: skip=True
+[OK] reply to your own message: skip=False
+[OK] forum topic: the implicit topic reply: skip=False
 [selftest] reply-to-other-user tests: all pass
 [selftest] access filters tests: all pass
 [selftest] running per-user semaphore test...

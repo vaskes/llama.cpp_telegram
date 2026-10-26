@@ -211,6 +211,13 @@ def _is_reply_to_other_user(update, bot_id: int) -> bool:
         are explicit user actions; the user means it.
       - Reply to bot's own message (rtm.from_user.id == bot_id)
         → False. The user is talking to the bot directly.
+      - Reply to the user's OWN message → False. That is not a
+        human-to-human exchange: nobody else is addressed, and it
+        is how the user points the bot at a message ("delete this
+        one"). The operator's live test of 2026-10-26 failed
+        exactly here: the bot went quiet, the model never saw
+        the id of the highlighted message, and the delete request
+        died with it.
       - Otherwise (reply to another human in a group) → True.
 
     Returns False in non-group chats so that the 1:1 conversation
@@ -233,6 +240,12 @@ def _is_reply_to_other_user(update, bot_id: int) -> bool:
         return False
     # Reply to the bot's own message: user is talking to the bot.
     if rtm.from_user is not None and getattr(rtm.from_user, 'id', None) == bot_id:
+        return False
+    # Reply to the user's own message: nobody else is addressed, and
+    # this is the gesture that points the bot at a message.
+    sender = getattr(msg, 'from_user', None)
+    if (sender is not None and rtm.from_user is not None
+            and getattr(sender, 'id', None) == getattr(rtm.from_user, 'id', None)):
         return False
     return True
 

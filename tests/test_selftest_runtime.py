@@ -70,9 +70,14 @@ GOLDEN = TESTS / "selftest_golden.log"
 # exactly those five lines and nothing else -- which is the evidence
 # that no other block moved.
 #
+# 92 -> 94 on 2026-10-26: the reply-to-other-user matrix gained the two
+# cases the live test of the delete tool found -- a reply to the user's
+# own message, and the implicit reply every message in a forum topic
+# carries. The golden diff was exactly those two lines.
+#
 # Bump this deliberately when a block is added, never as a side effect
 # of something failing.
-EXPECTED_VERDICTS = 92
+EXPECTED_VERDICTS = 94
 
 # Run once per session. It starts a stub server and spawns a
 # subprocess, and the whole point is that it is cheap enough to run on

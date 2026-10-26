@@ -37,7 +37,7 @@ telegram-bot/
 ├── storage.py             # SQLite: messages, threads, topics, summaries (940)
 ├── persistence.py         # conversation-history assembly (173)
 ├── turn.py                # one turn's persist/rollback ledger (158)
-├── access.py              # authorisation and group policy (291)
+├── access.py              # authorisation and group policy (304)
 ├── chat_utils.py          # chat-shape and command-argument helpers (163)
 ├── telegram_format.py     # the answer as HTML: a code block becomes <pre> (169)
 ├── donsetch.py            # the MCP client for the web tools (200)
