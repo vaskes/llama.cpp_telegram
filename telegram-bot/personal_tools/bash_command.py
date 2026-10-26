@@ -43,7 +43,12 @@ from typing import Any
 import httpx
 
 from llm_truncation import condense
-from personal_tools.sandbox_contract import STDIN_POLICY, SUDO_POLICY
+from personal_tools.sandbox_contract import (
+    CLIENT_TIMEOUT_SECONDS,
+    EXEC_TIMEOUT_SECONDS,
+    PROXY_WAIT_GRACE_SECONDS,
+    SUDO_POLICY,
+)
 
 
 # Tool definition that goes into llama-server's request body. The model
@@ -70,7 +75,7 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
             "this tool def would otherwise drift. Use it for: "
             "running scripts, inspecting files in /workspace, "
             "git operations, building projects, fetching public "
-            "web pages with curl/wget. " + SUDO_POLICY + " " + STDIN_POLICY
+            "web pages with curl/wget. " + SUDO_POLICY
         ),
         "parameters": {
             "type": "object",
@@ -415,35 +420,28 @@ def _sandbox_error_text(raw: str) -> str:
     """Turn the side-car's error envelope into a sentence with a cause.
 
     The proxy answers a failed upstream call with HTTP 200 and
-    ``{"error": "sandbox-agent request failed: <reason>"}``. For a
-    timeout the reason is empty, so the text ends with a colon and
-    nothing at all -- and read as it stands it blames the side-car.
-    The side-car is fine: it enforces a 60-second per-command limit,
-    and the proxy stops waiting at the very same second, so a command
-    that runs past the limit loses its answer on the way. The name of
-    the culprit has to survive the trip.
+    ``{"error": "..."}``. Since the side-car's v2.10.2 that text names
+    the cause: a timeout says it timed out and for how long, a
+    transport error carries the exception's repr -- because the bare
+    ``str()`` of an httpx timeout is empty, and an empty reason sends
+    the operator to the network instead of to the clock.
 
-    There is a second way to lose the answer, and it is the common
-    one: the side-car knows a command is over because a marker it
-    printed after it shows up in the pane, and a command that reads
-    standard input reads that marker instead. apt-get does it through
-    debconf -- the install succeeds in a second and the answer is lost
-    all the same. The message says so, because a timeout with no
-    advice sends the model around the same loop.
-
-    An empty result and a failure look the same on the wire, and the
-    bot used to pass the empty one on as a success: the model saw no
-    output, no error, and a command that had been killed.
+    So the bot passes the reason through and adds whose fault it is.
+    The one case it still has to recognise is an EMPTY reason: that is
+    not a side-car that is unwell, it is a proxy older than the
+    version this bot pins, and saying so points at the thing that has
+    to change.
     """
     text = raw.strip()
     prefix = "sandbox-agent request failed:"
     if text.startswith(prefix) and not text[len(prefix):].strip():
         return (
-            "the sandbox side-car did not answer within its 60-second "
-            "per-command limit (a command that reads standard input "
-            "swallows the side-car's end marker -- apt-get and dpkg do "
-            "it through debconf -- so retry it with `< /dev/null`)"
+            "the sandbox side-car's proxy did not name a cause for the "
+            "failure (its proxy is older than v2.10.2, where a timeout "
+            "and a transport error are both named)"
         )
+    if "timed out after" in text:
+        return f"the sandbox side-car's proxy stopped waiting for the agent: {text}"
     return f"the sandbox side-car failed: {text}"
 
 
@@ -451,7 +449,7 @@ async def call_bash_command(
     command: str,
     *,
     session_id: str | None = None,
-    timeout: float = 70.0,
+    timeout: float = CLIENT_TIMEOUT_SECONDS,
     chat_type: str,  # T53 #R4: required, no default (fail-closed)
     chat_id: int | None = None,  # T61 #S27: explicit, optional.
                                  # Default is None for backwards
@@ -549,7 +547,10 @@ async def call_bash_command(
     ok_sid, session_id, err_sid = _validate_session_id(session_id)
     if not ok_sid:
         return {"ok": False, "error": err_sid}
-    payload: dict[str, Any] = {"command": command, "timeout": 60}
+    payload: dict[str, Any] = {
+        "command": command,
+        "timeout": EXEC_TIMEOUT_SECONDS,
+    }
     if session_id:
         payload["session_id"] = session_id
     headers = {
@@ -564,7 +565,21 @@ async def call_bash_command(
                 headers=headers,
             )
     except httpx.TimeoutException:
-        return {"ok": False, "error": "sandbox side-car timeout (network)"}
+        # The proxy waits limit+grace (75 s with the stock knob), and
+        # the bot waits longer than that. A timeout here means the
+        # proxy itself is stuck, not that the command is slow -- and
+        # the text has to say which, or the model reads it as "the
+        # network is down".
+        return {
+            "ok": False,
+            "error": (
+                f"the bot stopped waiting for the sandbox side-car's "
+                f"answer after {timeout:.0f}s (the proxy waits "
+                f"{EXEC_TIMEOUT_SECONDS + PROXY_WAIT_GRACE_SECONDS}s, so "
+                f"a longer wait means "
+                f"the proxy is stuck, not that the command is slow)"
+            ),
+        }
     except httpx.HTTPError as e:
         return {"ok": False, "error": f"sandbox side-car unreachable: {e!r}"}
     if r.status_code in (401, 403):

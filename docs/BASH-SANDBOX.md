@@ -305,8 +305,8 @@ anything within the sandbox's policy:
   - Reach the host network's other containers unless
     `network_mode: host` is set in the sandbox compose
     (default: bridge, no host access).
-  - Run for more than 60 seconds per command (sandbox
-    timeout; bot also has a 70s httpx timeout on top).
+  - Run for more than 60 seconds per command (the side-car's
+    `AGENT_EXEC_TIMEOUT` knob; the bot waits 90s on top of it).
 
 ## Moving a file out of the sandbox
 
@@ -374,20 +374,41 @@ cut that keeps the tail would throw that first line away, and the chat
 would show a fragment as if it were the whole thing. Every cut the bot
 makes itself is marked too (`llm_truncation.py`).
 
-### The stdin trap
+### The stdin trap — fixed in v2.10.2
 
 The side-car knows a command is over because a marker it printed after
 the command shows up in the pane. A command that **reads standard
-input** reads that marker instead — apt-get and dpkg do it through
-debconf's readline frontend — and the answer is lost, even though the
-command itself finished. Measured on the production host: `apt-get
-install -y cowsay` lost its answer after the side-car's 60-second
-limit, and the same command with `< /dev/null` answered in one second.
+input** used to read that marker instead — apt-get and dpkg do it
+through debconf's readline frontend — and the answer was lost, even
+though the command itself finished. Measured on the production host:
+`apt-get install -y cowsay` lost its answer after the side-car's
+60-second limit, and the same command with `< /dev/null` answered in
+one second.
 
-The bot says so in the tool description the model reads, and in the
-error it reports when the answer is lost. The fix belongs in the
-side-car (run the command with its stdin closed); until it is there,
-`< /dev/null` is the way out.
+**The side-car fixed it in v2.10.2** (`4a6c465`): the command now runs
+inside a brace group whose stdin is `/dev/null`, so it reads EOF and
+the protocol stays intact. The bot's tool description no longer warns
+about the trap — a warning for a bug that no longer exists is a stale
+claim about the side-car, and it teaches the model a workaround it
+does not need.
+
+One gap the side-car states plainly: a command that contains a brace
+bash would read as a group delimiter (`echo }`) runs unwrapped, as
+before, and can still eat the protocol.
+
+### The command's time budget
+
+The limit is the side-car's knob, not the bot's: the compose file's
+own default is `AGENT_EXEC_TIMEOUT:-60` (5..600 seconds). The proxy
+asks the agent for that limit and waits `limit + 15` seconds for the
+answer, so the answer that says "this timed out" survives the trip.
+
+The bot's own HTTP timeout has to be strictly larger than the proxy's
+wait, or the bot drops the answer the proxy is still holding. The bot
+asks for 60 seconds and waits 90 (`EXEC_TIMEOUT_SECONDS`,
+`PROXY_WAIT_GRACE_SECONDS` and `CLIENT_TIMEOUT_SECONDS` in
+`telegram-bot/personal_tools/sandbox_contract.py`). A deployment that
+raises `AGENT_EXEC_TIMEOUT` has to raise the bot's timeout with it.
 
 ## Compatibility
 
@@ -398,6 +419,7 @@ side-car (run the command with its stdin closed); until it is there,
 | `c8d70ef` (v2.7.1) | `fcef3d5` | The file door and the stdout contract; v2.7.1 relays the door's real status instead of flattening every failure into a 200. |
 | `34eca7d` (v2.9.1) | this branch | The privilege mode, and a file the agent cannot read refused with a 403 instead of a truncated 200. |
 | `093c025` (v2.10.1) | this branch | The writable rootfs knob (`AGENT_READ_ONLY`), the fourth setting of the privilege mode: a privileged root that cannot write the filesystem cannot install a package. |
+| `4a6c465` (v2.10.2) | this branch | The stdin trap is fixed (the command reads EOF instead of the protocol), the exec limit is the proxy's knob (`AGENT_EXEC_TIMEOUT`), and the proxy waits longer than the limit so the answer that says "this timed out" survives. |
 
 The bot treats the sandbox as a black box: it sends JSON over
 HTTP and gets JSON back. As long as the wire format is

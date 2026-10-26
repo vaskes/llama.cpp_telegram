@@ -35,6 +35,24 @@ So the posture lives here, once:
   believes.
 * `SUDO_POLICY` -- the sentence the *model* reads, inside the
   `bash_command` tool description.
+* `EXEC_TIMEOUT_SECONDS` and the two numbers derived from it -- the
+  command's time budget, which the side-car's proxy owns as a knob and
+  the bot has to stay strictly above.
+
+THE STDIN TRAP IS GONE (v2.10.2, 2026-10-26)
+The side-car runs a command in a tmux pane and knows the command is
+over because a marker it printed shows up in the pane. A command that
+reads standard input used to read that marker instead: apt-get does it
+through debconf, and the answer was lost even though the command itself
+finished in a second. The side-car fixed it -- the command now runs
+inside a brace group whose stdin is /dev/null, so it reads EOF and the
+protocol stays intact.
+
+So the bot's tool description no longer carries the warning, and no
+sentence here tells the model to write `< /dev/null`: a warning for a
+bug that no longer exists is a stale claim about the side-car, and it
+teaches the model a workaround it does not need. The history stays in
+this docstring, where it belongs.
 
 The model-facing sentence is the interesting one. The tool description
 used to say "Do NOT use it for: anything that would need sudo", and the
@@ -59,7 +77,9 @@ __all__ = [
     "SANDBOX_POSTURE",
     "SANDBOX_POSTURE_LINES",
     "SUDO_POLICY",
-    "STDIN_POLICY",
+    "EXEC_TIMEOUT_SECONDS",
+    "PROXY_WAIT_GRACE_SECONDS",
+    "CLIENT_TIMEOUT_SECONDS",
 ]
 
 SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
@@ -67,7 +87,7 @@ SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
 # The tag this repo pins as a submodule. Keep it equal to the pin in the
 # tree and to the version the submodule's own source declares: a bump of
 # one without the others is a red test, not a quiet drift.
-SANDBOX_PINNED_VERSION = "2.10.1"
+SANDBOX_PINNED_VERSION = "2.10.2"
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -155,28 +175,27 @@ def _sudo_policy() -> str:
 SUDO_POLICY = _sudo_policy()
 
 
-def _stdin_policy() -> str:
-    """The side-car's stdin trap, in a sentence the model can use.
+# === the command's time budget ===
 
-    The side-car runs a command in a tmux pane and knows that the
-    command is over because a marker it printed after it shows up in
-    the pane. A command that reads standard input reads that marker
-    instead: apt-get reads stdin through debconf's readline frontend,
-    and the answer is lost even though the command itself finished in a
-    second. Measured on the production host: `apt-get install -y
-    cowsay` lost its answer after 60 seconds, and the same command
-    with `< /dev/null` answered in one.
+#: The longest a single command may run in the sandbox. Since v2.10.2
+#: this is a knob on the side-car's proxy: `AGENT_EXEC_TIMEOUT`
+#: (5..600, default 60). The proxy asks the agent for this limit, and
+#: the agent answers `timed_out: true` with the output it managed to
+#: produce when the limit is up.
+EXEC_TIMEOUT_SECONDS = 60
 
-    So the sentence tells the model what to do, instead of leaving it
-    to watch a minute pass and then see a timeout.
-    """
-    return (
-        "Run a command that reads standard input with `< /dev/null` "
-        "(apt-get and dpkg read stdin through debconf, and a command "
-        "that reads stdin swallows the side-car's end marker -- the "
-        "command succeeds but its answer is lost after the side-car's "
-        "timeout)."
-    )
+#: How much longer the proxy waits for the agent than the limit it
+#: asked for. Before v2.10.2 both numbers were 60: the agent answered
+#: at the very moment the proxy stopped listening, so the answer that
+#: said "this timed out" was thrown away and the caller saw a transport
+#: error with an empty reason -- which sent the operator to the network
+#: instead of to the clock.
+PROXY_WAIT_GRACE_SECONDS = 15
 
-
-STDIN_POLICY = _stdin_policy()
+#: The bot's own HTTP timeout. It has to be strictly larger than the
+#: proxy's wait (the limit plus the grace), or the bot gives up before
+#: the proxy does and the answer is lost again -- one layer up. The
+#: margin on top is for the trip between the two.
+CLIENT_TIMEOUT_SECONDS = (
+    EXEC_TIMEOUT_SECONDS + PROXY_WAIT_GRACE_SECONDS + 15
+)

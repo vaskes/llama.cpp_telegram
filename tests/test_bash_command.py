@@ -236,12 +236,9 @@ async def test_the_proxy_error_envelope_is_a_failure_not_an_empty_success(
     assert result["ok"] is False, (
         "the error envelope was read as a successful command with no "
         "output")
-    assert "60-second" in result["error"], (
-        "an empty reason means the side-car stopped waiting at its own "
-        f"per-command limit; the message has to say that: {result['error']!r}")
-    assert "/dev/null" in result["error"], (
-        "a command that reads stdin swallows the side-car's end marker, "
-        "and the message has to offer the way out: "
+    assert "older than v2.10.2" in result["error"], (
+        "an empty reason means the proxy is older than the version the "
+        "bot pins -- the message has to name that, not guess at a cause: "
         f"{result['error']!r}")
 
 
@@ -266,18 +263,75 @@ async def test_a_sidecar_error_keeps_its_reason(personal_with_token):
         f"the reason was dropped: {result['error']!r}")
 
 
-def test_the_tool_description_carries_the_stdin_policy(personal_with_token):
-    """The model has to know about the stdin trap before it hits it.
+@pytest.mark.asyncio
+async def test_the_proxy_names_the_timeout_and_the_bot_carries_it(
+        personal_with_token):
+    """Since v2.10.2 the proxy says what happened, and so must the bot.
 
-    The side-car knows a command is over because a marker it printed
-    after the command shows up in the pane. A command that reads
-    standard input reads that marker instead -- apt-get does it
-    through debconf -- and the answer is lost even though the command
-    finished. A description that does not say so sends the model
-    around the same loop: install, wait a minute, time out, install.
+    The proxy answers a timeout with the numbers: how long it waited
+    and what the exec limit was. The bot carries that reason instead
+    of replacing it with a guess -- the guess is what used to send the
+    operator to the network instead of to the clock.
+    """
+    class FakeResp:
+        status_code = 200
+        text = ""
+        def json(self):
+            return {"error": "sandbox-agent request timed out after 75s "
+                             "(exec limit 60s): ReadTimeout('timed out')"}
+    class FakeClient:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def post(self, *a, **kw): return FakeResp()
+    with patch("personal_tools.bash_command.httpx.AsyncClient", FakeClient):
+        result = await personal_with_token.call_bash_command(
+            "sleep 120", chat_type="private")
+    assert result["ok"] is False
+    assert "75s" in result["error"], (
+        f"the numbers the proxy sent were dropped: {result['error']!r}")
+    assert "exec limit 60s" in result["error"], (
+        f"the exec limit was dropped: {result['error']!r}")
+    assert "proxy" in result["error"], (
+        f"the text has to say whose wait ran out: {result['error']!r}")
+
+
+def test_the_bot_waits_longer_than_the_proxy_does(personal_with_token):
+    """The race, one layer up.
+
+    The proxy waits the exec limit plus a grace, and the agent answers
+    at the limit. If the bot's own HTTP timeout were shorter than the
+    proxy's wait, the bot would give up first and the answer would be
+    lost again -- with an empty reason, which is the symptom this all
+    started from.
+    """
+    from personal_tools.sandbox_contract import (
+        CLIENT_TIMEOUT_SECONDS,
+        EXEC_TIMEOUT_SECONDS,
+        PROXY_WAIT_GRACE_SECONDS,
+    )
+    assert CLIENT_TIMEOUT_SECONDS > (
+        EXEC_TIMEOUT_SECONDS + PROXY_WAIT_GRACE_SECONDS), (
+        "the bot's own timeout has to be strictly larger than the "
+        "proxy's wait, or the bot drops the answer the proxy is still "
+        "holding")
+
+
+def test_the_tool_description_does_not_carry_the_stdin_workaround(
+        personal_with_token):
+    """The trap is gone, so the warning has to go with it.
+
+    The side-car used to lose the answer of a command that read
+    standard input. Since v2.10.2 the command runs inside a brace
+    group whose stdin is /dev/null, so it reads EOF and the protocol
+    stays intact. A description that still warns about the trap is a
+    stale claim about the side-car, and it teaches the model a
+    workaround it does not need.
     """
     desc = personal_with_token.BASH_COMMAND_TOOL_DEF["function"]["description"]
-    assert "/dev/null" in desc, (
-        "the tool description does not mention the stdin trap")
-    assert "standard input" in desc, (
-        "the tool description does not say what the trap is")
+    assert "/dev/null" not in desc, (
+        "the tool description still tells the model to close stdin for a "
+        "trap that the side-car fixed in v2.10.2")
+    assert "standard input" not in desc, (
+        "the tool description still warns about the stdin trap, which "
+        "the pinned side-car no longer has")

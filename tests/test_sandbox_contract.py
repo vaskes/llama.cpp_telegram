@@ -39,11 +39,13 @@ if str(BOT) not in sys.path:
     sys.path.insert(0, str(BOT))
 
 from personal_tools.sandbox_contract import (  # noqa: E402
+    CLIENT_TIMEOUT_SECONDS,
+    EXEC_TIMEOUT_SECONDS,
     PRIVILEGE_MODE,
     PRIVILEGE_MODE_SUPPORTED,
+    PROXY_WAIT_GRACE_SECONDS,
     SANDBOX_PINNED_VERSION,
     SANDBOX_POSTURE_LINES,
-    STDIN_POLICY,
     SUDO_POLICY,
     WRITABLE_ROOTFS,
 )
@@ -83,6 +85,8 @@ COMPOSE_KNOBS = (
      re.compile(r"\$\{AGENT_NO_NEW_PRIVILEGES:-([^}]+)\}")),
     ("AGENT_READ_ONLY",
      re.compile(r"\$\{AGENT_READ_ONLY:-([^}]+)\}")),
+    ("AGENT_EXEC_TIMEOUT",
+     re.compile(r"\$\{AGENT_EXEC_TIMEOUT:-([^}]+)\}")),
 )
 
 
@@ -173,19 +177,49 @@ def test_the_tool_description_says_what_is_true_about_sudo():
             "the sandbox cannot do it at all")
 
 
-def test_the_tool_description_carries_the_stdin_policy():
-    """The model reads the description, and the stdin trap is in it.
+def test_the_stdin_trap_is_gone_and_the_warning_went_with_it():
+    """The side-car fixed it in v2.10.2; the bot must not teach it.
 
-    A command that reads standard input swallows the side-car's end
-    marker, and its answer is lost. The description is the only place
-    the model can learn that before it waits out a minute.
+    The side-car used to lose the answer of a command that read
+    standard input: the command read the protocol instead of waiting.
+    Since v2.10.2 the command runs inside a brace group whose stdin is
+    /dev/null, so it reads EOF and the answer comes back.
+
+    A description that still warns about the trap is a stale claim
+    about the side-car, and it teaches the model a workaround it does
+    not need. The tripwire is the other way round now: the workaround
+    must NOT be there, and it must not come back.
     """
     desc = _description()
-    assert STDIN_POLICY in desc, (
-        "the tool description no longer carries the contract's stdin "
-        "sentence -- the model reads the description, not the contract")
-    assert "/dev/null" in desc, (
-        "the description has to offer the way out, not just the trap")
+    assert "/dev/null" not in desc, (
+        "the tool description still tells the model to close stdin for a "
+        "trap the pinned side-car fixed in v2.10.2")
+    assert "standard input" not in desc, (
+        "the tool description still warns about the stdin trap, which the "
+        "pinned side-car no longer has")
+
+
+def test_the_exec_limit_is_the_sandbox_knob_and_the_bot_stays_above_it():
+    """The command's time budget is the side-car's knob, not the bot's.
+
+    Since v2.10.2 the limit is `AGENT_EXEC_TIMEOUT` on the proxy, and
+    the proxy waits that limit plus a grace. The bot's own HTTP
+    timeout has to be strictly larger than the proxy's wait, or the
+    bot drops the answer the proxy is still holding -- which is the
+    same lost answer, one layer up.
+    """
+    compose = _compose_text()
+    assert "AGENT_EXEC_TIMEOUT" in compose, (
+        "the pinned side-car does not have the exec-timeout knob the "
+        "bot's time budget is derived from")
+    assert EXEC_TIMEOUT_SECONDS == 60, (
+        "the bot assumes the stock limit; the side-car's default is 60 "
+        "and a deployment that raises the knob has to raise the bot's "
+        "own timeout with it")
+    assert CLIENT_TIMEOUT_SECONDS > (
+        EXEC_TIMEOUT_SECONDS + PROXY_WAIT_GRACE_SECONDS), (
+        "the bot's timeout has to be strictly larger than the proxy's "
+        "wait")
 
 
 def test_the_operator_facing_prose_carries_the_contract_posture():
