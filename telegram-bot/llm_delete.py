@@ -154,9 +154,14 @@ def _load_log() -> None:
                     # would be deleted as one.
                     _GROUP_SEQ = group
     except FileNotFoundError:
-        # The normal first run: there is no log yet, so the tool knows
-        # only what it sends from here on. Not worth a line of noise.
-        log.debug("[delete_messages] no id log at %s yet", _log_path())
+        # There is no log. On a fresh install that is normal; on a
+        # deployed bot it is the signature of the failure of
+        # 2026-10-26 -- the tool knew no ids, and the model invented
+        # some. So it is a line in the log, not a debug note: it is
+        # read right after a deploy, and it is the first question to
+        # ask when "delete this message" does not work.
+        log.info("[delete_messages] no id log at %s yet; the tool knows "
+                 "only what it sends from here on", _log_path())
         return
     except OSError as e:
         # The log exists but cannot be read. That is not the normal

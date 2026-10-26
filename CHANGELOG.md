@@ -59,9 +59,11 @@ mutation harness proves is load-bearing:
     report — the model relays a cause instead of inventing one.
 
 The journal of ids also stopped failing silently: a log that cannot be
-written is now a warning in the bot's log, and every process says how
-many ids it loaded at start-up. The empty log of that deployment
-window is why the description had nothing to offer the model.
+written or read is now a warning in the bot's log, and the bot says how
+many ids it loaded the first time the tool needs them — "no id log yet"
+is the line to look for after a deploy. The empty log of that
+deployment window is why the description had nothing to offer the
+model.
 
 ### The side-car's stdin trap is fixed, and the bot's warning went with it
 
