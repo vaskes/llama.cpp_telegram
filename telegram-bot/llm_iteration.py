@@ -481,6 +481,7 @@ class ToolLoop:
             reasoning_tail=(self.accumulated_reasoning
                             or reasoning_buf)[-3500:],
             finish_reason=finish_reason,
+            last_tool_text=self._last_tool_text(),
         )
         if isinstance(outcome, Abort):
             return IterationResult.done(outcome.text)
@@ -495,6 +496,20 @@ class ToolLoop:
         # its end would hand the loop None, and `None.is_terminal` is an
         # AttributeError inside the loop rather than a state it can read.
         return IterationResult.again()
+
+    def _last_tool_text(self) -> Optional[str]:
+        """What the last tool said, in the tool's own words.
+
+        The abort path puts this in the user's answer. The model is
+        not asked to summarise it: the model already had its chance and
+        used it to repeat the same call, and a paraphrase of a refusal
+        is how a refusal turns into a story (2026-10-26).
+        """
+        for message in reversed(self.msgs):
+            if message.get("role") == "tool":
+                return condense(str(message.get("content") or ""),
+                                MAX_TOOL_RESULT_CHARS)
+        return None
 
     # --- the Nudge path ------------------------------------------------
     #

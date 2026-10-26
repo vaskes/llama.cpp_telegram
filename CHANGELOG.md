@@ -79,6 +79,37 @@ is the line to look for after a deploy. The empty log of that
 deployment window is why the description had nothing to offer the
 model.
 
+### The delete tool learned the message you just wrote
+
+The operator tested the tool again on 2026-10-26, in the same chat, and
+it failed in a new way. "Delete the message I just wrote" came back as
+*"Telegram says your message is older than 48 hours"* — about a message
+he had written seconds earlier.
+
+The model had picked the wrong id, and the reason is in the tool's own
+description. The ids it offered were the bot's own messages and the
+message the user had **replied to**. The operator's message was a reply
+to an old message of the bot's, so the model took that old id, Telegram
+refused it (correctly — it really was ancient), and the refusal came
+back as a story about the wrong message. The id of the message the
+user had just written was known to the bot and was not on offer.
+
+So the description now names three kinds of id, each with the words the
+user would use for it: the message the user **just wrote** (first, and
+"the message I just wrote" is that one), the message the user
+**replied to** ("the one you answered"), and the bot's own messages.
+The first of them is in reach for the tool as well.
+
+Two more things the same test showed. When the model repeats the same
+call, the loop guard stopped it — and the user got the bot's internals
+and "Final answer so far: (none)" instead of the tool's reason. The
+tool's last words are now the answer; a refusal is not re-summarised
+by the model that just failed to use it. And a refusal that never
+reached Telegram must never be told to the user as Telegram's answer:
+the prompt says so in as many words, because the model had already
+copied the previous turn's story over a refusal that had nothing to do
+with Telegram.
+
 ### The side-car's stdin trap is fixed, and the bot's warning went with it
 
 The sandbox's v2.10.2 (`4a6c465`) closes the two failures the bot's

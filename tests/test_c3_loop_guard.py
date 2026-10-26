@@ -34,6 +34,49 @@ sys.path.insert(0, str(BOT_DIR))
 
 from llm_loop_guard import Abort, LoopGuard, Nudge  # noqa: E402
 
+
+def test_the_abort_carries_the_tool_s_own_words():
+    """The user gets the tool's reason, not "(none)".
+
+    Live test of 2026-10-26 16:40: the model asked for the same
+    delete twice, the guard stopped it, and the operator's chat got
+    "[bot: the model asked for the same tool call twice in a row ...
+    Final answer so far: (none)]" -- the bot's internals and no reason
+    at all, while the tool had already said why it could not do it.
+    """
+    guard = LoopGuard(budget_sec=600.0)
+    guard.prev_calls = [("delete_messages", '{"message_ids": [3267]}')]
+    outcome = guard.tick(
+        iteration=1,
+        current_calls=[("delete_messages", '{"message_ids": [3267]}')],
+        elapsed=1.0,
+        iter_had_real_result=False,
+        final_fallback=None,
+        reasoning_tail="",
+        finish_reason="tool_calls",
+        last_tool_text="[delete_messages: refused -- nothing was deleted.]",
+    )
+    assert isinstance(outcome, Abort)
+    assert "nothing was deleted" in outcome.text
+    assert "(none)" not in outcome.text
+
+
+def test_the_abort_without_a_tool_result_says_so():
+    guard = LoopGuard(budget_sec=600.0)
+    guard.prev_calls = [("delete_messages", "{}")]
+    outcome = guard.tick(
+        iteration=1,
+        current_calls=[("delete_messages", "{}")],
+        elapsed=1.0,
+        iter_had_real_result=False,
+        final_fallback=None,
+        reasoning_tail="",
+        finish_reason="tool_calls",
+    )
+    assert isinstance(outcome, Abort)
+    assert "(none)" in outcome.text
+
+
 pytestmark = pytest.mark.tech_debt(
     item=3,
     reason="Pins TECH-DEBT #3 C3: the loop guards fire in exactly the "

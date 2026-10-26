@@ -156,14 +156,43 @@ def test_the_tool_description_says_what_the_reply_means():
 
     On 2026-10-26 the description carried the reply-to id and the
     model still answered with numbers it had made up. So the id comes
-    first, it is named as the message the user is pointing at, and the
+    first, it is named as the message the user replied to, and the
     sentence says what to do with it.
     """
     from llm_delete import delete_messages_tool_def
     desc = delete_messages_tool_def(
         chat_id=100, reply_to_message_id=699)["function"]["description"]
-    assert "pointing at has id 699" in desc, desc
+    assert "REPLIED TO has id 699" in desc, desc
     assert "message_ids=[699]" in desc, desc
+
+
+def test_the_description_names_the_message_the_user_just_wrote():
+    """"Delete the message I just wrote" needs the current id.
+
+    The live test of 2026-10-26 16:08 is the reason. The operator wrote
+    "delete the message I just wrote" as a reply to an old message of
+    the bot's, and the model took the reply-to id -- an ancient one --
+    and the answer came back as a story about the 48-hour window. The
+    bot knew the id of the message the user had just written and did
+    not offer it, so the only id in reach was the wrong one.
+    """
+    from llm_delete import delete_messages_tool_def
+    desc = delete_messages_tool_def(
+        chat_id=100, reply_to_message_id=25,
+        current_message_id=3264)["function"]["description"]
+    assert "JUST WROTE has id 3264" in desc, desc
+    assert "message_ids=[3264]" in desc, desc
+    # the current message comes FIRST: it is the one "I just wrote"
+    assert desc.index("3264") < desc.index("25"), desc
+    assert "NEVER invent" in desc, desc
+
+
+def test_the_current_message_id_is_in_reach():
+    """The message the user just wrote is deletable by the tool."""
+    from llm_delete import authorized_ids
+    assert 3264 in authorized_ids(100, 25, 3264)
+    assert 3264 in authorized_ids(100, None, 3264)
+    assert 3264 not in authorized_ids(100, 25, None)
 
 
 def test_the_recent_ids_are_the_bots_own_messages_newest_first():
@@ -760,3 +789,35 @@ async def test_the_dispatcher_routes_the_tool():
     assert "deleted 1" in result.text
     assert result.ledger is not None
     assert result.ledger["name"] == "delete_messages"
+
+
+async def test_the_current_message_id_reaches_the_tool():
+    """The id of the message the user just wrote must get to the tool.
+
+    Live test of 2026-10-26 16:08: the operator wrote "delete the
+    message I just wrote" and the model deleted the wrong message --
+    the one the operator had replied to, because the current id was
+    not in the description and so was not in reach.
+    """
+    from llm_dispatch import DispatchDeps, execute_tool
+    bot = _FakeBot()
+    deps = DispatchDeps(bot=bot, chat_id=100, current_message_id=3264,
+                         chat_type="supergroup", iteration=1,
+                         custom_tools={}, donsetch_tools={})
+    result = await execute_tool(
+        "delete_messages", {"message_ids": [3264]}, deps)
+    assert bot.deleted == [(100, 3264)], bot.deleted
+    assert "3264" in result.text
+
+
+async def test_the_current_message_id_is_refused_when_it_is_not_the_turn():
+    """Only the ids of THIS turn are in reach."""
+    from llm_dispatch import DispatchDeps, execute_tool
+    bot = _FakeBot()
+    deps = DispatchDeps(bot=bot, chat_id=100, current_message_id=3264,
+                         chat_type="supergroup", iteration=1,
+                         custom_tools={}, donsetch_tools={})
+    result = await execute_tool(
+        "delete_messages", {"message_ids": [9999]}, deps)
+    assert bot.deleted == [], bot.deleted
+    assert "refused" in result.text

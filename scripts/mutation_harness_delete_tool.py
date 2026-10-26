@@ -169,12 +169,12 @@ MUTATIONS = [
     ]),
     ("the message the user replied to is out of reach", "CAUGHT", [
         (TOOL,
-         r"    allowed = authorized_ids\(chat_id, reply_to_message_id\)\n",
-         "    allowed = authorized_ids(chat_id, None)\n", 1),
+         r"    allowed = authorized_ids\(chat_id, reply_to_message_id, current_message_id\)\n",
+         "    allowed = authorized_ids(chat_id, None, None)\n", 1),
     ]),
     ("the reply-to id does not reach the tool", "CAUGHT", [
         (DISPATCH,
-         r"            reply_to_message_id=deps\.reply_to_message_id\)\n",
+         r"            reply_to_message_id=deps\.reply_to_message_id,\n            current_message_id=deps\.current_message_id\)\n",
          "            reply_to_message_id=None)\n", 1),
     ]),
     ("the cause of Telegram's refusal is guessed", "CAUGHT", [
@@ -187,10 +187,16 @@ MUTATIONS = [
          r"These are the BOT's messages, not the user's\.",
          "These are YOUR messages.", 1),
     ]),
+    ("the message the user just wrote is not in the description",
+     "CAUGHT", [
+        (TOOL,
+         r"\- The message the user JUST WROTE has id ",
+         "- The message the user wrote has id ", 1),
+    ]),
     ("the pointed-at id is not in the description", "CAUGHT", [
         (TOOL,
-         r"delete it with message_ids=\[\{reply_to_message_id\}\]\.",
-         "delete it.", 1),
+         r"message_ids=\[\{reply_to_message_id\}\]\.",
+         "nothing.", 1),
     ]),
 
     # --- group B: the tripwires ------------------------------------
@@ -287,6 +293,14 @@ MUTATIONS = [
         (TEST_TOOL,
          r"(?m)^async def test_a_known_id_goes_through_and_an_invented_one_does_not\(\):\n",
          "async def test_a_known_id_goes_through_and_an_invented_one_does_not():\n    return\n", 1),
+        # The dispatcher test of 2026-10-26 16:08 catches the same
+        # mutation: it asserts that an id outside the turn is refused
+        # and that nothing was deleted. A group-B mutation that left
+        # it standing would be caught by a test it did not claim to
+        # remove -- and then it is not a group-B mutation at all.
+        (TEST_TOOL,
+         r"(?m)^async def test_the_current_message_id_is_refused_when_it_is_not_the_turn\(\):\n",
+         "async def test_the_current_message_id_is_refused_when_it_is_not_the_turn():\n    return\n", 1),
         (TOOL,
          r"        unknown = \[i for i in ids if i not in allowed\]\n"
          r"        targets = \[i for i in ids if i in allowed\]\n",
@@ -298,20 +312,32 @@ MUTATIONS = [
         (TEST_TOOL,
          r"(?m)^async def test_the_message_the_user_replied_to_can_be_deleted\(\):\n",
          "async def test_the_message_the_user_replied_to_can_be_deleted():\n    return\n", 1),
+        # The dispatcher test of 2026-10-26 16:08 guards the same
+        # property: without the reply-to id travelling, the id it
+        # passes is out of reach and the tool refuses it.
+        (TEST_TOOL,
+         r"(?m)^async def test_the_current_message_id_reaches_the_tool\(\):\n",
+         "async def test_the_current_message_id_reaches_the_tool():\n    return\n", 1),
         (TEST_TOOL,
          r"(?m)^async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher\(\):\n",
          "async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher():\n    return\n", 1),
         (TOOL,
-         r"    allowed = authorized_ids\(chat_id, reply_to_message_id\)\n",
-         "    allowed = authorized_ids(chat_id, None)\n", 1),
+         r"    allowed = authorized_ids\(chat_id, reply_to_message_id, current_message_id\)\n",
+         "    allowed = authorized_ids(chat_id, None, None)\n", 1),
     ]),
     ("the plumbing tripwire is gone, and the reply-to id stops travelling",
      "SURVIVED", [
         (TEST_TOOL,
          r"(?m)^async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher\(\):\n",
          "async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher():\n    return\n", 1),
+        # The dispatcher test of 2026-10-26 16:08 guards the same
+        # property from the other side: with the reply-to id not
+        # travelling, the id the test passes is not in reach.
+        (TEST_TOOL,
+         r"(?m)^async def test_the_current_message_id_reaches_the_tool\(\):\n",
+         "async def test_the_current_message_id_reaches_the_tool():\n    return\n", 1),
         (DISPATCH,
-         r"            reply_to_message_id=deps\.reply_to_message_id\)\n",
+         r"            reply_to_message_id=deps\.reply_to_message_id,\n            current_message_id=deps\.current_message_id\)\n",
          "            reply_to_message_id=None)\n", 1),
     ]),
     ("the cause tripwire is gone, and the cause is guessed wrong",

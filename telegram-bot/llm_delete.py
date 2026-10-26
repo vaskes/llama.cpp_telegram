@@ -308,7 +308,8 @@ def own_ids(chat_id: Any) -> list[int]:
 
 
 def authorized_ids(chat_id: Any,
-                   reply_to_message_id: Any = None) -> set[int]:
+                   reply_to_message_id: Any = None,
+                   current_message_id: Any = None) -> set[int]:
     """The ids this tool is allowed to delete in this chat.
 
     Two sources, and both of them are verifiable:
@@ -331,9 +332,11 @@ def authorized_ids(chat_id: Any,
     real cause, so the model invented one.
     """
     allowed = set(own_ids(chat_id))
-    if reply_to_message_id is not None:
+    for extra in (reply_to_message_id, current_message_id):
+        if extra is None:
+            continue
         try:
-            allowed.add(int(reply_to_message_id))
+            allowed.add(int(extra))
         except (TypeError, ValueError):
             pass
     return allowed
@@ -502,7 +505,8 @@ async def _check_admin(bot: Any, chat_id: int) -> Rights:
 
 
 def delete_messages_tool_def(*, chat_id: Any = None,
-                              reply_to_message_id: Any = None) -> dict:
+                              reply_to_message_id: Any = None,
+                              current_message_id: Any = None) -> dict:
     """The definition the model is shown for `delete_messages`.
 
     The description carries the ids the bot actually knows: the ids of
@@ -529,12 +533,21 @@ def delete_messages_tool_def(*, chat_id: Any = None,
         "answer\", \"remove that message\", \"clean up the channel\".\n\n"
         "WHICH MESSAGE TO DELETE -- read this first:\n"
     )
+    if current_message_id is not None:
+        described += (
+            f"- The message the user JUST WROTE has id "
+            f"{current_message_id}. That is the one they mean when they "
+            f"say \"this one\", \"the message I just wrote\", \"my "
+            f"message\" or \"the last thing I wrote\": delete it with "
+            f"message_ids=[{current_message_id}].\n"
+        )
     if reply_to_message_id is not None:
         described += (
-            f"- The message the user is pointing at has id "
-            f"{reply_to_message_id}. That is the message they mean when "
-            f"they say \"this one\", \"that message\" or \"my message\": "
-            f"delete it with message_ids=[{reply_to_message_id}].\n"
+            f"- The message the user REPLIED TO has id "
+            f"{reply_to_message_id}. That is the one they mean when they "
+            f"say \"the one you answered\" or \"the message above that "
+            f"I answered\": delete it with "
+            f"message_ids=[{reply_to_message_id}].\n"
         )
     if known:
         described += (
@@ -550,8 +563,7 @@ def delete_messages_tool_def(*, chat_id: Any = None,
         described += (
             "- The bot's own messages in this chat: the bot does not "
             "know their ids right now, so `count` cannot take them "
-            "back. The message the user replied to is the one it can "
-            "delete.\n"
+            "back. The ids listed above are the ones it can delete.\n"
         )
     described += (
         "\nNEVER invent a message id. Only pass an id that is listed "
@@ -589,8 +601,9 @@ def delete_messages_tool_def(*, chat_id: Any = None,
                         "description": (
                             "Telegram message ids to delete exactly. Use it "
                             "only for the ids listed in this description: "
-                            "the message the user replied to, or the bot's "
-                            "own messages. An id that is not listed is "
+                            "the message the user just wrote, the message "
+                            "the user replied to, or the bot's own "
+                            "messages. An id that is not listed is "
                             "refused without touching anything. It wins "
                             "over `count`."
                         ),
@@ -644,6 +657,7 @@ async def execute_delete_messages(
     chat_id: Any,
     chat_type: str,
     reply_to_message_id: Any = None,
+    current_message_id: Any = None,
 ) -> tuple[str, Optional[dict]]:
     """Delete messages from the current chat.
 
@@ -665,7 +679,7 @@ async def execute_delete_messages(
     if ids_problem:
         return f"[delete_messages: {ids_problem}]", None
 
-    allowed = authorized_ids(chat_id, reply_to_message_id)
+    allowed = authorized_ids(chat_id, reply_to_message_id, current_message_id)
     unknown: list[int] = []
 
     if ids:
@@ -674,7 +688,7 @@ async def execute_delete_messages(
         scope = "the requested message ids"
         if unknown and not targets:
             return (_unknown_ids_text(unknown, chat_id, reply_to_message_id,
-                                      allowed), None)
+                                      current_message_id, allowed), None)
     else:
         groups = _answer_groups(chat_id, count)
         if not groups:
@@ -736,6 +750,7 @@ async def execute_delete_messages(
 
 def _unknown_ids_text(unknown: list[int], chat_id: Any,
                        reply_to_message_id: Any,
+                       current_message_id: Any,
                        allowed: set[int]) -> str:
     """The refusal for ids the bot cannot vouch for.
 
@@ -747,14 +762,17 @@ def _unknown_ids_text(unknown: list[int], chat_id: Any,
     known = ", ".join(str(m) for m in own) if own else "none"
     reply = (str(reply_to_message_id)
              if reply_to_message_id is not None else "none")
+    current = (str(current_message_id)
+               if current_message_id is not None else "none")
     return (
         "[delete_messages: refused -- nothing was deleted. The id(s) "
         + ", ".join(str(u) for u in unknown)
         + " are not messages the bot knows in this chat. It knows its "
-        "own messages (ids " + known + ") and the message the user "
-        "replied to (id " + reply + "). A made-up id would be a real "
-        "attempt to delete somebody else's message -- the bot is an "
-        "administrator here -- so it was not passed to Telegram. Reply "
-        "to the message you mean, so the bot learns its id, or use "
-        "`count` to take back the bot's own last answer.]"
+        "own messages (ids " + known + "), the message the user just "
+        "wrote (id " + current + ") and the message the user replied "
+        "to (id " + reply + "). A made-up id would be a real attempt to "
+        "delete somebody else's message -- the bot is an administrator "
+        "here -- so it was not passed to Telegram. Reply to the message "
+        "you mean, so the bot learns its id, or use `count` to take "
+        "back the bot's own last answer.]"
     )

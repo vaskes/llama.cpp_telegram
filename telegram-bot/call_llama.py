@@ -343,7 +343,8 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         if rights.allowed:
             bot_side_tool_defs.append(delete_messages_tool_def(
                 chat_id=chat_id,
-                reply_to_message_id=reply_to_message_id))
+                reply_to_message_id=reply_to_message_id,
+                current_message_id=current_message_id))
     all_tools = tools + bot_side_tool_defs
 
     # === Group context (always-injected system message) ===

@@ -46,7 +46,7 @@ MODULE_LIMIT = 1000
 EXCEPTIONS = {
     "call_llama": (
         "call_llama.py",
-        357,
+        358,
         "2026-10-22",
         "Carries a DO NOT REFACTOR notice with its own trigger; the "
         "transport, the four response buffers and the abort state across "
@@ -57,7 +57,7 @@ EXCEPTIONS = {
     ),
     "run_one": (
         "llm_iteration.py",
-        344,
+        345,
         "2026-10-25",
         "One tool-loop iteration, but nine concerns in the body. Open "
         "debt item 08, which is the item about splitting exactly this. "

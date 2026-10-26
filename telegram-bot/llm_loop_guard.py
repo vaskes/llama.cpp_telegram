@@ -111,7 +111,8 @@ class LoopGuard:
 
     def tick(self, *, iteration: int, current_calls: list, elapsed: float,
              iter_had_real_result: bool, final_fallback: Optional[str],
-             reasoning_tail: str, finish_reason) -> Optional[Nudge | Abort]:
+             reasoning_tail: str, finish_reason,
+             last_tool_text: Optional[str] = None) -> Optional[Nudge | Abort]:
         """Evaluate the tail guards in the order call_llama evaluates them.
 
         Returns None to continue, a Nudge to append to the message list,
@@ -124,6 +125,19 @@ class LoopGuard:
         #    IndexError on current_calls[0].
         if current_calls and current_calls == self.prev_calls:
             log.info(f"[loop] iter={iteration} same tool calls as previous iter; aborting")
+            # The truth first. On 2026-10-26 the operator got this
+            # message with "Final answer so far: (none)" -- a dump of
+            # the bot's internals and no reason at all, while the tool
+            # had already said WHY it could not do it. The tool's last
+            # words are the answer the user needed; the loop is the
+            # bot's problem, not the user's.
+            if last_tool_text:
+                return Abort(
+                    f'[bot: the model asked for the same tool call twice '
+                    f'in a row ({current_calls[0][0]}), so the bot stopped '
+                    f'rather than repeat itself. What the tool said: '
+                    f'{last_tool_text}]'
+                )
             return Abort(
                 f'[bot: the model asked for the same tool call twice in a row '
                 f'({current_calls[0][0]}). It is stuck in a loop. '

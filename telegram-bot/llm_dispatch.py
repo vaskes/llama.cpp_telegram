@@ -163,7 +163,8 @@ async def execute_tool(name: str, args, deps: DispatchDeps) -> ToolExecution:
         text, extras = await execute_delete_messages(
             args, bot=deps.bot, chat_id=deps.chat_id,
             chat_type=deps.chat_type,
-            reply_to_message_id=deps.reply_to_message_id)
+            reply_to_message_id=deps.reply_to_message_id,
+            current_message_id=deps.current_message_id)
         ledger = _entry("delete_messages", args, deps.iteration,
                          **(extras or {}))
         return _finish(text, ledger, deps)
