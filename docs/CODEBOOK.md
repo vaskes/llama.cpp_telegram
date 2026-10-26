@@ -395,7 +395,7 @@ naming a renamed function goes red.
 The 500-line threshold itself is enforced by nothing. Six production
 modules are over 500 lines; four carry section markers
 (`handlers.py` with 19, `context_budget.py` with 4, `bash_command.py`
-with 2, `storage.py` with 1 for 782 lines), and two carry none
+with 2, `storage.py` with 1 for 876 lines), and two carry none
 (`llm_iteration.py`, 571 lines, and `selftest_llm.py`, 784). Writing
 this rule down as `AUTO` would have been a claim with no check behind it
 — see D-1.
@@ -1159,8 +1159,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
 | `test_delete_messages_tool.py` | 35 | A message can be taken back out of the chat -- and the bot's own history is not touched |
+| `test_message_search.py` | 11 | The store keeps the Telegram id of every message, and can be searched by text and by sender |
 
-152 test files in total; the table above is the ones that guard a rule in
+156 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

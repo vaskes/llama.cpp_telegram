@@ -39,9 +39,13 @@ Schema columns:
           truth for thread existence), but kept for the active_thread
           table below and for analytics. Lazily populated.
 
-  messages(id, chat_id, thread_id, role, content, created_at)
+  messages(id, chat_id, thread_id, role, content, sender_name,
+           telegram_message_id, created_at)
       idx(chat_id, thread_id, id) for the hot lookup
       The single source of truth for conversation history.
+      `telegram_message_id` is the id of the Telegram message the row
+      came from: it is how the bot finds a message again, and takes it
+      back out of the chat, without touching the row itself.
 
   active_thread(chat_id PK, thread_id)
       Only meaningful in private mode (where "active" is not
@@ -87,6 +91,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role        TEXT NOT NULL,
     content     TEXT NOT NULL,
     sender_name TEXT,
+    telegram_message_id INTEGER,
     created_at  REAL NOT NULL
 );
 
@@ -171,6 +176,16 @@ DEFAULT_CONTEXT_MESSAGES = 20
 # COLUMN; this raises it. sub-second precision is dropped, which the
 # window filter cannot see at a 7-day boundary.
 _SQL_NOW = "unixepoch('now')"
+
+# Case-insensitive search, for SQLite.
+#
+# SQLite's own lower() and LIKE know ASCII only: lower('Дима') is still
+# 'дима' in the Latin sense, and LIKE 'дима' does not match 'ДИМА'. The
+# bot's chats are in Russian, so a search that only folds ASCII finds
+# nothing. casefold() is the Unicode version, and it is registered as a
+# SQL function on the connection (see Storage._conn).
+def _casefold(value):
+    return value.casefold() if isinstance(value, str) else value
 
 # T67: TRIM_HIGH / TRIM_LOW are gone.
 #
@@ -319,11 +334,34 @@ class Storage(SummaryStore):
             c.execute("ROLLBACK")
             raise
         c.execute("COMMIT")
+        # v5 -> v6: add `telegram_message_id` to messages. It is the id of
+        # the Telegram message the row came from, so the bot can find that
+        # message again (search_messages) and take it back out of the chat
+        # (delete_messages) WITHOUT touching the row: the record of what
+        # happened stays. NULL for rows written before this column, and for
+        # the bot's own answers (they are persisted before they are sent, so
+        # the id does not exist yet). Same transaction discipline as the
+        # ALTERs above, for the same reason (TECH-DEBT #5).
+        c.execute("BEGIN")
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN telegram_message_id INTEGER")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e):
+                c.execute("ROLLBACK")
+                raise
+        except BaseException:
+            c.execute("ROLLBACK")
+            raise
+        c.execute("COMMIT")
 
     def _conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn"):
             c = sqlite3.connect(self.path, check_same_thread=False)
             c.row_factory = sqlite3.Row
+            # Unicode-aware case folding for the search. Registered here,
+            # on the connection that runs the query, because a SQL function
+            # belongs to the connection it was created on.
+            c.create_function("casefold", 1, _casefold, deterministic=True)
             # WAL gives concurrent readers while a writer is active,
             # which matters once the polling loop and the handler
             # are both touching the DB on the same process.
@@ -634,7 +672,8 @@ class Storage(SummaryStore):
 
     def add_message(self, chat_id: int, thread_id: str, role: str,
                     content: str, rating: Optional[int] = None,
-                    sender_name: Optional[str] = None) -> int:
+                    sender_name: Optional[str] = None,
+                    telegram_message_id: Optional[int] = None) -> int:
         """Append a message. `content` is a JSON string.
 
         `rating` is the optional 1-10 score the LLM assigned in
@@ -646,12 +685,19 @@ class Storage(SummaryStore):
         rows). It lets the LLM distinguish between Vasisualy and
         Dimon in a busy group chat. Resolved by the bot from
         update.message.from_user; may be NULL for old rows
-        (pre-sender-name migration) or for system/assistant rows."""
+        (pre-sender-name migration) or for system/assistant rows.
+
+        `telegram_message_id` is the id of the Telegram message this row
+        came from, or NULL when there is none. It is what lets the bot
+        find that message again and delete it from the chat later,
+        without deleting the row: the record of what happened stays.
+        """
         c = self._conn()
         cur = c.execute(
-            "INSERT INTO messages (chat_id, thread_id, role, content, sender_name, created_at, rating) "
-            f"VALUES (?, ?, ?, ?, ?, {_SQL_NOW}, ?)",
-            (chat_id, thread_id, role, content, sender_name, rating),
+            "INSERT INTO messages (chat_id, thread_id, role, content, sender_name, created_at, rating, telegram_message_id) "
+            f"VALUES (?, ?, ?, ?, ?, {_SQL_NOW}, ?, ?)",
+            (chat_id, thread_id, role, content, sender_name, rating,
+             telegram_message_id),
         )
         c.commit()
         return cur.lastrowid
@@ -693,6 +739,54 @@ class Storage(SummaryStore):
             """,
             (chat_id, thread_id, limit),
         ).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_messages(self, chat_id: int, *, text: str | None = None,
+                        sender: str | None = None,
+                        ids: Optional[list[int]] = None,
+                        limit: int = 20) -> list[dict]:
+        """The chat's own record, newest first, optionally filtered.
+
+        `text` matches the body of the message and `sender` the display
+        name of the one who sent it. Both are case-insensitive
+        substrings, so "привет" finds "Привет!" and "dim" finds
+        "Dmitriklim". The body is read out of the JSON the row stores,
+        so a row that holds a list of content parts is searched by its
+        text too. `ids` narrows the result to the rows that came from
+        those Telegram message ids.
+
+        The result carries the Telegram id the row came from, so the
+        caller can act on the message itself and not only on the
+        record. Nothing here writes: this is the reading door of the
+        bot's own history.
+        """
+        c = self._conn()
+        where = ["chat_id = ?"]
+        args: list = [chat_id]
+        if text:
+            where.append(
+                "instr(casefold(COALESCE(CASE WHEN json_valid(content) "
+                "THEN json_extract(content, '$.content') END, '')), "
+                "casefold(?)) > 0")
+            args.append(text)
+        if sender:
+            where.append("instr(casefold(COALESCE(sender_name, '')), "
+                         "casefold(?)) > 0")
+            args.append(sender)
+        if ids:
+            where.append("telegram_message_id IN ("
+                         + ",".join("?" * len(ids)) + ")")
+            args.extend(ids)
+        sql = ("SELECT id, role, sender_name, created_at, "
+               "telegram_message_id, content FROM messages WHERE "
+               + " AND ".join(where))
+        if ids:
+            # The id list is the bound here: a LIMIT would hide a second
+            # row that carries the same Telegram id.
+            rows = c.execute(sql, args).fetchall()
+        else:
+            rows = c.execute(sql + " ORDER BY id DESC LIMIT ?",
+                             args + [limit]).fetchall()
         return [dict(r) for r in rows]
 
     def get_last_message(self, chat_id: int, thread_id: str) -> Optional[dict]:

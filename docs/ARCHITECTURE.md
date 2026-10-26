@@ -34,7 +34,7 @@ telegram-bot/
 ├── limits.py              # profile-based token/timeout limits (359)
 ├── config.py              # env-var read at import time (354)
 ├── state.py               # per-chat runtime state (225)
-├── storage.py             # SQLite: messages, threads, topics (782)
+├── storage.py             # SQLite: messages, threads, topics (876)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (198)
 ├── persistence.py         # conversation-history assembly (173)
 ├── turn.py                # one turn's persist/rollback ledger (158)
