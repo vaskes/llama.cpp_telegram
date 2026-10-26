@@ -13,9 +13,9 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1414 lines)
+├── handlers.py            # handle_text/photo/voice/document (1442 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   507 lines file, 343 in the function
+│                          #   510 lines file, 356 in the function, 343 in the loop
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py      # human-to-human reply absorb (107)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
@@ -85,7 +85,7 @@ tests, none of which build a full `call_llama`.
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
   llm_sendfile.py         79  send_file_tool_def
-  llm_delete.py          379  delete_messages_tool_def, execute_delete_messages, remember_answer
+  llm_delete.py          547  delete_messages_tool_def, execute_delete_messages, remember_answer
   llm_truncation.py      119  condense
 ```
 

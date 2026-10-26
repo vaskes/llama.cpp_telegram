@@ -94,6 +94,27 @@ The prompt learns the tool and loses a stale number: it said "these six
 tools" next to a list that moved, and a count next to a list goes stale
 the moment the list does.
 
+**The first live test found three real defects, and the fixes are in the
+same release.** The operator asked the bot to delete its last four
+messages, and it could not name one of them: the ids of the bot's own
+messages were only ever in memory, and a deploy had emptied it. Then it
+asked to delete the message it had replied to, and the model invented
+the ids 701, 702, 703 — a model with no id will guess one, and the bot
+is an administrator, so a guessed id is a real attempt to delete a
+stranger's message. So:
+
+  * what the bot sends is now written to a small log of ids next to the
+    database (not in it — the database is the record, and stays), so a
+    restart does not make the tool blind;
+  * the ids the model may use are handed to it in the tool's own
+    description: the bot's own recent message ids, and the id of the
+    message the user replied to;
+  * the prompt says never to invent an id, and to report the tool's
+    result in a sentence or two instead of lecturing the user about
+    Telegram's rules;
+  * "I do not know which messages to delete" now names the way out:
+    reply to the message, or use `count` for the bot's own last answer.
+
 ### A command that reads standard input loses its answer
 
 The side-car runs a command in a tmux pane and knows the command is

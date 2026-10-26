@@ -52,6 +52,7 @@ async def call_llama(
     *,
     chat_type: str,           # keyword-only and REQUIRED -- see below
     silent: bool = False,     # T65.1: answer another human, say nothing
+    reply_to_message_id=None, # the message the user replied to, for delete_messages
 )
 ```
 

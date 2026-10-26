@@ -757,6 +757,23 @@ Checked by `tests/test_delete_messages_tool.py`: the module imports no
 database module, and a delete with the store rigged to shout leaves it
 unshouted.
 
+**The ids have to be real.** The Bot API cannot list a chat's messages,
+so "my last answer" is only knowable from what the bot remembers
+sending. A model that has no id will invent one — and the bot is an
+administrator, so an invented id is a real attempt to delete a
+stranger's message. The ids the model may use are therefore handed to
+it: the bot's own recent message ids, and the id of the message the
+user replied to, both in the tool's own description. What the bot
+sends is also written to a small log of ids next to the database (not
+in it), so a restart does not make the tool blind — the operator asked
+for the last four messages to be taken back right after a deploy, and
+the tool could not name one of them.
+
+**A tool that fails must say what to do next.** "I do not know which
+messages to delete" is a dead end for the user; the same message names
+the way out — reply to the message, or use `count` for the bot's own
+last answer.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1105,7 +1122,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
-| `test_delete_messages_tool.py` | 25 | A message can be taken back out of the chat -- and the bot's own history is not touched |
+| `test_delete_messages_tool.py` | 35 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 
 152 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
