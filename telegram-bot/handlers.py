@@ -467,7 +467,7 @@ async def _reply(update, text, **kwargs):
     attempts time out we return None and log a warning
     (assuming Telegram will deliver the message anyway).
     """
-    from telegram.error import RetryAfter, TimedOut
+    from telegram.error import BadRequest, RetryAfter, TimedOut
     if _is_group_chat(update):
         kwargs.setdefault('message_thread_id', update.message.message_thread_id)
     last_err = None
@@ -487,6 +487,26 @@ async def _reply(update, text, **kwargs):
             backoff = 2 ** attempt
             log.info(f"[_reply] TimedOut attempt {attempt+1}/3, sleeping {backoff}s")
             await asyncio.sleep(backoff)
+        except BadRequest as e:
+            # The message we are answering is gone. The delete tool can
+            # remove the very message the bot is about to reply to --
+            # "delete the message I just wrote" -- and Telegram then
+            # refuses the reply: "Message to be replied not found".
+            # On 2026-10-26 that refusal was raised out of here, the
+            # handler caught it and tried to send a failure notice the
+            # same way, and the chat got a wall of the same traceback
+            # instead of an answer.
+            #
+            # `allow_sending_without_reply` is Telegram's own answer to
+            # this: send the message even if the quoted one is not
+            # found. The quote is lost; the answer is not.
+            if "Message to be replied not found" not in str(e):
+                raise
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            log.info(f"[_reply] the message being answered is gone; sending "
+                     f"without the quote. chat_id={chat_id} text_len={len(text)}")
+            kwargs["allow_sending_without_reply"] = True
+            return await update.message.reply_text(text, **kwargs)
     # Exhausted retries. For RetryAfter, re-raise so the
     # caller's except block runs (the user already saw the
     # LLM response if at least one try went through). For
