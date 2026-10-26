@@ -68,7 +68,7 @@ tests, none of which build a full `call_llama`.
   llm_iteration.py      571  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
   call_llama.py         507  call_llama
-  llm_loop_guard.py     184  Nudge, Abort, LoopGuard
+  llm_loop_guard.py     185  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py        83  _tag_sender
   llm_nonstream.py      442  NonStreamResult, non_stream_iteration, tools_less_fallback
