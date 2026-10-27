@@ -41,7 +41,7 @@ def test_soft_reject_mentioned():
 
 
 def test_six_whitelisted_tools_listed():
-    """All 6 tools from KNOWN_TOOL_NAMES must still be listed."""
+    """All native tools from NATIVE_TOOL_NAMES must still be listed."""
     for tool in [
         "donsetch_web_search",
         "donsetch_web_fetch",

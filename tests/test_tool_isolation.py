@@ -2,7 +2,7 @@
 
 The single most important property of this module is:
 the bot MUST NEVER execute a tool_call whose function name is not
-in KNOWN_TOOL_NAMES. These tests pin that property at every layer
+in known_tool_names(). These tests pin that property at every layer
 (validator, integration) and document the threat model.
 """
 
@@ -15,7 +15,7 @@ _REPO = os.path.join(os.path.dirname(__file__), "..", "telegram-bot")
 sys.path.insert(0, _REPO)
 
 from tool_isolation import (
-    KNOWN_TOOL_NAMES,
+    NATIVE_TOOL_NAMES,
     UnknownToolNameError,
     extract_function_names,
     is_known_tool_name,
@@ -42,8 +42,8 @@ def test_known_tool_names_includes_required_bot_tools():
         "delete_messages",
         "search_messages",
     }
-    missing = expected - set(KNOWN_TOOL_NAMES)
-    extra = set(KNOWN_TOOL_NAMES) - expected
+    missing = expected - set(NATIVE_TOOL_NAMES)
+    extra = set(NATIVE_TOOL_NAMES) - expected
     assert not missing, f"bot-side tools missing from whitelist: {missing}"
     assert not extra, f"whitelist has stale names: {extra}"
 
@@ -58,7 +58,7 @@ def test_known_tool_names_does_not_advertise_native_llama_tools():
         "agent", "agent_run", "agent_loop",
         "read", "write", "read_file", "write_file",  # NOT in this bot
     }
-    leaked = forbidden & set(KNOWN_TOOL_NAMES)
+    leaked = forbidden & set(NATIVE_TOOL_NAMES)
     assert not leaked, (
         f"native-llama / non-bot names leaked into whitelist: {leaked}. "
         f"These would be available to the model even if llama-server "
@@ -71,13 +71,13 @@ def test_known_tool_names_is_frozenset():
     at runtime. If this assertion ever fails, someone changed
     the type and we lost the immutability guarantee.
     """
-    assert isinstance(KNOWN_TOOL_NAMES, frozenset)
+    assert isinstance(NATIVE_TOOL_NAMES, frozenset)
 
 
 # --- is_known_tool_name ------------------------------------------------------
 
 def test_is_known_tool_name_true_for_whitelist():
-    for n in KNOWN_TOOL_NAMES:
+    for n in NATIVE_TOOL_NAMES:
         assert is_known_tool_name(n) is True, f"{n!r} should be known"
 
 
@@ -204,4 +204,4 @@ def test_known_tool_names_returns_whitelist():
     code see the same set. Pin that the accessor returns the
     canonical frozenset.
     """
-    assert known_tool_names() is KNOWN_TOOL_NAMES
+    assert NATIVE_TOOL_NAMES <= known_tool_names()

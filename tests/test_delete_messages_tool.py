@@ -276,9 +276,9 @@ def test_the_tool_def_carries_no_chat_id():
 
 
 def test_the_tool_name_is_registered_for_the_isolation_layer():
-    from tool_isolation import KNOWN_TOOL_NAMES
-    assert "delete_messages" in KNOWN_TOOL_NAMES, (
-        "a tool that is not in KNOWN_TOOL_NAMES is soft-rejected by the "
+    from tool_isolation import NATIVE_TOOL_NAMES
+    assert "delete_messages" in NATIVE_TOOL_NAMES, (
+        "a tool that is not in NATIVE_TOOL_NAMES is soft-rejected by the "
         "isolation layer, and the model loops on it")
 
 

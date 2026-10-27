@@ -4,7 +4,7 @@ core security boundary:
 
   1. validate_tool_calls() rejects unknown names
      (this is the T38.5 guard).
-  2. KNOWN_TOOL_NAMES contains exactly the 6 whitelisted
+  2. NATIVE_TOOL_NAMES contains exactly the native tools
      tools and nothing else.
   3. The dispatch chain in call_llama has a working arm
      for each whitelisted tool.
@@ -30,7 +30,7 @@ CALL_LLAMA = pathlib.Path(__file__).parent.parent / "telegram-bot" / "llm_iterat
 
 def test_known_tool_names_exact_set():
     """The whitelist must contain exactly the documented
-    tools. Adding a tool requires updating KNOWN_TOOL_NAMES
+    tools. Adding a tool requires updating NATIVE_TOOL_NAMES
     AND shipping a handler. Removing a tool requires
     updating both the whitelist and the system prompt.
 
@@ -46,7 +46,7 @@ def test_known_tool_names_exact_set():
     sys_path = str(pathlib.Path(__file__).parent.parent / "telegram-bot")
     import sys
     import sys; sys.path.insert(0, sys_path)
-    from tool_isolation import KNOWN_TOOL_NAMES
+    from tool_isolation import NATIVE_TOOL_NAMES
 
     expected = frozenset({
         "donsetch_web_search",
@@ -59,22 +59,22 @@ def test_known_tool_names_exact_set():
         "delete_messages",
         "search_messages",
     })
-    assert KNOWN_TOOL_NAMES == expected, \
-        f"KNOWN_TOOL_NAMES changed: {KNOWN_TOOL_NAMES!r}"
+    assert NATIVE_TOOL_NAMES == expected, \
+        f"NATIVE_TOOL_NAMES changed: {NATIVE_TOOL_NAMES!r}"
 
 
 def test_validate_tool_calls_accepts_whitelisted():
     import sys; sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "telegram-bot"))
-    from tool_isolation import validate_tool_calls, KNOWN_TOOL_NAMES
+    from tool_isolation import validate_tool_calls, NATIVE_TOOL_NAMES
 
     # Build a list of valid tool calls.
     valid_calls = [
         {"id": f"call_{n}", "type": "function",
          "function": {"name": name, "arguments": "{}"}}
-        for n, name in enumerate(KNOWN_TOOL_NAMES)
+        for n, name in enumerate(NATIVE_TOOL_NAMES)
     ]
     result = validate_tool_calls(valid_calls)
-    assert sorted(result) == sorted(KNOWN_TOOL_NAMES)
+    assert sorted(result) == sorted(NATIVE_TOOL_NAMES)
 
 
 def test_validate_tool_calls_rejects_unknown():
@@ -115,23 +115,24 @@ def test_call_llama_has_synthetic_tool_result():
     produce a synthetic tool result that mentions the
     available tools. T49 relies on this feedback to let
     the model retry with a whitelisted tool."""
-    # Block D4: the message is UNAVAILABLE_TOOL_MESSAGE in llm_dispatch.
-    # Asserting the constant's text rather than the f-string that used to
-    # sit inline is stronger -- the message cannot be reworded or dropped
-    # without this going red.
-    from llm_dispatch import UNAVAILABLE_TOOL_MESSAGE
+    # Block D4: the message is unavailable_tool_message() in llm_dispatch.
+    # Asserting the message that is actually sent rather than the f-string
+    # that used to sit inline is stronger -- the message cannot be
+    # reworded or dropped without this going red.
+    from llm_dispatch import unavailable_tool_message
     src = CALL_LLAMA.read_text()
-    assert "tool {name} unavailable in this mode" in UNAVAILABLE_TOOL_MESSAGE
+    message = unavailable_tool_message("rm_rf")
+    assert "tool rm_rf unavailable in this mode" in message
     # It must list bash_command in the MESSAGE so the model can see what
     # is available. This read call_llama.py, where bash_command appears
     # for unrelated reasons -- so after Block D4 it passed no matter what
     # the message said. A mutation that dropped the whole tool list was
     # reported as a survivor because of it.
-    assert "bash_command" in UNAVAILABLE_TOOL_MESSAGE, (
+    assert "bash_command" in message, (
         "the unavailable-tool message no longer names the tools, so the "
         "model cannot tell what it may retry with")
     for tool in ("donsetch_web_search", "react_to_message"):
-        assert tool in UNAVAILABLE_TOOL_MESSAGE, \
+        assert tool in message, \
             f"the unavailable-tool message stopped naming {tool}"
     # The synthetic result is appended to msgs (not just
     # logged), so the model sees it on the next iter.

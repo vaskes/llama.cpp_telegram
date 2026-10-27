@@ -937,6 +937,51 @@ The duplicates that are already in the record stay there. Deleting rows
 from the operator's record is not ours to do: the fix is about what
 happens next, not about rewriting what happened.
 
+**X-14 — The bot has two classes of tools, and the imported ones belong
+to a server.**
+`AUTO`
+`tests/test_mcp_client.py`, `tests/test_mcp_registry.py`,
+`tests/test_mcp_import_wiring.py`, `tests/test_drift_m5_dedup.py`.
+
+The operator's directive (2026-10-27): the bot is an agentic harness,
+so it should be able to talk to an arbitrary MCP server and get that
+server's tools. The payoff is that adding a capability becomes a config
+line, not a commit.
+
+The rules:
+
+  * **native and imported are different things and are named
+    differently.** A native tool is the bot's own: its name lives in
+    `NATIVE_TOOL_NAMES`, a constant, because it does not change while
+    the bot runs. An imported tool is somebody else's: it is
+    discovered at runtime, and it is named `<server>_<tool>` — the
+    convention llama.cpp uses, so an operator reading either tool's
+    name knows where it came from;
+  * **a name that collides with a native name is dropped, not
+    renamed.** Two definitions of one name is how a model sends
+    arguments that one of them does not have;
+  * **the servers are the operator's.** One config block in
+    `config.py`; the model cannot add, remove or widen one. What the
+    model may call is bounded twice: by that config, and by the gate;
+  * **the gate is per server, not per bot.** `always` (every chat,
+    every profile — for a tool that was there before MCP existed),
+    `profile` (everywhere except the public profile) and `dev-chat`
+    (the allowlisted chats only, in dev). The public bot has the
+    native Telegram tools and nothing else;
+  * **the list the model is shown is built in ONE place**
+    (`llm_tools.build_tool_defs`), and it does not contain the
+    engine's own tools. The bot cannot execute them, and offering a
+    tool that must be refused spends a turn for nothing;
+  * **an imported tool's output is data, not instructions.** The
+    wrapper says so in the text the model reads, because a server's
+    answer is text somebody else wrote;
+  * **the dispatch of an imported call is one branch**
+    (`llm_dispatch._execute_mcp`), not one per server. A branch per
+    server is the thing that turns a config into a code change;
+  * **the isolation layer knows the imported names too.** They arrive
+    at runtime, so the constant cannot hold them: `KNOWN_TOOL_NAMES`
+    is the native set plus what the registry found.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1291,8 +1336,12 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_chat_history_search.py` | 12 | The bot's own record of the chat, and what it buys |
 | `test_message_id_in_context.py` | 13 | The conversation shows the model the Telegram id of every message |
 | `test_record_message_once.py` | 6 | The record holds a message once, not twice |
+| `test_mcp_client.py` | 15 | One MCP server, one protocol, one name for the tool |
+| `test_mcp_registry.py` | 18 | What the servers offer, and who may call it |
+| `test_mcp_import_wiring.py` | 6 | The imported tools reach the model and the dispatcher |
+| `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
 
-160 test files in total; the table above is the ones that guard a rule in
+163 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

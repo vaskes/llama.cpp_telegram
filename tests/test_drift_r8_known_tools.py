@@ -1,7 +1,7 @@
-"""T61 #R8: every name in KNOWN_TOOL_NAMES has a dispatch site.
+"""T61 #R8: every name in NATIVE_TOOL_NAMES has a dispatch site.
 
 Wave-trap pattern (predicted): a future commit adds a
-tool name to KNOWN_TOOL_NAMES (the bot-side whitelist
+tool name to NATIVE_TOOL_NAMES (the bot-side whitelist
 in tool_isolation.py) but forgets to add the dispatch
 site in call_llama.py. The LLM will emit a tool_call
 with the new name; validate_tool_calls accepts it (it's
@@ -9,7 +9,7 @@ in the whitelist); the dispatch block has no elif
 fn_name == branch; the bot silently returns None.
 The user sees a tool result that says nothing useful.
 
-This tripwire asserts: every name in KNOWN_TOOL_NAMES
+This tripwire asserts: every name in NATIVE_TOOL_NAMES
 appears in at least one dispatch site in call_llama.py.
 """
 from __future__ import annotations
@@ -33,12 +33,12 @@ CALL_LLAMA_PY = (
 
 def _extract_known_tool_names(src: str) -> set:
     m = re.search(
-        r"KNOWN_TOOL_NAMES\s*:\s*frozenset\[str\]\s*=\s*frozenset\(\{(.*?)\}\)",
+        r"NATIVE_TOOL_NAMES\s*:\s*frozenset\[str\]\s*=\s*frozenset\(\{(.*?)\}\)",
         src, re.DOTALL,
     )
     if not m:
         raise AssertionError(
-            "Could not find KNOWN_TOOL_NAMES frozenset definition "
+            "Could not find NATIVE_TOOL_NAMES frozenset definition "
             "in tool_isolation.py. Tripwire is broken or the file "
             "has been heavily refactored. Update this tripwire."
         )
@@ -98,13 +98,13 @@ def _modules_with_tool_registries():
     return found
 
 def test_every_known_tool_name_has_dispatch_site():
-    """T61 #R8: every name in KNOWN_TOOL_NAMES must have at
+    """T61 #R8: every name in NATIVE_TOOL_NAMES must have at
     least one dispatch site in call_llama.py.
     """
     tool_isolation_src = TOOL_ISOLATION_PY.read_text()
     known_names = _extract_known_tool_names(tool_isolation_src)
     assert known_names, (
-        "KNOWN_TOOL_NAMES is empty - the bot would have no tools. "
+        "NATIVE_TOOL_NAMES is empty - the bot would have no tools. "
         "Either the file was refactored or this tripwire is broken."
     )
 
@@ -129,13 +129,13 @@ def test_every_known_tool_name_has_dispatch_site():
 
     missing = known_names - dispatched_names
     assert not missing, (
-        f"KNOWN_TOOL_NAMES has tool names with no dispatch site: "
+        f"NATIVE_TOOL_NAMES has tool names with no dispatch site: "
         f"{sorted(missing)}. Wave-trap pattern "
-        f"predicted: a future commit adds a tool to KNOWN_TOOL_NAMES "
+        f"predicted: a future commit adds a tool to NATIVE_TOOL_NAMES "
         f"but forgets the dispatch branch. The LLM will emit a "
         f"tool_call with this name; validate_tool_calls accepts it; "
         f"the dispatch block has no branch; the bot silently returns "
         f"None. Add a dispatch site (elif fn_name == 'name': ... or "
         f"include in DONSETCH_TOOLS / CUSTOM_TOOLS dict) or remove "
-        f"the name from KNOWN_TOOL_NAMES."
+        f"the name from NATIVE_TOOL_NAMES."
     )

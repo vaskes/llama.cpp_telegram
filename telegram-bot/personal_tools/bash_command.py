@@ -165,7 +165,7 @@ _T51_RATE_LIMIT_TTL_SEC = 3600  # 1 hour idle -> evict
 # Safe guards that REMAIN in place when dev mode is on:
 #   * T52 #H1 chat-type gate BYPASSED for listed chats (this is
 #     the ONLY thing dev mode changes).
-#   * T38.5 tool isolation whitelist (KNOWN_TOOL_NAMES).
+#   * T38.5 tool isolation whitelist (NATIVE_TOOL_NAMES).
 #   * T42 explicit tool whitelist in system prompt.
 #   * T43 soft-reject for unknown tool names.
 #   * T47 reframe wording (model encouraged to use tools).
@@ -370,6 +370,11 @@ AGENT_STACK_URL = os.environ.get(
     "AGENT_STACK_URL", "http://192.168.10.7:8090"
 )
 AGENT_STACK_TOKEN = os.environ.get("AGENT_STACK_TOKEN", "")
+# The side-car's address and token are read here, at import time, and
+# the MCP block in config.py reads them FROM HERE -- one owner for
+# both callers, so the shell tool and the imported MCP tools cannot
+# end up talking to two different side-cars.
+#
 # T52 #M3: the token is captured at import time. Operators
 # who edit /opt/telegram-bot/.env to rotate the token MUST
 # restart the bot for the new value to take effect:

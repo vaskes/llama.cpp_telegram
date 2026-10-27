@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from logconf import get_logger
+from mcp_client import GATE_DEV_CHAT, McpServerConfig
 log = get_logger(__name__)
 
 # === Telegram bot identity ===
@@ -214,6 +215,72 @@ LLAMABOT_SELFTEST = os.environ.get("LLAMABOT_SELFTEST") == "1"
 # === Donsetch MCP ===
 DONSETCH_URL = os.environ.get("DONSETCH_URL", "http://localhost:8765/mcp")
 DONSETCH_SESSION_ID: Optional[str] = None
+
+# === MCP servers (one config block) ===
+#
+# The imported half of the tool set: the tools the model may call
+# that somebody else's server implements. One list, one shape --
+# adding a server is adding an entry here, and nothing else in the
+# bot changes.
+#
+# Each entry says:
+#   name      the prefix its tool names carry ("<name>_<tool>");
+#   url       where the server listens (MCP over HTTP);
+#   headers   what to send (the sandbox wants its bearer token);
+#   include   the server's own tools to take (empty = all of them);
+#   exclude   the server's own tools to leave alone;
+#   gate      "profile" = every chat the profile allows,
+#             "dev-chat" = only the allowlisted chats, in dev mode;
+#   timeout   the per-call budget, in seconds.
+#
+# The tool NAMES are deliberately not listed here: the registry asks
+# the server what it has. A list kept by hand is a list that goes
+# stale -- which is how the bot ended up advertising tools it could
+# not execute.
+def _mcp_servers() -> list:
+    """The MCP servers, as the operator configured them.
+
+    A server without a token is not configured: the sandbox's MCP
+    endpoint wants the same bearer token as its HTTP ones, and a
+    server that would answer 401 is a server that only produces log
+    noise.
+
+    The side-car's address and token are read from the module that
+    owns them (the shell tool's), because they are the same
+    side-car: two readers of one fact is how two facts drift apart.
+    """
+    from personal_tools.bash_command import AGENT_STACK_TOKEN, AGENT_STACK_URL
+
+    servers = []
+    if AGENT_STACK_TOKEN:
+        servers.append(McpServerConfig(
+            name="sandbox",
+            url=f"{AGENT_STACK_URL}/mcp",
+            headers={"Authorization": f"Bearer {AGENT_STACK_TOKEN}"},
+            # `bash` is the shell the bot already has, with the
+            # policy that goes with it; `delete_file` destroys. Both
+            # are one word away from being imported, and neither is
+            # imported until that is a decision somebody made.
+            include=("read_file", "file_info"),
+            exclude=("bash", "delete_file"),
+            gate=GATE_DEV_CHAT,
+            timeout=MCP_CALL_TIMEOUT,
+            connect_timeout=MCP_CONNECT_TIMEOUT,
+        ))
+    return servers
+
+
+#: How long a TOOL CALL to an MCP server may take. A crawl is slow on
+#: purpose, so this one is generous.
+MCP_CALL_TIMEOUT = float(os.environ.get("MCP_CALL_TIMEOUT", "60"))
+
+#: How long the HANDSHAKE with an MCP server may take. This one is
+#: short on purpose: the handshake happens while the model waits for
+#: its tool list, and a server that cannot be reached in five seconds
+#: is not going to be reached in sixty either.
+MCP_CONNECT_TIMEOUT = float(os.environ.get("MCP_CONNECT_TIMEOUT", "5"))
+
+MCP_SERVERS = _mcp_servers()
 
 # === Webhook mode (T25) ===
 # When WEBHOOK_MODE=1, the bot starts an aiohttp server on

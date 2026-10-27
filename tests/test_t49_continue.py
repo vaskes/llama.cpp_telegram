@@ -1,5 +1,5 @@
 """T49 tests: when a tool call comes in for a name not in
-KNOWN_TOOL_NAMES, the dispatch loop continues (does not
+known_tool_names(), the dispatch loop continues (does not
 early-return) so the model can see the synthetic tool
 result on the next iteration and retry with a whitelisted
 tool.
@@ -86,10 +86,11 @@ def test_stuck_call_detector_intact():
 def test_t43_synthetic_tool_result_intact():
     """T43 synthetic tool result message for unhandled tools
     must still be generated and appended to msgs."""
-    # Block D4 moved the message into llm_dispatch.UNAVAILABLE_TOOL_MESSAGE.
-    from llm_dispatch import UNAVAILABLE_TOOL_MESSAGE
+    # Block D4 moved the message into llm_dispatch.unavailable_tool_message.
+    from llm_dispatch import unavailable_tool_message
     assert "tool __rejected__ unavailable" in src or \
-        "tool {name} unavailable" in UNAVAILABLE_TOOL_MESSAGE, \
+        "tool __rejected__ unavailable" in unavailable_tool_message(
+            "__rejected__"), \
         "synthetic tool result message missing"
     # The else: branch sets saw_unavailable_tool and appends
     # to msgs. Verify both code paths.

@@ -54,7 +54,7 @@ from llm_sse import StreamAccumulator
 from llm_thinking import push_thinking
 from llm_toolcalls import reject_unknown_names
 from logconf import get_logger
-from tool_isolation import (KNOWN_TOOL_NAMES, UnknownToolNameError,
+from tool_isolation import (UnknownToolNameError, known_tool_names,
                             validate_tool_calls)
 
 log = get_logger(__name__)
@@ -158,7 +158,7 @@ async def _fallback_to_nonstream(
         except UnknownToolNameError:
             # T43: soft-reject (same as site 1).
             bad_names = reject_unknown_names(
-                tool_calls, known=KNOWN_TOOL_NAMES)
+                tool_calls, known=known_tool_names())
             if bad_names:
                 log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject "
                          f"{sorted(bad_names)!r}; injecting tool result "

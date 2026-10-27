@@ -40,15 +40,29 @@ and should then be changed in one place with one test.
 import os
 from typing import Any, NamedTuple, Optional
 
+import mcp_registry
 from llm_truncation import condense
 from rating import _execute_react_to_message
+from tool_isolation import known_tool_names
 
-UNAVAILABLE_TOOL_MESSAGE = (
-    '[tool {name} unavailable in this mode. Bot supports: '
-    'donsetch_web_search, donsetch_web_fetch, donsetch_web_crawl, '
-    'donsetch_web_screenshot, react_to_message, bash_command, '
-    'send_file (personal mode only).]'
-)
+def unavailable_tool_message(name: str) -> str:
+    """What the model is told about a tool the bot cannot run.
+
+    The list of tools is read from the whitelist, not written by
+    hand. The hand-written version had already gone stale: it did
+    not mention `delete_messages` or `search_messages`, which the bot
+    has been executing since October. A list that lies about what the
+    bot can do is worse than no list -- the model reads it as the
+    whole menu.
+
+    Some of the tools are available only in personal mode; the
+    message says so rather than pretending otherwise.
+    """
+    known = ", ".join(sorted(known_tool_names()))
+    return (
+        f"[tool {name} unavailable in this mode. Bot supports: {known}. "
+        f"Some of them are available only in personal mode.]"
+    )
 
 # T57 #S16: never trust the LLM's session_id. Deterministic on purpose.
 #
@@ -128,6 +142,7 @@ def result_is_empty(text: str) -> bool:
         or text.startswith("[donsetch")
         or text.startswith("[fetch error")
         or text.startswith("[tool")
+        or text.startswith("[mcp")
     )
 
 
@@ -187,6 +202,10 @@ async def execute_tool(name: str, args, deps: DispatchDeps) -> ToolExecution:
                         **(extras or {}))
         return _finish(text, ledger, deps)
 
+    imported = mcp_registry.get_registry()
+    if name in imported.known_names():
+        return await _execute_mcp(name, args, deps)
+
     registry = deps.custom_tools or {}
     if name in registry:
         result = await registry[name](args)
@@ -197,7 +216,7 @@ async def execute_tool(name: str, args, deps: DispatchDeps) -> ToolExecution:
         result = await registry[name](args)
         return _finish(result, _entry(name, args, deps.iteration), deps)
 
-    text = UNAVAILABLE_TOOL_MESSAGE.format(name=name)
+    text = unavailable_tool_message(name)
     return ToolExecution(text=text, empty=True, unavailable=True, ledger=None)
 
 
@@ -406,6 +425,21 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
                       size=fetched.size, sha256=fetched.sha256,
                       file_id=file_id),
     )
+
+
+async def _execute_mcp(name: str, args, deps: DispatchDeps) -> ToolExecution:
+    """Call a tool the bot imported from an MCP server.
+
+    The registry owns the route: it knows which server offered the
+    tool, and it checks the gate before the call leaves the process.
+    The bot has no branch per server -- that is the whole point of
+    the registry. Adding a server is a config line, not a dispatch
+    branch, and a tool the model names that no server offered never
+    reaches the wire.
+    """
+    registry = mcp_registry.get_registry()
+    text = await registry.call(name, args, chat_id=deps.chat_id)
+    return _finish(text, _entry(name, args, deps.iteration), deps)
 
 
 def _finish(result, ledger: dict, deps: DispatchDeps) -> ToolExecution:

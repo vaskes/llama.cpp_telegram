@@ -43,7 +43,7 @@ from context_budget import OVERFLOW_MESSAGE, is_context_overflow
 from http_clients import _abortable_post
 from user_notice import engine_failure_message
 from logconf import get_logger
-from tool_isolation import (KNOWN_TOOL_NAMES, UnknownToolNameError,
+from tool_isolation import (UnknownToolNameError, known_tool_names,
                             validate_tool_calls)
 
 log = get_logger(__name__)
@@ -172,10 +172,10 @@ async def non_stream_iteration(req_body: dict, *, iteration: int,
         bad_names = sorted({(tc.get("function") or {}).get("name") or "" for tc in non_stream_tool_calls})
         log.info(f"[TOOL-ISOLATION] iter={iteration} soft-reject {bad_names!r}; "
             f"injecting tool result feedback")
-        known_list = ", ".join(sorted(KNOWN_TOOL_NAMES))
+        known_list = ", ".join(sorted(known_tool_names()))
         for tc in non_stream_tool_calls:
             fn = (tc.get("function") or {})
-            if (fn.get("name") or "") not in KNOWN_TOOL_NAMES:
+            if (fn.get("name") or "") not in known_tool_names():
                 fn["name"] = "__rejected__"
                 fn["arguments"] = "{}"
         saw_unavailable_tool = True

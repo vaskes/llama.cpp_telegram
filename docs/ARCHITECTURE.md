@@ -15,7 +15,9 @@ telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
 ├── handlers.py            # handle_text/photo/voice/document (1474 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   520 lines file, 366 in the function, 345 in the loop
+│                          #   377 lines file, 222 in the function, 345 in the loop
+├── mcp_client.py          # MCP protocol for ONE server (327)
+├── mcp_registry.py        # the tools imported from the MCP servers (302)
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py      # human-to-human reply absorb (162)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
@@ -64,11 +66,11 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       419  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _finish
+  llm_dispatch.py       453  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      571  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
-  call_llama.py         520  call_llama
+  call_llama.py         377  call_llama
   llm_loop_guard.py     185  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py       119  _tag_sender
@@ -84,7 +86,7 @@ tests, none of which build a full `call_llama`.
   llm_thinking.py       128  ThinkingThrottle, push_thinking
   llm_toolargs.py       215  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
-  llm_tools.py           99  _bash_command_tool_enabled, fetch_tools_from_llama
+  llm_tools.py          300  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
   llm_sendfile.py         79  send_file_tool_def
   llm_delete.py           855  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal, requested_ids
   llm_history.py          256  search_messages_tool_def, run_search, known_ids
@@ -160,29 +162,53 @@ The cycle:
 
 ## Tools the bot can execute
 
-The bot has a **whitelist** (`KNOWN_TOOL_NAMES` in
-`tool_isolation.py`) of 9 tools it will dispatch. llama-server may
-have many more tools loaded (via `--agent --mcp-servers-config`),
-but any tool name not in the whitelist is **renamed to
+The bot has **two classes** of tools, and the model calls both the
+same way.
+
+**NATIVE** tools are the bot's own. Their names live in
+`NATIVE_TOOL_NAMES` in `tool_isolation.py` -- a constant, because
+they do not change while the bot runs.
+
+**IMPORTED** tools are somebody else's: whatever an MCP server
+offers. They are discovered at runtime (`mcp_registry.py`), they
+are named `<server>_<tool>`, and they are dispatched to the server
+that offered them. The list of servers is the operator's, in one
+config block in `config.py`; the model cannot add one.
+
+Any tool name that is neither native nor imported is **renamed to
 `__rejected__`** with a synthetic tool result that lists the
-available tools. The model can then retry with a whitelisted tool.
+available tools. The model can then retry with a tool it may use.
 
-| Tool | Implementation | Available when | Defence |
-|---|---|---|---|
-| `donsetch_web_search` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
-| `donsetch_web_fetch` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
-| `donsetch_web_crawl` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
-| `donsetch_web_screenshot` | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
-| `react_to_message` | Telegram Bot API `set_message_reaction` | always | — |
-| `bash_command` | HTTP POST to vaskes/OpenWebUI-bash-sandbox side-car | **personal profile ONLY + private chat ONLY** | T38, T52 #H1, T52 #M1, T52 #S2/S3 |
-| `send_file` | reads a file out of the same sandbox side-car | personal profile ONLY | T57 |
-| `delete_messages` | Telegram Bot API `deleteMessage` | where the bot may delete (admin, or a private chat) | the ids it may use are vouched for |
-| `search_messages` | reads the bot's own record of the chat | always | a read: the record is not a scratch pad |
+| Tool | Class | Implementation | Available when | Defence |
+|---|---|---|---|---|
+| `donsetch_web_search` | native | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
+| `donsetch_web_fetch` | native | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
+| `donsetch_web_crawl` | native | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
+| `donsetch_web_screenshot` | native | HTTP POST to donsetch-http MCP `/mcp` | donsetch-http is up | — |
+| `react_to_message` | native | Telegram Bot API `set_message_reaction` | always | — |
+| `bash_command` | native | HTTP POST to vaskes/OpenWebUI-bash-sandbox side-car | **personal profile ONLY + private chat ONLY** | T38, T52 #H1, T52 #M1, T52 #S2/S3 |
+| `send_file` | native | reads a file out of the same sandbox side-car | personal profile ONLY | T57 |
+| `delete_messages` | native | Telegram Bot API `deleteMessage` | where the bot may delete (admin, or a private chat) | the ids it may use are vouched for |
+| `search_messages` | native | reads the bot's own record of the chat | always | a read: the record is not a scratch pad |
+| `<server>_<tool>` | imported | MCP `tools/call` on the server that offered it | the operator configured the server, and the gate allows this chat | the output is wrapped as data, not instructions |
 
-All other tool names (incl. llama-server's built-in
-`exec_shell_command`, `read_file`, `write_file`, etc.) are
-**rejected at the bot layer** even if llama-server advertises
-them. See `tool_isolation.py` for the full list.
+llama-server's own tools (its built-in `exec_shell_command`,
+`read_file`, `write_file`, ...) are **not** offered to the model: the
+bot cannot execute them, and advertising a tool the bot must refuse
+spends a turn for nothing. `merge_tools()` in `llm_tools.py` is
+where that is decided.
+
+### The imported class, in one paragraph
+
+An imported tool is a tool somebody else's server implements. The
+registry asks the server what it has (`tools/list`), offers the
+model the server's own description and schema under the name
+`<server>_<tool>`, and sends the model's call back to that server
+(`tools/call`). The bot has no branch per server: adding a server is
+a config line, not a dispatch branch. What the model may call is
+bounded twice -- by the operator's config block (which servers exist,
+and which of their tools are taken) and by the gate (which chats may
+use them).
 
 ## bash_command — killer feature, defence in depth
 

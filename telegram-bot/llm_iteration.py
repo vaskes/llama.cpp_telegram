@@ -58,7 +58,7 @@ from llm_toolargs import ArgsRejected, parse_tool_args
 from llm_toolcalls import normalize_tool_calls
 from llm_truncation import condense
 from logconf import get_logger
-from tool_isolation import KNOWN_TOOL_NAMES
+from tool_isolation import known_tool_names
 
 log = get_logger(__name__)
 
@@ -344,7 +344,7 @@ class ToolLoop:
             "reasoning_content": reasoning_buf or None,
         }
         normalized = normalize_tool_calls(tool_calls_buf,
-                                          known=KNOWN_TOOL_NAMES)
+                                          known=known_tool_names())
         saw_unavailable_tool = (saw_unavailable_tool
                                 or normalized.saw_unavailable_tool)
         for bad_name in normalized.rejected:

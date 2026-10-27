@@ -23,11 +23,11 @@ import llm_dispatch
 from llm_dispatch import (
     MAX_TOOL_RESULT_CHARS,
     SESSION_ID_TEMPLATE,
-    UNAVAILABLE_TOOL_MESSAGE,
     DispatchDeps,
     ToolExecution,
     execute_tool,
     result_is_empty,
+    unavailable_tool_message,
 )
 
 pytestmark = pytest.mark.tech_debt(item=8)
@@ -145,7 +145,7 @@ async def test_the_refusal_is_not_truncated_by_the_module():
     it appends. Applying it here would make the constant untestable."""
     got = await execute_tool("rm_rf", {}, deps())
     assert len(got.text) < MAX_TOOL_RESULT_CHARS
-    assert got.text == UNAVAILABLE_TOOL_MESSAGE.format(name="rm_rf")
+    assert got.text == unavailable_tool_message("rm_rf")
 
 
 # --------------------------------------------------------------------------

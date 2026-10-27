@@ -19,7 +19,7 @@ import pytest
 def _extract_known_tool_names(src: str) -> set:
     import re
     m = re.search(
-        r"KNOWN_TOOL_NAMES\s*:\s*frozenset\[str\]\s*=\s*frozenset\(\{(.*?)\}\)",
+        r"NATIVE_TOOL_NAMES\s*:\s*frozenset\[str\]\s*=\s*frozenset\(\{(.*?)\}\)",
         src, re.DOTALL,
     )
     if not m:
@@ -57,14 +57,14 @@ def _extract_env_vars_documented(example_src: str) -> set:
     return names
 
 
-# === Backtest #R8: add a tool to KNOWN_TOOL_NAMES without dispatch ===
+# === Backtest #R8: add a tool to NATIVE_TOOL_NAMES without dispatch ===
 
 def test_backtest_r8_catches_undispatched_tool():
-    """If a tool is added to KNOWN_TOOL_NAMES but not
+    """If a tool is added to NATIVE_TOOL_NAMES but not
     dispatched in call_llama.py, the tripwire catches it.
     """
     bad_known = '''
-KNOWN_TOOL_NAMES: frozenset[str] = frozenset({
+NATIVE_TOOL_NAMES: frozenset[str] = frozenset({
     "react_to_message",
     "bash_command",
     "totally_new_tool_without_dispatch",

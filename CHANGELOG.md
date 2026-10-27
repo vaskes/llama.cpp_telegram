@@ -16,8 +16,66 @@ this file is the human-readable summary.
 ## [Unreleased]
 
 **After `v0.13.0-stable`.** The post-release cycle: the empty-answer
-retry, the leaked token, the attribution cleanup, the codebook, and the
-deployment profile that finally has its own numbers.
+retry, the leaked token, the attribution cleanup, the codebook, the
+deployment profile that finally has its own numbers, and the MCP
+module.
+
+### Two classes of tools: the bot's own, and the ones a server brought
+
+The operator's directive (2026-10-27): the bot is already an agentic
+harness, so it should be able to talk to an arbitrary MCP server and
+get that server's tools. The payoff is that a new capability becomes a
+config line instead of a commit.
+
+What landed:
+
+  * **`telegram-bot/mcp_client.py`** — the MCP protocol for ONE server:
+    the handshake, `tools/list`, `tools/call`, the SSE answer, the
+    session id, and the one error worth retrying (the server forgot
+    the session, so a fresh handshake fixes it);
+  * **`telegram-bot/mcp_registry.py`** — what the servers offer, under
+    the names the model will see: `<server>_<tool>`, the convention
+    llama.cpp uses for the same job;
+  * **`telegram-bot/llm_tools.py`** — the ONE place the model's tool
+    list is built. It used to live inside `call_llama`, where nothing
+    could test it without a model call;
+  * **`telegram-bot/llm_dispatch.py`** — one branch for every imported
+    call (`_execute_mcp`). A branch per server would turn a config
+    line back into a code change;
+  * **`telegram-bot/tool_isolation.py`** — the native names stay a
+    constant; the imported ones arrive at runtime and are registered
+    with the isolation layer, which is the only thing that knows them.
+
+The rules that came with it (CODEBOOK X-14):
+
+  * the servers are the operator's, in one config block in
+    `config.py`; the model cannot add one;
+  * the gate is per server — `always`, `profile` or `dev-chat` — and
+    the public bot has the native Telegram tools and nothing else;
+  * a name that collides with a native name is **dropped**, not
+    renamed: two definitions of one name is how a model sends
+    arguments that one of them does not have;
+  * an imported tool's output is wrapped as **data**, not
+    instructions, because a server's answer is text somebody else
+    wrote;
+  * **the engine's own tools are not offered.** The bot cannot execute
+    `exec_shell_command` or `read_file`, and advertising a tool that
+    must be refused spends a turn for nothing. That was measured on
+    the live engine, which advertises 11 tools the bot cannot run;
+  * the handshake has its own short budget (5 s) and the tool call its
+    own long one (60 s): the handshake happens while the model waits
+    for its list, and a server that cannot be reached in five seconds
+    is not going to be reached in sixty either;
+  * the servers are asked **at the same time**, so one slow server
+    does not make the others wait for it.
+
+Along the way, one real defect was fixed: four tests in
+`tests/test_s2_s3_validation.py` set the environment directly and
+never gave it back, so a token stayed in the process for the rest of
+the session. The selftest block that reads the environment was green
+alone and red inside the suite — and the leak would have been the
+production bot's configuration too, in any process that ran those
+tests.
 
 ### The conversation shows the model the id of every message
 

@@ -26,6 +26,7 @@ import ast
 from test_drift_helpers import (
     BASH_COMMAND_PY,
     CALL_LLAMA_PY,
+    TELEGRAM_BOT_DIR,
     module_level_names,
     parse_source,
 )
@@ -58,28 +59,37 @@ def test_call_llama_does_not_define_bash_command_tool_def():
     )
 
 
-def test_call_llama_imports_bash_command_tool_def_exactly_once():
-    """T60 #2: call_llama.py must have exactly one
-    `from personal_tools.bash_command import BASH_COMMAND_TOOL_DEF`
-    statement. Multiple imports indicate divergence risk;
-    zero imports indicate the tool is not wired up.
+def test_the_tool_list_owner_imports_bash_command_tool_def_exactly_once():
+    """T60 #2: exactly one module may import the canonical
+    `BASH_COMMAND_TOOL_DEF` from personal_tools.bash_command.
+
+    The property is about the SYMBOL, not about a file: the tool list
+    moved from call_llama.py to llm_tools.py on 2026-10-27, and a
+    tripwire bound to the old file would have gone red for a move
+    that changed nothing. So the whole telegram-bot tree is scanned:
+    one importer means one owner, and no module may answer for
+    another.
+
+    Multiple imports indicate divergence risk; zero imports indicate
+    the tool is not wired up.
     """
-    tree = parse_source(CALL_LLAMA_PY)
-    matches: list[int] = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.ImportFrom)
-            and node.module == "personal_tools.bash_command"
-        ):
-            for alias in node.names:
-                if alias.name == "BASH_COMMAND_TOOL_DEF" or alias.asname == "BASH_COMMAND_TOOL_DEF":
-                    matches.append(node.lineno)
+    matches: list[str] = []
+    for path in sorted(TELEGRAM_BOT_DIR.rglob("*.py")):
+        tree = parse_source(path)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "personal_tools.bash_command"
+            ):
+                for alias in node.names:
+                    if alias.name == "BASH_COMMAND_TOOL_DEF" or alias.asname == "BASH_COMMAND_TOOL_DEF":
+                        matches.append(f"{path.name}:{node.lineno}")
     assert len(matches) == 1, (
-        f"call_llama.py must have exactly one import of "
-        f"BASH_COMMAND_TOOL_DEF from personal_tools.bash_command. "
-        f"Found {len(matches)} at lines {matches}. Wave-1 #M5 / "
-        f"wave-5 #D7 wave-trap class: too few imports means the "
-        f"tool isn't wired up; too many means divergence risk."
+        f"exactly one module must import BASH_COMMAND_TOOL_DEF from "
+        f"personal_tools.bash_command. Found {len(matches)}: "
+        f"{matches}. Wave-1 #M5 / wave-5 #D7 wave-trap class: too few "
+        f"imports means the tool isn't wired up; too many means "
+        f"divergence risk."
     )
 
 

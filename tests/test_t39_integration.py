@@ -106,5 +106,5 @@ def test_personal_tools_bash_command_in_known_tool_names():
     (otherwise the tool_isolation guard would reject our own
     tool call). Pin that here as a regression tripwire.
     """
-    from tool_isolation import KNOWN_TOOL_NAMES
-    assert "bash_command" in KNOWN_TOOL_NAMES
+    from tool_isolation import NATIVE_TOOL_NAMES
+    assert "bash_command" in NATIVE_TOOL_NAMES

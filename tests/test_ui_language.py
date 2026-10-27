@@ -61,9 +61,10 @@ ALLOWED = {
         # The summariser prompt: addressed to the model, not to the user.
         "Ты сжимаешь историю",
     ],
-    "call_llama.py": [
+    "llm_tools.py": [
         # The reaction tool description, with a Russian request as the
         # example of what the user may type. Model-facing schema.
+        # It moved here with the rest of the tool list (2026-10-27).
         "поставь",
     ],
     "context_budget.py": [

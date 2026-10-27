@@ -19,10 +19,10 @@ Defence in depth
 The isolation property lives on the BOT SIDE, not on the llama side.
 
   1. The bot advertises ONLY the tool names it knows how to dispatch
-     (KNOWN_TOOL_NAMES). llama-server is free to have its own tools;
+     (known_tool_names()). llama-server is free to have its own tools;
      we just don't tell the model about them.
   2. The bot REJECTS every tool_calls response that contains a
-     function name not in KNOWN_TOOL_NAMES. The rejection happens
+     function name the bot does not know. The rejection happens
      BEFORE we look up how to execute the tool, so we never run
      something we did not define.
   3. The bot logs a clear error when an unknown tool name appears
@@ -33,21 +33,45 @@ The isolation property lives on the BOT SIDE, not on the llama side.
 Maintenance
 -----------
 When a new tool is added to the bot, its name MUST be added to
-KNOWN_TOOL_NAMES in this file. The unit tests in
+NATIVE_TOOL_NAMES in this file. The unit tests in
 tests/test_tool_isolation.py enumerate this set and will fail
 loudly if a new tool ships without being registered. See
 docs/TOOL-ISOLATION.md for the full threat model and the
 maintenance checklist.
+
+Two classes of tools, and what the whitelist means
+--------------------------------------------------
+NATIVE tools are the bot's own -- Telegram, and the shell. Their
+names live in NATIVE_TOOL_NAMES, which is a constant.
+
+IMPORTED tools are somebody else's: they come from MCP servers, and
+they are discovered rather than declared (see mcp_registry.py). Their
+names are not in the constant -- they cannot be, they do not exist
+until a server answers -- so they are added by known_tool_names(),
+which is the union the validators actually use.
+
+The split matters because the two classes have different owners. A
+native tool is dispatched by a branch in llm_dispatch.py, and that
+branch is what the tripwires check. An imported tool is dispatched by
+the registry, which only ever calls the server it discovered the tool
+on -- so the model cannot make the bot call a server the operator did
+not configure, and cannot name a tool that server does not have.
 """
 
 from __future__ import annotations
 
 from typing import Iterable
 
+from logconf import get_logger
 
-#: Every function name the bot knows how to dispatch. Adding a
-#: new tool = adding a name here AND shipping a handler.
-KNOWN_TOOL_NAMES: frozenset[str] = frozenset({
+log = get_logger(__name__)
+
+
+#: Every NATIVE function name the bot knows how to dispatch. Adding
+#: a new native tool = adding a name here AND shipping a handler.
+#: Imported (MCP) tools are not here: they are found at runtime, and
+#: known_tool_names() is what adds them.
+NATIVE_TOOL_NAMES: frozenset[str] = frozenset({
     # donsetch_* tools: implemented in bot.py, dispatched over
     # HTTP to donsetch-http at 127.0.0.1:8765/mcp. They do
     # NOT touch the host shell; they only call out to a
@@ -91,9 +115,9 @@ KNOWN_TOOL_NAMES: frozenset[str] = frozenset({
 
 class UnknownToolNameError(Exception):
     """Raised when llama-server returns a tool_call whose function
-    name is not in KNOWN_TOOL_NAMES. The bot must NEVER execute
-    such a call; the whole response (or at least that tool_call)
-    is rejected and a clear error is sent back to the user.
+    name is not known to the bot. The bot must NEVER execute such a
+    call; the whole response (or at least that tool_call) is rejected
+    and a clear error is sent back to the user.
     """
 
     def __init__(self, unknown_names: list[str], known: Iterable[str]):
@@ -110,17 +134,44 @@ class UnknownToolNameError(Exception):
         )
 
 
-def known_tool_names() -> frozenset[str]:
-    """Public accessor for the whitelist. Callers MUST go through
-    this rather than reading KNOWN_TOOL_NAMES directly so that
-    test code and runtime code see the same set.
+#: The names the MCP registry found at its last refresh. The registry
+#: writes them here (register_imported_tool_names) instead of the
+#: isolation layer reaching for the registry: one direction, and no
+#: import cycle between the two.
+_IMPORTED_TOOL_NAMES: frozenset[str] = frozenset()
+
+
+def register_imported_tool_names(names: Iterable[str]) -> None:
+    """The registry tells the isolation layer what the servers offer.
+
+    Called by the registry after every refresh, including a refresh
+    that found nothing: a server that went away takes its tools out
+    of the whitelist, and the model that still remembers one gets a
+    refusal instead of a call to a server that is not there.
     """
-    return KNOWN_TOOL_NAMES
+    global _IMPORTED_TOOL_NAMES
+    _IMPORTED_TOOL_NAMES = frozenset(names)
+
+
+def known_tool_names() -> frozenset[str]:
+    """Every name the bot may execute: the native ones, plus the
+    tools imported from MCP servers.
+
+    The native half is a constant. The imported half is whatever the
+    registry found at its last refresh -- a server that is down
+    contributes nothing, and the native tools are unaffected, which
+    is the whole point of keeping the two classes apart.
+
+    Callers MUST go through this rather than reading
+    NATIVE_TOOL_NAMES directly, so that the validators and the
+    dispatcher see the same set.
+    """
+    return NATIVE_TOOL_NAMES | _IMPORTED_TOOL_NAMES
 
 
 def is_known_tool_name(name: str) -> bool:
     """True iff `name` is in the bot's whitelist."""
-    return name in KNOWN_TOOL_NAMES
+    return name in known_tool_names()
 
 
 def extract_function_names(tool_calls: list) -> list[str]:
@@ -145,8 +196,8 @@ def extract_function_names(tool_calls: list) -> list[str]:
 
 def validate_tool_calls(tool_calls: list) -> list[str]:
     """Return the list of function names from `tool_calls`,
-    raising UnknownToolNameError if any name is not in
-    KNOWN_TOOL_NAMES.
+    raising UnknownToolNameError if any name is not known to the
+    bot.
 
     This is the single guard the bot must call before executing
     any tool. It is intentionally strict: even ONE unknown name
@@ -158,7 +209,8 @@ def validate_tool_calls(tool_calls: list) -> list[str]:
     the user.
     """
     names = extract_function_names(tool_calls)
-    unknown = [n for n in names if n not in KNOWN_TOOL_NAMES]
+    known = known_tool_names()
+    unknown = [n for n in names if n not in known]
     if unknown:
-        raise UnknownToolNameError(unknown, KNOWN_TOOL_NAMES)
+        raise UnknownToolNameError(unknown, known)
     return names
