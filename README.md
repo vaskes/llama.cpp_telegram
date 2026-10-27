@@ -1,21 +1,35 @@
 # llama.cpp_telegram
 
-> **Current stable: `v0.14.0-stable`** (2026-10-27, commit `4c22b4e`).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
+[![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
+[![Release](https://img.shields.io/github/v/release/vaskes/llama.cpp_telegram?label=release)](../../releases)
+[![Tests: 2806](https://img.shields.io/badge/tests-2806-brightgreen)](tests/)
+
+> **Current stable: `v0.15.0-stable`** (2026-10-27, commit `e174168`).
 > Pin to a tag — see the clone command below.
 >
-> `v0.14.0` is the **tools-and-deployment** release: the bot can import
-> tools from MCP servers (which servers, and which of their tools, is
-> the operator's config — the model never adds a server), the side-car's
-> pin matches the side-car the bot actually talks to, and **a release is
-> the deployable unit**: the CI builds the image and attaches it to the
-> GitHub Release, and the production host loads that image. The
-> production host keeps no git of its own.
+> `v0.15.0` is the **limits-and-resilience** release: a command in the
+> sandbox may run for an hour. The operator measured the old limit from
+> the inside — a command was cut off at a minute, and the output it had
+> already produced went with it — and ruled that an hour is the ceiling.
+> The bot's turn budget is now longer than the command it runs, so a
+> long command comes back with its answer instead of being thrown away
+> at the boundary. A Telegram API hiccup on the typing indicator can no
+> longer cost the user their turn.
 >
-> `v0.13.0` was a **refactor release**: the 1612-line `dispatch.py` is now
-> 345 lines across five owner modules, `call_llama` is 478 lines across
-> 17 leaf modules, and the bot now assembles its own context instead of
-> sending a fixed number of messages. Nothing about the user-facing
-> behaviour changed on purpose.
+> Before it: `v0.14.1` — the delivery delivers the file and leaves it
+> alone; `v0.14.0` — the **tools-and-deployment** release (the bot can
+> import tools from MCP servers; which servers, and which of their
+> tools, are the operator's config — the model never adds a server; the
+> side-car's pin matches the side-car the bot actually talks to; and **a
+> release is the deployable unit** — the CI builds the image and attaches
+> it to the GitHub Release, and the production host loads that image and
+> keeps no git of its own); `v0.13.0` — the **refactor release**: the
+> 1612-line `dispatch.py` is now 345 lines across five owner modules,
+> `call_llama` is 478 lines across 17 leaf modules, and the bot now
+> assembles its own context instead of sending a fixed number of
+> messages. Nothing about the user-facing behaviour changed on purpose.
 >
 > **What is verified:** deployed in production in webhook mode; the whole
 > pytest suite green on Python **3.11** (the production interpreter) and
@@ -39,13 +53,34 @@
 > branch is bleeding-edge and may include unreleased refactors
 > that have not been human-tested. Pin to a tag:
 > ```bash
-> git clone --branch v0.14.0-stable https://github.com/vaskes/llama.cpp_telegram.git
+> git clone --branch v0.15.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 > ```
 > Bleeding edge is for contributors only. See [Releases](../../releases)
 > for the full stable-tag history.
 >
 
-**What `v0.14.0-stable` adds over `v0.13.0-stable`:**
+**What `v0.15.0-stable` adds over `v0.14.1-stable`:**
+
+- **A command may run for an hour.** The sandbox's ceiling moved to
+  3600 s and the production deployment raises the knob to it. The bot's
+  client timeout, the turn's budget and the engine's HTTP timeout all
+  followed: a limit is a chain, and raising one link without the next
+  is a limit that eats the answer. Measured on the production host: a
+  90-second command comes back complete — through the side-car and
+  through the bot's own tool path.
+- **A decoration cannot end the turn.** The typing indicator is
+  decoration, but three of the four handlers asked the Telegram API for
+  it without a guard, so a one-second network hiccup lost the user's
+  voice message before the model was ever asked. One helper, one guard,
+  and the refusal is logged.
+
+**What `v0.14.1-stable` added over `v0.14.0-stable`:** the delivery of
+a file no longer removes the sandbox copy on the tool's own initiative —
+and the answer does not announce it as a fact. The capability itself is
+gone from the client: nothing deletes anything except a command the
+operator asked for.
+
+**What `v0.14.0-stable` added over `v0.13.0-stable`:**
 
 - **The bot can import tools from MCP servers.** The operator's config
   block says which servers, which of their tools, and in which chats; the
@@ -271,7 +306,7 @@ your host topology; see `telegram-bot/docker-compose.yml` and
 The repository builds **one artifact**, and the release carries it:
 
 ```
- push tag v0.14.0-stable
+ push tag vX.Y.Z-stable
             │
             ▼
  ┌──────────────────────────┐        GitHub Release (public)
@@ -311,7 +346,7 @@ See [docs/SETUP.md](docs/SETUP.md) for step-by-step.
 Short version:
 
 ```bash
-git clone --branch v0.14.0-stable https://github.com/vaskes/llama.cpp_telegram.git
+git clone --branch v0.15.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 cd llama.cpp_telegram
 sudo ./scripts/install.sh
 sudo $EDITOR /opt/telegram-bot/.env   # BOT_TOKEN, ALLOWED_USER_IDS

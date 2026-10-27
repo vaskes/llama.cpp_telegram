@@ -8,7 +8,7 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.13.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.15.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
@@ -16,6 +16,27 @@ this file is the human-readable summary.
 ## [Unreleased]
 
 **After `v0.15.0-stable`.** The next cycle starts here.
+
+### The README wears badges, and they tell the truth
+
+The README's header now carries the same badge block as the side-car's:
+license, interpreter, compose, release, and the test count.
+
+The number in the badge is a claim about the tree, so it is checked
+against the tree: `tests/test_readme_release_claims.py` collects the
+tests and compares, checks that the version badge agrees with the
+Dockerfile's pinned interpreter and the license badge with the LICENSE
+file, and checks that the header's "current stable" and **every** clone
+command pin the release the tags say is current.
+
+That last check is the one that earns its keep: the clone pins in the
+README's header, the README's quick start, SETUP, BASH-SANDBOX and the
+CHANGELOG's header were all a release behind at the same time, while
+the README looked perfect. They are all `v0.15.0-stable` now.
+
+Tripwires: `tests/test_readme_release_claims.py` (6); mutation harness
+`scripts/mutation_harness_readme_claims.py` (8 mutations: 7 caught,
+1 survived — group B). Rule **X-22**.
 
 ## [v0.15.0-stable] — 2026-10-27 — The decoration cannot end the turn, and a command may run for an hour
 

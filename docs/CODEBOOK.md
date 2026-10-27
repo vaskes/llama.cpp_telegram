@@ -1399,6 +1399,47 @@ permission, and a 401 is the token.
 
 ---
 
+### 3.10 A claim about this repository
+
+**X-22 — A badge is a claim, and somebody recomputes it.** `AUTO`
+`tests/test_readme_release_claims.py`.
+
+The README's header is the first thing a visitor reads, and it is full
+of numbers that nobody recomputes: the test count in the badge, the
+current release in the header, the tag in the clone command. They were
+stale **together** — all of them, at once — while the README looked
+perfect: the clone command named `v0.14.0` while the stable release
+was `v0.15.0`, and the badge's number was two releases behind.
+
+The rules:
+
+  * **a number in a badge is a claim** — and the claim is checked
+    against the tree, not against memory;
+  * **the number rides in the same commit as what it counts** — the
+    badge's number and the tests it counts change together, or CI is
+    red;
+  * **one fact, one place** — the clone command pins the current stable
+    release, and every copy of that pin (the README's header, the
+    README's quick start, SETUP, BASH-SANDBOX, the CHANGELOG's header)
+    is checked against the tags;
+  * **a half-updated badge lies twice** — the alt text and the image URL
+    carry the number twice, and a reader sees one of them while a
+    screen reader says the other. Both are checked.
+
+Checked by `tests/test_readme_release_claims.py`: the badge's two
+numbers agree with each other and with the collected tests, the version
+badge agrees with the Dockerfile's pinned interpreter, the license badge
+agrees with the LICENSE file, the header names the release the tags say
+is current, and every clone command pins it. The harness
+`scripts/mutation_harness_readme_claims.py` puts the lie back eight
+ways and checks that the tripwire is the one that catches it.
+
+**The badge is also a promise about the repository's shape.** "Tests:
+N" says the suite is that big, and a suite that is smaller than the
+badge looks like a repository that lost its tests.
+
+---
+
 ## 4. Rules for the reviewer and the harness
 
 These are the ones that cost me personally, three waves running. They are about
@@ -1621,9 +1662,10 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_empty_answer_fallback.py` | 6 | The empty-answer fallback reaches the user |
 | `test_release_workflow.py` | 10 | The release door: a tag releases, and the release cannot reach the host |
 | `test_typing_indicator.py` | 6 | The typing indicator cannot end the turn |
+| `test_readme_release_claims.py` | 6 | The README's badges and clone-pins follow the tree and the tags |
 | `test_limits.py` | 19 | The turn's budget outlives the command it runs |
 
-167 test files in total; the table above is the ones that guard a rule in
+168 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

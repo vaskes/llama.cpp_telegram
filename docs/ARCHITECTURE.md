@@ -54,8 +54,8 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, leave the copy
 ```
 
-64 top-level modules, 167 test files, 2797 tests collected in a checkout.
-CI collects 2778 of them — the sandbox-marked file is excluded by name.
+64 top-level modules, 168 test files, 2806 tests collected in a checkout.
+CI collects 2787 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 
