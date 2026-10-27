@@ -193,8 +193,12 @@ def test_call_bash_command_rejects_non_string_command(monkeypatch):
     # Use the simplest check: rate limit and profile are needed to
     # get to the validation point. Set them.
     import os
-    os.environ["LLAMABOT_DEPLOYMENT_PROFILE"] = "personal"
-    os.environ["AGENT_STACK_TOKEN"] = "test-token-12345"
+    # monkeypatch, not os.environ: a value left behind here is read by
+    # every test after this one, and by the selftest's own subprocess.
+    # A leaked token is a leaked configuration -- it is exactly what
+    # makes a block pass alone and fail inside the suite.
+    monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
+    monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token-12345")
     import importlib
     import personal_tools.bash_command as bc
     importlib.reload(bc)
@@ -217,8 +221,12 @@ def test_call_bash_command_rejects_non_string_command(monkeypatch):
 
 def test_call_bash_command_rejects_oversized_command(monkeypatch):
     import os
-    os.environ["LLAMABOT_DEPLOYMENT_PROFILE"] = "personal"
-    os.environ["AGENT_STACK_TOKEN"] = "test-token-12345"
+    # monkeypatch, not os.environ: a value left behind here is read by
+    # every test after this one, and by the selftest's own subprocess.
+    # A leaked token is a leaked configuration -- it is exactly what
+    # makes a block pass alone and fail inside the suite.
+    monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
+    monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token-12345")
     import importlib
     import personal_tools.bash_command as bc
     importlib.reload(bc)
@@ -239,8 +247,12 @@ def test_call_bash_command_rejects_oversized_command(monkeypatch):
 
 def test_call_bash_command_rejects_bad_session_id(monkeypatch):
     import os
-    os.environ["LLAMABOT_DEPLOYMENT_PROFILE"] = "personal"
-    os.environ["AGENT_STACK_TOKEN"] = "test-token-12345"
+    # monkeypatch, not os.environ: a value left behind here is read by
+    # every test after this one, and by the selftest's own subprocess.
+    # A leaked token is a leaked configuration -- it is exactly what
+    # makes a block pass alone and fail inside the suite.
+    monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
+    monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token-12345")
     import importlib
     import personal_tools.bash_command as bc
     importlib.reload(bc)
@@ -265,8 +277,12 @@ def test_call_bash_command_accepts_good_inputs(monkeypatch):
     """The happy path: a well-formed command and session_id
     proceed to the network call (which we mock to return ok)."""
     import os
-    os.environ["LLAMABOT_DEPLOYMENT_PROFILE"] = "personal"
-    os.environ["AGENT_STACK_TOKEN"] = "test-token-12345"
+    # monkeypatch, not os.environ: a value left behind here is read by
+    # every test after this one, and by the selftest's own subprocess.
+    # A leaked token is a leaked configuration -- it is exactly what
+    # makes a block pass alone and fail inside the suite.
+    monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
+    monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token-12345")
     import importlib
     import personal_tools.bash_command as bc
     importlib.reload(bc)

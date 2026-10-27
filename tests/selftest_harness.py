@@ -291,6 +291,24 @@ asyncio.run(main())
 '''
 
 
+def clean_env(base=None):
+    """The environment a block (or the selftest) runs in.
+
+    The variables that would change what the block MEANS are removed.
+    The allowlist: the block is about the bot, not about who may talk
+    to it. The MCP servers: a token left behind by an earlier test
+    would send the block to a server that is not there, and the block
+    would fail for a reason that has nothing to do with the block --
+    which is the worst kind of failure, because it is green when run
+    alone and red inside the suite.
+    """
+    env = dict(os.environ if base is None else base)
+    for k in ("LLAMABOT_ALLOWED_USER_IDS", "ALLOWED_USER_IDS",
+              "AGENT_STACK_TOKEN", "AGENT_STACK_URL", "MCP_SERVERS"):
+        env.pop(k, None)
+    return env
+
+
 def run_selftest(env_extra=None, timeout=240):
     """Run `_selftest()` in a subprocess.
 
@@ -305,7 +323,7 @@ def run_selftest(env_extra=None, timeout=240):
     import tempfile
 
     srv, _thread, base = start_stub()
-    env = dict(os.environ)
+    env = clean_env()
     env.update({
         "BOT_TOKEN": "1:selftest",
         "TELEGRAM_API": f"{base}/bot",
@@ -319,8 +337,6 @@ def run_selftest(env_extra=None, timeout=240):
                                          "selftest_harness.db"),
         "SELFTEST_BOT_DIR": BOT,
     })
-    for k in ("LLAMABOT_ALLOWED_USER_IDS", "ALLOWED_USER_IDS"):
-        env.pop(k, None)
     if env_extra:
         env.update(env_extra)
 
@@ -385,7 +401,7 @@ def run_block(module, name, env_extra=None, timeout=120):
     import tempfile
 
     srv, _thread, base = start_stub()
-    env = dict(os.environ)
+    env = clean_env()
     env.update({
         "BOT_TOKEN": "1:selftest",
         "TELEGRAM_API": f"{base}/bot",
@@ -397,8 +413,6 @@ def run_block(module, name, env_extra=None, timeout=120):
         "SELFTEST_BLOCK_MODULE": module,
         "SELFTEST_BLOCK_NAME": name,
     })
-    for k in ("LLAMABOT_ALLOWED_USER_IDS", "ALLOWED_USER_IDS"):
-        env.pop(k, None)
     if env_extra:
         env.update(env_extra)
 

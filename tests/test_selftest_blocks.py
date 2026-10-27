@@ -193,3 +193,24 @@ def test_every_block_is_awaited_by_selftest(module_name):
         f"failure. Modules driven by run_all are covered by "
         f"`test_the_module_exists_and_has_blocks`; this is the "
         f"caller-side direction for the ones that are not.")
+
+
+def test_the_blocks_environment_names_no_mcp_server(monkeypatch):
+    """A block runs against a defined environment.
+
+    The MCP servers come from the environment. A token left behind by
+    an earlier test would send the block to a server that is not
+    there, and the block would fail for a reason that has nothing to
+    do with the block -- green when run alone, red inside the suite.
+    """
+    from selftest_harness import clean_env
+
+    monkeypatch.setenv("AGENT_STACK_TOKEN", "left-behind-by-another-test")
+    monkeypatch.setenv("AGENT_STACK_URL", "http://192.168.10.7:8090")
+    monkeypatch.setenv("MCP_SERVERS", "sandbox")
+
+    env = clean_env()
+
+    assert "AGENT_STACK_TOKEN" not in env
+    assert "AGENT_STACK_URL" not in env
+    assert "MCP_SERVERS" not in env
