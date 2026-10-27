@@ -260,11 +260,18 @@ def _mcp_servers() -> list:
     the log: a configuration that silently does nothing is one the
     operator cannot debug.
 
-    The side-car is NOT in this block on purpose. It speaks its own
-    HTTP API, not MCP -- measured on 2026-10-27, a POST to its /mcp
-    answers 404 -- and the bot already reaches it directly through
-    the shell tool. Listing it here would mean a server that could
-    only ever answer "not usable", and a warning every refresh.
+    The side-car the bot's shell tool talks to is NOT in this block on
+    purpose: it speaks its own HTTP API, not MCP. Measured on
+    2026-10-27, a POST to its /mcp answers 404. Listing it here would
+    mean a server that could only ever answer "not usable", and a
+    warning every refresh.
+
+    (The newer side-car, v2.12.0, DOES speak MCP -- it offers bash,
+    read_file, file_info and delete_file. It is not in the block
+    either, for a different reason: on this host its port is bound to
+    127.0.0.1, so the bot's container cannot reach it. Publishing that
+    port, or moving the bot's shell tool to the newer side-car, is the
+    operator's call.)
     """
     raw = os.environ.get("LLAMABOT_MCP_SERVERS", "").strip()
     if not raw:
