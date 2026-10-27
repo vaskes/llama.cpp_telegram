@@ -92,7 +92,7 @@ EXCEPTIONS = {
     ),
     "handle_text": (
         "handlers.py",
-        214,
+        211,
         "2026-10-23",
         "Not a debt item -- same shape as handle_photo, and registered only "
         "because it crossed 200 lines while nobody was looking. The reason "
@@ -100,7 +100,10 @@ EXCEPTIONS = {
         "what this file exists to catch. It grew again on 2026-10-27, by "
         "the Telegram id of the message being stored with the row (two "
         "lines) -- the same shape of change, and the same kind of "
-        "invisible.",
+        "invisible. It SHRANK again the same day, to 211, when the "
+        "typing indicator moved out to the shared `_typing_indicator` "
+        "helper: the handler had carried its own copy of the guard, and "
+        "three of the four handlers carried none.",
         "Split only together with the other three handlers, never alone.",
     ),
 }

@@ -17,6 +17,30 @@ this file is the human-readable summary.
 
 **After `v0.14.1-stable`.** The next cycle starts here.
 
+### A decoration cannot end the turn
+
+On 2026-10-27 a voice message was lost in production. The turn died before
+the model was ever asked: `send_action` raised `telegram.error.NetworkError`
+— an `httpx.ConnectError` to the Telegram API — and three of the four
+handlers had no guard around that call. The next update, 44 seconds later,
+was served normally, so the hiccup was over by then: the message was lost to
+a moment of network trouble, because the handler had asked the API for a
+decoration without a guard.
+
+**The typing indicator is decoration; the turn is the work.**
+
+  * `_typing_indicator` owns the guard, and all four handlers call it — one
+    helper, one guard. The helper used to be four call sites, which is four
+    chances to forget one;
+  * the refusal is logged, so an operator told that a message was lost can
+    see the indicator fail;
+  * a cancellation is not a network hiccup: the guard catches `Exception`,
+    so `CancelledError` still cancels the turn.
+
+Tripwires: `tests/test_typing_indicator.py` (6);
+mutation harness `scripts/mutation_harness_typing_indicator.py` (5 mutations:
+4 caught, 1 survived — group B). Rule **X-20**.
+
 ## [v0.14.1-stable] — 2026-10-27 — The delivery removes nothing
 
 **After `v0.14.0-stable`.** The documentation sweep, and the delivery that
