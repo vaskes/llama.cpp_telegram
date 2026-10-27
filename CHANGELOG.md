@@ -17,6 +17,11 @@ this file is the human-readable summary.
 
 **After `v0.14.0-stable`.** The next cycle starts here.
 
+* The documentation follows the release-as-artifact refactor: the README's
+  Architecture section now shows how a tag becomes a running container, and
+  SETUP, AGENT_GUIDE, TROUBLESHOOTING, ROADMAP and the side-car's guide
+  tell a host with a clone and a host deployed from a release apart.
+
 ## [v0.14.0-stable] — 2026-10-27 — The side-car's pin, the MCP door,
 and the release that carries the image
 
