@@ -27,10 +27,10 @@
 
 | | |
 |---|---|
-| HEAD | 101 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file, the writable rootfs and the pin that follows it, the lost answer that came back as an empty success, the stdin trap that eats the side-car's end marker, the tool that takes a message back out of the chat, the split of the chunk summaries out of `storage.py`, the Telegram id of every stored message, and the search over the bot's own record) |
-| Production | **deployed and verified** (2026-10-27 01:07 MSK, commit `9d82799`). The bot container runs `9d82799` with 0 restarts, `/healthz` is 200, the fatal scan is 0 and the ERROR count is 0; the smoke script reports 8 checks passed, 0 failed, 0 warnings. **The chat's own record is now searchable** (`search_messages`): the `messages` table carries the Telegram id of the message every row came from, the tool reads the record with informal filters (a substring of the body, a substring of the sender's name, or nothing for the newest messages), and the ids it returns are in reach for `delete_messages`. Measured on the deployed tree: the live model calls the tool (`search_messages({'text': 'сериал'})` -> 6 matches) and reports the match honestly, including that an old row has no id yet -- the column is new, so the 320 rows that predate it have none. The whole chain was walked on a COPY of the production database (never on the live one): the search found the row, the record vouched for its id and not for an invented one, Telegram was asked to delete the message, and **the row was still there afterwards** -- the rule is that the chat is a surface and the record is not. The rows before the column existed stay NULL; every new message carries its id |
-| Pytest | `2641 passed, 20 skipped` locally (the live-sandbox file is excluded, as in CI) |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `9d82799` (`lint` + `Push on main`, both success) |
+| HEAD | 104 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file, the writable rootfs and the pin that follows it, the lost answer that came back as an empty success, the stdin trap that eats the side-car's end marker, the tool that takes a message back out of the chat, the split of the chunk summaries out of `storage.py`, the Telegram id of every stored message, the search over the bot's own record, and the Telegram id of every message the conversation shows to the model) |
+| Production | **deployed and verified** (2026-10-27 15:14 MSK, commit `d0a92fb`). The bot container runs `d0a92fb` with 0 restarts, `/healthz` is 200, the fatal scan is 0 and the ERROR count is 0. **The conversation shows the model the Telegram id of every message it carries** (a `[telegram id N]` line of its own, directly above the text): a message the user names by what it wrote ("Сообщение 1") now resolves to an id instead of being guessed. Measured on the deployed tree by replaying the operator's own turn ("Удали сообщение 1") against the real engine, the real store and the real tools -- with only the Telegram boundary replaced, so nothing in the operator's channel was actually deleted: the model called `delete_messages({'message_ids': [3369]})`, and 3369 IS "Сообщение 1". The same turn on the previous tree called **no tool at all** (`tool_calls=0`, 9851 characters of reasoning) and asked the operator to clarify, after answering with two ids that belonged to the BOT's own messages. The guard did not move: the dispatcher still asks the record whether it holds the id, and the record is not touched by a deletion. The chat's own record is searchable (`search_messages`): the `messages` table carries the Telegram id of the message every row came from, the tool reads the record with informal filters (a substring of the body, a substring of the sender's name, or nothing for the newest messages), and the ids it returns are in reach for `delete_messages`. The whole chain was walked on a COPY of the production database (never on the live one): the search found the row, the record vouched for its id and not for an invented one, Telegram was asked to delete the message, and **the row was still there afterwards** -- the rule is that the chat is a surface and the record is not. The rows before the column existed stay NULL; every new message carries its id |
+| Pytest | `2655 passed, 1 skipped` locally (the live-sandbox file is excluded, as in CI) |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `d0a92fb` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 61 `.py` files in `telegram-bot/` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count did not move |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
@@ -239,6 +239,42 @@ wording, change it, or drop the flag again.
 
 
 ## Open — code, not blocked on anyone
+
+### The record can hold the same message twice
+
+**Status:** open since 2026-10-27, found while measuring the delete
+tool's live test. Not a blocker, and not a lie in the record -- but the
+record is the source of truth, so a message that is in it twice is
+noise in the one thing that must not be noisy.
+
+Measured on the production database: the operator's message "Удали
+сообщение 1" (Telegram id 3379) is in `messages` **twice** -- row 10690,
+written by the text handler under the display name ("Vasisualy
+Lohankin"), and row 10693, written six hours later by the group-absorb
+path under the short name ("Vasisualy"). The second row was written
+when another human replied to that message: the absorb path stores the
+message that was replied to, so that "the message where he said X" is
+findable at all -- and it stores it without asking whether the record
+already holds it.
+
+Two consequences, both measured:
+
+  * a search for that message returns it twice, with the same Telegram
+    id in both rows;
+  * the two rows carry **different sender names** for the same person,
+    which is the shape of the problem the search-by-sender has already
+    tripped over once ("Dmitriklim" against "Димриклим").
+
+The fix is small and belongs where the row is written: before the
+absorb path stores the message that was replied to, ask the record
+whether it already holds a row with that `telegram_message_id`, and do
+not write a second one. The sender name of the copy is a second
+question -- the two writers name the same person differently -- and the
+two should be made to agree, or one of them should be dropped.
+
+Not started: the operator had not been asked yet, and the fix touches
+the path that decides what the bot records about other people's
+speaking.
 
 ### T-FREEZE-EMPTY-1 — the empty-response fallback never reaches the user
 
