@@ -982,6 +982,40 @@ The rules:
     at runtime, so the constant cannot hold them: `KNOWN_TOOL_NAMES`
     is the native set plus what the registry found.
 
+**X-15 — A file that comes from an MCP server reaches the model as its
+facts, not as its bytes.**
+`AUTO`
+`tests/test_mcp_client.py`, `tests/test_mcp_registry.py`.
+
+MCP carries a file that is not text as a resource with base64 bytes in
+it. The bot has no image channel into the transcript and no reason to
+carry megabytes of base64 in a context window, so the client renders
+the file's facts instead: the name, the mime type, the size.
+
+The rules:
+
+  * **a blob is never inlined.** A tool result is truncated on the way
+    into the model, so a blob that is too big arrives as a fragment of
+    base64 -- useless to the model and expensive to carry. The facts
+    are what the model needs; the bytes are what the file door is for;
+  * **a text resource IS text** and is read as text. The rule is
+    about bytes, not about the shape of the block;
+  * **a secret the bot already has is named, not copied.** The config
+    block may say `token_env`: the NAME of the environment variable
+    that holds it. The side-car's token is already in
+    `AGENT_STACK_TOKEN`, and a second copy of a secret in a JSON block
+    is a second thing to rotate and one more place to leak it from;
+  * **`token_env` wins over `token`.** A block that names a variable
+    and also carries a literal would keep working after the variable
+    changed -- and the literal is exactly the copy the naming was
+    meant to remove;
+  * **a named token that is not in the environment means the server is
+    not configured.** It is skipped, and the log names the VARIABLE
+    (never the value). A server that authenticates with nothing would
+    be refused on every call, and the model would be told
+    "unauthorized" instead of being told that the configuration is the
+    problem.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1336,8 +1370,8 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_chat_history_search.py` | 12 | The bot's own record of the chat, and what it buys |
 | `test_message_id_in_context.py` | 13 | The conversation shows the model the Telegram id of every message |
 | `test_record_message_once.py` | 6 | The record holds a message once, not twice |
-| `test_mcp_client.py` | 15 | One MCP server, one protocol, one name for the tool |
-| `test_mcp_registry.py` | 18 | What the servers offer, and who may call it |
+| `test_mcp_client.py` | 18 | One MCP server, one protocol, one name for the tool |
+| `test_mcp_registry.py` | 22 | What the servers offer, and who may call it |
 | `test_mcp_import_wiring.py` | 6 | The imported tools reach the model and the dispatcher |
 | `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
 

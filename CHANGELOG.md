@@ -80,6 +80,41 @@ alone and red inside the suite — and the leak would have been the
 production bot's configuration too, in any process that ran those
 tests.
 
+### A file from an MCP server reaches the model as its facts
+
+Measured on 2026-10-27 against the deployed side-car **v2.12.1**: the
+bot's own side-car answers `POST /mcp` with 200 and offers four tools
+(`bash`, `read_file`, `file_info`, `delete_file`). The bot's
+container runs in the **host** network, so `127.0.0.1:8090` — the
+address its shell tool already uses — is the same server the MCP
+endpoint lives on. Nothing had to be published, moved or rebuilt for
+the import to work; the config block was the whole change.
+
+Two defects were found while wiring it up:
+
+  * **a binary file arrived as a fragment of base64.** MCP carries a
+    file that is not text as a resource with the bytes in it, and the
+    client had no branch for that shape: the block was dumped as
+    JSON and cut at 500 characters, so the model got a useless
+    fragment of a megabyte. The client now renders the file's facts —
+    name, mime type, size — and the bytes stay out of the context.
+    A text resource is text and is read as text;
+  * **the token would have had to be written twice.** The config block
+    took the token as a literal, and the side-car's token is already
+    in the bot's environment as `AGENT_STACK_TOKEN`. The block may now
+    name the variable instead (`token_env`); a named token that is not
+    in the environment means the server is not configured, and the log
+    names the variable — never the value.
+
+A new rule (**X-15**) covers both, and
+`scripts/mutation_harness_mcp_resource_token.py` proves the tripwires
+can go red: 4 mutations caught, 3 survived as group B (the tripwire
+gone ⇒ the suite green), 0 refused, 0 invalid.
+
+The configuration block in `config.py` also stopped claiming that the
+side-car cannot be reached: it was wrong, and wrong in the direction
+that would have hidden the fix.
+
 ### The conversation shows the model the id of every message
 
 The operator's live test of 2026-10-27 (01:21 MSK): "Сообщение 1",

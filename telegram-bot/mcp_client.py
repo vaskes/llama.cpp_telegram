@@ -248,10 +248,16 @@ class McpClient:
         MCP results are a list of content blocks. Text is what the
         model can read; an image block becomes a line saying what it
         was, because the bot has no image channel into the transcript
-        and a base64 blob would eat the context. A result the server
-        marked as an error says so -- the caller must not pass an
-        error off as an answer.
+        and a base64 blob would eat the context. A resource block --
+        the shape a file comes back in when it is not text -- becomes
+        the facts of the file, for the same reason and harder: a blob
+        is megabytes of context for something no text model can read.
+        A result the server marked as an error says so -- the caller
+        must not pass an error off as an answer.
         """
+        structured = result.get("structuredContent") or {}
+        if not isinstance(structured, dict):
+            structured = {}
         parts: list[str] = []
         for block in result.get("content") or []:
             if isinstance(block, dict):
@@ -263,6 +269,8 @@ class McpClient:
                     parts.append(
                         f"[image: {block.get('mimeType', '?')}, "
                         f"{len(data)} bytes]")
+                elif kind == "resource":
+                    parts.append(self._render_resource(block, structured))
                 else:
                     parts.append(json.dumps(block, ensure_ascii=False)[:500])
             else:
@@ -275,6 +283,43 @@ class McpClient:
         if result.get("isError"):
             return f"[mcp tool error: {text}]"
         return text
+
+    @staticmethod
+    def _render_resource(block: dict, structured: dict) -> str:
+        """One MCP resource block, as a line the model can use.
+
+        A blob resource carries the file's bytes as base64. Those bytes
+        are not for the model: they are a context window spent on
+        something no text model can read, and the tool result is
+        truncated on the way in, so a blob that is too big arrives as
+        a fragment of base64 -- useless to the model and expensive to
+        carry. What the model needs is the fact of the file: its name,
+        its type, its size. The server usually says all three in
+        ``structuredContent``; the block itself carries the mime type
+        and the name as a URI.
+
+        Measured on 2026-10-27 against the sandbox side-car v2.12.1:
+        a binary file comes back as ``{"type": "resource", "resource":
+        {"blob": ..., "mimeType": ..., "uri": "file://..."}}`` with
+        ``structuredContent = {"name", "size", "mime"}``.
+        """
+        inner = block.get("resource")
+        if not isinstance(inner, dict):
+            inner = {}
+        name = str(structured.get("name") or inner.get("uri") or "file")
+        mime = str(structured.get("mime") or inner.get("mimeType")
+                   or "application/octet-stream")
+        blob = inner.get("blob")
+        if isinstance(blob, str):
+            size = structured.get("size")
+            if not isinstance(size, int):
+                size = (len(blob) * 3) // 4
+            return (f"[binary file: {name} ({mime}), {size} bytes -- "
+                    "the content is not inlined]")
+        text = inner.get("text")
+        if isinstance(text, str):
+            return text
+        return json.dumps(block, ensure_ascii=False)[:500]
 
     async def _rpc(self, method: str, params: dict,
                    timeout: Optional[float] = None) -> dict:

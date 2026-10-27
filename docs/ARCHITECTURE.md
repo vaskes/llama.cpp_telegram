@@ -16,36 +16,36 @@ telegram-bot/
 ├── handlers.py            # handle_text/photo/voice/document (1474 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   377 lines file, 222 in the function, 345 in the loop
-├── mcp_client.py          # MCP protocol for ONE server (327)
-├── mcp_registry.py        # the tools imported from the MCP servers (302)
+├── mcp_client.py # MCP protocol for ONE server (382)
+├── mcp_registry.py # the tools imported from the MCP servers (318)
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
-├── dispatch_group.py      # human-to-human reply absorb (162)
+├── dispatch_group.py # human-to-human reply absorb (163)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
 ├── dispatch_webhook.py    # PTB assembly + handler registration (429)
 ├── webhook.py             # aiohttp server + secret check (266)
 ├── commands/              # the slash-command handlers, as a package
-├── context_budget.py      # which persisted messages reach the engine (658)
+├── context_budget.py # which persisted messages reach the engine (659)
 ├── summarize.py           # summarise out-of-window history, in chunks (319)
 ├── reanchor.py            # when the memory window re-anchors (272)
-├── personality.py         # the optional persona block (213)
+├── personality.py # the optional persona block (214)
 ├── prompt_guard.py        # the sender-label prompt-injection filter (109)
 ├── prompts.py             # module constants only (75); the prose is in prompt_text/
 ├── prompt_text/           # the prompt prose, split by topic
 ├── rating.py              # rate-this-message reaction tool (235)
-├── tool_isolation.py      # KNOWN_TOOL_NAMES whitelist (164)
+├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
 ├── limits.py              # profile-based token/timeout limits (359)
-├── config.py              # env-var read at import time (354)
+├── config.py # env-var read at import time (478)
 ├── state.py               # per-chat runtime state (225)
 ├── storage.py             # SQLite: messages, threads, topics (886)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (200)
 ├── persistence.py         # conversation-history assembly (214)
-├── turn.py                # one turn's persist/rollback ledger (165)
+├── turn.py # one turn's persist/rollback ledger (166)
 ├── access.py              # authorisation and group policy (304)
 ├── chat_utils.py          # chat-shape and command-argument helpers (163)
 ├── telegram_format.py     # the answer as HTML: a code block becomes <pre> (169)
 ├── donsetch.py            # the MCP client for the web tools (200)
 ├── http_clients.py        # the shared httpx helpers (87)
-├── logconf.py             # logging configuration (141)
+├── logconf.py # logging configuration (142)
 ├── selftest.py            # in-tree selftest entry (239) + 7 selftest_*.py leaves
 ├── llm_*.py               # 23 leaf modules, one decision each
 └── personal_tools/
@@ -53,8 +53,8 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, purge the copy
 ```
 
-59 top-level modules, 155 test files, 2622 tests collected in a checkout.
-CI collects 2507 of them — the sandbox-marked file is excluded by name.
+63 top-level modules, 163 test files, 2749 tests collected in a checkout.
+CI collects 2730 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 

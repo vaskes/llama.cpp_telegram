@@ -244,13 +244,19 @@ def _mcp_servers() -> list:
     array of server objects::
 
         [{"name": "donsetch", "url": "http://127.0.0.1:8765/mcp",
-          "token": "", "include": [], "exclude": [],
+          "token": "", "token_env": "", "include": [], "exclude": [],
           "gate": "always"}]
 
     * ``name`` and ``url`` are required -- a server without a name
       has no namespace for its tools, and a server without an address
       is nowhere;
     * ``token`` becomes an ``Authorization: Bearer`` header;
+    * ``token_env`` names an ENVIRONMENT VARIABLE to read the token
+      from, and wins over ``token``. It exists so that a secret the
+      bot already has does not have to be written a second time
+      inside a JSON block: the side-car's token is already in
+      ``AGENT_STACK_TOKEN``, and a second copy of it is a second
+      thing to rotate;
     * ``include`` / ``exclude`` filter the server's OWN tool names
       (before the bot prefixes them). ``exclude`` wins;
     * ``gate`` is ``always``, ``profile`` or ``dev-chat`` (the
@@ -258,20 +264,16 @@ def _mcp_servers() -> list:
 
     A block that does not parse is not a server, and it says so in
     the log: a configuration that silently does nothing is one the
-    operator cannot debug.
+    operator cannot debug. The same goes for a server whose token is
+    named by ``token_env`` and is not in the environment: it is
+    skipped, and the log names the VARIABLE (never the value).
 
-    The side-car the bot's shell tool talks to is NOT in this block on
-    purpose: it speaks its own HTTP API, not MCP. Measured on
-    2026-10-27, a POST to its /mcp answers 404. Listing it here would
-    mean a server that could only ever answer "not usable", and a
-    warning every refresh.
-
-    (The newer side-car, v2.12.0, DOES speak MCP -- it offers bash,
-    read_file, file_info and delete_file. It is not in the block
-    either, for a different reason: on this host its port is bound to
-    127.0.0.1, so the bot's container cannot reach it. Publishing that
-    port, or moving the bot's shell tool to the newer side-car, is the
-    operator's call.)
+    Which side-car speaks MCP is a fact about its version, not about
+    the network. Measured on 2026-10-27 against the deployed
+    side-car v2.12.1: a POST to its ``/mcp`` answers 200 and
+    ``tools/list`` offers bash, read_file, file_info and delete_file.
+    The older v2.10.2 answers 404 on the same path, which is why
+    that version must not be listed here.
     """
     raw = os.environ.get("LLAMABOT_MCP_SERVERS", "").strip()
     if not raw:
@@ -301,6 +303,15 @@ def _mcp_servers() -> list:
             continue
         headers = {}
         token = str(entry.get("token") or "").strip()
+        token_env = str(entry.get("token_env") or "").strip()
+        if token_env:
+            from_env = os.environ.get(token_env, "").strip()
+            if not from_env:
+                log.warning("[mcp] skipping an MCP server without a token: "
+                            "the environment variable %s is empty or unset",
+                            token_env)
+                continue
+            token = from_env
         if token:
             headers["Authorization"] = f"Bearer {token}"
         servers.append(McpServerConfig(

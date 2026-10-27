@@ -184,7 +184,13 @@ def test_the_glob_is_not_silently_empty():
 # test_computed_env_names_are_all_acknowledged below fails if anything
 # lands in it, which is the point: an unresolvable read is a hole in
 # the inventory and has to be a decision, not a silence.
-KNOWN_COMPUTED_READS = set()
+#
+# The third one is the MCP config block's `token_env`: the OPERATOR
+# names the variable that holds the token, in the JSON block, so the
+# name is not the bot's to know. It cannot be in the inventory of the
+# bot's own names by construction, and the block is where it is
+# visible.
+KNOWN_COMPUTED_READS = {("config.py", "token_env")}
 
 
 def test_computed_env_names_are_all_acknowledged():
@@ -193,8 +199,10 @@ def test_computed_env_names_are_all_acknowledged():
     `os.environ.get(env_name)` matches neither READ_RE nor any document
     check, so the two-way inventory would report a clean bill of health
     while missing the variable entirely. Two such reads exist and are
-    listed above; this fails when a third appears, which is the moment
-    someone needs to decide whether it belongs in the inventory.
+    listed above, and a third one (the MCP block's `token_env`) is
+    acknowledged because the operator, not the bot, names it. This
+    fails when a fourth appears, which is the moment someone needs to
+    decide whether it belongs in the inventory.
     """
     # Sites that _indirect_readers/_module_const_names already resolve
     # are not holes -- limits.py's `env_name` and personality.py's

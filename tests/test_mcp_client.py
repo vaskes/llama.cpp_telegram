@@ -203,6 +203,77 @@ async def test_an_image_block_becomes_a_line_and_not_a_blob(monkeypatch):
     assert "AAAA" not in out
 
 
+async def test_a_binary_file_becomes_its_facts_and_not_a_base64_blob(monkeypatch):
+    """A file that is not text comes back as a resource with bytes in it.
+
+    The bytes are a context window spent on something no text model can
+    read, and the result is truncated on the way in -- so a blob that is
+    too big arrives as a fragment of base64: useless and expensive. The
+    model gets the facts of the file instead.
+
+    Measured on 2026-10-27 against the sandbox side-car v2.12.1: a
+    binary file comes back as a resource block with a base64 blob and
+    with the name, the size and the mime type in structuredContent.
+    """
+    _install(monkeypatch, [_ok({"content": [
+        {"type": "resource", "resource": {
+            "uri": "file://probe.bin",
+            "mimeType": "application/octet-stream",
+            "blob": "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=",
+        }},
+    ], "structuredContent": {"name": "probe.bin", "size": 2048,
+                             "mime": "application/octet-stream"}})])
+    client = McpClient(_config())
+
+    out = await client.call_tool("t", {})
+
+    assert "probe.bin" in out
+    assert "application/octet-stream" in out
+    assert "2048 bytes" in out
+    # the bytes themselves must not reach the model
+    assert "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=" not in out
+    assert "base64" not in out
+
+
+async def test_a_resource_without_structured_content_still_names_the_file(monkeypatch):
+    """A server that says nothing extra still gets its facts rendered.
+
+    The size is computed from the blob when the server did not say it,
+    so the model is not told "0 bytes" for a file that has some.
+    """
+    _install(monkeypatch, [_ok({"content": [
+        {"type": "resource", "resource": {
+            "uri": "file://probe.bin",
+            "mimeType": "application/octet-stream",
+            "blob": "QUJDREVG",
+        }},
+    ]})])
+    client = McpClient(_config())
+
+    out = await client.call_tool("t", {})
+
+    assert "file://probe.bin" in out
+    assert "application/octet-stream" in out
+    assert "6 bytes" in out
+    assert "QUJDREVG" not in out
+
+
+async def test_a_text_resource_is_read_as_text(monkeypatch):
+    """A resource may carry text instead of bytes -- that IS readable."""
+    _install(monkeypatch, [_ok({"content": [
+        {"type": "resource", "resource": {
+            "uri": "file://note.txt",
+            "mimeType": "text/plain",
+            "text": "the contents of the note",
+        }},
+    ]})])
+    client = McpClient(_config())
+
+    out = await client.call_tool("t", {})
+
+    assert "the contents of the note" in out
+
+
 async def test_a_result_the_server_marked_as_an_error_says_so(monkeypatch):
     _install(monkeypatch, [_ok({"content": [
         {"type": "text", "text": "no such file"},

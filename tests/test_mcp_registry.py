@@ -15,6 +15,7 @@ own clients), so the tests are about the registry's decisions and not
 about the wire.
 """
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
@@ -319,6 +320,75 @@ async def test_the_servers_come_from_the_config_block(monkeypatch):
         servers = _servers('[{"name": "web", "url": "http://x/mcp", '
                            '"gate": "always"}]')
         assert servers[0].gate == "always"
+    finally:
+        monkeypatch.delenv("LLAMABOT_MCP_SERVERS", raising=False)
+
+
+async def test_a_token_can_be_named_by_the_variable_that_holds_it(monkeypatch):
+    """The block may point at an environment variable instead of a copy.
+
+    The side-car's token is already in the bot's environment. Writing
+    it a second time inside a JSON block means two places to rotate
+    and one more chance to leave a secret lying in a file. The block
+    names the variable instead.
+    """
+    import config
+
+    monkeypatch.setenv("LLAMABOT_MCP_SERVERS", json.dumps([
+        {"name": "sandbox", "url": "http://x/mcp",
+         "token_env": "AGENT_STACK_TOKEN"}]))
+    monkeypatch.setenv("AGENT_STACK_TOKEN", "from-the-environment")
+
+    try:
+        servers = config._mcp_servers()
+        assert [s.name for s in servers] == ["sandbox"]
+        assert servers[0].headers == {
+            "Authorization": "Bearer from-the-environment"}
+    finally:
+        monkeypatch.delenv("LLAMABOT_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("AGENT_STACK_TOKEN", raising=False)
+
+
+async def test_a_named_token_wins_over_a_written_one(monkeypatch):
+    """``token_env`` is the source of truth when both are given.
+
+    Otherwise a block that names a variable and also carries a literal
+    would keep working after the variable changed -- and the literal is
+    exactly the copy the naming was meant to remove.
+    """
+    import config
+
+    monkeypatch.setenv("LLAMABOT_MCP_SERVERS", json.dumps([
+        {"name": "sandbox", "url": "http://x/mcp",
+         "token": "stale-copy", "token_env": "AGENT_STACK_TOKEN"}]))
+    monkeypatch.setenv("AGENT_STACK_TOKEN", "from-the-environment")
+
+    try:
+        servers = config._mcp_servers()
+        assert servers[0].headers == {
+            "Authorization": "Bearer from-the-environment"}
+    finally:
+        monkeypatch.delenv("LLAMABOT_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("AGENT_STACK_TOKEN", raising=False)
+
+
+async def test_a_server_whose_named_token_is_missing_is_not_a_server(monkeypatch):
+    """A token that is named but not there is a refusal, not a 401 later.
+
+    A server that authenticates with nothing would be refused by the
+    server on every call, and the model would be told "unauthorized"
+    without ever being told that the configuration is the problem. The
+    server is skipped instead, and the log names the variable.
+    """
+    import config
+
+    monkeypatch.setenv("LLAMABOT_MCP_SERVERS", json.dumps([
+        {"name": "sandbox", "url": "http://x/mcp",
+         "token_env": "AGENT_STACK_TOKEN"}]))
+    monkeypatch.delenv("AGENT_STACK_TOKEN", raising=False)
+
+    try:
+        assert config._mcp_servers() == []
     finally:
         monkeypatch.delenv("LLAMABOT_MCP_SERVERS", raising=False)
 

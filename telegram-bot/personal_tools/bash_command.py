@@ -104,10 +104,14 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
 }
 
 
-# Network: openapi-proxy listens on 192.168.10.7:8090 on the host LAN
-# (the agent-net docker network is internal; only openapi-proxy is
-# published). Inside the telegram-bot container (which uses a
-# macvlan on the same LAN), 192.168.10.7:8090 is reachable.
+# Network: the side-car the shell tool talks to is whatever
+# AGENT_STACK_URL names. In production on this host it is
+# http://127.0.0.1:8090 -- the host's own openapi-proxy, published on
+# the loopback -- and the bot's container runs with the HOST network,
+# so the loopback is shared and the side-car is reachable (measured
+# 2026-10-27). The default below is the LAN side-car (192.168.10.7,
+# a macvlan address on the same LAN), which is what the bot used
+# before it moved next to the host.
 # === T51 C4: Per-session rate limit (defence in depth) ===
 # The openapi-proxy already has OPENAPI_PROXY_RATE_LIMIT_RPM,
 # but a single misbehaving user (or a model stuck in a
