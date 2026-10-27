@@ -1238,9 +1238,23 @@ Three things follow, and the tripwire checks all of them:
   has to be carried into the documents instead of quietly diverging from
   them;
 * **the sandbox's own numbers are read from the sandbox** — the tripwire
-  takes `mem_limit`, `pids_limit` and the three posture knobs out of
-  the pinned submodule's compose file and checks that the document quotes
-  them. A number about the sandbox comes from the sandbox.
+  takes `mem_limit`, `pids_limit` and the posture knobs out of the pinned
+  submodule's compose file and checks that the document quotes them. A
+  number about the sandbox comes from the sandbox. The MCP door's read
+  budget is read the same way, out of the side-car's own source and
+  resolved with an AST walk, because the side-car writes its sizes in
+  terms of each other (`1 * _MIB`, `_MIB = 1024 * _KIB`) and a check
+  that could only read a plain literal would be a check that cannot see
+  half of the ways a number is written;
+* **the pin and the deployment are the same version.** The pin was
+  v2.10.2 for three releases after the side-car the bot actually talked
+  to had moved to v2.12.1 — and the tripwire said nothing, because the
+  claims were still *true*. A claim that happens to hold is not a claim
+  that was checked. The pin moved to v2.13.0 on 2026-10-27, and two
+  claims moved with it: the posture no longer mentions the search
+  engine's mount (v2.13.0 dropped it), and `pids_limit` became a knob
+  instead of a literal. Both were false the moment the side-car moved,
+  and neither was visible until the pin did.
 
 The same failure has a second half, and it is the half that reaches the
 user: **a refusal has to name the component that refused.** The sandbox

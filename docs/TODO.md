@@ -269,29 +269,61 @@ download limit, and a refusal that names the cap instead of a silently
 truncated file. The bot cannot enforce it from its side: it sees the
 server's answer, not the file.
 
-### The bot's pin describes an older side-car than the one it talks to
+### The bot's pin described an older side-car than the one it talks to —
+### closed 2026-10-27
 
-**Status:** open since 2026-10-27. Measured, not suspected.
+**Status:** ✅ **closed 2026-10-27.** The pin, the contract's number and
+the production deployment are now the same version.
 
-The bot's repository pins the sandbox as a submodule at **v2.10.2**
-(`4a6c465`), and `sandbox_contract.py` says
-`SANDBOX_PINNED_VERSION = "2.10.2"`. The side-car the bot actually
-talks to on the production host is **v2.12.1** (the deployed checkout
-`/opt/telegrambot/sandbox` is at tag `v2.12.1`, commit `a396101`).
-
+**What was wrong:** the bot's repository pinned the sandbox as a
+submodule at **v2.10.2** (`4a6c465`) and `sandbox_contract.py` said
+`SANDBOX_PINNED_VERSION = "2.10.2"`, while the side-car the bot
+actually talked to on the production host was **v2.12.1** (`a396101`).
 The tripwire `tests/test_sandbox_contract.py` compares the contract
-with the PINNED submodule's own source — so the bot's claims are
-checked against a version that is two releases old, and the claims
-themselves (the stdin trap, the privilege posture, the exec limits, the
-binary limit) are all still true in v2.12.1 but are being verified
-against the wrong file.
+with the PINNED submodule's own source — so the bot's claims were being
+checked against a version three releases old. The claims themselves
+were still true, which is exactly what made it quiet: a claim that
+happens to be true is not a claim that is checked.
 
-**What it needs:** move the pin to v2.12.1, move the contract's number
-with it, and re-read every claim in the contract against that source
-rather than against the old one. The side-car release notes
-(`RELEASE-v2.12.1.md`) say the MCP contract is unchanged from v2.12.0,
-so the door the bot uses did not move — but the *version* in the
-contract does.
+**What it needed:** move the pin, move the contract's number with it,
+and re-read every claim against that source rather than against the old
+one.
+
+**What was done:**
+
+  * the pin moved to **v2.13.0** (`b2174e8`) — the version the
+    production side-car now runs (the MCP read budget, below);
+  * `SANDBOX_PINNED_VERSION = "2.13.0"` ✔;
+  * **every claim was re-read against v2.13.0's source**, and two of
+    them had moved:
+    - the posture paragraph said the host's `ssh-keys` **and
+      `/opt/search`** are mounted read-only. v2.13.0 dropped the
+      `/opt/search` mount (the search engine is gone from the stack),
+      so the sentence was false and is now true again — in the
+      contract, in `docs/BASH-SANDBOX.md` and in `docs/ARCHITECTURE.md`,
+      which quote it verbatim;
+    - the compose's own `pids_limit` became a knob
+      (`pids_limit: "${AGENT_PIDS_LIMIT:-256}"`), and the document was
+      quoting the old literal. A number about the sandbox has to come
+      from the sandbox;
+  * a **new claim** came with the new version: the model's read budget
+    on the MCP door (`MCP_MAX_READ_BYTES`), checked by the tripwire
+    against the side-car's own source — the number is resolved out of
+    `agent_config.py` with an AST walk, because the side-car writes its
+    sizes in terms of each other (`1 * _MIB`, `_MIB = 1024 * _KIB`) and
+    a check that could only read a plain literal would be a check that
+    cannot see half of the ways a number is written.
+
+**Measured on the production host after the move:** the side-car runs
+v2.13.0, the MCP door refuses a 2 701 756-byte file with "the file is
+2701756 bytes, which is over the limit of 1048576 bytes; read it in
+pieces with bash (head, tail, sed) or compress it first", a 21-byte
+file comes back as its text, and `file_info` reports the limit that
+actually applies.
+
+**Where to look:** `CHANGELOG.md` § Unreleased;
+`telegram-bot/personal_tools/sandbox_contract.py`;
+`tests/test_sandbox_contract.py`; `docs/BASH-SANDBOX.md`.
 
 ---
 
@@ -393,13 +425,14 @@ Not repeated here; each line points at the record.
 | T70.5 — chunked summaries with a "СВЕДЕНО" marker | `CHANGELOG.md` § Unreleased; `docs/tickets/TICKET-T70-*.md` |
 | T70.6 — the reasoning cap lives on the engine | `CHANGELOG.md` § Unreleased; `docs/CALL_LLAMA.md` |
 | Review waves 1–8 | `docs/archive/2026-10/`; `docs/review/README.md` |
-| The side-car on v2.10.2, with a writable rootfs | `CHANGELOG.md` § Unreleased; `docs/BASH-SANDBOX.md` § The sandbox's posture |
+| The side-car on the production host, with a writable rootfs | `CHANGELOG.md` § Unreleased; `docs/BASH-SANDBOX.md` § The sandbox's posture |
 | The bot can take a message back out of the chat | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-10 |
 | The record holds a message once | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-13 |
 | One person, one name in the record | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16 |
 | The empty-answer fallback reaches the user | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-17 |
 | The MCP import, on in production | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-14 |
 | The deploy workflow, with the topology on the host | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-18 |
+| The bot's pin, and the side-car it talks to | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-8 |
 
 ---
 
@@ -463,14 +496,15 @@ restart that looks successful and changes nothing. The backup is in
 
 ### The side-car on the production host — v2.10.2, with a writable rootfs
 
-**Status:** ✅ **closed 2026-10-26** — and **the version moved again on
-2026-10-27**: the host now runs **v2.12.1** (`a396101`), which is the
-side-car the bot's MCP door talks to. The repository's pin has **not**
-followed it (it is still v2.10.2), and that gap is its own open item —
-"The bot's pin describes an older side-car than the one it talks to"
-below. The posture described here (the writable rootfs and the rest) did
-not change; only the number moved, and the number is the part a claim
-goes stale on.
+**Status:** ✅ **closed 2026-10-26** — and **the version moved twice on
+2026-10-27**: the host ran **v2.12.1** (`a396101`) and now runs
+**v2.13.0** (`b2174e8`), which is the side-car the bot's MCP door talks
+to — and the repository's pin has **followed it** (it was v2.10.2, it is
+v2.13.0 now; the gap is closed, see "The bot's pin described an older
+side-car than the one it talks to" below). The posture described here
+(the writable rootfs and the rest) did not change; what changed in
+v2.13.0 is the MCP door's read budget, the search engine's mount, and
+`pids_limit` becoming a knob.
 
 **What moved:** `/opt/telegrambot/sandbox` is a standalone clone of the
 sandbox repository, and the bot's deploy does not touch it, so it was
@@ -491,7 +525,8 @@ side-car v2.10.0 made the rootfs the fourth switch of the privilege
 mode, `read_only: "${AGENT_READ_ONLY:-true}"`; the production
 deployment sets `AGENT_READ_ONLY=false`. The container is still the
 perimeter: the writable layer dies with the container, and the host's
-`ssh-keys` and `/opt/search` are still mounted read-only.
+`ssh-keys` were still mounted read-only at that point (the side-car
+dropped the `/opt/search` mount in v2.13.0).
 
 **Measured on the host after the move:** `id` → uid 1000, `sudo -n id`
 → uid 0, a write into `/usr` succeeds, `apt-get update` and

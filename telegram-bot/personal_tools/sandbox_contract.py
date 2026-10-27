@@ -21,6 +21,22 @@ install a package, and apt-get is exactly what a privileged root is
 for. The container stays the perimeter -- the writable layer dies with
 the container.
 
+THE MODEL'S READ BUDGET (v2.13.0, 2026-10-27)
+The bot imports the side-car's MCP door, and one of the tools on that
+door reads a whole file into the model's context. The side-car's
+binary limit (50 MiB) is the right limit for a download, and the wrong
+one for a prompt: one MCP read could cost the machine about 117 MiB of
+RAM for an answer a text model has no use for. So the side-car gave
+that door a budget of its own -- `AGENT_MCP_MAX_READ_BYTES`, 1 MiB by
+default -- and a refusal that names the file's size and the limit
+instead of a truncated file. The HTTP door kept its own limit: the
+bytes land in a file there.
+
+The bot's claim about the side-car moves with the side-car, and the
+tripwire checks it against the pinned source -- which is why the pin
+and this number cannot drift apart: the pin is v2.13.0, and v2.13.0
+is where the budget exists.
+
 So the posture lives here, once:
 
 * `SANDBOX_PINNED_VERSION` -- the tag this repo pins as a submodule.
@@ -80,6 +96,7 @@ __all__ = [
     "EXEC_TIMEOUT_SECONDS",
     "PROXY_WAIT_GRACE_SECONDS",
     "CLIENT_TIMEOUT_SECONDS",
+    "MCP_MAX_READ_BYTES",
 ]
 
 SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
@@ -87,7 +104,11 @@ SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
 # The tag this repo pins as a submodule. Keep it equal to the pin in the
 # tree and to the version the submodule's own source declares: a bump of
 # one without the others is a red test, not a quiet drift.
-SANDBOX_PINNED_VERSION = "2.10.2"
+#
+# v2.13.0 (2026-10-27) is the version the production side-car runs: the
+# MCP read got a budget of its own (see MCP_MAX_READ_BYTES below), and
+# the search engine's read-only mount is gone from the deployment.
+SANDBOX_PINNED_VERSION = "2.13.0"
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -138,7 +159,7 @@ SANDBOX_POSTURE_LINES = (
     "The side-car runs in a container whose rootfs is writable in this "
     "deployment (AGENT_READ_ONLY=false), so a root inside it can install "
     "packages; /workspace is the workspace mount, and the host's "
-    "ssh-keys and /opt/search are mounted read-only.",
+    "ssh-keys are mounted read-only.",
     "The agent's own process runs as uid 1000 and the container drops "
     "SYS_ADMIN, so there are no mounts and no namespaces to be had from "
     "inside.",
@@ -191,6 +212,19 @@ EXEC_TIMEOUT_SECONDS = 60
 #: error with an empty reason -- which sent the operator to the network
 #: instead of to the clock.
 PROXY_WAIT_GRACE_SECONDS = 15
+
+#: How many bytes one MCP `read_file` may put into a model's context.
+#: Since v2.13.0 the side-car owns that budget: `AGENT_MCP_MAX_READ_BYTES`
+#: (0 .. 64 MiB, 1 MiB by default). Before it, the effective ceiling was
+#: the deployment's binary limit -- 50 MiB -- and one call read that much
+#: into memory and base64-encoded it, about 117 MiB of RAM for an answer
+#: a text model cannot use.
+#:
+#: A deployment fact, like the other two above: the side-car ships the
+#: knob with that default, and the production deployment does not
+#: override it. The HTTP door's own limit is a different axis -- there
+#: the bytes land in a file on the caller's disk, not in a prompt.
+MCP_MAX_READ_BYTES = 1024 * 1024
 
 #: The bot's own HTTP timeout. It has to be strictly larger than the
 #: proxy's wait (the limit plus the grace), or the bot gives up before

@@ -218,7 +218,8 @@ the bot does not have its own opinion about them:
     /var/lib/apt/lists, /var/lib/dpkg and /usr). The container is
     still the perimeter -- the writable layer dies with the container.
   - `/workspace` is the only writable host mount; size-limited.
-  - `pids_limit: 256` so fork bombs are contained.
+  - `pids_limit: "${AGENT_PIDS_LIMIT:-256}"` so fork bombs are
+    contained.
   - `mem_limit: 4g` so memory-exhaustion attacks die.
   - Per-command 60s timeout, killed at the tmux level so a
     hung process cannot block the bot forever.
@@ -227,7 +228,7 @@ the bot does not have its own opinion about them:
 
 ### The sandbox's posture
 
-The side-car runs in a container whose rootfs is writable in this deployment (AGENT_READ_ONLY=false), so a root inside it can install packages; /workspace is the workspace mount, and the host's ssh-keys and /opt/search are mounted read-only.
+The side-car runs in a container whose rootfs is writable in this deployment (AGENT_READ_ONLY=false), so a root inside it can install packages; /workspace is the workspace mount, and the host's ssh-keys are mounted read-only.
 
 The agent's own process runs as uid 1000 and the container drops SYS_ADMIN, so there are no mounts and no namespaces to be had from inside.
 
@@ -410,6 +411,39 @@ asks for 60 seconds and waits 90 (`EXEC_TIMEOUT_SECONDS`,
 `telegram-bot/personal_tools/sandbox_contract.py`). A deployment that
 raises `AGENT_EXEC_TIMEOUT` has to raise the bot's timeout with it.
 
+### The model's read budget (the MCP door)
+
+The bot also imports the side-car's **MCP door** (`read_file`,
+`file_info`), and there the bytes land in a *prompt*, not in a file.
+That is a different axis from the file door, and it got its own budget
+in the side-car's **v2.13.0**: `AGENT_MCP_MAX_READ_BYTES`, 1 MiB by
+default (`AGENT_MCP_MAX_READ_BYTES:-1m` in the compose file), 0..64 MiB,
+and 0 means "no budget of its own".
+
+Before it, the effective ceiling was the binary limit — 50 MiB in the
+production deployment — and one `read_file` call read that much into
+memory and base64-encoded it: about 117 MiB of RAM for an answer a text
+model cannot use. Now a file over the budget is **refused**, and the
+refusal names the file's size and the limit, and says how to read a
+piece of it instead (`read_file` has no offset, so the honest advice is
+`bash` with `head`/`tail`/`sed`).
+
+Measured on the production host after the move: a 2 701 756-byte file
+comes back as `the file is 2701756 bytes, which is over the limit of
+1048576 bytes; read it in pieces with bash (head, tail, sed) or
+compress it first`, a 21-byte file comes back as its text, and
+`file_info` reports the limit that actually applies (`1048576`).
+
+The HTTP file door keeps its own limit: there the bytes land in a file
+on the caller's disk, and the side-car's own test proves that the very
+file the MCP tool refuses is still served by `/files`.
+
+The bot's claim about this number lives in
+`telegram-bot/personal_tools/sandbox_contract.py`
+(`MCP_MAX_READ_BYTES`), and `tests/test_sandbox_contract.py` reads the
+number out of the pinned side-car's own source — so the bot's belief
+and the side-car's behaviour cannot drift apart.
+
 ## Compatibility
 
 | Sandbox tag | Bot tag | Notes |
@@ -420,6 +454,8 @@ raises `AGENT_EXEC_TIMEOUT` has to raise the bot's timeout with it.
 | `34eca7d` (v2.9.1) | this branch | The privilege mode, and a file the agent cannot read refused with a 403 instead of a truncated 200. |
 | `093c025` (v2.10.1) | this branch | The writable rootfs knob (`AGENT_READ_ONLY`), the fourth setting of the privilege mode: a privileged root that cannot write the filesystem cannot install a package. |
 | `4a6c465` (v2.10.2) | this branch | The stdin trap is fixed (the command reads EOF instead of the protocol), the exec limit is the proxy's knob (`AGENT_EXEC_TIMEOUT`), and the proxy waits longer than the limit so the answer that says "this timed out" survives. |
+| `a396101` (v2.12.1) | this branch | The MCP door (v2.12.0) — the one the bot's import uses. The side-car dropped the search engine's read-only mount, so the posture above changed with it. |
+| `b2174e8` (v2.13.0) | this branch | The model's read budget on the MCP door (`AGENT_MCP_MAX_READ_BYTES`, 1 MiB by default): a file over the budget is refused with a sentence that names the size and the limit, and the HTTP file door keeps its own limit. |
 
 The bot treats the sandbox as a black box: it sends JSON over
 HTTP and gets JSON back. As long as the wire format is

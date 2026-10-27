@@ -20,6 +20,52 @@ retry, the leaked token, the attribution cleanup, the codebook, the
 deployment profile that finally has its own numbers, and the MCP
 module.
 
+### The bot's pin, the side-car's read budget, and what the bot believes
+
+Two items of the same backlog, one version apart, closed together.
+
+**The pin.** The bot's repository pinned the side-car at v2.10.2 while
+the side-car the bot actually talked to on the production host had
+already moved to v2.12.1 — and the tripwire that compares the bot's
+claims with the side-car's own source said nothing, because the claims
+were still *true*. A claim that happens to hold is not a claim that was
+checked. The pin is now **v2.13.0** (`b2174e8`), which is the version
+the production host runs, and every claim was re-read against that
+source. Two of them had moved:
+
+  * the posture said the host's `ssh-keys` **and `/opt/search`** are
+    mounted read-only — v2.13.0 dropped the `/opt/search` mount, so the
+    sentence was false and is now true again in the contract and in the
+    two documents that quote it verbatim;
+  * the compose's `pids_limit` became a knob
+    (`pids_limit: "${AGENT_PIDS_LIMIT:-256}"`), and the document was
+    quoting the old literal.
+
+**The budget.** The MCP door had no model-facing read cap: its
+effective ceiling was the deployment's 50 MiB binary limit, and one
+`read_file` call read that much into memory and base64-encoded it —
+about 117 MiB of RAM for an answer a text model cannot use. The
+side-car's v2.13.0 gives that door a budget of its own
+(`AGENT_MCP_MAX_READ_BYTES`, 1 MiB by default) and a refusal that names
+the file's size and the limit. The HTTP file door keeps its own limit:
+there the bytes land in a file, not in a prompt.
+
+Measured on the production host after the move: a 2 701 756-byte file
+comes back as *"the file is 2701756 bytes, which is over the limit of
+1048576 bytes; read it in pieces with bash (head, tail, sed) or
+compress it first"*, a 21-byte file comes back as its text, and
+`file_info` reports the limit that actually applies.
+
+The bot's belief about that number is now a claim like any other:
+`MCP_MAX_READ_BYTES` in the contract, checked by the tripwire against
+the pinned side-car's own source — read out of `agent_config.py` with
+an AST walk, because the side-car writes its sizes in terms of each
+other (`1 * _MIB`, `_MIB = 1024 * _KIB`).
+
+**Where to look:** `docs/CODEBOOK.md` § X-8;
+`telegram-bot/personal_tools/sandbox_contract.py`;
+`tests/test_sandbox_contract.py`; `docs/BASH-SANDBOX.md`.
+
 ### A tag deploys the bot, and the door is narrow
 
 `T-FREEZE-AUTO-3`. The bot reached the production host by hand: a

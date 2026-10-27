@@ -41,6 +41,7 @@ if str(BOT) not in sys.path:
 from personal_tools.sandbox_contract import (  # noqa: E402
     CLIENT_TIMEOUT_SECONDS,
     EXEC_TIMEOUT_SECONDS,
+    MCP_MAX_READ_BYTES,
     PRIVILEGE_MODE,
     PRIVILEGE_MODE_SUPPORTED,
     PROXY_WAIT_GRACE_SECONDS,
@@ -87,6 +88,8 @@ COMPOSE_KNOBS = (
      re.compile(r"\$\{AGENT_READ_ONLY:-([^}]+)\}")),
     ("AGENT_EXEC_TIMEOUT",
      re.compile(r"\$\{AGENT_EXEC_TIMEOUT:-([^}]+)\}")),
+    ("AGENT_MCP_MAX_READ_BYTES",
+     re.compile(r"\$\{AGENT_MCP_MAX_READ_BYTES:-([^}]+)\}")),
 )
 
 
@@ -220,6 +223,96 @@ def test_the_exec_limit_is_the_sandbox_knob_and_the_bot_stays_above_it():
         EXEC_TIMEOUT_SECONDS + PROXY_WAIT_GRACE_SECONDS), (
         "the bot's timeout has to be strictly larger than the proxy's "
         "wait")
+
+
+def test_the_read_budget_is_the_side_cars_own_number():
+    """The budget the bot believes in is the one the side-car enforces.
+
+    Since v2.13.0 the MCP door has a read budget of its own
+    (`AGENT_MCP_MAX_READ_BYTES`, 1 MiB by default). Before it, the
+    effective ceiling was the binary limit -- 50 MiB -- and one call
+    cost about 117 MiB of RAM for an answer a text model cannot use.
+
+    The number is read out of the pinned side-car's own source and out
+    of its compose file, not out of the bot's memory: a claim about the
+    side-car that the side-car does not check is the failure this whole
+    file is about.
+    """
+    compose = _compose_text()
+    knob = re.search(
+        r"AGENT_MCP_MAX_READ_BYTES=\$\{AGENT_MCP_MAX_READ_BYTES:-([^}]+)\}",
+        compose)
+    assert knob, (
+        "the pinned side-car does not carry the MCP read budget the bot "
+        "believes in -- the side-car changed, and the bot's claim has to "
+        "follow it")
+    assert _size_in_bytes(knob.group(1)) == MCP_MAX_READ_BYTES, (
+        f"the side-car's compose gives the MCP read a budget of "
+        f"{knob.group(1)} and the bot believes in {MCP_MAX_READ_BYTES} "
+        f"bytes. One of them was moved and the other was not.")
+
+    default = _sidecar_constant("MCP_READ_LIMIT_DEFAULT_BYTES")
+    assert default is not None, (
+        "the pinned side-car does not declare the default of its own MCP "
+        "read budget")
+    assert default == MCP_MAX_READ_BYTES, (
+        f"the side-car's own default is {default} bytes and the bot "
+        f"believes in {MCP_MAX_READ_BYTES}")
+
+
+def _size_in_bytes(value: str) -> int:
+    """``"1m"`` -> 1048576; ``"2048k"`` -> 2097152; ``"512"`` -> 512."""
+    text = value.strip().lower()
+    factor = 1
+    if text.endswith("k"):
+        factor, text = 1024, text[:-1]
+    elif text.endswith("m"):
+        factor, text = 1024 * 1024, text[:-1]
+    elif text.endswith("g"):
+        factor, text = 1024 * 1024 * 1024, text[:-1]
+    return int(text) * factor
+
+
+def _sidecar_constant(name: str) -> int | None:
+    """A module-level integer from the pinned side-car's source.
+
+    The side-car writes its sizes in terms of each other (``1 * _MIB``,
+    and ``_MIB = 1024 * _KIB``), so a check that could only read a
+    plain literal would be a check that cannot see half of the ways a
+    number is written. The constants are resolved here, from the file
+    itself.
+    """
+    import ast
+
+    source = (SANDBOX / "agent_config.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    values: dict[str, int] = {}
+
+    def evaluate(node: ast.AST) -> int | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return node.value
+        if isinstance(node, ast.Name):
+            return values.get(node.id)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+            left = evaluate(node.left)
+            right = evaluate(node.right)
+            if left is not None and right is not None:
+                return left * right
+        return None
+
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        for target in statement.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            value = evaluate(statement.value)
+            if value is None:
+                continue
+            values[target.id] = value
+            if target.id == name:
+                return value
+    return None
 
 
 def test_the_operator_facing_prose_carries_the_contract_posture():

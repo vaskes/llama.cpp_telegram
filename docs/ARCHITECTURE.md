@@ -251,7 +251,7 @@ path in the entire bot**. The defence layers are:
      `tests/test_sandbox_contract.py` compares them with the sandbox
      this repo actually pins.
 
-     The side-car runs in a container whose rootfs is writable in this deployment (AGENT_READ_ONLY=false), so a root inside it can install packages; /workspace is the workspace mount, and the host's ssh-keys and /opt/search are mounted read-only.
+     The side-car runs in a container whose rootfs is writable in this deployment (AGENT_READ_ONLY=false), so a root inside it can install packages; /workspace is the workspace mount, and the host's ssh-keys are mounted read-only.
 
      The agent's own process runs as uid 1000 and the container drops SYS_ADMIN, so there are no mounts and no namespaces to be had from inside.
 
