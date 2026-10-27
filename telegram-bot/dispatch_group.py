@@ -19,6 +19,10 @@ the top of the old module:
 `dispatch.py` bound the first two from `persistence`, so this module
 binds them the same way and would have raised NameError on the first
 group reply otherwise.
+
+2026-10-27: a sixth name joined them -- `display_name`, the one policy
+for how a person is named in the record. It used to have a second
+resolver in this module, and the two disagreed.
 """
 
 import call_llama
@@ -29,6 +33,7 @@ from persistence import (
     load_history as _load_history,
     already_recorded as _already_recorded,
 )
+from sender_name import display_name
 
 log = get_logger(__name__)
 
@@ -36,18 +41,15 @@ log = get_logger(__name__)
 def _name_of(user) -> str:
     """How a person is named in the record.
 
-    Never a bare number. On 2026-10-26 the model read the digits out of
-    "[reply to id=286293081]" -- a USER id -- and handed them to the
-    delete tool as a MESSAGE id. A user id is not a message id, and a
-    record that carries one in the shape the other one has is a trap
-    with the operator's own messages in it.
+    The policy is not here: it is in `sender_name.display_name`, and both
+    writers call it. This used to be a second resolver, and it preferred
+    the handle -- so the text handler wrote "Vasisualy Lohankin" and this
+    path wrote "Vasisualy" for the same person, in the same record.
+
+    What is left here is the one thing that is specific to this path: a
+    label for the message, even when the person has no name at all.
     """
-    if user is None:
-        return "unknown"
-    username = getattr(user, "username", None)
-    if username:
-        return f"@{username}"
-    return getattr(user, "first_name", None) or "unknown"
+    return display_name(user) or "unknown"
 
 
 async def _handle_reply_to_other_user(upd, bot) -> None:

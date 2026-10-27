@@ -49,6 +49,13 @@ from llm_delete import new_answer_group, remember_answer
 # named for what it does rather than for a cosmetic role.
 from prompt_guard import _SAFE_SENDER_MAX_LEN, _safe_sender_label
 
+# One person, one name in the record. The policy of WHICH name a person
+# is called lives in `sender_name.py`: two writers used to call the same
+# person by two different names, and the record is the source of truth.
+# See that module's docstring. The name here is kept because the
+# handlers, the selftests and the tripwires all address it.
+from sender_name import display_name as _sender_display_name
+
 from logconf import get_logger
 log = get_logger(__name__)
 
@@ -561,43 +568,6 @@ async def _resolve_active(user_id: int) -> str:
     await asyncio.to_thread(storage.get_store().create_thread, user_id, 'main')
     await asyncio.to_thread(storage.get_store().set_active_thread, user_id, 'main')
     return 'main'
-
-# === _sender_display_name ===
-
-
-def _sender_display_name(user) -> str | None:
-    """Build a short display name for a Telegram User so the LLM can
-    distinguish speakers in a group. Resolution order:
-      1. first_name + " " + last_name  (e.g. "Vasisualy Lohankin")
-      2. first_name only
-      3. "@" + username
-      4. "user_" + str(id)              (last-resort numeric)
-
-    Returns None for non-User inputs (system messages, channel posts)
-    so the caller can decide to skip persisting the name.
-
-    The user-controlled first_name / last_name / username are passed
-    through _safe_sender_label() to strip newlines, RTL overrides,
-    and other characters that would let the name break out of the
-    From: line in the LLM prompt. See _safe_sender_label for the
-    threat model and stripped categories.
-    """
-    if user is None:
-        return None
-    first_raw = getattr(user, "first_name", None) or ""
-    last_raw = getattr(user, "last_name", None) or ""
-    full = _safe_sender_label((first_raw + " " + last_raw).strip())
-    if full:
-        return full
-    username_raw = getattr(user, "username", None) or ""
-    # Usernames are restricted to [A-Za-z0-9_] by Telegram but we
-    # sanitise anyway for symmetry and future-proofing.
-    username_safe = _safe_sender_label(username_raw)
-    if username_safe:
-        return "@" + username_safe
-    if getattr(user, "id", None) is not None:
-        return f"user_{user.id}"
-    return None
 
 # === handle_photo ===
 

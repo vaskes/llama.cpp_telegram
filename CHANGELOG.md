@@ -20,6 +20,40 @@ retry, the leaked token, the attribution cleanup, the codebook, the
 deployment profile that finally has its own numbers, and the MCP
 module.
 
+### One person, one name in the record
+
+The operator's decision (2026-10-27): the full Telegram nickname is the
+canonical name — "Vasisualy Lohankin". Anything shorter is an artefact
+of a second resolver, not a second fact.
+
+The record is written by two paths, and they disagreed. The text
+handler stored the display name; the group-absorb path preferred the
+handle and fell back to the first name. The production record shows it:
+rows 10690 and 10693 — one message, two names for the same person. A
+search by sender could find that person twice or not at all, and a
+model reading the record saw two people where there is one.
+
+What changed:
+
+  * **`telegram-bot/sender_name.py`** — the one policy for how a person
+    is named, in one place;
+  * **`handlers._sender_display_name`** is now an alias for that
+    function, not a second copy of it. A tripwire asserts they are the
+    same object, because two resolvers that agree today disagree the
+    first time one of them is edited;
+  * **the group-absorb path asks the policy** instead of reading the
+    name off the user itself, and the reply's `[reply to …]` prefix
+    carries the same name the row does.
+
+What did not change, deliberately: the rows already in the record keep
+the name they were written with. The record is the source of truth, and
+rewriting what it says about the past is not a repair — it is a second
+truth. New rows carry the canonical name; old ones are searchable by
+the name they carry.
+
+**Where to look:** `docs/CODEBOOK.md` § X-16; `telegram-bot/sender_name.py`;
+`tests/test_one_name_per_person.py`; `scripts/mutation_harness_one_name.py`.
+
 ### Two classes of tools: the bot's own, and the ones a server brought
 
 The operator's directive (2026-10-27): the bot is already an agentic

@@ -13,13 +13,13 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1474 lines)
+├── handlers.py            # handle_text/photo/voice/document (1444 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   377 lines file, 222 in the function, 345 in the loop
 ├── mcp_client.py # MCP protocol for ONE server (382)
 ├── mcp_registry.py # the tools imported from the MCP servers (318)
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
-├── dispatch_group.py # human-to-human reply absorb (163)
+├── dispatch_group.py # human-to-human reply absorb (164)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
 ├── dispatch_webhook.py    # PTB assembly + handler registration (429)
 ├── webhook.py             # aiohttp server + secret check (266)
@@ -29,6 +29,7 @@ telegram-bot/
 ├── reanchor.py            # when the memory window re-anchors (272)
 ├── personality.py # the optional persona block (214)
 ├── prompt_guard.py        # the sender-label prompt-injection filter (109)
+├── sender_name.py         # the one policy for how a person is named (60)
 ├── prompts.py             # module constants only (75); the prose is in prompt_text/
 ├── prompt_text/           # the prompt prose, split by topic
 ├── rating.py              # rate-this-message reaction tool (235)
@@ -53,8 +54,8 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, purge the copy
 ```
 
-63 top-level modules, 163 test files, 2749 tests collected in a checkout.
-CI collects 2730 of them — the sandbox-marked file is excluded by name.
+64 top-level modules, 164 test files, 2763 tests collected in a checkout.
+CI collects 2744 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 

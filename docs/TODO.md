@@ -293,23 +293,6 @@ rather than against the old one. The side-car release notes
 so the door the bot uses did not move — but the *version* in the
 contract does.
 
-### The two writers name the same person differently
-
-**Status:** open since 2026-10-27. The duplicate is closed (see "Closed
-— and why"); the names are not.
-
-The text handler stores the display name ("Vasisualy Lohankin"); the
-group-absorb path stores the short one ("Vasisualy"), because the two
-read the name from different places in the update. The record therefore
-carries one person under two names -- the shape the search-by-sender
-has already tripped over once ("Dmitriklim" against "Димриклим").
-
-**What it needs:** a decision on which name the record uses -- the
-display name, the @username or the first name -- and one place that
-resolves it, so that both writers write the same string. Until then,
-a search by sender can find the same person twice or not at all,
-depending on which of the two names it was given.
-
 ### T-FREEZE-EMPTY-1 — the empty-response fallback never reaches the user
 
 **Status:** open since 2026-10-24. Found by the offline replay of the
@@ -455,6 +438,7 @@ Not repeated here; each line points at the record.
 | The side-car on v2.10.2, with a writable rootfs | `CHANGELOG.md` § Unreleased; `docs/BASH-SANDBOX.md` § The sandbox's posture |
 | The bot can take a message back out of the chat | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-10 |
 | The record holds a message once | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-13 |
+| One person, one name in the record | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16 |
 | The MCP import, on in production | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-14 |
 
 ---
@@ -884,10 +868,42 @@ they are. The record is the operator's, and deleting rows from it is
 not ours to do — the fix is about what happens next, not about
 rewriting what happened.
 
-**Still open, and a separate question:** the two writers name the same
-person differently ("Vasisualy Lohankin" against "Vasisualy"). The
-duplicate is gone; the naming is not — see "The two writers name the
-same person differently" above.
+**Also closed, on the same day:** the two writers named the same person
+differently ("Vasisualy Lohankin" against "Vasisualy"). That was a
+separate question, and it is answered below — see "One person, one
+name in the record".
+
+### One person, one name in the record — closed 2026-10-27
+
+**Decision (the operator, 2026-10-27):** the full Telegram nickname is
+the canonical name. "Vasisualy Lohankin" is what the record carries.
+Anything shorter — the first name, the handle — is an artefact of a
+second resolver, not a second fact.
+
+**What was wrong:** two writers, two resolvers. The text handler read
+the display name; the group-absorb path preferred the handle and fell
+back to the first name. Measured on the production record: rows 10690
+and 10693 — one message, two names for the same person.
+
+**What it cost:** a search by sender could find the same person twice
+or not at all, which is the shape the search-by-sender has already
+tripped over once ("Dmitriklim" against "Димриклим"). And a model
+reading the record saw two people where there is one.
+
+**The fix:** the policy lives in one module, `sender_name.py`, and both
+writers call it. `handlers._sender_display_name` is an alias for that
+one function, not a second copy — a tripwire asserts they are the same
+object, because two resolvers that agree today disagree the first time
+one of them is edited.
+
+**Not fixed, deliberately:** the rows already in the production record
+keep the name they were written with. The record is the source of
+truth, and rewriting what it says about the past is not a repair — it
+is a second truth. New rows carry the canonical name; old ones are
+searchable by the name they carry.
+
+**Where to look:** `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16;
+`telegram-bot/sender_name.py`; `tests/test_one_name_per_person.py`.
 
 ## House rules for this file
 

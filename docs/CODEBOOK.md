@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1474 lines, and it is
+Our largest file right now is `handlers.py` at 1444 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -420,7 +420,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1474 and is registered. The threshold is 1000 because
+`handlers.py` is 1444 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -1018,6 +1018,37 @@ The rules:
 
 ---
 
+**X-16 — One person, one name in the record.**
+`AUTO`
+`tests/test_one_name_per_person.py`.
+
+The record is written by two paths: the text handler, and the
+group-absorb path ("a human replied to another human in a group"). On
+2026-10-27 they were measured to disagree — the text handler wrote
+"Vasisualy Lohankin", the absorb path wrote "Vasisualy" for the same
+person, in the same chat, in the same record. The operator's decision:
+the full Telegram nickname is canonical, and anything shorter is an
+artefact of a second resolver.
+
+The rules:
+
+  * **the naming policy lives in one module** (`sender_name.py`), and
+    both writers call it. Two resolvers that agree today disagree the
+    first time one of them is edited;
+  * **a person is one fact in the record, and the record is the source
+    of truth** — the operator keeps this history for a LoRA dataset. Two
+    names for one person is a record that cannot be searched by name,
+    and a model that reads both rows sees two people where there is
+    one;
+  * **a test of the resolver is not a test of the writer.** The absorb
+    path is checked by what it WRITES, because the resolver can be
+    correct and the writer still use a different one;
+  * **the name is not a bare number.** A user id in the shape of a
+    message id is how the model handed "286293081" to the delete tool
+    as a message id. `user_<id>` is the last resort, not the first.
+
+---
+
 ### 3.7 The language of the bot
 
 **X-5 — Every text the user reads is English.**
@@ -1374,8 +1405,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_mcp_registry.py` | 22 | What the servers offer, and who may call it |
 | `test_mcp_import_wiring.py` | 6 | The imported tools reach the model and the dispatcher |
 | `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
+| `test_one_name_per_person.py` | 6 | One person, one name in the record |
 
-163 test files in total; the table above is the ones that guard a rule in
+164 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
@@ -1402,7 +1434,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1474 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1444 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -1559,6 +1591,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1474 lines and healthy — it only decides when somebody
+> `handlers.py` is 1444 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.
