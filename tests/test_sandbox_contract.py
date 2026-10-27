@@ -271,7 +271,8 @@ def test_the_prompt_does_not_name_a_command_limit_of_its_own():
         "the prompt's sandbox sentence is gone -- check the wording before "
         "claiming that it names no limit")
     durations = re.findall(
-        r"\d+\s*(?:seconds|minutes|hours)|\b(?:an hour|a minute|a second)\b",
+        r"\b\d+\s*(?:s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)\b"
+        r"|\b(?:an hour|a minute|a second)\b",
         paragraph.group(1), re.I)
     assert not durations, (
         f"the prompt's sandbox sentence names {durations}. The command's "
