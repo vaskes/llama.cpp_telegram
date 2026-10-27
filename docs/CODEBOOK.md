@@ -1600,14 +1600,14 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
 | `test_send_file_tool.py` | 16 | A file from the sandbox reaches the chat as a document -- and the delivery removes nothing |
 | `test_file_transport.py` | 16 | The file door: the bytes, the digest, the version -- and no way to delete |
-| `test_sandbox_contract.py` | 10 | The bot's claims about the sandbox match the sandbox we run |
+| `test_sandbox_contract.py` | 17 | The bot's claims about the sandbox match the sandbox we run |
 | `test_engine_failure_message.py` | 9 | What the user reads when the engine could not be reached |
 | `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |
 | `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
 | `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
-| `test_delete_messages_tool.py` | 35 | A message can be taken back out of the chat -- and the bot's own history is not touched |
+| `test_delete_messages_tool.py` | 52 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 | `test_message_search.py` | 11 | The store keeps the Telegram id of every message, and can be searched by text and by sender |
 | `test_telegram_id_recorded.py` | 5 | Every message the bot stores carries the Telegram id it came from |
 | `test_chat_history_search.py` | 12 | The bot's own record of the chat, and what it buys |
@@ -1618,7 +1618,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_mcp_import_wiring.py` | 6 | The imported tools reach the model and the dispatcher |
 | `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
 | `test_one_name_per_person.py` | 6 | One person, one name in the record |
-| `test_empty_answer_fallback.py` | 5 | The empty-answer fallback reaches the user |
+| `test_empty_answer_fallback.py` | 6 | The empty-answer fallback reaches the user |
 | `test_release_workflow.py` | 10 | The release door: a tag releases, and the release cannot reach the host |
 | `test_typing_indicator.py` | 6 | The typing indicator cannot end the turn |
 | `test_limits.py` | 19 | The turn's budget outlives the command it runs |

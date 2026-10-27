@@ -94,6 +94,7 @@ __all__ = [
     "SANDBOX_POSTURE_LINES",
     "SUDO_POLICY",
     "EXEC_TIMEOUT_SECONDS",
+    "EXEC_TIMEOUT_PHRASE",
     "PROXY_WAIT_GRACE_SECONDS",
     "CLIENT_TIMEOUT_SECONDS",
     "MCP_MAX_READ_BYTES",
@@ -171,32 +172,6 @@ SANDBOX_POSTURE_LINES = (
 SANDBOX_POSTURE = " ".join(SANDBOX_POSTURE_LINES)
 
 
-def _sudo_policy() -> str:
-    """The sentence the model reads, inside the tool description.
-
-    It is a policy, and it says so. The sandbox can do it; the bot does
-    not want it done.
-    """
-    if PRIVILEGE_MODE:
-        return (
-            "Do NOT use it for: anything that would need sudo -- the "
-            "sandbox's container can run a command as root (its privilege "
-            "mode is on), so that is a policy and not a wall: the "
-            "container is the boundary, and the work this tool is for "
-            "does not need root. Nor for anything that needs to write "
-            "outside /workspace, or anything that needs to run for more "
-            "than an hour."
-        )
-    return (
-        "Do NOT use it for: anything that would need sudo (the sandbox "
-        "runs without it), anything that needs to write outside "
-        "/workspace, or anything that needs to run for more than an hour."
-    )
-
-
-SUDO_POLICY = _sudo_policy()
-
-
 # === the command's time budget ===
 
 #: The longest a single command may run in the sandbox. Since v2.10.2
@@ -213,6 +188,12 @@ SUDO_POLICY = _sudo_policy()
 #: larger than the proxy's wait, or the bot drops the answer the proxy
 #: is still holding.
 EXEC_TIMEOUT_SECONDS = 3600
+
+#: The limit as the words the model reads. The description quotes these
+#: words, so the number and the sentence cannot drift apart: a tripwire
+#: checks that the phrase means the number, and another that the
+#: description carries the phrase and not some other limit.
+EXEC_TIMEOUT_PHRASE = "an hour"
 
 #: How much longer the proxy waits for the agent than the limit it
 #: asked for. Before v2.10.2 both numbers were 60: the agent answered
@@ -242,3 +223,32 @@ MCP_MAX_READ_BYTES = 1024 * 1024
 CLIENT_TIMEOUT_SECONDS = (
     EXEC_TIMEOUT_SECONDS + PROXY_WAIT_GRACE_SECONDS + 15
 )
+
+
+def _sudo_policy() -> str:
+    """The sentence the model reads, inside the tool description.
+
+    It is a policy, and it says so. The sandbox can do it; the bot does
+    not want it done.
+    """
+    if PRIVILEGE_MODE:
+        return (
+            "Do NOT use it for: anything that would need sudo -- the "
+            "sandbox's container can run a command as root (its privilege "
+            "mode is on), so that is a policy and not a wall: the "
+            "container is the boundary, and the work this tool is for "
+            "does not need root. Nor for anything that needs to write "
+            "outside /workspace, or anything that needs to run for more "
+            f"than {EXEC_TIMEOUT_PHRASE}."
+        )
+    return (
+        "Do NOT use it for: anything that would need sudo (the sandbox "
+        "runs without it), anything that needs to write outside "
+        f"/workspace, or anything that needs to run for more than "
+        f"{EXEC_TIMEOUT_PHRASE}."
+    )
+
+
+SUDO_POLICY = _sudo_policy()
+
+

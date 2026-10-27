@@ -66,7 +66,7 @@ by `validate_tool_calls` + soft-reject in `call_llama.py`
 
 When using `bash_command` (only available in personal mode),
 follow these rules. The sandbox is the first line of defence
-(read-only fs, no network to host, one-hour command timeout,
+(read-only fs, no network to host, a bounded command timeout,
 pids/memory
 caps) but the model is the second line. Defence in depth.
 

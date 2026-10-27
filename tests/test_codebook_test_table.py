@@ -89,27 +89,32 @@ def test_every_named_tripwire_file_actually_has_tests(rows):
         f"function: {empty}")
 
 
-def test_the_declared_test_counts_are_not_bigger_than_the_files(text, rows):
+def test_the_declared_test_counts_match_the_files(text, rows):
     """The number next to the name is a claim about the file.
 
     It used to be checked in one direction only (the tripwire's own
     files), and the edit-replace row claimed 7 tests for a file that did
     not exist. A count that is too big is a stale claim; a count that is
     too small is a stale claim in the other direction -- the file grew
-    and the table did not. Both are the same rot.
+    and the table did not. Both are the same rot, so both are checked:
+    a table whose numbers are "close enough" is a table nobody recomputes.
+
+    The count is the number of *test functions* in the file, not the
+    number of collected cases: a parametrized test is one function and
+    several cases, and the table has always counted the function.
     """
-    too_big = []
+    wrong = []
     for name, count in rows:
         path = TESTS / name
         if not path.is_file():
             continue
         src = path.read_text(encoding="utf-8")
         actual = len(re.findall(r"^\s*(async )?def test_", src, re.MULTILINE))
-        if count > actual:
-            too_big.append(f"{name}: table says {count}, the file has {actual}")
-    assert not too_big, (
-        "the CODEBOOK's tripwire table claims more tests than the files "
-        "have:\n" + "\n".join(too_big))
+        if count != actual:
+            wrong.append(f"{name}: table says {count}, the file has {actual}")
+    assert not wrong, (
+        "the CODEBOOK's tripwire table does not match the files:\n"
+        + "\n".join(wrong))
 
 
 def test_the_total_number_of_test_files_is_right(text):

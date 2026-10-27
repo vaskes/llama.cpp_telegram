@@ -40,6 +40,7 @@ if str(BOT) not in sys.path:
 
 from personal_tools.sandbox_contract import (  # noqa: E402
     CLIENT_TIMEOUT_SECONDS,
+    EXEC_TIMEOUT_PHRASE,
     EXEC_TIMEOUT_SECONDS,
     MCP_MAX_READ_BYTES,
     PRIVILEGE_MODE,
@@ -231,13 +232,17 @@ def test_the_exec_limit_is_the_sandbox_knob_and_the_bot_stays_above_it():
         "the pinned side-car no longer declares the exec limit's range, "
         "its default or the agent's own cap -- the bot's number cannot "
         "be checked against a knob that is not there any more")
-    assert EXEC_TIMEOUT_SECONDS <= ceiling, (
-        f"the bot asks for {EXEC_TIMEOUT_SECONDS}s and the side-car accepts "
-        f"at most {ceiling}s -- the deployment would refuse to start")
-    assert EXEC_TIMEOUT_SECONDS >= default, (
-        f"the bot believes in {EXEC_TIMEOUT_SECONDS}s while the side-car's "
-        f"own default is {default}s: a deployment that raises the knob has "
-        f"to raise the bot's number with it")
+    assert EXEC_TIMEOUT_SECONDS == ceiling, (
+        f"the bot believes in {EXEC_TIMEOUT_SECONDS}s while the side-car "
+        f"accepts at most {ceiling}s. The bot has to believe in the "
+        f"ceiling: the deployment may set the knob anywhere up to it, and "
+        f"the bot's own timeout has to cover the largest value the "
+        f"deployment may set -- otherwise the bot is the link that gives "
+        f"up first, and the answer is lost one layer up.")
+    assert default <= ceiling, (
+        f"the side-car's own default ({default}s) is outside its own range "
+        f"(..{ceiling}s) -- the side-car's business, but the bot's number "
+        f"is derived from it")
     assert EXEC_TIMEOUT_SECONDS <= agent_cap, (
         f"the bot asks for {EXEC_TIMEOUT_SECONDS}s and the agent refuses "
         f"anything above {agent_cap}s")
@@ -245,6 +250,67 @@ def test_the_exec_limit_is_the_sandbox_knob_and_the_bot_stays_above_it():
         EXEC_TIMEOUT_SECONDS + PROXY_WAIT_GRACE_SECONDS), (
         "the bot's timeout has to be strictly larger than the proxy's "
         "wait")
+
+
+def test_the_prompt_does_not_name_a_command_limit_of_its_own():
+    """The prompt is the second place a number can go stale.
+
+    How long a command may run is a fact that lives in the contract and
+    in the sentence the model reads about the tool. The prompt's safety
+    paragraph used to carry a third copy ("60s timeout"), and it was
+    wrong the moment the limit moved -- a second copy of a fact is a
+    second thing to forget. So the paragraph names no limit at all: a
+    fact that lives in one place cannot go stale.
+    """
+    from prompt_text import GROUP_CONTEXT
+
+    paragraph = re.search(
+        r"The sandbox is the first line of defence\s*\(([^)]*)\)",
+        GROUP_CONTEXT, re.S)
+    assert paragraph, (
+        "the prompt's sandbox sentence is gone -- check the wording before "
+        "claiming that it names no limit")
+    durations = re.findall(
+        r"\d+\s*(?:seconds|minutes|hours)|\b(?:an hour|a minute|a second)\b",
+        paragraph.group(1), re.I)
+    assert not durations, (
+        f"the prompt's sandbox sentence names {durations}. The command's "
+        f"limit lives in the contract and in the tool's description; a "
+        f"second copy is a second thing to forget.")
+
+
+#: What the contract's phrase means, in seconds. A phrase nobody can
+#: translate is a phrase nobody can check.
+PHRASE_SECONDS = {
+    "a second": 1,
+    "a minute": 60,
+    "an hour": 3600,
+}
+
+
+def test_the_phrase_the_model_reads_means_the_number_the_code_believes_in():
+    """The words and the seconds are one fact.
+
+    The description says how long a command may run; the contract holds
+    the seconds. Written by hand they drift -- and the drift is
+    invisible: the model is told "an hour" while the bot's own timeout
+    is a minute, and the answer is lost one layer up.
+    """
+    phrase = EXEC_TIMEOUT_PHRASE.strip().lower()
+    if phrase in PHRASE_SECONDS:
+        seconds = PHRASE_SECONDS[phrase]
+    else:
+        m = re.fullmatch(r"(\d+)\s*(seconds|minutes|hours)", phrase)
+        assert m, (
+            f"the contract's phrase {EXEC_TIMEOUT_PHRASE!r} is neither a "
+            f"known duration nor a number of seconds, minutes or hours -- "
+            f"the tripwire cannot tell what the model is being told")
+        seconds = int(m.group(1)) * {
+            "seconds": 1, "minutes": 60, "hours": 3600}[m.group(2)]
+    assert seconds == EXEC_TIMEOUT_SECONDS, (
+        f"the description says {EXEC_TIMEOUT_PHRASE!r} ({seconds}s) and the "
+        f"contract believes in {EXEC_TIMEOUT_SECONDS}s. The words the model "
+        f"reads have to mean the number the bot acts on.")
 
 
 def test_the_description_says_the_limit_the_contract_believes_in():
@@ -256,10 +322,10 @@ def test_the_description_says_the_limit_the_contract_believes_in():
     command for a minute -- and then tells the user so.
     """
     desc = _description()
-    minutes = EXEC_TIMEOUT_SECONDS // 60
-    assert "an hour" in desc or f"{minutes} minutes" in desc, (
-        "the tool description does not name the command limit the "
-        "contract believes in")
+    assert EXEC_TIMEOUT_PHRASE in desc, (
+        f"the tool description does not carry the contract's phrase "
+        f"{EXEC_TIMEOUT_PHRASE!r} -- the model reads the description, not "
+        f"the contract")
     assert "more than a minute" not in desc, (
         "the tool description still says the limit is a minute")
 
