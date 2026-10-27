@@ -707,10 +707,20 @@ class Storage(SummaryStore):
         """Returns the last `limit` messages in chronological order.
 
         Each row is `{'role': str, 'content': str, 'sender_name': str|None,
-        'rating': int|None, 'created_at': float}`. `content` is the raw JSON
+        'rating': int|None, 'created_at': float,
+        'telegram_message_id': int|None}`. `content` is the raw JSON
         string the caller stored. The OpenAI Chat Completions format
         (`{"role", "content"}`) round-trips because both text-only and
         multimodal messages are stored as JSON.
+
+        `telegram_message_id` is the id the message has in Telegram, or
+        None for a row stored before the column existed (and for the
+        bot's own answers, which are persisted BEFORE they are sent, so
+        their id does not exist yet). The model is shown it next to the
+        text of the message: without it a message the user names by what
+        it says cannot be resolved to an id, and the model guesses one
+        instead -- measured on 2026-10-27, it answered "Сообщение 1 —
+        3354" with an id that belonged to one of the BOT's own messages.
 
         T70: `created_at` is now in the result so that context_budget can
         apply an AGE-based window. Until then only the SQL LIMIT stood
@@ -729,9 +739,9 @@ class Storage(SummaryStore):
         rows = c.execute(
             """
             SELECT id, role, content, sender_name, rating, created_at,
-                   summary_id FROM (
+                   summary_id, telegram_message_id FROM (
                 SELECT id, role, content, sender_name, rating, created_at,
-                       summary_id FROM messages
+                       summary_id, telegram_message_id FROM messages
                 WHERE chat_id = ? AND thread_id = ?
                 ORDER BY id DESC
                 LIMIT ?

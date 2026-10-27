@@ -119,6 +119,8 @@ def _decode(rows) -> list[dict]:
             item = {"role": d.get("role", "user"), "content": content}
         item["_created_at"] = d.get("created_at")
         item["_id"] = d.get("id")
+        if d.get("telegram_message_id") is not None:
+            item["_telegram_message_id"] = d["telegram_message_id"]
         if d.get("sender_name"):
             item["_sender_name"] = d["sender_name"]
         out.append(item)

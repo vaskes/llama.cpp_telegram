@@ -74,11 +74,15 @@ EXCEPTIONS = {
     ),
     "handle_photo": (
         "handlers.py",
-        252,
+        253,
         "2026-10-23",
         "One concern (a photo) plus a media path. Same shape as the other "
         "three handlers, so the repetition is the point -- a fix to the "
-        "skeleton breaks four call sites identically. Open debt item 13.",
+        "skeleton breaks four call sites identically. Open debt item 13. "
+        "It grew again on 2026-10-27, by one line: the photo is the one "
+        "turn that is not persisted, so its current turn is built by hand "
+        "-- and without the Telegram id on it, the photo was the one "
+        "message whose id the model could not see.",
         "Split only together with the other three handlers, never alone: "
         "one handler on its own is four shapes, not one.",
     ),

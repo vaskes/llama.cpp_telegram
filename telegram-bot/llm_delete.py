@@ -596,7 +596,9 @@ def delete_messages_tool_def(*, chat_id: Any = None,
         described += (
             "- The bot's own messages in this chat, newest first: "
             + ", ".join(str(m) for m in known)
-            + ". These are the BOT's messages, not the user's. `count` "
+            + ". These are the BOT's messages, not the user's -- never "
+            "offer one of them as the answer to \"which message did I "
+            "write\". `count` "
             "takes back that many of the bot's own last answers (one "
             "answer is one reply, even when it was sent as several "
             "messages); `message_ids` deletes exactly the ids you "
@@ -609,8 +611,17 @@ def delete_messages_tool_def(*, chat_id: Any = None,
             "back. The ids listed above are the ones it can delete.\n"
         )
     described += (
+        "- Every message of this conversation is shown with the id it "
+        "has in Telegram, as a `[telegram id N]` line right above the "
+        "text. That is the id of the USER's message: pass it when the "
+        "user names an earlier message by what it says (\"Сообщение 1\", "
+        "\"the one about the deploy\"). If the message they mean is not "
+        "in the conversation you were given, call `search_messages` for "
+        "its text.\n"
         "\nNEVER invent a message id. Only pass an id that is listed "
-        "above, or one that `search_messages` returned for this chat -- "
+        "above, one that is marked `[telegram id N]` in the "
+        "conversation, or one that `search_messages` returned for this "
+        "chat -- "
         "the bot's own record of the chat is what it can vouch for. The "
         "bot is an "
         "administrator here, so a made-up id is a real attempt to "
@@ -646,8 +657,10 @@ def delete_messages_tool_def(*, chat_id: Any = None,
                         "description": (
                             "Telegram message ids to delete exactly. Use it "
                             "only for the ids listed in this description, "
-                            "or for the ones `search_messages` returned "
-                            "for this chat: the message the user just "
+                            "for the ones `search_messages` returned "
+                            "for this chat, or for the ones marked "
+                            "`[telegram id N]` in the conversation: the "
+                            "message the user just "
                             "wrote, the message the user replied to, the "
                             "bot's own messages, or a message the bot's own "
                             "record of the chat holds. An id that is not "

@@ -86,6 +86,11 @@ def _decode(rows: list[dict]) -> list[dict]:
         context_budget to decide what falls inside the memory window.
         Carried through as an out-of-band field so it never reaches the
         engine as a message field.
+      - "_telegram_message_id": int | None. The id the message has in
+        Telegram. The model is shown it next to the text (llm_messages
+        renders it as a marker line), because a message the user names
+        by what it says cannot be resolved to an id otherwise -- and an
+        id the model cannot resolve is an id it invents.
       - "_id": int | None. The row id. T70.5 uses it to place a chunk
         summary on the timeline (at the id of the first message of the
         chunk it stands for) and to slice chunks out of the old history.
@@ -107,6 +112,8 @@ def _decode(rows: list[dict]) -> list[dict]:
         if r.get("sender_name"):
             msg["_sender_name"] = r["sender_name"]
         msg["_created_at"] = r.get("created_at")
+        if r.get("telegram_message_id") is not None:
+            msg["_telegram_message_id"] = r["telegram_message_id"]
         if r.get("id") is not None:
             msg["_id"] = r["id"]
         if r.get("summary_id") is not None:

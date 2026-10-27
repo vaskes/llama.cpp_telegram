@@ -78,6 +78,17 @@ ALLOWED = {
     "selftest_handlers.py": ["что на фото?"],
     "selftest_llm.py": ["проверь математику"],
     "selftest_media.py": ["Что на картинке?"],
+    "llm_delete.py": [
+        # The delete tool's description: the example of a message the
+        # user names by what it wrote, in the words the operator used in
+        # his own chat. Model-facing schema.
+        "Сообщение 1",
+    ],
+    "prompt_text/group_context.py": [
+        # The rules about where a message id may come from, with the
+        # same example. Model-facing.
+        "Сообщение 1",
+    ],
 }
 
 # The shortest fragment that may be an exception. Two characters is
@@ -153,7 +164,15 @@ def test_the_bot_has_modules_to_check():
                          ids=lambda p: p.name)
 def test_no_russian_reaches_the_user(path: Path):
     """No user-facing text of the bot is Russian."""
-    module = path.name
+    # The key is the path RELATIVE to telegram-bot/, not the file name:
+    # a file in a subdirectory (prompt_text/, personal_tools/,
+    # commands/) has a name that says nothing about which file it is --
+    # and with the name as the key, such a file could not be vouched for
+    # at all, which is a way of forbidding the exception rather than of
+    # describing it. The allowlist is keyed the same way below, and
+    # `test_the_allowlist_is_not_a_blanket` checks that every key is a
+    # path that exists.
+    module = str(path.relative_to(BOT))
     literals = cyrillic_literals(path.read_text(encoding="utf-8"))
     bad = violations(module, literals)
     assert not bad, (

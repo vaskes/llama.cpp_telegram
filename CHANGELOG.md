@@ -19,6 +19,43 @@ this file is the human-readable summary.
 retry, the leaked token, the attribution cleanup, the codebook, and the
 deployment profile that finally has its own numbers.
 
+### The conversation shows the model the id of every message
+
+The operator's live test of 2026-10-27 (01:21 MSK): "Сообщение 1",
+"Сообщение 2", "Сообщение 3", "Сообщение 4", and then "Удали сообщение
+1". The bot named the user's messages with ids **3354** and **3357** —
+and those were ids of the **BOT's own** messages, taken out of the list
+in the delete tool's description. On the last turn it called no tool at
+all (`reasoning_chars=9851`, `tool_calls=0`) and asked the operator to
+clarify instead.
+
+The cause, measured: **the id of a message the USER wrote was nowhere
+in anything the model was shown.** The conversation carried the text and
+nothing else, so a message named by its text ("Сообщение 1") had no id
+to resolve to — and a model without an id takes a number out of
+whatever bag of numbers it can see. The bag in reach was the list of
+the bot's own ids, and that is exactly where 3354 came from.
+
+What changed:
+
+  * every message the context carries is now shown to the model with the
+    Telegram id it has, as a `[telegram id N]` line of its own, directly
+    above the text it belongs to (a display name is user-controlled
+    text, and it must not be mistakable for an id);
+  * the delete tool's description names that marker as a source of ids,
+    and fences the bot's own ids off — the model read 3354 and 3357 out
+    of that list and offered them as the user's;
+  * the prompt rules say where an id may come from (the marker,
+    `search_messages`, the tool description) and that an id the model
+    wrote in an earlier answer is not evidence: the "Сообщение 1 —
+    3354" answer poisoned the next turn, which repeated it back as "in
+    my previous round I said ...".
+
+The guard did not move. The dispatcher still asks the record whether it
+holds the id, and an id the record does not hold is refused before
+Telegram is asked to do anything. The record itself is not touched by a
+deletion — that was the operator's rule from the start, and it holds.
+
 ### The delete tool stopped guessing, and started naming the cause
 
 The operator tested the `delete_messages` tool in LlmChatPlace on

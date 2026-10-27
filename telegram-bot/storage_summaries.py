@@ -115,9 +115,11 @@ class SummaryStore:
         c = self._conn()
         rows = c.execute(
             """
-            SELECT id, role, content, sender_name, rating, created_at
+            SELECT id, role, content, sender_name, rating, created_at,
+                   telegram_message_id
             FROM (
-                SELECT id, role, content, sender_name, rating, created_at
+                SELECT id, role, content, sender_name, rating, created_at,
+                       telegram_message_id
                 FROM messages
                 WHERE chat_id = ? AND thread_id = ? AND created_at >= ?
                 ORDER BY id DESC
@@ -158,10 +160,10 @@ class SummaryStore:
         rows = c.execute(
             f"""
             SELECT id, role, content, sender_name, rating, created_at,
-                   summary_id
+                   summary_id, telegram_message_id
             FROM (
                 SELECT id, role, content, sender_name, rating, created_at,
-                       summary_id
+                       summary_id, telegram_message_id
                 FROM messages
                 WHERE chat_id = ? AND thread_id = ? AND created_at < ?
                   AND (summary_id IS NULL OR summary_id NOT IN (

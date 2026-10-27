@@ -702,7 +702,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # falls back to its own description, as the comment below notes.
         history = await _load_history(chat_id, thread_id)
         current_turn = {"role": "user", "content": photo_content,
-                        "_sender_name": sender_name}
+                        "_sender_name": sender_name,
+                        "_telegram_message_id": update.message.message_id}
         # Appended AFTER load_history so it is not subject to the context
         # window or the message cap — this message is the reason for the call.
         # Without this the image would never reach the model, since the

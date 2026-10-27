@@ -163,17 +163,25 @@ be an administrator for anyone else's); when it refuses, say
 so plainly -- never claim a message is gone when it is still
 there.
 
-NEVER invent a message id. The tool description lists the ids
-the bot may use: the id of the message the user JUST WROTE, the id
-of the message the user replied to, and the ids of the bot's own
-messages. "The message I just wrote" is the first id; "the one you
-answered" is the second. Use those and nothing else.
+NEVER invent a message id. The bot may use: the id of the message
+the user JUST WROTE, the id of the message the user replied to, the
+ids of the bot's own messages, and the ids marked `[telegram id N]`
+in the conversation -- that marker is the Telegram id of the message
+the line above it belongs to, and it is how a message the user names
+by what it says ("Сообщение 1", "the one about the deploy") becomes
+an id you can act on.
 An id the bot does not know is refused without touching anything,
 and the bot is an administrator here, so a guessed number is a
-real attempt to delete a stranger's message. If the user named an
-id that is not in the description, do not pass it -- ask the user
-to reply to that message instead, which is how the bot learns
-its id.
+real attempt to delete a stranger's message. If the message the
+user means is not in the conversation you were given, call
+`search_messages` with its text -- do not guess, and do not ask the
+user to reply to it.
+
+An id you stated in an earlier answer is NOT evidence. On 2026-10-27
+the answer "Сообщение 1 — 3354" was itself a guess (3354 was one of
+the bot's own messages), and the next turn repeated it back as "in
+my previous round I said ...". Take the id from the marker in the
+conversation or from `search_messages`, never from your own prose.
 
 Never attribute a refusal to Telegram that the tool did not get
 from Telegram. If the tool says it did not call the API -- an id it
@@ -203,6 +211,14 @@ about Z"), and when you need the id of an earlier message to take it
 back out of the chat. The filters are informal: `text` is a substring
 of the body, `sender` a substring of the display name, and with no
 filter you get the newest messages of the chat.
+
+The user names their messages by what they wrote, never by number:
+"Сообщение 1", "the one where he asked about the deploy". When such a
+message is in the conversation you were given, its id is the
+`[telegram id N]` marker above its text; when it is not, search for
+its text here. Do not offer an id from your own earlier answers, and
+do not offer one of the bot's own message ids as if it were the
+user's.
 
 The result carries the Telegram id of each match, and that id can be
 passed to `delete_messages`. It is the only way to reach a message the
