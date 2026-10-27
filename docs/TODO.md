@@ -49,6 +49,10 @@ can answer. Each one records the decision that unblocks it.
 
 ### The bot delivers a file twice — the fix is in production; nobody has watched it happen
 
+**Status:** open since 2026-10-25. The deploy half is done — the fix is
+in production. What is left is the human half: nobody has asked for a
+file in the chat since and counted the copies.
+
 **Measured by the operator, 2026-10-25.** He asked for an HTML file in the
 group chat. The document arrived — 595 bytes, the right bytes — and then a
 second message arrived carrying the same HTML as a code block: the
