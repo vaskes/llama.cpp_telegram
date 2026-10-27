@@ -326,9 +326,15 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
     payload decoded into garbage -- and it paid four thirds of the file
     in size for the privilege.
 
-    The order is the one the sandbox side documents: ask what the file
-    is, pull it, deliver it, and then delete the sandbox copy. The
-    delivery is the copy that counts; the workspace is a scratchpad.
+    The order is: ask what the file is, pull it, deliver it, and stop.
+    The sandbox copy stays where it is.
+
+    An earlier version deleted it after the delivery -- one copy, not
+    two, the workspace is a scratchpad. The operator overruled that on
+    2026-10-27: nobody had asked for the file to be deleted, and the
+    workspace is his to look at. A delivery that removes what it was
+    not told to remove is a delivery that surprises, and the surprise
+    is what the user has to undo.
     """
     path = str(args.get("path", "") or "").strip()
     if not path:
@@ -409,9 +415,10 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
         except OSError:
             pass
 
-    # 4. One copy. The file is in the chat; the scratch copy in the
-    #    workspace is the one that goes.
-    purge_note = await _ft.purge(path)
+    # 4. The sandbox copy stays. The delivery removes nothing on its
+    #    own -- the operator's ruling of 2026-10-27. If the file is
+    #    supposed to go, that is a request the model carries out through
+    #    the shell, where the intent is explicit.
 
     # The pointer is Telegram's own id for the delivered file, not the
     # path in the sandbox: the path dies with the sandbox, and the
@@ -420,7 +427,8 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
 
     return ToolExecution(
         text=(f"[send_file: sent {name} ({fetched.size} bytes, "
-              f"sha256 {fetched.sha256}) to the chat; {purge_note}]"),
+              f"sha256 {fetched.sha256}) to the chat; the sandbox copy is "
+              f"still at {path}]"),
         ledger=_entry("send_file", args, deps.iteration,
                       size=fetched.size, sha256=fetched.sha256,
                       file_id=file_id),

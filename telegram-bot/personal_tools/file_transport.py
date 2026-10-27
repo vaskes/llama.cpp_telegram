@@ -37,9 +37,15 @@ decoded into garbage, with nothing in the answer to say so.
 This module is the courier. It asks for the metadata first, so a file
 that is over the sandbox's own limit is refused before a single byte is
 pulled; it streams the bytes into a temp file while hashing them; and
-it deletes the sandbox copy once the caller says the file was
-delivered, because a file that lives in two places at once lives in the
-one nobody is looking at as often as in the one they are.
+it leaves the sandbox copy where it is.
+
+It used to delete that copy once the caller said the file had been
+delivered -- one copy, not two, and the workspace is a scratchpad. The
+operator overruled that on 2026-10-27: the delivery had been removing a
+file nobody asked it to remove, and the user was the one who found out.
+The door still answers `DELETE /files`; the bot does not use it. If a
+file is supposed to go, the user asks for it, and the model removes it
+through the shell -- where the intent is explicit.
 
 Everything here speaks HTTP to the same proxy the shell tool speaks to,
 with the same bearer token: `AGENT_STACK_URL` and `AGENT_STACK_TOKEN`.
@@ -64,7 +70,6 @@ __all__ = [
     "FetchedFile",
     "file_meta",
     "fetch_to_temp",
-    "purge",
 ]
 
 
@@ -292,34 +297,6 @@ async def fetch_to_temp(path: str, *, timeout: float = 120.0) -> FetchedFile:
         size=written,
         sha256=digest.hexdigest(),
     )
-
-
-async def purge(path: str, *, timeout: float = 30.0) -> str:
-    """Delete the sandbox copy, and say what happened.
-
-    The sandbox is a scratchpad, not storage. Once the file has been
-    delivered, the copy in the workspace is the second copy of the same
-    artifact -- and the one nobody is looking at.
-
-    A failure here is not a failure of the delivery: the file is already
-    in the chat. So the outcome is a sentence for the model, not an
-    exception.
-    """
-    url = f"{AGENT_STACK_URL}/files"
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.delete(url, params={"path": path},
-                                    headers=_headers())
-    except httpx.TimeoutException:
-        return "the sandbox copy could not be removed (the side-car timed out)"
-    except httpx.HTTPError as e:
-        return f"the sandbox copy could not be removed ({e!r})"
-    if r.status_code == 204:
-        return "the sandbox copy was removed"
-    if r.status_code == 404:
-        return "the sandbox copy was already gone"
-    return ("the sandbox copy could not be removed ("
-            f"{_error_for_status(r.status_code, r.text)})")
 
 
 def _unlink(path: str) -> None:

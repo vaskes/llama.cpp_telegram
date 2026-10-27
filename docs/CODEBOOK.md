@@ -1137,6 +1137,43 @@ trusts. The rules:
     it made anything worse, because a check that was already red before
     the deploy is the operator's business, not this deploy's failure.
 
+**X-19 — The delivery removes nothing.**
+`AUTO`
+`tests/test_send_file_tool.py`, `tests/test_file_transport.py`.
+
+On 2026-10-27 the operator asked the bot for a 50 MB binary, got it, and
+then found the file gone from the sandbox. He had given no such order.
+The deletion was the tool's own decision — "one copy, not two: the
+workspace is a scratchpad" — and the answer had announced it as a fact
+("the sandbox copy was removed"), so the surprise read as information
+rather than as a decision somebody had made for him. His ruling: **a
+delivery never removes what it was not told to remove.**
+
+The rules:
+
+  * **the capability is gone, not just the call.** The file-door client
+    cannot issue a `DELETE` at all, so a future caller cannot reach for
+    it by accident. A guard that only forbids one call site is one
+    refactor away from a second one.
+  * **the answer says where the file is.** The tool result names the
+    path the copy is still at, so nobody has to guess whether the file
+    survived — and the operator can look at his own workspace.
+  * **the answer makes no claim the tool did not make.** "The sandbox
+    copy was removed" was true and still wrong: it stated a decision as
+    a fact. The wording is pinned by a test, because a claim is exactly
+    what drifts.
+  * **a removal is a request, and a request travels through the shell.**
+    If the user wants the file gone, the model removes it with
+    `bash_command` — where the intent is explicit and the user can see
+    it happen.
+
+This is the delivery-side half of the same rule the chat side obeys
+(X-10): **the surface can be cleaned up.** What is different here is
+who owns the surface. The chat is the bot's to clean; the sandbox
+workspace is the operator's, and the bot is a guest in it — so the
+difference between the two is not the size of the thing being removed
+but who asked.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1490,8 +1527,8 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 
 | `test_console_output_in_chat.py` | 9 | The console output goes into the chat; it is not a file |
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
-| `test_send_file_tool.py` | 14 | A file from the sandbox reaches the chat as a document |
-| `test_file_transport.py` | 18 | The file door: the bytes, the digest, the purge, the version |
+| `test_send_file_tool.py` | 16 | A file from the sandbox reaches the chat as a document -- and the delivery removes nothing |
+| `test_file_transport.py` | 16 | The file door: the bytes, the digest, the version -- and no way to delete |
 | `test_sandbox_contract.py` | 9 | The bot's claims about the sandbox match the sandbox we run |
 | `test_engine_failure_message.py` | 9 | What the user reads when the engine could not be reached |
 | `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |

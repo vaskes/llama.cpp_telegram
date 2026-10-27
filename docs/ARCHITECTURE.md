@@ -51,7 +51,7 @@ telegram-bot/
 ├── llm_*.py               # 23 leaf modules, one decision each
 └── personal_tools/
     ├── bash_command.py    # T38: bash execution via sandbox side-car
-    └── file_transport.py  # the file door: pull bytes out, purge the copy
+    └── file_transport.py  # the file door: pull bytes out, leave the copy
 ```
 
 64 top-level modules, 166 test files, 2782 tests collected in a checkout.
@@ -67,7 +67,7 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       453  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
+  llm_dispatch.py       461  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      571  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
@@ -88,7 +88,7 @@ tests, none of which build a full `call_llama`.
   llm_toolargs.py       215  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py          300  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
-  llm_sendfile.py         79  send_file_tool_def
+  llm_sendfile.py         82  send_file_tool_def
   llm_delete.py           855  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal, requested_ids
   llm_history.py          256  search_messages_tool_def, run_search, known_ids
   llm_truncation.py      119  condense

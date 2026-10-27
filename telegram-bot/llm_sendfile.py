@@ -60,7 +60,10 @@ def send_file_tool_def() -> dict:
                 "sandbox serves files that exist, not downloads in flight. "
                 "If the file is over the sandbox's own size limit the call "
                 "comes back with its real size, so read the answer before "
-                "retrying."
+                "retrying. The delivery does NOT delete the sandbox copy: "
+                "the file is still there afterwards, and the answer says "
+                "so. Only remove it with bash_command, and only when the "
+                "user asked for it to be removed."
             ),
             "parameters": {
                 "type": "object",

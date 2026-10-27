@@ -73,9 +73,8 @@ async def test_every_request_carries_the_bearer_token(sandbox):
 
     await ft.file_meta(PATH)
     await ft.fetch_to_temp(PATH)
-    await ft.purge(PATH)
 
-    assert sandbox.tokens == ["Bearer test-token"] * 3, sandbox.tokens
+    assert sandbox.tokens == ["Bearer test-token"] * 2, sandbox.tokens
 
 
 async def test_the_meta_door_answers_with_the_size_and_the_limit(sandbox):
@@ -164,33 +163,30 @@ async def test_the_proxies_own_quirk_is_read(sandbox):
     assert "file not found" in caught.value.message, caught.value.message
 
 
-async def test_the_purge_removes_the_sandbox_copy(sandbox):
-    sandbox.files[PATH] = PAYLOAD
+def test_the_transport_cannot_delete_a_file():
+    """The bot has no way to remove a file from the sandbox.
 
-    note = await ft.purge(PATH)
+    The operator's ruling (2026-10-27): a delivery does not remove
+    what it was not told to remove. The capability itself is gone, so
+    a future caller cannot reach for it by accident -- the door still
+    answers `DELETE /files`, and this client must never ask.
 
-    assert note == "the sandbox copy was removed", note
-    assert PATH not in sandbox.files, (
-        "the scratch copy is still in the workspace -- the artifact lives "
-        "in two places at once")
-    assert sandbox.paths("DELETE") == [PATH]
+    The check is structural on purpose: the property is "this module
+    cannot issue a DELETE", and a substring search for the word
+    "delete" would trip over the docstring that explains the rule.
+    """
+    import ast
 
-
-async def test_a_purge_of_a_file_that_is_not_there_is_not_a_failure(sandbox):
-    note = await ft.purge("/workspace/gone.bin")
-
-    assert note == "the sandbox copy was already gone", note
-
-
-async def test_a_purge_that_fails_is_a_sentence_not_an_exception(sandbox):
-    """The file is already in the chat. A failure to clean up is worth
-    saying, not worth raising."""
-    sandbox.files[PATH] = PAYLOAD
-    sandbox.delete_status = 500
-
-    note = await ft.purge(PATH)
-
-    assert "could not be removed" in note, note
+    tree = ast.parse(Path(ft.__file__).read_text(encoding="utf-8"))
+    deletes = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "delete"
+    ]
+    assert deletes == [], (
+        "the file door client can still issue a DELETE: "
+        f"{[ast.dump(node) for node in deletes]}")
 
 
 async def test_a_failed_pull_leaves_no_file_behind(sandbox, tmp_path):

@@ -498,7 +498,7 @@ file door, shipped on the sandbox side as
 The model creates the file and calls `send_file` with its path. The bot
 asks the sandbox what the file is (size, limit), pulls the bytes as a
 stream, hashes them, sends them as a Telegram document in the topic the
-question came from, and then deletes the sandbox copy.
+question came from, and leaves the sandbox copy where it is.
 
 **What it replaced:** base64 through the terminal pane. That route was
 bounded by the pane's scrollback (~400 KB of real file), paid four
@@ -508,10 +508,13 @@ payload decoded into garbage with nothing in the answer to say so. The
 door has no such ceiling: the smaller of the sandbox's
 `AGENT_BINARY_LIMIT` and Telegram's 50 MB is the real one.
 
-**The one-copy rule:** the delivery is the copy that counts, the
-workspace is a scratchpad, so the sandbox copy is deleted after the
-delivery. A file that lives in two places at once lives in the one
-nobody is looking at as often as in the one they are.
+**The copy that stays:** the sandbox copy is **not** deleted after the
+delivery. The one-copy rule ("the delivery is the copy that counts, the
+workspace is a scratchpad") was my decision, and the operator overruled
+it on 2026-10-27 — see "The delivery deleted the file" below. A
+delivery never removes what it was not told to remove; if the user wants
+the file gone, that is a request the model carries out through the
+shell, where the intent is explicit.
 
 ### T70.5 — what if the summary itself does not fit in the context window?
 
@@ -994,6 +997,56 @@ actually applies.
 **Where to look:** `CHANGELOG.md` § Unreleased;
 `telegram-bot/personal_tools/sandbox_contract.py`;
 `tests/test_sandbox_contract.py`; `docs/BASH-SANDBOX.md`.
+
+---
+
+### The delivery deleted the file from the sandbox — closed 2026-10-27
+
+**Status:** ✅ **closed 2026-10-27.** The delivery removes nothing; the
+answer says where the copy is.
+
+**What was wrong:** on 2026-10-27 the operator asked the bot for a 50 MB
+binary. He got it — and then found the file gone from the sandbox. He
+had given no such order: "почему стерлась? я давал такую команду?".
+The deletion was the tool's own decision, and it was not a careless
+one: the code had a rule for it ("one copy, not two — the delivery is
+the copy that counts, the workspace is a scratchpad"), the tool
+description said nothing about it, and the answer announced the result
+as a fact ("the sandbox copy was removed"). So the surprise reached him
+as information rather than as a decision somebody had made for him.
+
+**The ruling:** a delivery never removes what it was not told to
+remove. The chat is the bot's to clean up; the sandbox workspace is
+the operator's, and the bot is a guest in it.
+
+**What was done:**
+
+  * `_execute_send_file` no longer purges the sandbox copy, and its
+    answer names the path where the copy still is;
+  * `file_transport.purge()` is **gone** — the file-door client cannot
+    issue a `DELETE` at all. The capability is removed, not just the
+    call: a guard that only forbids one call site is one refactor away
+    from a second one;
+  * the tool description says the copy stays, and that a removal goes
+    through the shell, where the user's intent is explicit;
+  * the refusal of an oversized file is pinned **verbatim**, because the
+    operator asked for the error to be written down ("запиши и выведи
+    сообщение об ошибке"). Measured on the production host against a
+    real 120 MB file:
+    `[send_file: big_120mb.bin is 125829120 bytes; the sandbox allows
+    52428800 bytes]` — the sandbox's own limit, which is also Telegram's
+    `sendDocument` limit, so the file is refused before a byte is
+    pulled;
+  * tripwires: `tests/test_send_file_tool.py` (the copy stays, the
+    answer claims nothing it did not do, the refusal text is pinned),
+    `tests/test_file_transport.py` (the client cannot delete);
+  * mutation harness `scripts/mutation_harness_send_file_copy.py`:
+    5 mutations — 4 caught, 1 survived (group B: with the tripwires
+    silenced the suite goes green, which is the proof that the
+    tripwires were the thing doing the work).
+
+**Where to look:** `docs/CODEBOOK.md` X-19; `docs/BASH-SANDBOX.md` §
+"Moving a file out of the sandbox".
 
 ---
 

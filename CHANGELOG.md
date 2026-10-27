@@ -22,6 +22,37 @@ this file is the human-readable summary.
   SETUP, AGENT_GUIDE, TROUBLESHOOTING, ROADMAP and the side-car's guide
   tell a host with a clone and a host deployed from a release apart.
 
+### The delivery removes nothing
+
+On 2026-10-27 the operator asked the bot for a 50 MB binary, got it — and
+then found the file gone from the sandbox. He had given no such order. The
+deletion was the tool's own decision ("one copy, not two: the workspace is
+a scratchpad"), and the answer announced it as a fact, so the surprise
+reached him as information rather than as a decision somebody had made for
+him.
+
+**A delivery never removes what it was not told to remove.** The chat is
+the bot's to clean up; the sandbox workspace is the operator's, and the bot
+is a guest in it.
+
+  * `send_file` no longer deletes the sandbox copy, and its answer names the
+    path where the copy still is;
+  * the file-door client **cannot issue a `DELETE` at all** — the capability
+    is gone, not just the call, so a future caller cannot reach for it by
+    accident;
+  * the tool description tells the model the copy stays, and that a removal
+    goes through the shell, where the user's intent is explicit;
+  * the refusal of an oversized file is pinned verbatim, because the
+    operator asked for the error to be written down. Measured on the
+    production host against a real 120 MB file:
+    `[send_file: big_120mb.bin is 125829120 bytes; the sandbox allows
+    52428800 bytes]` — the sandbox's own limit, which is also Telegram's
+    `sendDocument` limit, so the file is refused before a byte is pulled.
+
+Tripwires: `tests/test_send_file_tool.py`, `tests/test_file_transport.py`;
+mutation harness `scripts/mutation_harness_send_file_copy.py` (5 mutations:
+4 caught, 1 survived — group B). Rule **X-19**.
+
 ## [v0.14.0-stable] — 2026-10-27 — The side-car's pin, the MCP door,
 and the release that carries the image
 

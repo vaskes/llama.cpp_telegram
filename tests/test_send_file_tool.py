@@ -22,11 +22,15 @@ What is pinned here:
 
   * the document that goes out is the file's bytes, not its text;
   * the bytes come through the file door and not through the shell;
-  * the sandbox copy is deleted after the delivery -- one copy, not two;
+  * the sandbox copy is NOT deleted by the delivery -- nothing is
+    removed that the user did not ask to remove (the operator's ruling
+    of 2026-10-27, after a 50 MB file vanished under him);
   * the size is known before the bytes are pulled, so a file nobody
     could deliver is never downloaded;
   * a file that is too big, missing or refused produces a message the
-    model can read and act on, instead of an exception.
+    model can read and act on, instead of an exception -- and that
+    message is pinned verbatim, because the operator asked for the
+    error to be written down.
 """
 import hashlib
 import sys
@@ -199,22 +203,51 @@ async def test_a_file_over_the_channel_limit_is_refused(sandbox, monkeypatch):
 
     assert "sendDocument" in outcome.text, outcome.text
     assert str(llm_dispatch.MAX_SEND_FILE_BYTES) in outcome.text, outcome.text
+    assert outcome.text == (
+        "[send_file: huge.bin is 52428801 bytes; Telegram's sendDocument "
+        "accepts at most 52428800 bytes]"), outcome.text
     assert deps.bot.documents == []
 
 
-async def test_the_sandbox_copy_is_deleted_after_the_delivery(sandbox):
-    """One copy, not two: the sandbox is a scratchpad, the delivery is
-    the artifact."""
+async def test_the_sandbox_copy_stays_in_the_sandbox(sandbox):
+    """The delivery does not remove what it was not told to remove.
+
+    On 2026-10-27 the operator asked the bot for a 50 MB binary, got
+    it, and then found the file gone from the sandbox: the delivery had
+    deleted the copy on its own. He had given no such order. His
+    ruling: a delivery never removes anything by itself.
+
+    The check is on the wire, not on the wording: a DELETE request to
+    the door is the thing that would have removed the file, so the
+    request list is what has to stay clean.
+    """
     sandbox.files[PATH] = PAYLOAD
     deps = _deps()
     deps.bot.events = []
 
     outcome = await execute_tool("send_file", {"path": PATH}, deps)
 
-    assert "the sandbox copy was removed" in outcome.text, outcome.text
-    assert PATH not in sandbox.files, (
-        "the scratch copy is still in the workspace")
-    assert sandbox.paths("DELETE") == [PATH]
+    assert PATH in sandbox.files, (
+        "the delivery removed the sandbox copy; nobody asked for that")
+    assert sandbox.paths("DELETE") == [], (
+        f"the delivery asked the door to delete: {sandbox.requests}")
+    assert "still at" in outcome.text and PATH in outcome.text, (
+        "the answer has to say where the file is, so the user is not left "
+        f"guessing: {outcome.text}")
+
+
+async def test_the_answer_does_not_claim_the_copy_was_removed(sandbox):
+    """The wording is pinned, because a claim the tool did not make is
+    the failure the operator actually saw: the answer used to say the
+    copy was removed, and that is what made the deletion look like a
+    fact instead of a decision."""
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+
+    outcome = await execute_tool("send_file", {"path": PATH}, deps)
+
+    assert "removed" not in outcome.text, outcome.text
+    assert "deleted" not in outcome.text, outcome.text
 
 
 async def test_the_document_lands_in_the_topic_of_the_question(sandbox):
@@ -246,6 +279,35 @@ async def test_a_file_that_is_too_big_says_so(sandbox):
     outcome = await execute_tool("send_file", {"path": PATH}, deps)
     assert "10240" in outcome.text, outcome.text
     assert deps.bot.documents == []
+
+
+async def test_the_refusal_of_an_oversized_file_is_pinned_verbatim(sandbox):
+    """The error message, written down -- which is what the operator
+    asked for on 2026-10-27: "запиши и выведи сообщение об ошибке".
+
+    It is pinned here rather than in a document, because a string in a
+    test cannot drift away from the code that produces it.
+
+    The live case was a 120 MB file, refused by the sandbox's own limit
+    before a single byte was pulled:
+
+        [send_file: big_120mb.bin is 125829120 bytes; the sandbox
+        allows 52428800 bytes]
+    """
+    sandbox.files[PATH] = PAYLOAD
+    sandbox.limit = 10
+    deps = _deps()
+
+    outcome = await execute_tool("send_file", {"path": PATH}, deps)
+
+    assert outcome.text == (
+        "[send_file: random10k.bin is 10240 bytes; "
+        "the sandbox allows 10 bytes]"), outcome.text
+    assert deps.bot.documents == [], (
+        "the file was pulled even though it cannot be delivered")
+    assert [route for method, route, _ in sandbox.requests
+            if method == "GET"] == ["/files/meta"], (
+        f"the bytes were pulled anyway: {sandbox.requests}")
 
 
 async def test_the_temp_file_is_removed(sandbox, tmp_path):

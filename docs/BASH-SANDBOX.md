@@ -324,12 +324,15 @@ routes next to the shell:
 |---|---|---|
 | GET | `/files/meta?path=P` | size, name, mtime, and the sandbox's own size limit |
 | GET | `/files?path=P` | the file's **raw bytes**, streamed |
-| DELETE | `/files?path=P` | remove the file from the sandbox (204) |
+| DELETE | `/files?path=P` | remove the file from the sandbox (204) -- the door still has this route; the bot does not use it |
 
 The bot's `send_file` tool is the courier: the model creates a file in
 the sandbox, calls `send_file` with its path, and the bot pulls the
-bytes, sends them as a Telegram document, and then deletes the sandbox
-copy. One copy of the artifact survives -- the delivery.
+bytes and sends them as a Telegram document. The sandbox copy stays
+where it is -- the delivery removes nothing on its own. That is the
+operator's ruling of 2026-10-27, made after a 50 MB file vanished
+under him: he had given no such order, and the answer had announced
+the deletion as a fact.
 
 The order is not a detail:
 
@@ -341,8 +344,14 @@ The order is not a detail:
    its own `sha256sum`.
 3. **the delivery.** The file is handed over as a file object, not as
    a bytes object the bot had to hold.
-4. **the purge.** `DELETE /files` removes the scratch copy. A failure
-   here is reported, not raised: the file is already in the chat.
+4. **no purge.** There is no fourth step. An earlier version deleted
+   the scratch copy here, on the theory that one copy is one copy too
+   many -- and the operator overruled it: the file was his, and nobody
+   had asked for it to go. The bot's file-door client no longer has a
+   way to issue that request at all, so the capability is gone rather
+   than merely unused. If a file is supposed to be removed, the user
+   asks for it and the model removes it through the shell, where the
+   intent is explicit.
 
 Two limits, and the smaller one wins:
 
