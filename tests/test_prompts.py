@@ -60,7 +60,7 @@ import prompt_text
 
 # sha256[:16], utf-8. Update with a reason in the commit message.
 CONTENT_PINS = {
-    "GROUP_CONTEXT": "0b70bbca3d96e60f",
+    "GROUP_CONTEXT": "0885911cc71a5264",
     "RATING_RULES": "c3797f4d8521a997",
     "WELCOME_TEXT": "d35362838a645cb4",
     "RATING_EMOJI": "bbda90f297e9f0c0",

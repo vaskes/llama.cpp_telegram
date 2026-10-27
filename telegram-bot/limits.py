@@ -209,9 +209,14 @@ _PUBLIC_DEFAULTS = {
                                        #   Below 32K the 4K-prompt case
                                        #   truncates with content_chars=0.
     "MAX_TOKENS_CAPTION":    16384,   # unchanged: photos / voice transcripts
-    "LOOP_BUDGET_SEC":         900,   # 15 min - 1.5x over the 5-10 min the
-                                       #   4K-prompt case actually took
-    "LLAMA_HTTP_TIMEOUT_SEC": 990.0,  # LOOP_BUDGET_SEC * 1.1
+    "LOOP_BUDGET_SEC":        7200,   # 2 h. Raised 2026-10-27 from 900 s:
+                                       #   the sandbox command limit is an
+                                       #   hour (AGENT_EXEC_TIMEOUT=3600 in
+                                       #   the production deployment), and a
+                                       #   turn whose budget is shorter than
+                                       #   the command it runs throws the
+                                       #   answer away.
+    "LLAMA_HTTP_TIMEOUT_SEC": 7920.0, # LOOP_BUDGET_SEC * 1.1
     "LLAMA_MODELS_TIMEOUT_SEC": 10.0, # unchanged
     "TRANSCRIBE_TIMEOUT_SEC":  120.0, # unchanged
 }
@@ -227,13 +232,14 @@ _PERSONAL_DEFAULTS = {
                                        #   reasoning than the 4K
                                        #   Newton's-cradle test did.
     "MAX_TOKENS_CAPTION":    65536,   # unchanged from v3
-    "LOOP_BUDGET_SEC":        1200,   # 20 min - 2x over the 5-10 min
-                                       #   observed. Trimming v3's 30
-                                       #   min because nobody waited that
-                                       #   long; if a future test takes
-                                       #   >20 min, raise this, not
-                                       #   MAX_TOKENS_DEFAULT.
-    "LLAMA_HTTP_TIMEOUT_SEC": 1320.0, # LOOP_BUDGET_SEC * 1.1
+    "LOOP_BUDGET_SEC":        7200,   # 2 h. Raised 2026-10-27 from 1200 s:
+                                       #   the sandbox command limit is an
+                                       #   hour (AGENT_EXEC_TIMEOUT=3600 in
+                                       #   the production deployment), and a
+                                       #   turn whose budget is shorter than
+                                       #   the command it runs throws the
+                                       #   answer away.
+    "LLAMA_HTTP_TIMEOUT_SEC": 7920.0, # LOOP_BUDGET_SEC * 1.1
     "LLAMA_MODELS_TIMEOUT_SEC": 30.0, # unchanged
     "TRANSCRIBE_TIMEOUT_SEC":  300.0, # unchanged
 }
@@ -259,8 +265,17 @@ _DEV_DEFAULTS = {
                                        #   short -- but they still have to
                                        #   clear the thinking budget, or
                                        #   the model returns content=0.
-    "LOOP_BUDGET_SEC":        3600,  # 60 min
-    "LLAMA_HTTP_TIMEOUT_SEC": 3960.0, # LOOP_BUDGET_SEC * 1.1
+    "LOOP_BUDGET_SEC":        7200,  # 2 h. Raised 2026-10-27 from 3600 s:
+                                    #   the sandbox command limit is an hour
+                                    #   (AGENT_EXEC_TIMEOUT=3600 in the
+                                    #   production deployment), and a turn
+                                    #   whose budget is not longer than the
+                                    #   command it runs loses the answer:
+                                    #   the guard aborts the turn the moment
+                                    #   the command returns, and the user
+                                    #   gets "time budget exceeded" instead
+                                    #   of the answer.
+    "LLAMA_HTTP_TIMEOUT_SEC": 7920.0, # LOOP_BUDGET_SEC * 1.1
     "LLAMA_MODELS_TIMEOUT_SEC": 30.0,
     "TRANSCRIBE_TIMEOUT_SEC":  300.0,
 }

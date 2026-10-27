@@ -224,7 +224,8 @@ the bot does not have its own opinion about them:
   - `pids_limit: "${AGENT_PIDS_LIMIT:-256}"` so fork bombs are
     contained.
   - `mem_limit: 4g` so memory-exhaustion attacks die.
-  - Per-command 60s timeout, killed at the tmux level so a
+  - Per-command timeout of an hour in the production deployment
+    (`AGENT_EXEC_TIMEOUT=3600`), killed at the tmux level so a
     hung process cannot block the bot forever.
   - Per-session rate limit (60 rpm) so a runaway loop does
     not DoS the side-car.
@@ -309,8 +310,9 @@ anything within the sandbox's policy:
   - Reach the host network's other containers unless
     `network_mode: host` is set in the sandbox compose
     (default: bridge, no host access).
-  - Run for more than 60 seconds per command (the side-car's
-    `AGENT_EXEC_TIMEOUT` knob; the bot waits 90s on top of it).
+  - Run for more than an hour per command (the side-car's
+    `AGENT_EXEC_TIMEOUT` knob, 3600 s in the production deployment;
+    the bot waits 3630 s on top of it).
 
 ## Moving a file out of the sandbox
 
@@ -412,16 +414,25 @@ before, and can still eat the protocol.
 ### The command's time budget
 
 The limit is the side-car's knob, not the bot's: the compose file's
-own default is `AGENT_EXEC_TIMEOUT:-60` (5..600 seconds). The proxy
-asks the agent for that limit and waits `limit + 15` seconds for the
-answer, so the answer that says "this timed out" survives the trip.
+own default is `AGENT_EXEC_TIMEOUT:-60` (5..3600 seconds since the
+side-car v2.14.0). The proxy asks the agent for that limit and waits
+`limit + 15` seconds for the answer, so the answer that says "this
+timed out" survives the trip.
+
+**The production deployment raises it to 3600 -- an hour.** The
+operator measured the limit from the inside (a command was cut off at a
+minute, and the output it had already produced went with it) and ruled
+that the ceiling should be an hour.
 
 The bot's own HTTP timeout has to be strictly larger than the proxy's
 wait, or the bot drops the answer the proxy is still holding. The bot
-asks for 60 seconds and waits 90 (`EXEC_TIMEOUT_SECONDS`,
+asks for 3600 seconds and waits 3630 (`EXEC_TIMEOUT_SECONDS`,
 `PROXY_WAIT_GRACE_SECONDS` and `CLIENT_TIMEOUT_SECONDS` in
 `telegram-bot/personal_tools/sandbox_contract.py`). A deployment that
-raises `AGENT_EXEC_TIMEOUT` has to raise the bot's timeout with it.
+raises `AGENT_EXEC_TIMEOUT` has to raise the bot's timeout with it --
+and the turn's own budget with it: the guard that enforces the budget
+runs after the command returns, so a turn whose budget is not longer
+than the command it runs throws the answer away.
 
 ### The model's read budget (the MCP door)
 
@@ -550,7 +561,8 @@ relax anything else. The model can STILL NOT:
     (sandbox network egress restricted; model is told
     not to in the system prompt)
   * read /etc/shadow, /proc, /sys (sandbox read-only)
-  * run for more than 60s (sandbox per-command timeout)
+  * run for more than an hour (sandbox per-command timeout:
+    `AGENT_EXEC_TIMEOUT`, 3600 s in the production deployment)
   * use more than 2GB of memory (sandbox mem_limit)
   * spawn more than 256 processes (sandbox pids_limit)
   * exceed 10 commands per minute per session (T51 C4,

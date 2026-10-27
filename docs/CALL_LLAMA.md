@@ -639,8 +639,8 @@ env var always wins over the profile.
 |---|---|---|---|
 | `MAX_TOKENS_DEFAULT` | 131072 | `LLAMABOT_MAX_TOKENS` | max_tokens for plain text (handle_text) |
 | `MAX_TOKENS_CAPTION` | 98304 | `LLAMABOT_MAX_TOKENS_CAPTION` | max_tokens for photo/voice/document captions |
-| `LOOP_BUDGET_SEC` | 3600 | `LLAMABOT_LOOP_BUDGET_SEC` | tool-loop wall clock, 60 min |
-| `LLAMA_HTTP_TIMEOUT_SEC` | 3960.0 | `LLAMABOT_LLAMA_HTTP_TIMEOUT` | httpx timeout to llama-server |
+| `LOOP_BUDGET_SEC` | 7200 | `LLAMABOT_LOOP_BUDGET_SEC` | tool-loop wall clock, 120 min |
+| `LLAMA_HTTP_TIMEOUT_SEC` | 7920.0 | `LLAMABOT_LLAMA_HTTP_TIMEOUT` | httpx timeout to llama-server |
 | `LLAMA_MODELS_TIMEOUT_SEC` | 30.0 | `LLAMABOT_LLAMA_MODELS_TIMEOUT` | httpx timeout for /v1/models discovery |
 | `TRANSCRIBE_TIMEOUT_SEC` | 300.0 | `LLAMABOT_TRANSCRIBE_TIMEOUT` | httpx timeout for whisper |
 

@@ -212,19 +212,56 @@ def test_the_exec_limit_is_the_sandbox_knob_and_the_bot_stays_above_it():
     timeout has to be strictly larger than the proxy's wait, or the
     bot drops the answer the proxy is still holding -- which is the
     same lost answer, one layer up.
+
+    The number the bot believes in is the deployment's value of that
+    knob, and the deployment's value lives in the side-car's own
+    source: the range it accepts (the ceiling) and the default it
+    ships with. The bot's number has to sit inside that range -- too
+    high and the side-car would refuse to start with it, too low and
+    the bot would give up before the command it asked for is done.
     """
     compose = _compose_text()
     assert "AGENT_EXEC_TIMEOUT" in compose, (
         "the pinned side-car does not have the exec-timeout knob the "
         "bot's time budget is derived from")
-    assert EXEC_TIMEOUT_SECONDS == 60, (
-        "the bot assumes the stock limit; the side-car's default is 60 "
-        "and a deployment that raises the knob has to raise the bot's "
-        "own timeout with it")
+    ceiling = _sidecar_constant("EXEC_TIMEOUT_MAX_SECONDS", "proxy_core.py")
+    default = _sidecar_constant("EXEC_TIMEOUT_SECONDS", "proxy_core.py")
+    agent_cap = _sidecar_constant("MAX_TIMEOUT", "agent_api.py")
+    assert ceiling is not None and default is not None and agent_cap is not None, (
+        "the pinned side-car no longer declares the exec limit's range, "
+        "its default or the agent's own cap -- the bot's number cannot "
+        "be checked against a knob that is not there any more")
+    assert EXEC_TIMEOUT_SECONDS <= ceiling, (
+        f"the bot asks for {EXEC_TIMEOUT_SECONDS}s and the side-car accepts "
+        f"at most {ceiling}s -- the deployment would refuse to start")
+    assert EXEC_TIMEOUT_SECONDS >= default, (
+        f"the bot believes in {EXEC_TIMEOUT_SECONDS}s while the side-car's "
+        f"own default is {default}s: a deployment that raises the knob has "
+        f"to raise the bot's number with it")
+    assert EXEC_TIMEOUT_SECONDS <= agent_cap, (
+        f"the bot asks for {EXEC_TIMEOUT_SECONDS}s and the agent refuses "
+        f"anything above {agent_cap}s")
     assert CLIENT_TIMEOUT_SECONDS > (
         EXEC_TIMEOUT_SECONDS + PROXY_WAIT_GRACE_SECONDS), (
         "the bot's timeout has to be strictly larger than the proxy's "
         "wait")
+
+
+def test_the_description_says_the_limit_the_contract_believes_in():
+    """The sentence the model reads names the same limit.
+
+    The description used to say "more than a minute", which was true
+    when the limit was 60 s. The limit is an hour now, and a model that
+    reads a stale sentence is a model that believes it may only run a
+    command for a minute -- and then tells the user so.
+    """
+    desc = _description()
+    minutes = EXEC_TIMEOUT_SECONDS // 60
+    assert "an hour" in desc or f"{minutes} minutes" in desc, (
+        "the tool description does not name the command limit the "
+        "contract believes in")
+    assert "more than a minute" not in desc, (
+        "the tool description still says the limit is a minute")
 
 
 def test_the_read_budget_is_the_side_cars_own_number():
@@ -275,7 +312,7 @@ def _size_in_bytes(value: str) -> int:
     return int(text) * factor
 
 
-def _sidecar_constant(name: str) -> int | None:
+def _sidecar_constant(name: str, filename: str = "agent_config.py") -> int | None:
     """A module-level integer from the pinned side-car's source.
 
     The side-car writes its sizes in terms of each other (``1 * _MIB``,
@@ -286,13 +323,16 @@ def _sidecar_constant(name: str) -> int | None:
     """
     import ast
 
-    source = (SANDBOX / "agent_config.py").read_text(encoding="utf-8")
+    source = (SANDBOX / filename).read_text(encoding="utf-8")
     tree = ast.parse(source)
     values: dict[str, int] = {}
 
     def evaluate(node: ast.AST) -> int | None:
-        if isinstance(node, ast.Constant) and isinstance(node.value, int):
-            return node.value
+        # A number may be written as a float ("60.0"): the side-car's own
+        # default is one, and a reader that only understood ints would
+        # come back empty-handed and blame the file.
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return int(node.value)
         if isinstance(node, ast.Name):
             return values.get(node.id)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):

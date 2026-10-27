@@ -30,8 +30,9 @@ Failure modes
   bot just runs without bash, never crashes the bot on startup.
 * sandbox side-car unreachable -> call returns an error JSON that
   the LLM sees, with no exception leaking into the bot's flow.
-* Timeout in sandbox-agent -> 60s, after which the side-car kills the
-  tmux command and returns `{"timed_out": true}`.
+* Timeout in sandbox-agent -> the deployment's limit (an hour, since
+  2026-10-27), after which the side-car kills the tmux command and
+  returns `{"timed_out": true}`.
 """
 
 from __future__ import annotations
@@ -484,8 +485,8 @@ async def call_bash_command(
     the request reached the side-car.
 
     The timeout is slightly longer than the side-car's per-command
-    timeout (60s) so we get the proper `{"timed_out": true}` payload
-    back rather than our own httpx timeout.
+    timeout (an hour in the production deployment) so we get the proper
+    `{"timed_out": true}` payload back rather than our own httpx timeout.
     """
     if not is_enabled_for_active_profile():
         # Defence in depth: even if the caller forgot to gate,
@@ -574,8 +575,8 @@ async def call_bash_command(
                 headers=headers,
             )
     except httpx.TimeoutException:
-        # The proxy waits limit+grace (75 s with the stock knob), and
-        # the bot waits longer than that. A timeout here means the
+        # The proxy waits limit+grace (3615 s with the deployment's
+        # one-hour knob), and the bot waits longer than that. A timeout here means the
         # proxy itself is stuck, not that the command is slow -- and
         # the text has to say which, or the model reads it as "the
         # network is down".

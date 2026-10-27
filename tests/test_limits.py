@@ -47,8 +47,8 @@ def test_public_profile_defaults():
         limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'public'})
         assert limits.MAX_TOKENS_DEFAULT == 65536
         assert limits.MAX_TOKENS_CAPTION == 16384
-        assert limits.LOOP_BUDGET_SEC == 900
-        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 990.0
+        assert limits.LOOP_BUDGET_SEC == 7200
+        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 7920.0
     finally:
         _restore_env()
 
@@ -58,8 +58,8 @@ def test_personal_profile_defaults():
         limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'personal'})
         assert limits.MAX_TOKENS_DEFAULT == 131072
         assert limits.MAX_TOKENS_CAPTION == 65536
-        assert limits.LOOP_BUDGET_SEC == 1200
-        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 1320.0
+        assert limits.LOOP_BUDGET_SEC == 7200
+        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 7920.0
     finally:
         _restore_env()
 
@@ -80,8 +80,8 @@ def test_dev_profile_defaults():
         limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': 'dev'})
         assert limits.MAX_TOKENS_DEFAULT == 131072
         assert limits.MAX_TOKENS_CAPTION == 98304
-        assert limits.LOOP_BUDGET_SEC == 3600
-        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 3960.0
+        assert limits.LOOP_BUDGET_SEC == 7200
+        assert limits.LLAMA_HTTP_TIMEOUT_SEC == 7920.0
     finally:
         _restore_env()
 
@@ -151,9 +151,39 @@ def test_env_overrides_personal_profile():
             'LLAMABOT_MAX_TOKENS': '12345',
         })
         assert limits.MAX_TOKENS_DEFAULT == 12345
-        assert limits.LOOP_BUDGET_SEC == 1200
+        assert limits.LOOP_BUDGET_SEC == 7200
     finally:
         _restore_env()
+
+
+def test_every_profile_outlives_the_command_it_runs():
+    """The turn's wall-clock budget must be longer than the command limit.
+
+    The guard that enforces the budget runs at the loop's tail: after a
+    command returns, the turn is checked against the budget and aborted
+    if it is over. So a command that runs for the whole limit has to fit
+    *inside* the budget -- otherwise the guard throws the answer away the
+    moment the command comes back, and the user gets "time budget
+    exceeded" instead of it.
+
+    2026-10-27: the sandbox command limit became an hour (the operator's
+    ruling), and the dev profile's budget was exactly an hour -- the two
+    numbers met at the edge, which is the one place where a command that
+    runs to the limit loses its answer.
+    """
+    from personal_tools.sandbox_contract import EXEC_TIMEOUT_SECONDS
+
+    for profile in ("public", "personal", "dev"):
+        limits = _reload_with({"LLAMABOT_DEPLOYMENT_PROFILE": profile})
+        try:
+            assert limits.LOOP_BUDGET_SEC > EXEC_TIMEOUT_SECONDS, (
+                f"{profile}: the turn budget is {limits.LOOP_BUDGET_SEC}s and "
+                f"the sandbox command limit is {EXEC_TIMEOUT_SECONDS}s. A "
+                f"command that runs to the limit would have its answer "
+                f"thrown away by the budget guard."
+            )
+        finally:
+            _restore_env()
 
 
 def test_env_overrides_preserve_type():

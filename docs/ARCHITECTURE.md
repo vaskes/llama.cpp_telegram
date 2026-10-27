@@ -34,7 +34,7 @@ telegram-bot/
 ├── prompt_text/           # the prompt prose, split by topic
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
-├── limits.py              # profile-based token/timeout limits (359)
+├── limits.py              # profile-based token/timeout limits (374)
 ├── config.py # env-var read at import time (478)
 ├── state.py               # per-chat runtime state (225)
 ├── storage.py             # SQLite: messages, threads, topics (886)
@@ -54,8 +54,8 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, leave the copy
 ```
 
-64 top-level modules, 166 test files, 2782 tests collected in a checkout.
-CI collects 2763 of them — the sandbox-marked file is excluded by name.
+64 top-level modules, 167 test files, 2797 tests collected in a checkout.
+CI collects 2778 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 
@@ -130,7 +130,8 @@ function signature and the return contract. See
 ## Tool-calling loop (streaming + non-streaming paths)
 
 The bot **runs its own** tool-calling loop (up to 15 iterations, with
-a wall-clock cap of 600 s, an identical-call detector, and a
+a wall-clock cap of 7200 s — two hours, so that a turn may hold a
+command that runs for an hour — an identical-call detector, and a
 hallucination abort). This is because llama-server with
 `--mcp-servers-config` only loads the **list of tools**, but does
 **not** execute them — that is the client's job (us).
@@ -460,7 +461,7 @@ Three profiles, picked at container start via
     thinking cap lives on the engine, so this profile needs no
     bot-side reasoning cap at all; it only has to leave room for the
     answer that comes after the engine's cut — 128K for a text turn,
-    96K for a caption turn, 60 min of wall clock. PLUS bash_command
+    96K for a caption turn, 120 min of wall clock. PLUS bash_command
     is available in the chat_ids
     listed in `LLAMABOT_DEV_ALLOWED_CHAT_IDS`, even when
     the chat is a supergroup or channel. Operator opt-in.

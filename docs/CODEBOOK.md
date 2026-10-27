@@ -355,6 +355,48 @@ At `_PER_USER_SEMAPHORE_LIMIT=2`, two failures lock the user out until
 restart. Verify with `sem._value` after injecting an exception — an AST check
 for this class lied twice.
 
+**X-21 — The turn's budget must outlive the command it runs.** `AUTO`
+`tests/test_limits.py`.
+
+On 2026-10-27 the operator measured the sandbox's own limit from the
+inside: a command was cut off at a minute, and the output it had
+already produced went with it. His ruling: the ceiling is an hour
+(`AGENT_EXEC_TIMEOUT=3600` in the production deployment).
+
+The bot's numbers are a chain, and the chain is only as good as its
+weakest link:
+
+| link | number | who owns it |
+|---|---|---|
+| the command's limit | 3600 s | the side-car (`AGENT_EXEC_TIMEOUT`) |
+| the proxy's wait | limit + 15 s | the side-car |
+| the bot's client timeout | limit + 30 s | the bot (`CLIENT_TIMEOUT_SECONDS`) |
+| the turn's budget | 7200 s | the bot (`LOOP_BUDGET_SEC`) |
+| the engine's HTTP timeout | budget x 1.1 | the bot (`LLAMA_HTTP_TIMEOUT_SEC`) |
+
+Every link has to be strictly larger than the one before it — and the
+turn's budget has to be longer than the *command*, not just than the
+answer. The guard that enforces the budget runs at the loop's tail:
+after a command returns, the turn is measured against the budget and
+aborted if it is over. So a command that runs for the whole limit has
+to fit **inside** the budget — otherwise the guard throws the answer
+away the moment the command comes back, and the user gets "time budget
+exceeded" instead of the answer.
+
+The dev profile's budget was exactly an hour when the limit became an
+hour: the two numbers met at the edge, which is the one place where a
+command that runs to the limit loses its answer. The budget is 7200 s
+now, in every profile.
+
+The rule: **when a limit is raised, walk the chain.** A limit raised at
+one link and not at the next is a limit that eats the answer.
+
+Checked by `tests/test_limits.py` (every profile's budget outlives the
+command limit) and `tests/test_sandbox_contract.py` (the bot's number
+sits inside the range the pinned side-car accepts, and is not below the
+side-car's own default — a deployment that raises the knob has to raise
+the bot's number with it).
+
 ### 3.3 Size
 
 **S-1 — A function is ≤ 200 lines unless registered as an exception.** `AUTO`
@@ -1558,7 +1600,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
 | `test_send_file_tool.py` | 16 | A file from the sandbox reaches the chat as a document -- and the delivery removes nothing |
 | `test_file_transport.py` | 16 | The file door: the bytes, the digest, the version -- and no way to delete |
-| `test_sandbox_contract.py` | 9 | The bot's claims about the sandbox match the sandbox we run |
+| `test_sandbox_contract.py` | 10 | The bot's claims about the sandbox match the sandbox we run |
 | `test_engine_failure_message.py` | 9 | What the user reads when the engine could not be reached |
 | `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |
 | `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
@@ -1579,6 +1621,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_empty_answer_fallback.py` | 5 | The empty-answer fallback reaches the user |
 | `test_release_workflow.py` | 10 | The release door: a tag releases, and the release cannot reach the host |
 | `test_typing_indicator.py` | 6 | The typing indicator cannot end the turn |
+| `test_limits.py` | 19 | The turn's budget outlives the command it runs |
 
 167 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.

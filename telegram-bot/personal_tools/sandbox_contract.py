@@ -105,10 +105,11 @@ SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
 # tree and to the version the submodule's own source declares: a bump of
 # one without the others is a red test, not a quiet drift.
 #
-# v2.13.0 (2026-10-27) is the version the production side-car runs: the
-# MCP read got a budget of its own (see MCP_MAX_READ_BYTES below), and
-# the search engine's read-only mount is gone from the deployment.
-SANDBOX_PINNED_VERSION = "2.13.0"
+# v2.14.0 (2026-10-27) is the version the production side-car runs: a
+# command may run for an hour (the operator's ruling -- see
+# EXEC_TIMEOUT_SECONDS below), on top of the MCP read budget of v2.13.0
+# (see MCP_MAX_READ_BYTES below).
+SANDBOX_PINNED_VERSION = "2.14.0"
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -184,12 +185,12 @@ def _sudo_policy() -> str:
             "container is the boundary, and the work this tool is for "
             "does not need root. Nor for anything that needs to write "
             "outside /workspace, or anything that needs to run for more "
-            "than a minute."
+            "than an hour."
         )
     return (
         "Do NOT use it for: anything that would need sudo (the sandbox "
         "runs without it), anything that needs to write outside "
-        "/workspace, or anything that needs to run for more than a minute."
+        "/workspace, or anything that needs to run for more than an hour."
     )
 
 
@@ -200,10 +201,18 @@ SUDO_POLICY = _sudo_policy()
 
 #: The longest a single command may run in the sandbox. Since v2.10.2
 #: this is a knob on the side-car's proxy: `AGENT_EXEC_TIMEOUT`
-#: (5..600, default 60). The proxy asks the agent for this limit, and
-#: the agent answers `timed_out: true` with the output it managed to
-#: produce when the limit is up.
-EXEC_TIMEOUT_SECONDS = 60
+#: (5..3600 since the side-car v2.14.0, default 60). The proxy asks the
+#: agent for this limit, and the agent answers `timed_out: true` with
+#: the output it managed to produce when the limit is up.
+#:
+#: 2026-10-27: the operator measured the limit from the inside -- a
+#: command was cut off at a minute, and the output it had already
+#: produced went with it -- and ruled that the ceiling should be an
+#: hour. The production deployment raises the side-car's knob to 3600,
+#: and this number follows it: the bot's own HTTP timeout has to be
+#: larger than the proxy's wait, or the bot drops the answer the proxy
+#: is still holding.
+EXEC_TIMEOUT_SECONDS = 3600
 
 #: How much longer the proxy waits for the agent than the limit it
 #: asked for. Before v2.10.2 both numbers were 60: the agent answered

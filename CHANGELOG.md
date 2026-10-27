@@ -41,6 +41,28 @@ Tripwires: `tests/test_typing_indicator.py` (6);
 mutation harness `scripts/mutation_harness_typing_indicator.py` (5 mutations:
 4 caught, 1 survived — group B). Rule **X-20**.
 
+### A command may run for an hour
+
+On 2026-10-27 the operator measured the sandbox's own limit from the inside
+and found the ceiling where it was: a command was cut off at a minute, and
+the output it had already produced went with it. His ruling: an hour.
+
+  * the side-car's ceiling moved to 3600 s (`EXEC_TIMEOUT_MAX_SECONDS`), and
+    the tag `v2.14.0` carries it;
+  * the bot's turn budget moved to 7200 s in **every** profile, because the
+    guard that enforces the budget runs *after* a command returns: a turn
+    whose budget is not longer than the command it runs throws the answer
+    away the moment the command comes back;
+  * the bot's own client timeout and the engine's HTTP timeout followed
+    (3630 s and 7920 s) — a chain raised at one link and not at the next is
+    a limit that eats the answer;
+  * the side-car's pin moved to `v2.14.0`, and the tripwire now reads the
+    side-car's own range, default and cap out of the pinned source: the
+    bot's number has to sit inside the range the side-car accepts.
+
+Tripwires: `tests/test_limits.py` (19);
+`tests/test_sandbox_contract.py` (10). Rule **X-21**.
+
 ## [v0.14.1-stable] — 2026-10-27 — The delivery removes nothing
 
 **After `v0.14.0-stable`.** The documentation sweep, and the delivery that
