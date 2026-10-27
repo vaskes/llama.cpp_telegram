@@ -15,7 +15,12 @@ this file is the human-readable summary.
 
 ## [Unreleased]
 
-**After `v0.14.1-stable`.** The next cycle starts here.
+**After `v0.15.0-stable`.** The next cycle starts here.
+
+## [v0.15.0-stable] — 2026-10-27 — The decoration cannot end the turn, and a command may run for an hour
+
+**After `v0.14.1-stable`.** Two fixes from one live report, and the
+limit the operator measured from the inside.
 
 ### A decoration cannot end the turn
 
