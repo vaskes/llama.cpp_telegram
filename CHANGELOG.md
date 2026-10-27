@@ -61,6 +61,14 @@ and that the workflow carries no topology. The mutation harness
 (7 caught, 1 survived — the group-B mutation, where the tripwires are
 removed along with the behaviour, and the suite goes green).
 
+**What the first run measured.** The workflow reached GitHub and the
+host's door — and then the router answered instead of the host: from
+the runner's address (20.83.53.76) ports 80 and 443 answer, and 22,
+3000, 8080, 8443, 12006 and 12007 do not. The key is fine; the port is
+not open to the CI. The workflow now says so before it tries, and
+prints the address it came from, and `docs/TODO.md` carries the three
+ways out with what each one costs.
+
 **Where to look:** `docs/CODEBOOK.md` § X-18;
 `docs/ARCHITECTURE.md` § The deploy workflow;
 `tests/test_deploy_workflow.py`;

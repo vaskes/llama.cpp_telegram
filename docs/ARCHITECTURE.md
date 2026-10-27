@@ -425,8 +425,17 @@ is why the workflow can pass the sha without opening a shell on the
 host.
 
 The script's last steps are the checks (the health endpoint, the
-restart count, the smoke test), because a deploy that does not say
-whether the bot works reports success by having stopped.
+restart count, the smoke test — run **before and after**, so the deploy
+is judged on whether it made anything worse), because a deploy that
+does not say whether the bot works reports success by having stopped.
+
+Before the `ssh`, the workflow asks the same question the operator
+would ask: can this runner reach the host? The production host is
+behind a router that opens 80 and 443 to the outside and keeps the SSH
+port for a narrower set of addresses, so a runner that cannot reach it
+must say so with the address it came from — measured, the failure is
+"the host did not answer on 85.136.112.144:12007 from 20.83.53.76",
+not "connection timed out".
 
 The properties above are pinned by `tests/test_deploy_workflow.py`; the
 mutation harness `scripts/mutation_harness_deploy_workflow.py` puts

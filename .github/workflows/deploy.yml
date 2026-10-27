@@ -50,6 +50,28 @@ jobs:
         id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Can this runner reach the host?
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          # The host is behind the operator's router, and the router is
+          # what decides whether a runner can reach it. A timeout here
+          # says nothing about the key, so the address is printed and
+          # the reason is named -- otherwise the failure reads as a
+          # broken deploy.
+          host="${DEPLOY_HOST##*@}"
+          echo "this runner's address: $(curl -s -m 15 https://api.ipify.org || echo unknown)"
+          if timeout 10 bash -c "echo > /dev/tcp/$host/$DEPLOY_PORT" 2>/dev/null; then
+            echo "the host answered on $host:$DEPLOY_PORT"
+          else
+            echo "::error::the host did not answer on $host:$DEPLOY_PORT from this runner"
+            echo "The production host is behind a router that opens only 80 and 443 to the outside."
+            echo "The deploy key is fine; the port is not open to this address."
+            exit 1
+          fi
+
       - name: Deploy
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}

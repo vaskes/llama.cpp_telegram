@@ -897,13 +897,24 @@ searchable by the name they carry.
 **Where to look:** `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16;
 `telegram-bot/sender_name.py`; `tests/test_one_name_per_person.py`.
 
-### T-FREEZE-AUTO-3 — a deploy workflow — closed 2026-10-27
+### T-FREEZE-AUTO-3 — a deploy workflow — done 2026-10-27; one rule on the
+### operator's router is left
 
-**Decision (the operator delegated it on 2026-10-27, "делай с 6 по 10"):
-the deploy logic stays on the host; the repository gets the trigger, the
+**Decision (the operator delegated it on 2026-10-27, "делай с 6 по
+10"): the deploy logic stays on the host; the repository gets the trigger, the
 docs and the tripwire.** The topology — the compose file, the `.env`,
 the volume, the backup — is the operator's, and a second copy of it in
 the repository is a second copy that nobody updates.
+
+**Status:** the code is done and measured. **One thing is left, and it is
+the operator's:** the router in front of the production host does not let
+a GitHub runner reach the SSH port. Measured, not suspected — from the
+runner's address (20.83.53.76, Microsoft Azure): ports **80 and 443
+answer**, and 22, 3000, 8080, 8443, 12006 and 12007 **do not**. From
+the operator's other network (47.253.4.207) every one of them answers.
+So the router opens the web ports to the world and keeps the SSH
+forwards for a narrower set of addresses — and the CI is not in that
+set.
 
 **What was there:** nothing. A workflow that deploys on a tag push, with
 no secret behind it and no tripwire on the properties that make it safe.
@@ -914,6 +925,9 @@ no secret behind it and no tripwire on the properties that make it safe.
     from the Actions tab), the commit (`git rev-parse HEAD`), and one
     `ssh` call. Nothing about the deployment itself: the workflow does
     not even name the compose file;
+  * a **preflight** that prints the runner's address and says plainly
+    that the host did not answer — a timeout with a reason is a
+    different thing from a timeout without one;
   * the deploy key is **limited to one script** on the host. sshd runs
     `/opt/telegrambot/deploy_bot.sh` with a forced command, and the
     client's command line arrives as *data* in `$SSH_ORIGINAL_COMMAND` —
@@ -924,13 +938,32 @@ no secret behind it and no tripwire on the properties that make it safe.
   * the token can read the repository and nothing else
     (`permissions: contents: read`);
   * the host's script was extended with the **checks** the operator
-    already ran by hand: the health endpoint, the restart count, the
-    smoke test — and it backs up before it touches anything, so a
-    failure leaves the previous image running.
+    already ran by hand: the backup, the health endpoint, the restart
+    count, and the smoke test **before and after** — a deploy is judged
+    on whether it made anything worse, because a red check that was
+    already red before the deploy is the operator's business, not this
+    deploy's failure. (Measured: the webhook's `last_error_message` is
+    a 504 from 14:54 MSK, six hours before the deploy, and it would
+    have failed the gate on its own.) The deploy of this wave ran
+    through that script by hand: backup, build, recreate, healthz 200,
+    0 restarts, no fatal, no ERROR.
 
-**What was measured:** the forced command refuses a non-hex value and
-does not execute it; the sha reaches the script as an argument. The
-first real CI deploy is the tag that carries this wave.
+**What it needs from the operator — one of the three:**
+
+  1. **open the SSH port to the CI.** One rule on the router: allow
+     tcp/12007 from the ranges GitHub publishes
+     (`api.github.com/meta`, the `actions` key). The key, the forced
+     command and the validation stay exactly as they are — the door
+     stays narrow;
+  2. **a self-hosted runner on the host.** Then the workflow runs on
+     llmhost1 and reaches it directly. The price is honest and worth
+     naming: the CI's steps would then run *on the production host*, so
+     anyone who can push to `main` could run any command there. The
+     forced command is a narrower door than that;
+  3. **the host pulls.** A timer on the host that looks for a new tag
+     and deploys it. No inbound path is needed at all — and the key
+     becomes unnecessary, which loses the operator's "one script, one
+     key" design.
 
 **Where to look:** `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-18;
 `docs/ARCHITECTURE.md` § The deploy workflow;

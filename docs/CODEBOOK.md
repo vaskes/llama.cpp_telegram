@@ -1109,7 +1109,16 @@ rules:
   * **a deploy that does not say whether the bot works is a deploy that
     reports success by having stopped.** The script's last steps are the
     checks: the health endpoint, the restart count, the smoke test — and
-    a failure at any of them leaves the previous image running.
+    a failure at any of them leaves the previous image running. The
+    smoke test runs **before and after**: the deploy is judged on whether
+    it made anything worse, because a check that was already red before
+    the deploy is the operator's business, not this deploy's failure;
+  * **the key is half of the door; the other half is the network.** The
+    production host is behind the operator's router, and the router
+    decides who may reach it: measured, a GitHub runner (20.83.53.76)
+    reaches ports 80 and 443 and nothing else — not the SSH port. A
+    deploy that cannot reach the host says so with the address it came
+    from, because "connection timed out" without a reason is a riddle.
 
 ---
 
