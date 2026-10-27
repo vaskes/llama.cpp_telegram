@@ -10,8 +10,6 @@ the suite has to notice:
 
   * the file is not pulled through the door (the document carries
     nothing);
-  * the sandbox copy is not deleted after the delivery (the artifact
-    lives in two places at once);
   * the size is not known before the bytes are pulled (a file nobody
     could deliver is downloaded anyway);
   * the channel's own limit is not checked;
@@ -31,6 +29,14 @@ tripwire was the thing doing the work: without it, the defect is
 invisible. This is the direction a one-way harness never checks, and it
 is the one that turns "the suite is green" into "the suite is green
 *because of this test*".
+
+**Retired on 2026-10-27.** Two mutations here used to measure "the
+sandbox copy is deleted after the delivery". The operator reversed that
+rule the same day -- a delivery never removes what it was not told to
+remove -- so the code those mutations pointed at is gone, and a mutation
+whose site no longer exists is a REFUSED one, forever. The rule as it
+stands now is measured by `scripts/mutation_harness_send_file_copy.py`,
+which puts the deletion back and watches the new tripwires catch it.
 
 The rules this harness holds itself to, because a mutation run that
 cannot report INVALID is a decoration:
@@ -97,11 +103,6 @@ MUTATIONS = [
          r"                    async for chunk in r\.aiter_bytes\(\):\n",
          "                    async for chunk in ():\n", 1),
     ]),
-    ("the sandbox copy is not deleted after the delivery", "CAUGHT", [
-        (DISPATCH,
-         r"    purge_note = await _ft\.purge\(path\)\n",
-         "    purge_note = \"the sandbox copy was removed\"\n", 1),
-    ]),
     ("the size is not known before the bytes are pulled", "CAUGHT", [
         (DISPATCH,
          r"    if limit and size > limit:\n"
@@ -165,19 +166,18 @@ MUTATIONS = [
          r"                    async for chunk in r\.aiter_bytes\(\):\n",
          "                    async for chunk in ():\n", 1),
     ]),
-    ("the tripwire for the purge is gone, and so is the purge", "SURVIVED", [
-        (TEST_SEND,
-         r"async def test_the_sandbox_copy_is_deleted_after_the_delivery\(sandbox\):",
-         "async def _disabled_test_the_sandbox_copy_is_deleted_after_the_delivery(sandbox):", 1),
-        (DISPATCH,
-         r"    purge_note = await _ft\.purge\(path\)\n",
-         "    purge_note = \"the sandbox copy was removed\"\n", 1),
-    ]),
     ("the tripwire for the size is gone, and so is the size check",
      "SURVIVED", [
         (TEST_SEND,
          r"async def test_the_size_is_known_before_the_bytes_are_pulled\(sandbox\):",
          "async def _disabled_test_the_size_is_known_before_the_bytes_are_pulled(sandbox):", 1),
+        # The refusal text is pinned by a second test, and that test
+        # guards the same branch. A group-B mutation has to silence every
+        # tripwire of the behaviour it removes, or the suite stays red and
+        # the verdict measures a neighbour instead of the proof.
+        (TEST_SEND,
+         r"async def test_the_refusal_of_an_oversized_file_is_pinned_verbatim\(sandbox\):",
+         "async def _disabled_test_the_refusal_of_an_oversized_file_is_pinned_verbatim(sandbox):", 1),
         (DISPATCH,
          r"    if limit and size > limit:\n"
          r"        return ToolExecution\(text=\(\n"

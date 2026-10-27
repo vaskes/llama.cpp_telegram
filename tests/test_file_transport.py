@@ -1,4 +1,4 @@
-"""The courier: a file out of the sandbox, and one copy left behind.
+"""The courier: a file out of the sandbox, and nothing left behind.
 
 The sandbox side (`vaskes/OpenWebUI-bash-sandbox`, tag `v2.7.1`)
 publishes a file door next to its shell door. This file tests the bot's
@@ -14,9 +14,10 @@ What is pinned here:
     pulled, and an over-limit file is refused with its real size;
   * the errors say what happened -- and the proxy's own quirk (a 200
     that carries an error in the body) is read;
-  * the sandbox copy is deleted after the delivery, and a failure to
-    delete is a sentence rather than an exception: the file is already
-    in the chat.
+  * the client cannot delete: the door still answers `DELETE /files`,
+    but a delivery never removes what it was not told to remove (the
+    operator's ruling of 2026-10-27), so the capability is gone rather
+    than merely unused.
 """
 import hashlib
 import sys
