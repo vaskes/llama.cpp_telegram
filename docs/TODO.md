@@ -47,6 +47,54 @@ Sizes are `splitlines()`-based and are recomputed by
 These are not forgotten; they are parked on a question only the operator
 can answer. Each one records the decision that unblocks it.
 
+### The side-car's MCP tools are live-checked, and not switched on
+
+**Status:** open since 2026-10-27. Everything is built and measured; one
+line of the production `.env` is missing, and that line is the operator's
+to write.
+
+Measured on 2026-10-27 against the deployed side-car **v2.12.1**: the
+bot's own side-car answers `POST /mcp` with 200 and offers four tools
+(`bash`, `read_file`, `file_info`, `delete_file`). The bot's container
+runs in the **host** network, so `127.0.0.1:8090` — the address its
+shell tool already uses — is the same server the MCP endpoint lives on.
+Nothing had to be published, moved or rebuilt; the config block is the
+whole change:
+
+```json
+[{"name": "sandbox", "url": "http://127.0.0.1:8090/mcp",
+  "token_env": "AGENT_STACK_TOKEN",
+  "include": ["read_file", "file_info"],
+  "exclude": ["bash", "delete_file"],
+  "gate": "dev-chat"}]
+```
+
+**Why `bash` is excluded:** the bot already has `bash_command`, and it
+talks to the SAME sandbox. Two shells with two policies is one too many
+— the model would have a native tool and an imported twin of it.
+
+**Why `delete_file` is excluded:** the bot has no destructive file tool
+and does not need one; the operator can turn it on later.
+
+**What the decision is:** whether the production `.env` gets this line
+(the bot ships without it), and whether the gate stays `dev-chat` (only
+the allowlisted chats) or becomes `always`.
+
+The live check on the deployed code: the model is shown two imported
+tools (`sandbox_read_file`, `sandbox_file_info`); a text file comes back
+as text; a binary file comes back as
+`[binary file: mcp-probe.bin (application/octet-stream), 4096 bytes -- the
+content is not inlined]`; a path outside the workspace is refused by the
+sandbox with its reason.
+
+**One thing the side-car still owes the bot:** a model-facing read cap
+on the MCP door. The deployment's binary limit is 50 MiB and the MCP
+face's own ceiling is 64 MiB, so the effective cap today is 50 MiB — and
+the face reads the whole file into memory and base64-encodes it. One
+call can therefore cost the machine ~117 MiB of RAM for an answer no
+chat model can use. The HTTP door's 50 MiB is right for a download; the
+MCP door is a different door.
+
 ### The bot delivers a file twice — the fix is in the tree, production still has it
 
 **Measured by the operator, 2026-10-25.** He asked for an HTML file in the
@@ -239,6 +287,30 @@ wording, change it, or drop the flag again.
 
 
 ## Open — code, not blocked on anyone
+
+### The bot's pin describes an older side-car than the one it talks to
+
+**Status:** open since 2026-10-27. Measured, not suspected.
+
+The bot's repository pins the sandbox as a submodule at **v2.10.2**
+(`4a6c465`), and `sandbox_contract.py` says
+`SANDBOX_PINNED_VERSION = "2.10.2"`. The side-car the bot actually
+talks to on the production host is **v2.12.1** (the deployed checkout
+`/opt/telegrambot/sandbox` is at tag `v2.12.1`, commit `a396101`).
+
+The tripwire `tests/test_sandbox_contract.py` compares the contract
+with the PINNED submodule's own source — so the bot's claims are
+checked against a version that is two releases old, and the claims
+themselves (the stdin trap, the privilege posture, the exec limits, the
+binary limit) are all still true in v2.12.1 but are being verified
+against the wrong file.
+
+**What it needs:** move the pin to v2.12.1, move the contract's number
+with it, and re-read every claim in the contract against that source
+rather than against the old one. The side-car release notes
+(`RELEASE-v2.12.1.md`) say the MCP contract is unchanged from v2.12.0,
+so the door the bot uses did not move — but the *version* in the
+contract does.
 
 ### The two writers name the same person differently
 
