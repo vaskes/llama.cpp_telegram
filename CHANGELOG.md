@@ -15,6 +15,11 @@ this file is the human-readable summary.
 
 ## [Unreleased]
 
+**After `v0.14.0-stable`.** The next cycle starts here.
+
+## [v0.14.0-stable] — 2026-10-27 — The side-car's pin, the MCP door,
+and the release that carries the image
+
 **After `v0.13.0-stable`.** The post-release cycle: the empty-answer
 retry, the leaked token, the attribution cleanup, the codebook, the
 deployment profile that finally has its own numbers, and the MCP
