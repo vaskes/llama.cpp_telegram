@@ -95,7 +95,7 @@ call can therefore cost the machine ~117 MiB of RAM for an answer no
 chat model can use. The HTTP door's 50 MiB is right for a download; the
 MCP door is a different door.
 
-### The bot delivers a file twice — the fix is in the tree, production still has it
+### The bot delivers a file twice — the fix is in production; nobody has watched it happen
 
 **Measured by the operator, 2026-10-25.** He asked for an HTML file in the
 group chat. The document arrived — 595 bytes, the right bytes — and then a
@@ -116,8 +116,13 @@ goes into what the bot remembers (`raw`) — delivery and memory are two
 artefacts. The files an answer carries — pulled out of the model's own
 text — are not counted as a delivered file.
 
-**What is not:** the production bot still runs `72fee7b`, so the double
-answer is still there. The deploy waits for the operator's word.
+**What is not:** nothing about the deploy. The production tree is
+`77805ba` (2026-10-27), and `9752b06` is an ancestor of it, so the code
+that duplicated the file is not in production. What is missing is a pair
+of human eyes: nobody has asked for a file in the chat since and counted
+the copies. This entry used to say "the deploy waits for the operator's
+word" — it was written before the deploy, and a copy of a moment is not a
+fact about the tree.
 
 **Verification:** `tests/test_trace_not_duplicating_a_delivered_file.py`
 (six tests, with the command taken from the production log and the output
@@ -128,8 +133,9 @@ three survived as intended).
 ### The answer-files feature has never been checked by a human — the machine check passed on the live engine
 
 **Status:** open since 2026-10-24. The feature is implemented, tested and
-pushed (`e8e4ff0`) and **deployed** (the production tree is `a6c20fc` as of
-2026-10-24 19:15). What is still missing is a human looking at the chat:
+pushed (`e8e4ff0`) and **deployed** (the production tree is `77805ba` as of
+2026-10-27; it has moved on since the deploy). What is still missing is a
+human looking at the chat:
 the machine check cannot see what the user sees.
 
 **What the operator measured:** the production host runs on a generator, and
@@ -159,7 +165,7 @@ transcript of each shape:
 the generator can take the load. The checklist:
 
 1. ~~deploy the current `main` to the production bot~~ -- done 2026-10-24
-   19:15, the tree in the container is `c7d32ae`;
+   19:15; the tree in the container is `77805ba` as of 2026-10-27;
 2. ~~ask the model for a json, an html page, a site in three files, and one
    plain question with no code at all~~ -- the operator asked for a sql file
    and an html page; both arrived;
@@ -484,11 +490,14 @@ The items below were decided and are done. They are here because the
 
 ### The side-car on the production host — v2.10.2, with a writable rootfs
 
-**Status:** ✅ **closed 2026-10-26.** The host runs the version the
-repository pins: **v2.10.2** (`4a6c465`). The pin moved with it
-(`2c83d97`), and the bot's claims about the sandbox — the version, the
-posture, the knobs — are checked against that pin by
-`tests/test_sandbox_contract.py`.
+**Status:** ✅ **closed 2026-10-26** — and **the version moved again on
+2026-10-27**: the host now runs **v2.12.1** (`a396101`), which is the
+side-car the bot's MCP door talks to. The repository's pin has **not**
+followed it (it is still v2.10.2), and that gap is its own open item —
+"The bot's pin describes an older side-car than the one it talks to"
+below. The posture described here (the writable rootfs and the rest) did
+not change; only the number moved, and the number is the part a claim
+goes stale on.
 
 **What moved:** `/opt/telegrambot/sandbox` is a standalone clone of the
 sandbox repository, and the bot's deploy does not touch it, so it was
