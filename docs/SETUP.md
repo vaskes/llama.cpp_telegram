@@ -24,9 +24,12 @@ sudo apt-get install -y docker-compose-plugin
 ```bash
 sudo mkdir -p /opt
 sudo chown $USER:$USER /opt
-git clone https://github.com/vaskes/llama.cpp_telegram.git
+git clone --branch v0.14.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 cd llama.cpp_telegram
 ```
+
+Pin a tag: the default branch is bleeding-edge and may carry
+unreleased refactors (see the README).
 
 ## 2. Run install.sh
 
@@ -119,11 +122,28 @@ Then:
 # logs
 sudo docker logs -f telegram-bot
 sudo docker logs -f whisper-api
-
-# update bot to the latest version
-cd llama.cpp_telegram
-./scripts/update.sh
 ```
+
+**Updating a running host** — two ways, and they are not the same thing:
+
+1. **From a clone on that host** (this document's layout): pull and
+   rebuild in place.
+   ```bash
+   cd llama.cpp_telegram
+   git fetch --tags && git checkout <tag>
+   ./scripts/update.sh
+   ```
+2. **From a release** (what the production host does): a tag makes the
+   CI build the image and attach it to the GitHub Release, and the
+   host's own deploy script loads that image and runs it. The host then
+   needs **no git at all** — the image arrives as an artifact, so
+   nothing fetches itself and there is nothing to remember about it.
+   The script is the host's (it holds the topology — the compose file,
+   the `.env`, the volume), it is the same script a hand deploy runs,
+   and it judges the deploy by its own checks: the health endpoint, the
+   restart count, and the smoke test before and after. See
+   [docs/ARCHITECTURE.md](ARCHITECTURE.md#the-release-workflow) and
+   CODEBOOK rule **X-18**.
 
 ## 9. Backup before update
 

@@ -107,9 +107,12 @@ This project depends on
 pinned as a git submodule at `sandbox/`. The bot does NOT
 include the sandbox source. Operators must:
 
-  1. Clone with `--recurse-submodules`:
+  1. Clone with `--recurse-submodules` **and a tag** — the submodule's
+     pinned version is the side-car the bot was tested against, so a
+     clone of `main` can carry a side-car the bot does not expect:
      ```bash
-     git clone --recurse-submodules https://github.com/vaskes/llama.cpp_telegram.git
+     git clone --recurse-submodules --branch v0.14.0-stable \
+         https://github.com/vaskes/llama.cpp_telegram.git
      ```
      Or, if already cloned:
      ```bash

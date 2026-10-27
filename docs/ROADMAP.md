@@ -4,15 +4,35 @@
 > items — is [`TODO.md`](TODO.md). The two complement each other and only
 > one of them is a task list.
 >
-> **Updated 2026-10-23**, against the `v0.13.0-stable` tag.
+> **Updated 2026-10-27**, against the `v0.14.0-stable` tag.
 
 ---
 
 ## Where we are
 
-`v0.13.0-stable` is the first release since `v0.12.0-stable` that carries a
-refactor rather than a feature — 191 commits, 107 of them touching
-production code. What changed structurally:
+`v0.14.0-stable` is the release after `v0.13.0-stable`. What it changed
+structurally:
+
+- **A release is the deployable unit.** The CI builds the image from the
+  tagged commit and attaches it to the GitHub Release; the production
+  host loads that image and runs it. The host keeps **no git of its
+  own** — nothing fetches itself, and there is nothing to remember
+  about it. The workflow holds no secret and cannot reach the host; the
+  last hop is whoever holds the host's access. See
+  [`docs/ARCHITECTURE.md`](ARCHITECTURE.md#the-release-workflow) and
+  CODEBOOK rule **X-18**.
+- **The bot imports tools from MCP servers.** Which servers, which of
+  their tools and in which chats is the operator's config; the model
+  never adds a server, and a tool that duplicates a native one is
+  excluded rather than renamed. See
+  [`docs/TOOL-ISOLATION.md`](TOOL-ISOLATION.md).
+- **The side-car's pin matches the side-car.** The repository pinned a
+  version the production host had already moved past, and the tripwire
+  stayed quiet because the claims were still true. The pin is now the
+  version the host runs.
+
+And what `v0.13.0-stable` changed, for the record — 191 commits, 107 of
+them touching production code:
 
 - **The monolith is gone.** `dispatch.py` is 345 lines (was 1612),
   `call_llama.py` is 478 (was 1616), `_selftest` is 111 (was 1940),
@@ -29,8 +49,8 @@ production code. What changed structurally:
 - **The history is no longer destroyed on read.** The lazy trim is gone;
   SQLite is the source of truth and every derived context is recomputable.
 
-The bot runs in production in webhook mode and is deployed from the tagged
-tree, not from `main`.
+The bot runs in production in webhook mode and is deployed from the
+release's image, not from a tree on the host.
 
 ---
 

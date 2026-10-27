@@ -1,4 +1,4 @@
-# Architecture (v0.13.0-stable)
+# Architecture (v0.14.0-stable)
 
 > **Read this first if you are deploying the bot for the first time.**
 > The bot runs as a thin proxy between Telegram and a local
@@ -54,8 +54,8 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, purge the copy
 ```
 
-64 top-level modules, 165 test files, 2769 tests collected in a checkout.
-CI collects 2750 of them — the sandbox-marked file is excluded by name.
+64 top-level modules, 166 test files, 2782 tests collected in a checkout.
+CI collects 2763 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 
@@ -541,7 +541,7 @@ no tokenizer to ask, and the estimate is deliberately conservative
   * [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common
     failure modes.
   * [CHANGELOG.md](../CHANGELOG.md) — release notes
-    (`v0.13.0-stable` is the current release; see the
+    (`v0.14.0-stable` is the current release; see the
     [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases)
     for the full stable-tag history).
   * [docs/README.md](README.md) — the map of the documentation tree.

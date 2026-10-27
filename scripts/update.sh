@@ -2,6 +2,11 @@
 # update.sh — pull the latest from this repo and redeploy the bot.
 # Run from inside a clone of llama.cpp_telegram.
 #
+# This is the path for a host that KEEPS a clone (a dev box, a first-time
+# install). The production host does not: it keeps no git, and it runs
+# the image that the release carries — see docs/ARCHITECTURE.md
+# ("The release workflow") and CODEBOOK rule X-18.
+#
 # T64: this script used to deploy a FRANKENSTEIN build. It copied only
 # bot.py + Dockerfile + requirements.txt + docker-compose.yml out of
 # 13 python modules, so `dispatch.py` / `handlers.py` / `call_llama.py`

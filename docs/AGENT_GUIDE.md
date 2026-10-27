@@ -32,7 +32,8 @@ forks and downstream scripts. The code lives in the 53 modules beside it;
 `TECH-DEBT.md` item 1 records what that cost and why it was done.
 
 The live deployment on the operator's host uses a different layout
-(`/opt/telegrambot/`); `scripts/install.sh` is the source of truth for a
+(`/opt/telegrambot/`), and it keeps **no git of its own**: the image
+arrives from a release. `scripts/install.sh` is the source of truth for a
 fresh install, and `BOT_DIR` overrides it.
 
 ### Before you change anything
@@ -103,10 +104,35 @@ sudo docker logs telegram-bot 2>&1 | grep "SECURITY" | tail -30
 ```
 
 ### Update to the latest version
+
+Two paths, and which one you use depends on what the host has.
+
+**A host you keep a clone on** (the quickstart layout):
 ```bash
 cd /path/to/llama.cpp_telegram
+git fetch --tags && git checkout <tag>
 ./scripts/update.sh
 ```
+
+**The production host** — it keeps **no git**, and the release is the
+deployable unit:
+
+1. push the tag (`vX.Y.Z-stable`): the CI builds the image from the
+   tagged commit and attaches it, with the files the deploy needs, to
+   the GitHub Release. The workflow holds no secret and has no way to
+   reach any host;
+2. run the host's own deploy script with that tag. The script is the
+   host's (it holds the compose file, the `.env` and the volume), it is
+   the same script a hand deploy runs, and it judges itself: the health
+   endpoint, the restart count, the smoke test **before and after**
+   (a check that was already red is not this deploy's failure), and a
+   rollback to the image that was running before if anything fails.
+
+Do **not** open the production host to a CI runner to do this. The
+runners' addresses are 7081 CIDR — about 28.6 million of them — and the
+host is behind the operator's router; the access that already exists is
+the door. See [docs/ARCHITECTURE.md](ARCHITECTURE.md#the-release-workflow)
+and CODEBOOK rule **X-18**.
 
 ## What you MUST NOT do
 

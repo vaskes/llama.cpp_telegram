@@ -1,9 +1,17 @@
 # llama.cpp_telegram
 
-> **Current stable: `v0.13.0-stable`** (2026-10-23, commit `ba71325`).
+> **Current stable: `v0.14.0-stable`** (2026-10-27, commit `4c22b4e`).
 > Pin to a tag — see the clone command below.
 >
-> `v0.13.0` is a **refactor release**: the 1612-line `dispatch.py` is now
+> `v0.14.0` is the **tools-and-deployment** release: the bot can import
+> tools from MCP servers (which servers, and which of their tools, is
+> the operator's config — the model never adds a server), the side-car's
+> pin matches the side-car the bot actually talks to, and **a release is
+> the deployable unit**: the CI builds the image and attaches it to the
+> GitHub Release, and the production host loads that image. The
+> production host keeps no git of its own.
+>
+> `v0.13.0` was a **refactor release**: the 1612-line `dispatch.py` is now
 > 345 lines across five owner modules, `call_llama` is 478 lines across
 > 17 leaf modules, and the bot now assembles its own context instead of
 > sending a fixed number of messages. Nothing about the user-facing
@@ -13,8 +21,9 @@
 > pytest suite green on Python **3.11** (the production interpreter) and
 > **3.12**; eight review waves closed with an approve; a production smoke
 > after the deploy (`/healthz` → 200, zero fatal lines in the log, webhook
-> auth rejecting both a missing and a wrong secret, and the deployed tree
-> matching the repository by md5).
+> auth rejecting both a missing and a wrong secret). The deployed
+> container's image id is the id the release carries: the image that runs
+> in production is the image that was reviewed, not a rebuild of it.
 >
 > **What is not:** the live edit-replace flow — a user edits a message
 > while the bot is answering, and the bot rewrites its answer — was never
@@ -30,13 +39,30 @@
 > branch is bleeding-edge and may include unreleased refactors
 > that have not been human-tested. Pin to a tag:
 > ```bash
-> git clone --branch v0.13.0-stable https://github.com/vaskes/llama.cpp_telegram.git
+> git clone --branch v0.14.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 > ```
 > Bleeding edge is for contributors only. See [Releases](../../releases)
 > for the full stable-tag history.
 >
 
-**What `v0.13.0-stable` adds over `v0.12.0-stable`** (194 commits):
+**What `v0.14.0-stable` adds over `v0.13.0-stable`:**
+
+- **The bot can import tools from MCP servers.** The operator's config
+  block says which servers, which of their tools, and in which chats; the
+  model is shown those tools as `<server>_<tool>` and calls them through
+  one branch. A tool that duplicates a native one is excluded rather
+  than renamed — two shells on one machine are two policies.
+- **The side-car's pin matches the side-car.** The repository pinned
+  v2.10.2 while the running side-car was already at v2.12.1, and the
+  tripwire said nothing because the claims were still *true*. The pin is
+  now the version the production host runs, and every claim is re-read
+  against that source.
+- **A release is the deployable unit.** Push a tag, and the CI builds
+  the image and attaches it to the release; the production host loads
+  that image and runs it. See
+  [Architecture](#how-a-release-reaches-production) below.
+
+**What `v0.13.0-stable` added over `v0.12.0-stable`** (194 commits):
 
 - **The bot owns its context.** `ContextBudget` decides which persisted
   messages reach the engine — protect the recent window, summarise what
@@ -216,6 +242,13 @@ deployment choice; the diagram below shows the conceptual wiring.
   `bash_command` tool calls; the sandbox returns stdout / stderr /
   exit_code. See [docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md) for
   the full architecture, threat model, and operator runbook.
+- **bot → an MCP server** — `POST /mcp` (JSON-RPC over HTTP, MCP
+  protocol). The bot asks the server what it offers and shows the model
+  those tools under the name `<server>_<tool>`. Which servers, which of
+  their tools and in which chats is the **operator's** config
+  (`LLAMABOT_MCP_SERVERS`) — the model never adds a server. A tool that
+  duplicates a native one is excluded, not renamed. See
+  [docs/TOOL-ISOLATION.md](docs/TOOL-ISOLATION.md).
 
 **Network layout:** the bot does not require any particular
 container networking mode. The two reference layouts are
@@ -233,6 +266,44 @@ Either layout works. The exact `docker-compose.yml` depends on
 your host topology; see `telegram-bot/docker-compose.yml` and
 `whisper-api/docker-compose.yml` for the reference files.
 
+### How a release reaches production
+
+The repository builds **one artifact**, and the release carries it:
+
+```
+ push tag v0.14.0-stable
+            │
+            ▼
+ ┌──────────────────────────┐        GitHub Release (public)
+ │ CI: build the image      │ ─────────────────────────────▶  bot-image.tar.gz
+ │ (no secret, no ssh)      │                                  deploy-side.tar.gz
+ └──────────────────────────┘
+            │
+            │  the CI's share ends here
+            ▼
+ ┌──────────────────────────────────────────────────────────┐
+ │ the host's deploy_bot.sh <tag>                           │
+ │   fetch the release's assets → load the image → run it →  │
+ │   health endpoint, restart count, smoke test (before      │
+ │   and after) → roll back on failure                       │
+ └──────────────────────────────────────────────────────────┘
+```
+
+The CI's share of the work ends where the image is built: the workflow
+holds **no secret** and has **no way to reach the production host** — no
+ssh, no host address, no key. The last hop is whoever holds the access
+to that host (the operator, or the agent holding the operator's keys):
+one command, the host's own script — the same script a hand deploy
+runs, so the two cannot drift apart.
+
+The production host keeps **no git of its own**. The image arrives as an
+artifact, so nothing fetches itself and there is nothing to remember
+about it; what runs in production is written down on the host
+(`/opt/telegrambot/DEPLOYED`: the tag, the image, its id).
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-release-workflow)
+and CODEBOOK rule **X-18**.
+
 ## Quick start
 
 See [docs/SETUP.md](docs/SETUP.md) for step-by-step.
@@ -240,7 +311,7 @@ See [docs/SETUP.md](docs/SETUP.md) for step-by-step.
 Short version:
 
 ```bash
-git clone --branch v0.13.0-stable https://github.com/vaskes/llama.cpp_telegram.git
+git clone --branch v0.14.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 cd llama.cpp_telegram
 sudo ./scripts/install.sh
 sudo $EDITOR /opt/telegram-bot/.env   # BOT_TOKEN, ALLOWED_USER_IDS
@@ -248,13 +319,19 @@ sudo systemctl start whisper-api-compose
 sudo systemctl start telegram-bot-compose
 ```
 
+To deploy a **new version** to a host that already runs the bot, do not
+pull on that host: cut a tag, let the CI build the image onto the
+release, and let whoever holds the host's access run the host's deploy
+script with that tag. See
+[How a release reaches production](#how-a-release-reaches-production).
+
 ## Documentation
 
 - **[docs/WEBHOOK.md](docs/WEBHOOK.md)** — webhook transport: when to use, how to set up, security, fallback
 - **[docs/SETUP.md](docs/SETUP.md)** — installing on a fresh host (for humans); also covers group-mode deployment
 - **[docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md)** — short command reference for AI agents
 - **[docs/CODEBOOK.md](docs/CODEBOOK.md)** — the rules this repo learned by breaking them: what a monolith is here, what stops one regrowing, and what a tripwire has to be able to do. Read this before changing anything.
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — what's inside bot.py at a high level; covers both private and group modes
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — what's inside bot.py at a high level; covers both private and group modes, and the release workflow (how a tag becomes a running container)
 - **[docs/CALL_LLAMA.md](docs/CALL_LLAMA.md)** — detailed design notes for `call_llama`, polling loop, abort ladder, image MIME detection, config block. The file to read for a code review.
 - **[docs/SECURITY.md](docs/SECURITY.md)** — whitelist (private mode), group-mode security, env vars, what NOT to commit
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common issues, including group-mode gotchas

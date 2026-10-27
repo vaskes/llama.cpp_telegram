@@ -477,8 +477,12 @@ To clean up the chat: long-press the old bot message → Delete.
 ### `/newsub Болталка` rejected with "Name rules..."
 
 Old bot version (pre-`326ca48`). Names like Cyrillic / emoji are
-allowed by the current `^[^\s]{1,128}$` regex. Update the bot
-(`cd llama.cpp_telegram && git pull && sudo ./scripts/update.sh`).
+allowed by the current `^[^\s]{1,128}$` regex. Update the bot: on a host
+you keep a clone on, `cd llama.cpp_telegram && git fetch --tags && git
+checkout <tag> && sudo ./scripts/update.sh`; on a host deployed from a
+release, deploy a newer tag (the CI builds the image onto the release
+and the host's deploy script loads it — see
+[ARCHITECTURE.md](ARCHITECTURE.md#the-release-workflow)).
 
 ### `/delsub <name>` returns "❌ No topic named ..."
 
@@ -532,11 +536,14 @@ a new message.
 `is_forum` is the **chat** attribute (set by Telegram when the
 group is a forum-enabled supergroup). It does NOT change per
 message. If you see `is_forum=True` but the bot says "Created
-sub-talk", the bot is running an old build. Pull, rebuild, restart:
+sub-talk", the bot is running an old build. Deploy a newer one — on a
+host with a clone, pull and rebuild; on a host deployed from a release,
+deploy a newer tag:
 
 ```bash
+# host with a clone
 cd /opt/llama.cpp_telegram
-git pull
+git fetch --tags && git checkout <tag>
 sudo ./scripts/update.sh
 ```
 
