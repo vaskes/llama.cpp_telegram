@@ -211,13 +211,15 @@ def test_the_open_sections_were_found(open_sections):
     finding nothing -- which is the exact failure this file exists to
     prevent, one level up.
     """
-    # Six entries were open on 2026-10-24, after four of the freeze
-    # items were closed (T-FREEZE-CHUNK-1, -AUTO-1, -DOC-1, -AUTO-2).
+    # Five entries were open on 2026-10-27, after the last three of the
+    # code items were closed (the side-car's read cap, the bot's pin,
+    # and the deploy workflow) -- which emptied the "code, not blocked on
+    # anyone" section altogether.
     # The floor is deliberately low and deliberately counted: it is there
     # to catch a splitter that stopped matching, not to keep a number of
     # open items in line. Closing one more item means moving this
     # number on purpose, not that the check has stopped working.
-    assert len(open_sections) >= 6, (
+    assert len(open_sections) >= 5, (
         f"only {len(open_sections)} open sections found in {TODO.name}; the "
         "splitter probably stopped matching. Every check below would pass "
         "by finding nothing.")

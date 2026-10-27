@@ -248,85 +248,6 @@ the current test run. Two things are still open:
 wording, change it, or drop the flag again.
 
 
-## Open — code, not blocked on anyone
-
-### The MCP door has no model-facing read cap
-
-**Status:** open since 2026-10-27. This is the side-car's debt, not the
-bot's: the bot imported the door, and what the door lets through is the
-side-car's business. It stayed open through the switch because the
-switch did not close it.
-
-The deployment's binary limit is 50 MiB and the MCP face's own ceiling
-is 64 MiB, so the effective cap today is 50 MiB — and the face reads
-the whole file into memory and base64-encodes it. One call can
-therefore cost the machine ~117 MiB of RAM for an answer no chat model
-can use. The HTTP door's 50 MiB is right for a download; the MCP door is
-a different door.
-
-**What it needs:** a cap on the MCP face's own read, well below the
-download limit, and a refusal that names the cap instead of a silently
-truncated file. The bot cannot enforce it from its side: it sees the
-server's answer, not the file.
-
-### The bot's pin described an older side-car than the one it talks to —
-### closed 2026-10-27
-
-**Status:** ✅ **closed 2026-10-27.** The pin, the contract's number and
-the production deployment are now the same version.
-
-**What was wrong:** the bot's repository pinned the sandbox as a
-submodule at **v2.10.2** (`4a6c465`) and `sandbox_contract.py` said
-`SANDBOX_PINNED_VERSION = "2.10.2"`, while the side-car the bot
-actually talked to on the production host was **v2.12.1** (`a396101`).
-The tripwire `tests/test_sandbox_contract.py` compares the contract
-with the PINNED submodule's own source — so the bot's claims were being
-checked against a version three releases old. The claims themselves
-were still true, which is exactly what made it quiet: a claim that
-happens to be true is not a claim that is checked.
-
-**What it needed:** move the pin, move the contract's number with it,
-and re-read every claim against that source rather than against the old
-one.
-
-**What was done:**
-
-  * the pin moved to **v2.13.0** (`b2174e8`) — the version the
-    production side-car now runs (the MCP read budget, below);
-  * `SANDBOX_PINNED_VERSION = "2.13.0"` ✔;
-  * **every claim was re-read against v2.13.0's source**, and two of
-    them had moved:
-    - the posture paragraph said the host's `ssh-keys` **and
-      `/opt/search`** are mounted read-only. v2.13.0 dropped the
-      `/opt/search` mount (the search engine is gone from the stack),
-      so the sentence was false and is now true again — in the
-      contract, in `docs/BASH-SANDBOX.md` and in `docs/ARCHITECTURE.md`,
-      which quote it verbatim;
-    - the compose's own `pids_limit` became a knob
-      (`pids_limit: "${AGENT_PIDS_LIMIT:-256}"`), and the document was
-      quoting the old literal. A number about the sandbox has to come
-      from the sandbox;
-  * a **new claim** came with the new version: the model's read budget
-    on the MCP door (`MCP_MAX_READ_BYTES`), checked by the tripwire
-    against the side-car's own source — the number is resolved out of
-    `agent_config.py` with an AST walk, because the side-car writes its
-    sizes in terms of each other (`1 * _MIB`, `_MIB = 1024 * _KIB`) and
-    a check that could only read a plain literal would be a check that
-    cannot see half of the ways a number is written.
-
-**Measured on the production host after the move:** the side-car runs
-v2.13.0, the MCP door refuses a 2 701 756-byte file with "the file is
-2701756 bytes, which is over the limit of 1048576 bytes; read it in
-pieces with bash (head, tail, sed) or compress it first", a 21-byte
-file comes back as its text, and `file_info` reports the limit that
-actually applies.
-
-**Where to look:** `CHANGELOG.md` § Unreleased;
-`telegram-bot/personal_tools/sandbox_contract.py`;
-`tests/test_sandbox_contract.py`; `docs/BASH-SANDBOX.md`.
-
----
-
 ## Accepted as documented risk — not a bug, not a task
 
 ### T-FREEZE-1 — the semaphore LRU can evict a held semaphore
@@ -1004,6 +925,104 @@ no secret behind it and no tripwire on the properties that make it safe.
 `docs/ARCHITECTURE.md` § The deploy workflow;
 `tests/test_deploy_workflow.py`;
 `scripts/mutation_harness_deploy_workflow.py`.
+
+### The MCP door has no model-facing read cap — closed 2026-10-27
+
+**Status:** ✅ **closed 2026-10-27.** The cap exists, it is deployed, and
+the bot's belief about it is a claim like any other.
+
+**What was wrong:** the deployment's binary limit is 50 MiB and the MCP
+face's own ceiling is 64 MiB, so the effective cap was 50 MiB — and the
+face read the whole file into memory and base64-encoded it. One call
+could cost the machine ~117 MiB of RAM for an answer no chat model can
+use. The HTTP door's 50 MiB is right for a download; the MCP door is a
+different door.
+
+**Who could fix it:** not the bot. The bot sees the server's answer, not
+the file — the cap had to live in the side-car, where the read happens.
+
+**What was done:** the side-car's **v2.13.0** gives that door a budget
+of its own: `AGENT_MCP_MAX_READ_BYTES` (0..64 MiB, 1 MiB by default),
+and a refusal that names the file's size and the limit instead of a
+truncated file. A budget may only narrow, never widen: the file policy
+(`AGENT_BINARY_LIMIT`) still decides when it is the smaller one, and the
+64 MiB ceiling still decides when the other two are switched off. The
+HTTP door is untouched — the very file the MCP tool refuses is still
+served by `/files`, and the side-car's own test proves it.
+
+**Measured on the production host after the deploy:** a 2 701 756-byte
+file is refused with *"the file is 2701756 bytes, which is over the
+limit of 1048576 bytes; read it in pieces with bash (head, tail, sed)
+or compress it first"*, a 21-byte file comes back as its text, and
+`file_info` reports the limit that actually applies (1048576).
+
+**The bot's side:** the number is now in the contract
+(`MCP_MAX_READ_BYTES`) and the tripwire reads it out of the pinned
+side-car's own source — so the bot's belief and the side-car's
+behaviour cannot drift apart.
+
+**Where to look:** `CHANGELOG.md` § Unreleased; `docs/BASH-SANDBOX.md`
+§ The model's read budget; `tests/test_sandbox_contract.py`.
+
+### The bot's pin described an older side-car than the one it talks to —
+
+### closed 2026-10-27
+
+**Status:** ✅ **closed 2026-10-27.** The pin, the contract's number and
+the production deployment are now the same version.
+
+**What was wrong:** the bot's repository pinned the sandbox as a
+submodule at **v2.10.2** (`4a6c465`) and `sandbox_contract.py` said
+`SANDBOX_PINNED_VERSION = "2.10.2"`, while the side-car the bot
+actually talked to on the production host was **v2.12.1** (`a396101`).
+The tripwire `tests/test_sandbox_contract.py` compares the contract
+with the PINNED submodule's own source — so the bot's claims were being
+checked against a version three releases old. The claims themselves
+were still true, which is exactly what made it quiet: a claim that
+happens to be true is not a claim that is checked.
+
+**What it needed:** move the pin, move the contract's number with it,
+and re-read every claim against that source rather than against the old
+one.
+
+**What was done:**
+
+  * the pin moved to **v2.13.0** (`b2174e8`) — the version the
+    production side-car now runs (the MCP read budget, below);
+  * `SANDBOX_PINNED_VERSION = "2.13.0"` ✔;
+  * **every claim was re-read against v2.13.0's source**, and two of
+    them had moved:
+    - the posture paragraph said the host's `ssh-keys` **and
+      `/opt/search`** are mounted read-only. v2.13.0 dropped the
+      `/opt/search` mount (the search engine is gone from the stack),
+      so the sentence was false and is now true again — in the
+      contract, in `docs/BASH-SANDBOX.md` and in `docs/ARCHITECTURE.md`,
+      which quote it verbatim;
+    - the compose's own `pids_limit` became a knob
+      (`pids_limit: "${AGENT_PIDS_LIMIT:-256}"`), and the document was
+      quoting the old literal. A number about the sandbox has to come
+      from the sandbox;
+  * a **new claim** came with the new version: the model's read budget
+    on the MCP door (`MCP_MAX_READ_BYTES`), checked by the tripwire
+    against the side-car's own source — the number is resolved out of
+    `agent_config.py` with an AST walk, because the side-car writes its
+    sizes in terms of each other (`1 * _MIB`, `_MIB = 1024 * _KIB`) and
+    a check that could only read a plain literal would be a check that
+    cannot see half of the ways a number is written.
+
+**Measured on the production host after the move:** the side-car runs
+v2.13.0, the MCP door refuses a 2 701 756-byte file with "the file is
+2701756 bytes, which is over the limit of 1048576 bytes; read it in
+pieces with bash (head, tail, sed) or compress it first", a 21-byte
+file comes back as its text, and `file_info` reports the limit that
+actually applies.
+
+**Where to look:** `CHANGELOG.md` § Unreleased;
+`telegram-bot/personal_tools/sandbox_contract.py`;
+`tests/test_sandbox_contract.py`; `docs/BASH-SANDBOX.md`.
+
+---
+
 
 ## House rules for this file
 
