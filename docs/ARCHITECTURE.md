@@ -210,6 +210,11 @@ bounded twice -- by the operator's config block (which servers exist,
 and which of their tools are taken) and by the gate (which chats may
 use them).
 
+The block is one variable: `LLAMABOT_MCP_SERVERS`, a JSON array of
+server objects (`name`, `url`, and optionally `token`, `include`,
+`exclude`, `gate`). The bot ships with none configured -- the
+servers are the operator's, and the model cannot add one.
+
 ## bash_command — killer feature, defence in depth
 
 The `bash_command` tool gives the model a general-purpose shell in

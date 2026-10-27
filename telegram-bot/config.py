@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from logconf import get_logger
-from mcp_client import GATE_DEV_CHAT, McpServerConfig
+from mcp_client import GATE_PROFILE, McpServerConfig
 log = get_logger(__name__)
 
 # === Telegram bot identity ===
@@ -240,30 +240,69 @@ DONSETCH_SESSION_ID: Optional[str] = None
 def _mcp_servers() -> list:
     """The MCP servers, as the operator configured them.
 
-    A server without a token is not configured: the sandbox's MCP
-    endpoint wants the same bearer token as its HTTP ones, and a
-    server that would answer 401 is a server that only produces log
-    noise.
+    ONE block, one variable: ``LLAMABOT_MCP_SERVERS`` holds a JSON
+    array of server objects::
 
-    The side-car's address and token are read from the module that
-    owns them (the shell tool's), because they are the same
-    side-car: two readers of one fact is how two facts drift apart.
+        [{"name": "donsetch", "url": "http://127.0.0.1:8765/mcp",
+          "token": "", "include": [], "exclude": [],
+          "gate": "always"}]
+
+    * ``name`` and ``url`` are required -- a server without a name
+      has no namespace for its tools, and a server without an address
+      is nowhere;
+    * ``token`` becomes an ``Authorization: Bearer`` header;
+    * ``include`` / ``exclude`` filter the server's OWN tool names
+      (before the bot prefixes them). ``exclude`` wins;
+    * ``gate`` is ``always``, ``profile`` or ``dev-chat`` (the
+      default). It decides which chats may use the server's tools.
+
+    A block that does not parse is not a server, and it says so in
+    the log: a configuration that silently does nothing is one the
+    operator cannot debug.
+
+    The side-car is NOT in this block on purpose. It speaks its own
+    HTTP API, not MCP -- measured on 2026-10-27, a POST to its /mcp
+    answers 404 -- and the bot already reaches it directly through
+    the shell tool. Listing it here would mean a server that could
+    only ever answer "not usable", and a warning every refresh.
     """
-    from personal_tools.bash_command import AGENT_STACK_TOKEN, AGENT_STACK_URL
+    raw = os.environ.get("LLAMABOT_MCP_SERVERS", "").strip()
+    if not raw:
+        return []
+    try:
+        entries = _json.loads(raw)
+    except ValueError as exc:
+        log.warning("[mcp] LLAMABOT_MCP_SERVERS is not valid JSON: %s. "
+                    "No MCP server is configured.", exc)
+        return []
+    if not isinstance(entries, list):
+        log.warning("[mcp] LLAMABOT_MCP_SERVERS must be a JSON array of "
+                    "server objects. No MCP server is configured.")
+        return []
 
     servers = []
-    if AGENT_STACK_TOKEN:
+    for entry in entries:
+        if not isinstance(entry, dict):
+            log.warning("[mcp] skipping an MCP server entry that is not an "
+                        "object: %r", entry)
+            continue
+        name = str(entry.get("name") or "").strip()
+        url = str(entry.get("url") or "").strip()
+        if not name or not url:
+            log.warning("[mcp] skipping an MCP server without a name or a "
+                        "url: %r", entry)
+            continue
+        headers = {}
+        token = str(entry.get("token") or "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         servers.append(McpServerConfig(
-            name="sandbox",
-            url=f"{AGENT_STACK_URL}/mcp",
-            headers={"Authorization": f"Bearer {AGENT_STACK_TOKEN}"},
-            # `bash` is the shell the bot already has, with the
-            # policy that goes with it; `delete_file` destroys. Both
-            # are one word away from being imported, and neither is
-            # imported until that is a decision somebody made.
-            include=("read_file", "file_info"),
-            exclude=("bash", "delete_file"),
-            gate=GATE_DEV_CHAT,
+            name=name,
+            url=url,
+            headers=headers,
+            include=tuple(str(t) for t in entry.get("include") or ()),
+            exclude=tuple(str(t) for t in entry.get("exclude") or ()),
+            gate=str(entry.get("gate") or GATE_PROFILE),
             timeout=MCP_CALL_TIMEOUT,
             connect_timeout=MCP_CONNECT_TIMEOUT,
         ))

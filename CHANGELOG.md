@@ -49,7 +49,10 @@ What landed:
 The rules that came with it (CODEBOOK X-14):
 
   * the servers are the operator's, in one config block in
-    `config.py`; the model cannot add one;
+    `config.py` — one variable, `LLAMABOT_MCP_SERVERS`, holding a
+    JSON array of server objects (`name`, `url`, and optionally
+    `token`, `include`, `exclude`, `gate`). The model cannot add one;
+    the bot ships with none configured;
   * the gate is per server — `always`, `profile` or `dev-chat` — and
     the public bot has the native Telegram tools and nothing else;
   * a name that collides with a native name is **dropped**, not

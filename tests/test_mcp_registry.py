@@ -274,45 +274,53 @@ async def test_in_dev_mode_a_gated_server_follows_the_allowlist(monkeypatch):
 
 
 async def test_the_servers_come_from_the_config_block(monkeypatch):
-    """One block, and the token is the switch.
+    """One block, one variable, and it is the operator's.
 
-    A server that would answer 401 is a server that only produces log
-    noise, so a server without a token is not configured at all. The
-    block is the operator's: the model cannot add a server, and the
-    bot reads the list from one place.
+    The block is a JSON array of server objects. A block that does not
+    parse is not a server -- and it says so, because a configuration
+    that silently does nothing is one the operator cannot debug.
     """
-    import importlib
-
     import config
-    import personal_tools.bash_command as bc
 
-    # The token is read by the shell tool's module, which is where the
-    # side-car's address and token live -- one fact, one reader. So
-    # that module is reloaded and the config block is asked again.
-    #
-    # `config` itself is NOT reloaded: a reload builds a new
-    # SHUTDOWN_EVENT, and every module that holds an alias of it
-    # (`llm_iteration` reads the abort guard through its own alias)
-    # would then be looking at a different event than `config` has.
-    # The polling test that checks exactly that would go red for a
-    # reason that has nothing to do with the polling test.
-    def _servers():
-        importlib.reload(bc)
+    def _servers(raw):
+        monkeypatch.setenv("LLAMABOT_MCP_SERVERS", raw)
         return config._mcp_servers()
 
     try:
-        monkeypatch.setenv("AGENT_STACK_TOKEN", "a-token")
-        names = [srv.name for srv in _servers()]
-        assert "sandbox" in names
+        # nothing configured is not a mistake
+        monkeypatch.setenv("LLAMABOT_MCP_SERVERS", "")
+        assert config._mcp_servers() == []
 
-        monkeypatch.delenv("AGENT_STACK_TOKEN")
-        assert _servers() == []
+        # a block that does not parse configures nothing
+        assert _servers("{not json") == []
 
-        # and the constant the bot actually uses is that same block
-        assert config.MCP_SERVERS == config._mcp_servers()
+        # a server needs a name (the namespace of its tools) and a url
+        assert _servers('[{"url": "http://x/mcp"}]') == []
+        assert _servers('[{"name": "s"}]') == []
+
+        servers = _servers('[{"name": "web", "url": "http://x/mcp"}]')
+        assert [s.name for s in servers] == ["web"]
+        assert servers[0].url == "http://x/mcp"
+        # the default gate: everywhere except the public profile
+        assert servers[0].gate == "profile"
+
+        # the token becomes a bearer header
+        servers = _servers('[{"name": "web", "url": "http://x/mcp", '
+                           '"token": "secret"}]')
+        assert servers[0].headers == {"Authorization": "Bearer secret"}
+
+        # the filters are on the server's own names
+        servers = _servers('[{"name": "web", "url": "http://x/mcp", '
+                           '"include": ["read_file"], "exclude": ["bash"]}]')
+        assert servers[0].include == ("read_file",)
+        assert servers[0].exclude == ("bash",)
+
+        # the gate is the operator's choice
+        servers = _servers('[{"name": "web", "url": "http://x/mcp", '
+                           '"gate": "always"}]')
+        assert servers[0].gate == "always"
     finally:
-        monkeypatch.delenv("AGENT_STACK_TOKEN", raising=False)
-        importlib.reload(bc)
+        monkeypatch.delenv("LLAMABOT_MCP_SERVERS", raising=False)
 
 
 async def test_the_servers_are_asked_at_the_same_time(monkeypatch):
