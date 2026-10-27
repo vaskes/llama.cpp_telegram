@@ -362,7 +362,7 @@ decoded into garbage with nothing in the answer to say so.
 
 The sandbox's `stdout` is **this command's output and only this
 command's** (since v2.7.0; before that it was the whole session
-transcript). It is bounded by `AGENT_STDOUT_LIMIT` (default 512 KiB),
+transcript). It is bounded by `AGENT_STDOUT_LIMIT:-512k` (512 KiB),
 and it says when it was cut:
 
 | Marker | Where | What it means |

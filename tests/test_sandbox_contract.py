@@ -90,6 +90,8 @@ COMPOSE_KNOBS = (
      re.compile(r"\$\{AGENT_EXEC_TIMEOUT:-([^}]+)\}")),
     ("AGENT_MCP_MAX_READ_BYTES",
      re.compile(r"\$\{AGENT_MCP_MAX_READ_BYTES:-([^}]+)\}")),
+    ("AGENT_STDOUT_LIMIT",
+     re.compile(r"\$\{AGENT_STDOUT_LIMIT:-([^}]+)\}")),
 )
 
 
