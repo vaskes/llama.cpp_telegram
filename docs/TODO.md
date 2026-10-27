@@ -47,25 +47,6 @@ Sizes are `splitlines()`-based and are recomputed by
 These are not forgotten; they are parked on a question only the operator
 can answer. Each one records the decision that unblocks it.
 
-### The MCP door has no model-facing read cap
-
-**Status:** open since 2026-10-27. This is the side-car's debt, not the
-bot's: the bot imported the door, and what the door lets through is the
-side-car's business. It survived the switch because the door was
-switched on.
-
-The deployment's binary limit is 50 MiB and the MCP face's own ceiling
-is 64 MiB, so the effective cap today is 50 MiB — and the face reads
-the whole file into memory and base64-encodes it. One call can
-therefore cost the machine ~117 MiB of RAM for an answer no chat model
-can use. The HTTP door's 50 MiB is right for a download; the MCP door is
-a different door.
-
-**What it needs:** a cap on the MCP face's own read, well below the
-download limit, and a refusal that names the cap instead of a silently
-truncated file. The bot cannot enforce it from its side: it sees the
-server's answer, not the file.
-
 ### The bot delivers a file twice — the fix is in production; nobody has watched it happen
 
 **Measured by the operator, 2026-10-25.** He asked for an HTML file in the
@@ -264,6 +245,25 @@ wording, change it, or drop the flag again.
 
 
 ## Open — code, not blocked on anyone
+
+### The MCP door has no model-facing read cap
+
+**Status:** open since 2026-10-27. This is the side-car's debt, not the
+bot's: the bot imported the door, and what the door lets through is the
+side-car's business. It stayed open through the switch because the
+switch did not close it.
+
+The deployment's binary limit is 50 MiB and the MCP face's own ceiling
+is 64 MiB, so the effective cap today is 50 MiB — and the face reads
+the whole file into memory and base64-encodes it. One call can
+therefore cost the machine ~117 MiB of RAM for an answer no chat model
+can use. The HTTP door's 50 MiB is right for a download; the MCP door is
+a different door.
+
+**What it needs:** a cap on the MCP face's own read, well below the
+download limit, and a refusal that names the cap instead of a silently
+truncated file. The bot cannot enforce it from its side: it sees the
+server's answer, not the file.
 
 ### The bot's pin describes an older side-car than the one it talks to
 
