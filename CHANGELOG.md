@@ -61,7 +61,9 @@ the output it had already produced went with it. His ruling: an hour.
     bot's number has to sit inside the range the side-car accepts.
 
 Tripwires: `tests/test_limits.py` (19);
-`tests/test_sandbox_contract.py` (10). Rule **X-21**.
+`tests/test_sandbox_contract.py` (16); mutation harness
+`scripts/mutation_harness_exec_timeout.py` (9 mutations: 8 caught,
+1 survived — group B). Rule **X-21**.
 
 ## [v0.14.1-stable] — 2026-10-27 — The delivery removes nothing
 
