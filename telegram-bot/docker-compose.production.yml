@@ -18,7 +18,9 @@ name: telegrambot-bot
 #     the on-disk file are the same thing.
 #
 # Deploy:
-#   git clone ... llama.cpp_telegram && cd llama.cpp_telegram/telegram-bot
+#   the release carries the image; the host's deploy script
+#   (/opt/telegrambot/deploy_bot.sh) loads it and runs this stack.
+#   For a first-time bring-up from a checkout:
 #   cp .env.example .env      # then fill in the secrets
 #   docker compose -f docker-compose.production.yml up -d
 #
@@ -28,6 +30,13 @@ name: telegrambot-bot
 
 services:
   telegram-bot:
+    # The image the release carries. The deploy loads it from the
+    # release and runs it; it does not build on the production host
+    # (a build there would be a second build, from a source tree
+    # nobody else has). `build:` stays so that a FRESH host can still
+    # bring the stack up from a checkout; the deploy passes
+    # --no-build, so the loaded image is what runs.
+    image: ${BOT_IMAGE:-telegram-bot:local}
     build: .
     container_name: tb-bot
     restart: unless-stopped

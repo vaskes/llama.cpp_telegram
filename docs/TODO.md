@@ -352,7 +352,7 @@ Not repeated here; each line points at the record.
 | One person, one name in the record | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16 |
 | The empty-answer fallback reaches the user | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-17 |
 | The MCP import, on in production | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-14 |
-| The deploy workflow, with the topology on the host | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-18 |
+| The release workflow, with the topology on the host | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-18 |
 | The bot's pin, and the side-car it talks to | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-8 |
 
 ---
@@ -853,78 +853,52 @@ searchable by the name they carry.
 **Where to look:** `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16;
 `telegram-bot/sender_name.py`; `tests/test_one_name_per_person.py`.
 
-### T-FREEZE-AUTO-3 — a deploy workflow — done 2026-10-27; one rule on the
-### operator's router is left
+### T-FREEZE-AUTO-3 — a release workflow, and the deploy is the agent's door —
+### done 2026-10-27
 
-**Decision (the operator delegated it on 2026-10-27, "делай с 6 по
-10"): the deploy logic stays on the host; the repository gets the trigger, the
-docs and the tripwire.** The topology — the compose file, the `.env`,
-the volume, the backup — is the operator's, and a second copy of it in
-the repository is a second copy that nobody updates.
+**Decision (the operator, 2026-10-27):** "ты без проблем можешь зайти на все
+мои машины и раскатать таг или релиз с гита... у тебя доступы есть — это
+разумно и достаточно. лишние хуи — лишний геморой." The agent has the access
+to every machine; the deploy is the agent's, and the CI does not need to be
+the one who opens the door. The deploy logic stays on the host — the
+topology (the compose file, the `.env`, the volume, the backup) is the
+operator's, and a second copy of it in the repository is a second copy that
+nobody updates.
 
-**Status:** the code is done and measured. **One thing is left, and it is
-the operator's:** the router in front of the production host does not let
-a GitHub runner reach the SSH port. Measured, not suspected — from the
-runner's address (20.83.53.76, Microsoft Azure): ports **80 and 443
-answer**, and 22, 3000, 8080, 8443, 12006 and 12007 **do not**. From
-the operator's other network (47.253.4.207) every one of them answers.
-So the router opens the web ports to the world and keeps the SSH
-forwards for a narrower set of addresses — and the CI is not in that
-set.
+**Status: closed, and nothing is left for the operator.** The first shape
+(this wave's beginning) was a workflow that deployed over ssh, and its one
+outstanding item was a rule on the operator's router: a GitHub runner cannot
+reach the SSH port of the production host, and the addresses those runners
+come from are **7081 CIDR — about 28.6 million addresses**. Opening the
+router to all of them to earn a deploy nobody asked for is a bad trade, and
+the agent's own access is a door the operator already trusts.
 
-**What was there:** nothing. A workflow that deploys on a tag push, with
-no secret behind it and no tripwire on the properties that make it safe.
+So the split moved:
 
-**What is there now:**
-
-  * `.github/workflows/deploy.yml` — the trigger (a tag, or a manual run
-    from the Actions tab), the commit (`git rev-parse HEAD`), and one
-    `ssh` call. Nothing about the deployment itself: the workflow does
-    not even name the compose file;
-  * a **preflight** that prints the runner's address and says plainly
-    that the host did not answer — a timeout with a reason is a
-    different thing from a timeout without one;
-  * the deploy key is **limited to one script** on the host. sshd runs
-    `/opt/telegrambot/deploy_bot.sh` with a forced command, and the
-    client's command line arrives as *data* in `$SSH_ORIGINAL_COMMAND` —
-    verified: a command line of `not-a-sha; rm -f /tmp/pwned` was refused
-    and the file it named was not touched. The script validates the
-    value as a hex object name before it reaches git;
-  * the host's key is **pinned** (`DEPLOY_KNOWN_HOSTS`), not discovered;
-  * the token can read the repository and nothing else
-    (`permissions: contents: read`);
-  * the host's script was extended with the **checks** the operator
-    already ran by hand: the backup, the health endpoint, the restart
-    count, and the smoke test **before and after** — a deploy is judged
-    on whether it made anything worse, because a red check that was
-    already red before the deploy is the operator's business, not this
-    deploy's failure. (Measured: the webhook's `last_error_message` is
-    a 504 from 14:54 MSK, six hours before the deploy, and it would
-    have failed the gate on its own.) The deploy of this wave ran
-    through that script by hand: backup, build, recreate, healthz 200,
-    0 restarts, no fatal, no ERROR.
-
-**What it needs from the operator — one of the three:**
-
-  1. **open the SSH port to the CI.** One rule on the router: allow
-     tcp/12007 from the ranges GitHub publishes
-     (`api.github.com/meta`, the `actions` key). The key, the forced
-     command and the validation stay exactly as they are — the door
-     stays narrow;
-  2. **a self-hosted runner on the host.** Then the workflow runs on
-     llmhost1 and reaches it directly. The price is honest and worth
-     naming: the CI's steps would then run *on the production host*, so
-     anyone who can push to `main` could run any command there. The
-     forced command is a narrower door than that;
-  3. **the host pulls.** A timer on the host that looks for a new tag
-     and deploys it. No inbound path is needed at all — and the key
-     becomes unnecessary, which loses the operator's "one script, one
-     key" design.
+  * **`.github/workflows/release.yml`** — the trigger (a tag, or a manual run
+    from the Actions tab for a tag that already exists), the build of the
+    image from the tagged commit, and the attachment of that image to the
+    GitHub Release for the tag. The release notes are the CHANGELOG section
+    the tag names, and a tag without its section cannot be cut. The
+    workflow holds **no secret** and has **no way to reach the host** — no
+    ssh, no scp, no host address, no port, no key. The token may write the
+    release and nothing else (`contents: write`);
+  * **the host's script** (`/opt/telegrambot/deploy_bot.sh`, the operator's
+    file) — it loads the image the release carries, runs it, and then does
+    what it already did: backup, health endpoint, restart count, the smoke
+    test **before and after**, judged on whether the deploy made anything
+    worse. A deploy that does not say whether the bot works reports success
+    by having stopped;
+  * **the production host keeps no git of its own.** The image arrives as an
+    artifact; nothing fetches itself, and there is nothing to remember about
+    it. The push of the repository moved off the production host too (it
+    rides the same access, from the machine that already holds the GitHub
+    key).
 
 **Where to look:** `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-18;
-`docs/ARCHITECTURE.md` § The deploy workflow;
-`tests/test_deploy_workflow.py`;
-`scripts/mutation_harness_deploy_workflow.py`.
+`docs/ARCHITECTURE.md` § The release workflow;
+`tests/test_release_workflow.py`;
+`scripts/mutation_harness_release_workflow.py`.
 
 ### The MCP door has no model-facing read cap — closed 2026-10-27
 

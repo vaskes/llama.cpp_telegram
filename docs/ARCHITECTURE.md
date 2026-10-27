@@ -399,46 +399,47 @@ bearer token.
     failure mode this repository keeps meeting. Run it as a script to
     print the transcripts.
 
-### The deploy workflow
+### The release workflow
 
-`.github/workflows/deploy.yml` deploys the bot to the production host when
-a **tag** is pushed, and it can be run by hand from the Actions tab for
-a specific commit. The workflow is deliberately thin:
+`.github/workflows/release.yml` builds the bot's image when a **tag** is
+pushed, and can be run by hand from the Actions tab for a tag that
+already exists. The workflow is deliberately thin:
 
-  * it says **when** to deploy (the tag, or the operator's manual run)
-    and **which commit** (`git rev-parse HEAD`);
-  * it says **how to reach the host**: an ed25519 key from the
-    repository's Actions secrets, a pinned host key
-    (`DEPLOY_KNOWN_HOSTS`), `StrictHostKeyChecking=yes`, and one `ssh`
-    call whose last argument is the commit sha;
-  * it says **nothing about the deployment itself**. The compose file,
-    the `.env`, the volume and the backup are the operator's, and they
-    live in the host's own script `/opt/telegrambot/deploy_bot.sh` —
-    the same script the operator runs by hand, so a CI deploy and a
-    hand deploy cannot drift apart.
+  * it says **when** to release (the tag, or the operator's manual run)
+    and **what** to release (the image, built from the tagged commit);
+  * it attaches the image, and the files the host's deploy needs, to the
+    GitHub Release for that tag — so **the release is the deployable
+    unit**: the tag, the image and the container that runs in production
+    are one fact;
+  * it says **nothing about the deployment itself**, and it cannot: the
+    production host is behind the operator's router, a GitHub runner
+    reaches ports 80 and 443 there and nothing else, and the addresses
+    those runners come from are 7081 CIDR (~28.6 million addresses).
+    The agent's own ssh access is the door into the host, and it is the
+    same access a hand deploy uses.
 
-The key is a **forced command**: sshd runs only that script with the
-client's command line in `$SSH_ORIGINAL_COMMAND`, and the script
-refuses anything that is not a hex object name before it reaches git.
-The client's command line is data there, never a shell command — which
-is why the workflow can pass the sha without opening a shell on the
-host.
+The workflow holds no secret and no host credentials: the only token it
+uses is the one GitHub mints for the run, and the worst a compromised
+workflow can do is publish a release. It writes the release and nothing
+else (`contents: write`), it validates the tag before the tag reaches a
+command, and it takes the release notes from the CHANGELOG section the
+tag names.
+
+The last hop is the agent's: it loads the image from the release on the
+production host and runs it, through the host's own script
+`/opt/telegrambot/deploy_bot.sh` — the same script the operator runs by
+hand, so a deploy by the agent and a deploy by the operator cannot
+drift apart. The production host keeps no git of its own: the image
+arrives as an artifact, nothing fetches itself, and there is nothing to
+remember about it.
 
 The script's last steps are the checks (the health endpoint, the
 restart count, the smoke test — run **before and after**, so the deploy
 is judged on whether it made anything worse), because a deploy that
 does not say whether the bot works reports success by having stopped.
 
-Before the `ssh`, the workflow asks the same question the operator
-would ask: can this runner reach the host? The production host is
-behind a router that opens 80 and 443 to the outside and keeps the SSH
-port for a narrower set of addresses, so a runner that cannot reach it
-must say so with the address it came from — measured, the failure is
-"the host did not answer on 85.136.112.144:12007 from 20.83.53.76",
-not "connection timed out".
-
-The properties above are pinned by `tests/test_deploy_workflow.py`; the
-mutation harness `scripts/mutation_harness_deploy_workflow.py` puts
+The properties above are pinned by `tests/test_release_workflow.py`; the
+mutation harness `scripts/mutation_harness_release_workflow.py` puts
 each of them back and watches the suite notice.
 
 ## Deployment profiles (T35)

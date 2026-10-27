@@ -66,59 +66,58 @@ other (`1 * _MIB`, `_MIB = 1024 * _KIB`).
 `telegram-bot/personal_tools/sandbox_contract.py`;
 `tests/test_sandbox_contract.py`; `docs/BASH-SANDBOX.md`.
 
-### A tag deploys the bot, and the door is narrow
+### A tag releases the image, and the deploy is the agent's door
 
 `T-FREEZE-AUTO-3`. The bot reached the production host by hand: a
 script on the host, a command typed into a shell. Every deploy was one
 person's memory of the order of the steps, and a step that is easy to
 forget is a step that gets forgotten.
 
-`.github/workflows/deploy.yml` deploys the bot when a **tag** is pushed,
-and can be run by hand from the Actions tab for a specific commit.
+The first answer to that was a workflow that deployed over ssh. It was
+the wrong shape, and the operator said why: the runners' addresses are
+not on the operator's router. Measured, a GitHub runner (20.83.53.76)
+reaches ports 80 and 443 and nothing else, and the addresses GitHub's
+runners come from are **7081 CIDR — about 28.6 million addresses**. Opening
+the router to all of them to earn a deploy nobody asked for is not a
+trade worth making. And the agent already has a door into the host: its
+own ssh access, the same access a hand deploy uses.
 
-The workflow is deliberately thin. It says *when* to deploy and *which
-commit*; it says *how to reach the host* (an ed25519 key from the
-repository's Actions secrets, a pinned host key, `ssh` with one
-argument). It says **nothing about the deployment itself** — the compose
-file, the `.env`, the volume and the backup are the operator's, and they
-stay in the host's own script `/opt/telegrambot/deploy_bot.sh`, which is
-the same script the operator runs by hand. A CI deploy and a hand deploy
-that share a script cannot drift apart; two copies of the topology in
-two places could.
+So the workflow's share of the work ends where the image is built.
+`.github/workflows/release.yml` builds the image from the tagged commit
+and attaches it, together with the files the host's deploy needs, to
+the GitHub Release for that tag. The release **is** the deployable unit:
+the tag, the image and the container that runs in production are one
+fact.
 
-The key is a **forced command**: sshd runs only that script, and the
-client's command line arrives as *data* in `$SSH_ORIGINAL_COMMAND`, not
-as a shell command. The script refuses anything that is not a hex object
-name before it reaches git — measured: a command line of
-`not-a-sha; rm -f /tmp/pwned` was refused, and the file it named was
-not touched.
+The last hop is the agent's: it loads that image on the host and runs
+it, through the host's own script — the same script the operator runs
+by hand, so a deploy by the agent and a deploy by the operator cannot
+drift apart. The production host keeps **no git of its own**: nothing
+fetches itself, nothing needs to be remembered about it, and the image
+that runs there is the image the release carries, bit for bit.
 
-The host's script was extended with the checks the operator already ran
-by hand — the health endpoint, the restart count, the smoke test — and
-it backs up before it touches anything, so a failure at any step leaves
-the previous image running. A deploy that does not say whether the bot
-works reports success by having stopped.
+The workflow holds **no secret** and has **no way to reach the host**:
+the worst a compromised workflow can do is publish a release. It writes
+the release and nothing else (`contents: write`), it validates the tag
+before it reaches a command (a dispatch input is text somebody typed),
+and it takes the release notes from the CHANGELOG section the tag
+names — a release without its section cannot be cut.
 
-The properties are pinned, not remembered: `tests/test_deploy_workflow.py`
-asserts that a tag deploys and a pull request never does, that the token
-can read the repository and nothing else, that the host's key is pinned,
-and that the workflow carries no topology. The mutation harness
-`scripts/mutation_harness_deploy_workflow.py` puts each of them back
-(7 caught, 1 survived — the group-B mutation, where the tripwires are
-removed along with the behaviour, and the suite goes green).
-
-**What the first run measured.** The workflow reached GitHub and the
-host's door — and then the router answered instead of the host: from
-the runner's address (20.83.53.76) ports 80 and 443 answer, and 22,
-3000, 8080, 8443, 12006 and 12007 do not. The key is fine; the port is
-not open to the CI. The workflow now says so before it tries, and
-prints the address it came from, and `docs/TODO.md` carries the three
-ways out with what each one costs.
+The properties are pinned, not remembered:
+`tests/test_release_workflow.py` asserts that a tag releases and a pull
+request never does, that the workflow cannot reach the production host
+and holds no secret, that the token may write the release and nothing
+else, that the image is built from the repository and attached to the
+release for that tag, and that the topology is not in the workflow. The
+mutation harness `scripts/mutation_harness_release_workflow.py` puts
+each of them back (10 caught, 1 survived — the group-B mutation, where
+the tripwires are removed along with the behaviour, and the suite goes
+green).
 
 **Where to look:** `docs/CODEBOOK.md` § X-18;
-`docs/ARCHITECTURE.md` § The deploy workflow;
-`tests/test_deploy_workflow.py`;
-`scripts/mutation_harness_deploy_workflow.py`.
+`docs/ARCHITECTURE.md` § The release workflow;
+`tests/test_release_workflow.py`;
+`scripts/mutation_harness_release_workflow.py`.
 
 ### The empty-answer fallback reaches the user
 

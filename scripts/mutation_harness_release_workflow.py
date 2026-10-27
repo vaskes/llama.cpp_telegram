@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
-"""Mutation harness for the deploy workflow (2026-10-27).
+"""Mutation harness for the release workflow (2026-10-27).
 
-T-FREEZE-AUTO-3. The workflow deploys the bot to the production host
-when a tag is pushed. A workflow is code with production access, so the
-properties that make it safe are pinned by
-`tests/test_deploy_workflow.py` -- and a pinned property is a claim
+T-FREEZE-AUTO-3. The workflow builds the image and publishes it on the
+release when a tag is pushed. A workflow is code that runs without a
+human in the loop, so the properties that make it safe are pinned by
+`tests/test_release_workflow.py` -- and a pinned property is a claim
 until something tries to break it.
 
-**Group A -- the behaviour.** Each mutation puts one of the defects back,
-and the suite has to notice:
+**Group A -- the behaviour.** Each mutation puts one of the defects
+back, and the suite has to notice:
 
-  * a pull request deploys;
-  * every push to a branch deploys;
+  * the workflow reaches the production host;
+  * the workflow reads a secret of the operator's;
+  * a pull request releases;
+  * every push to a branch releases;
   * the manual trigger is gone;
-  * the token can write to the repository;
-  * the host's key is not pinned;
-  * the key is inlined in the file;
-  * the topology is copied into the repository.
+  * the token may write more than the release;
+  * the image is not built;
+  * the image is not attached to the release;
+  * the tag is not validated;
+  * the topology is copied into the workflow.
 
-**Group B -- the tripwires.** The mutation removes the tripwires *and* the
-behaviour they are supposed to catch, and the suite has to go **green**. A
-green suite with the tripwire gone is the proof that the tripwire was the
-thing doing the work.
+**Group B -- the tripwires.** The mutation removes the tripwires *and*
+the behaviour they are supposed to catch, and the suite has to go
+**green**. A green suite with the tripwire gone is the proof that the
+tripwire was the thing doing the work.
 
 The rules this harness holds itself to:
 
@@ -37,7 +40,7 @@ The rules this harness holds itself to:
     body, not by renaming the function: a renamed test leaves the file,
     and the CODEBOOK's table quotes how many tests it has.
 
-    python3 scripts/mutation_harness_deploy_workflow.py [ROOT]
+    python3 scripts/mutation_harness_release_workflow.py [ROOT]
 """
 import os
 import re
@@ -49,9 +52,9 @@ ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else
             Path(__file__).resolve().parent.parent).resolve()
 IMAGE = os.environ.get("MUTATION_HARNESS_IMAGE", "")
 
-#: The tests that read the workflows, and the guard on the deploy one.
+#: The tests that read the workflows, and the guard on the release one.
 TARGETS = [
-    "tests/test_deploy_workflow.py",
+    "tests/test_release_workflow.py",
     "tests/test_python_version_compat.py",
 ]
 
@@ -59,19 +62,21 @@ TARGETS = [
 #: scored within a bounded time.
 SUITE_TIMEOUT = 300
 
-WORKFLOW = ROOT / ".github" / "workflows" / "deploy.yml"
-TEST_WORKFLOW = ROOT / "tests" / "test_deploy_workflow.py"
+WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+TEST_WORKFLOW = ROOT / "tests" / "test_release_workflow.py"
 
 # The tripwires of this rule, silenced one by one in group B, with the
 # signature each one takes.
 TRIPWIRES = [
-    ("test_it_deploys_on_a_tag_and_not_on_every_push", "text"),
+    ("test_it_releases_on_a_tag_and_not_on_every_push", "text"),
     ("test_the_workflow_can_be_run_by_hand", "text"),
-    ("test_the_token_can_read_the_repository_and_nothing_else", "text"),
-    ("test_the_host_key_is_pinned", "text"),
-    ("test_the_credentials_are_named_not_inlined", "text"),
-    ("test_the_topology_is_not_in_the_repository", "text"),
-    ("test_the_deploy_is_one_ssh_call", "text"),
+    ("test_the_workflow_cannot_reach_the_production_host", "text"),
+    ("test_the_workflow_holds_no_secret", "text"),
+    ("test_the_token_may_write_the_release_and_nothing_else", "text"),
+    ("test_the_image_is_built_from_the_repository", "text"),
+    ("test_the_image_is_attached_to_the_release_for_that_tag", "text"),
+    ("test_the_tag_is_validated_before_it_reaches_a_command", "text"),
+    ("test_the_topology_is_not_in_the_workflow", "text"),
 ]
 
 
@@ -93,12 +98,28 @@ def _silence(name, signature):
 # (name, expectation, [(path, pattern, replacement, expected_sites)])
 MUTATIONS = [
     # --- group A: the behaviour -------------------------------------
-    ("a pull request deploys", "CAUGHT", [
+    ("the workflow reaches the production host", "CAUGHT", [
+        (WORKFLOW,
+         r"      - name: Build the image\n",
+         "      - name: Reach the host\n"
+         "        run: ssh -i ~/.ssh/deploy_key root@10.0.0.1 'deploy'\n"
+         "      - name: Build the image\n", 1),
+    ]),
+    ("the workflow reads a secret", "CAUGHT", [
+        (WORKFLOW,
+         r"      - name: Build the image\n",
+         "      - name: Read the key\n"
+         "        env:\n"
+         "          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}\n"
+         "        run: echo \"$DEPLOY_SSH_KEY\"\n"
+         "      - name: Build the image\n", 1),
+    ]),
+    ("a pull request releases", "CAUGHT", [
         (WORKFLOW,
          r"  push:\n    tags:\n      - 'v\*'\n",
          "  push:\n    tags:\n      - 'v*'\n  pull_request:\n", 1),
     ]),
-    ("every push to a branch deploys", "CAUGHT", [
+    ("every push to a branch releases", "CAUGHT", [
         (WORKFLOW,
          r"  push:\n    tags:\n      - 'v\*'\n",
          "  push:\n    branches:\n      - main\n    tags:\n      - 'v*'\n", 1),
@@ -107,33 +128,39 @@ MUTATIONS = [
         (WORKFLOW,
          r"  workflow_dispatch:\n", "", 1),
     ]),
-    ("the token can write to the repository", "CAUGHT", [
+    ("the token may write the packages", "CAUGHT", [
         (WORKFLOW,
-         r"permissions:\n  contents: read\n",
-         "permissions:\n  contents: write\n", 1),
+         r"permissions:\n  contents: write\n",
+         "permissions:\n  contents: write\n  packages: write\n", 1),
     ]),
-    ("the host's key is not pinned", "CAUGHT", [
+    ("the image is not built", "CAUGHT", [
         (WORKFLOW,
-         r"              -o StrictHostKeyChecking=yes \\\n",
-         "              -o StrictHostKeyChecking=no \\\n", 1),
+         r"        run: docker build -t \"telegram-bot:\$TAG\" telegram-bot/\n",
+         "        run: echo \"nothing to build\"\n", 1),
     ]),
-    ("the key is inlined in the file", "CAUGHT", [
+    ("the image is not attached to the release", "CAUGHT", [
         (WORKFLOW,
-         r"          set -euo pipefail\n",
-         "          set -euo pipefail\n"
-         "          # -----BEGIN OPENSSH PRIVATE KEY-----\n"
-         "          # (this is a placeholder, but the check must not\n"
-         "          #  care whether the bytes are real)\n", 1),
+         r"            gh release upload \"\$TAG\" bot-image\.tar\.gz deploy-side\.tar\.gz --clobber\n",
+         "", 1),
+        (WORKFLOW,
+         r"            gh release create \"\$TAG\" --title \"\$TAG\" --notes-file release-notes\.md bot-image\.tar\.gz deploy-side\.tar\.gz\n",
+         "            gh release create \"$TAG\" --title \"$TAG\" --notes-file release-notes.md\n", 1),
     ]),
-    ("the topology is copied into the repository", "CAUGHT", [
+    ("the tag is not validated", "CAUGHT", [
         (WORKFLOW,
-         r"          set -euo pipefail\n",
-         "          set -euo pipefail\n"
-         "          docker compose -f docker-compose.production.yml up -d\n", 1),
+         r"\^v\[0-9A-Za-z\]\[0-9A-Za-z\._-\]\{0,60\}\$",
+         ".*", 1),
+    ]),
+    ("the topology is copied into the workflow", "CAUGHT", [
+        (WORKFLOW,
+         r"      - name: Build the image\n",
+         "      - name: The stack\n"
+         "        run: docker compose -f docker-compose.production.yml up -d\n"
+         "      - name: Build the image\n", 1),
     ]),
 
     # --- group B: the tripwires ------------------------------------
-    ("the tripwires are gone, and a pull request deploys",
+    ("the tripwires are gone, and the workflow reaches the host",
      "SURVIVED", [
         (TEST_WORKFLOW, *_silence(*TRIPWIRES[0]), 1),
         (TEST_WORKFLOW, *_silence(*TRIPWIRES[1]), 1),
@@ -142,9 +169,13 @@ MUTATIONS = [
         (TEST_WORKFLOW, *_silence(*TRIPWIRES[4]), 1),
         (TEST_WORKFLOW, *_silence(*TRIPWIRES[5]), 1),
         (TEST_WORKFLOW, *_silence(*TRIPWIRES[6]), 1),
+        (TEST_WORKFLOW, *_silence(*TRIPWIRES[7]), 1),
+        (TEST_WORKFLOW, *_silence(*TRIPWIRES[8]), 1),
         (WORKFLOW,
-         r"  push:\n    tags:\n      - 'v\*'\n",
-         "  push:\n    tags:\n      - 'v*'\n  pull_request:\n", 1),
+         r"      - name: Build the image\n",
+         "      - name: Reach the host\n"
+         "        run: ssh -i ~/.ssh/deploy_key root@10.0.0.1 'deploy'\n"
+         "      - name: Build the image\n", 1),
     ]),
 ]
 

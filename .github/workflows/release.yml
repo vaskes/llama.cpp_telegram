@@ -1,0 +1,135 @@
+name: Release
+
+# A tag is a release. The tag names the commit that carries its
+# CHANGELOG section (see the release contract in the CODEBOOK), and
+# pushing it is the operator's own action -- so the tag IS the approval.
+#
+# What this workflow does: it BUILDS THE IMAGE and puts it on the
+# release. What it does not do: deploy.
+#
+# The production host sits behind the operator's router, and the only
+# door into it the operator trusts is the one the agent already walks
+# -- the agent's own ssh access, the same access a hand deploy uses. A
+# CI runner's address is not on that list: GitHub's runners come from
+# 7081 CIDR (about 28.6 million addresses), and opening the router to
+# all of them to earn a deploy nobody asked for is a bad trade. So the
+# CI's share of the work ends where the image is built, and the last
+# hop is the agent's -- one command, one door, the same script the
+# operator runs by hand.
+#
+# The result: the release IS the deployable unit. The tag, the image
+# attached to it, and the container that runs in production are one
+# fact, and the production host needs no git of its own, no registry
+# login and no secret of ours to get it.
+#
+# The workflow holds no secret and has no way to reach the host: the
+# worst a compromised workflow can do is publish a release.
+#
+# The deploy itself belongs to the host: the script that runs there
+# (/opt/telegrambot/deploy_bot.sh) holds the topology -- the compose
+# file, the .env, the volume -- and it is the same script the operator
+# runs by hand.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The release tag to build, e.g. v0.14.0'
+        required: true
+
+# The workflow writes the release and nothing else. It needs to create
+# the release and attach the image to it; it does not need to push
+# code, to publish a package, or to mint a token for another service.
+permissions:
+  contents: write
+
+# One release at a time. Two builds racing for the same tag would
+# publish two different images under one name.
+concurrency:
+  group: release-image
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build the image and publish the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out the release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: The tag has to be a tag
+        run: |
+          set -euo pipefail
+          # The tag arrives as data -- from a dispatch input, which is
+          # text somebody typed. It is validated before it reaches a
+          # command, because a value that reaches a shell unvalidated
+          # is a value that can become a command.
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9A-Za-z][0-9A-Za-z._-]{0,60}$'; then
+            echo "::error::'$TAG' is not a release tag (expected v<version>)"
+            exit 1
+          fi
+          echo "releasing $TAG"
+
+      - name: Build the image
+        run: docker build -t "telegram-bot:$TAG" telegram-bot/
+
+      - name: The image and the files the host's deploy needs
+        run: |
+          set -euo pipefail
+          # The image the release carries is the image that will run in
+          # production: built here, once, from the tagged commit.
+          docker save "telegram-bot:$TAG" | gzip -1 > bot-image.tar.gz
+          # What travels with it: the smoke test that judges the
+          # deploy, plus the compose file and the personal tools the
+          # deploy starts from. The host keeps its own copy of the
+          # topology -- this is the reference, not the master.
+          tar -czf deploy-side.tar.gz \
+            telegram-bot/docker-compose.production.yml \
+            telegram-bot/personal_tools \
+            scripts/smoke_test.py
+
+      - name: The release notes are the CHANGELOG section
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          tag = os.environ["TAG"]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          start = re.search(rf"^## \[{re.escape(tag)}\].*$", text, re.M)
+          if not start:
+              sys.exit(f"no CHANGELOG section for {tag} -- the release "
+                       "contract says the tag names the commit that "
+                       "carries it")
+          rest = text[start.end():]
+          end = re.search(r"^## ", rest, re.M)
+          body = text[start.start(): start.end() + (end.start() if end else len(rest))]
+          pathlib.Path("release-notes.md").write_text(body, encoding="utf-8")
+          PY
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # A re-run of the same tag replaces the image rather than
+          # failing: the release is the deployable unit, and the unit
+          # must be the one the last build produced.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" bot-image.tar.gz deploy-side.tar.gz --clobber
+            echo "replaced the assets of $TAG"
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md bot-image.tar.gz deploy-side.tar.gz
+            echo "published $TAG"
+          fi

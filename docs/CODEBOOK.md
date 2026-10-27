@@ -1081,44 +1081,61 @@ next to the internal marker it is not to be confused with. The other
 failure sentences live in `user_notice.py`; this one predates that
 module and has not been moved yet.
 
-**X-18 — The deploy door is narrow, and what it opens is on the host.**
+**X-18 — The release door is narrow, and the deploy door is the agent's.**
 `AUTO`
-`tests/test_deploy_workflow.py`.
+`tests/test_release_workflow.py`.
 
-A tag push deploys the bot to the production host (T-FREEZE-AUTO-3). The
-rules:
+A tag push builds the image and publishes it on the release
+(T-FREEZE-AUTO-3). It does **not** deploy, and that is the point: the
+production host is behind the operator's router, and the router decides
+who may reach it. Measured, a GitHub runner (20.83.53.76) reaches ports
+80 and 443 and nothing else — not the SSH port. The addresses GitHub's
+runners come from are 7081 CIDR, about 28.6 million addresses, and
+opening the router to all of them is not a trade worth making. The
+agent's own access is the door, and it is a door the operator already
+trusts. The rules:
 
   * **the trigger is a tag.** A tag is a release, and a release is the
     operator's own action — so the tag IS the approval. A push to a
-    branch does not deploy, and a pull request never deploys: anyone can
-    open a pull request;
+    branch does not release, and a pull request never releases: anyone
+    can open a pull request;
+  * **the workflow cannot reach the production host.** No ssh, no
+    scp, no host address, no port, no key. The worst a compromised
+    workflow can do is publish a release — which is a nuisance, not a
+    breach;
+  * **the workflow holds no secret.** The only credential it uses is
+    the token GitHub mints for the run;
+  * **the token may write the release and nothing else.** Publishing
+    the release needs `contents: write`; a job that can write to the
+    repository can also push a change nobody reviewed;
+  * **the tag is validated before it reaches a command.** A dispatch
+    input is text somebody typed, and a value that reaches a shell
+    unvalidated is a value that can become a command;
+  * **the release notes are the CHANGELOG section the tag names**, and
+    a tag without its section cannot be cut — the release contract
+    enforced by the machine instead of by memory;
   * **the deploy logic is not in the repository.** The compose file, the
     `.env`, the volume and the backup belong to the host's script
     (`/opt/telegrambot/deploy_bot.sh`), which is also what the operator
     runs by hand. A second copy in the repository is a second copy that
     nobody updates — the "two copies of a fact" rule, one level up;
-  * **the host's script is the only way in.** The CI's key is a forced
-    command: sshd runs that script and nothing else, and the commit sha
-    arrives as *data* in `$SSH_ORIGINAL_COMMAND`, validated as a hex
-    object name before it reaches git. A key that can run an arbitrary
-    command on the production host is not a deploy key;
-  * **the host's key is pinned**, not discovered. A deploy that trusts
-    whatever answers the port deploys to whoever answered;
-  * **the token can read the repository and nothing else.** The deploy
-    job needs the source, not the ability to push;
+  * **the host's script is the only way in.** The key is a forced
+    command: sshd runs that script and nothing else, and the release
+    tag arrives as *data* in `$SSH_ORIGINAL_COMMAND`, validated before
+    it reaches anything. A key that can run an arbitrary command on the
+    production host is not a deploy key;
+  * **the image on the release is the image that runs.** It is built
+    once, from the tagged commit, and the production host loads that
+    image instead of building a second one from a source tree nobody
+    else has. The production host keeps no git of its own: nothing
+    fetches itself, and there is nothing to remember about it;
   * **a deploy that does not say whether the bot works is a deploy that
     reports success by having stopped.** The script's last steps are the
     checks: the health endpoint, the restart count, the smoke test — and
     a failure at any of them leaves the previous image running. The
     smoke test runs **before and after**: the deploy is judged on whether
     it made anything worse, because a check that was already red before
-    the deploy is the operator's business, not this deploy's failure;
-  * **the key is half of the door; the other half is the network.** The
-    production host is behind the operator's router, and the router
-    decides who may reach it: measured, a GitHub runner (20.83.53.76)
-    reaches ports 80 and 443 and nothing else — not the SSH port. A
-    deploy that cannot reach the host says so with the address it came
-    from, because "connection timed out" without a reason is a riddle.
+    the deploy is the operator's business, not this deploy's failure.
 
 ---
 
@@ -1494,7 +1511,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
 | `test_one_name_per_person.py` | 6 | One person, one name in the record |
 | `test_empty_answer_fallback.py` | 5 | The empty-answer fallback reaches the user |
-| `test_deploy_workflow.py` | 8 | The deploy door: a tag deploys, a pull request does not |
+| `test_release_workflow.py` | 10 | The release door: a tag releases, and the release cannot reach the host |
 
 166 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
