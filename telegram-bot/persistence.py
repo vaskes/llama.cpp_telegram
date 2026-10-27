@@ -69,6 +69,32 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     )
 
 
+async def already_recorded(chat_id: int, telegram_message_id: int) -> bool:
+    """Does the record already hold a row for this Telegram message?
+
+    A Telegram message id is unique inside its chat, so the pair
+    (chat_id, telegram_message_id) names one message and one message
+    only. The answer is a READ: nothing here writes, and the record is
+    not a scratch pad.
+
+    The group-absorb path needs it (2026-10-27). That path stores the
+    message a human replied to, so that "the message where he said X"
+    is findable at all -- and it stored it without asking whether the
+    record already held it, so one message ended up in the record
+    twice, under two different names for the same person (measured on
+    the production database: id 3379 in rows 10690 and 10693).
+
+    By id and not by text: a message id is unique in its chat, its
+    text is not. Two messages by the same person can carry the same
+    words, and a check by text would drop the second one.
+    """
+    rows = await asyncio.to_thread(
+        storage.get_store().search_messages, chat_id,
+        ids=[telegram_message_id],
+    )
+    return bool(rows)
+
+
 def _decode(rows: list[dict]) -> list[dict]:
     """Turn raw DB rows into the dict shape call_llama expects.
 

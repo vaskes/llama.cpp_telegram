@@ -210,6 +210,11 @@ def persisted(monkeypatch):
 
     monkeypatch.setattr(dispatch_group, "_persist_message", _capture)
     monkeypatch.setattr(dispatch_group, "_load_history", _returns([]))
+    # The record does not hold the message that was replied to: this
+    # fixture is about what the absorb path STORES, and the question
+    # "is it already in the record?" has its own tripwires in
+    # test_record_message_once.py.
+    monkeypatch.setattr(dispatch_group, "_already_recorded", _returns(False))
     # The silent reaction is not what is under test, and the real one
     # reaches for the engine: a test that talks to localhost:8080 is a
     # test that waits for a timeout.

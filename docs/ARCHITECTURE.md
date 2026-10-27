@@ -17,7 +17,7 @@ telegram-bot/
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   520 lines file, 366 in the function, 345 in the loop
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
-├── dispatch_group.py      # human-to-human reply absorb (140)
+├── dispatch_group.py      # human-to-human reply absorb (162)
 ├── dispatch_polling.py    # startup + getUpdates loop (326)
 ├── dispatch_webhook.py    # PTB assembly + handler registration (429)
 ├── webhook.py             # aiohttp server + secret check (266)
@@ -36,7 +36,7 @@ telegram-bot/
 ├── state.py               # per-chat runtime state (225)
 ├── storage.py             # SQLite: messages, threads, topics (886)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (200)
-├── persistence.py         # conversation-history assembly (188)
+├── persistence.py         # conversation-history assembly (214)
 ├── turn.py                # one turn's persist/rollback ledger (165)
 ├── access.py              # authorisation and group policy (304)
 ├── chat_utils.py          # chat-shape and command-argument helpers (163)

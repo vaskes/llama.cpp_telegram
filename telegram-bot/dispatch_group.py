@@ -13,7 +13,8 @@ function carries its statements and none of its imports. The five free
 names below were measured with an AST pass over the body, not read off
 the top of the old module:
 
-    _persist_message  _load_history  call_llama  limits  log
+    _persist_message  _load_history  _already_recorded  call_llama
+    limits  log
 
 `dispatch.py` bound the first two from `persistence`, so this module
 binds them the same way and would have raised NameError on the first
@@ -26,6 +27,7 @@ from logconf import get_logger
 from persistence import (
     persist as _persist_message,
     load_history as _load_history,
+    already_recorded as _already_recorded,
 )
 
 log = get_logger(__name__)
@@ -90,15 +92,35 @@ async def _handle_reply_to_other_user(upd, bot) -> None:
     if rtm is not None and rtm.message_id is not None:
         target_body = rtm.text or rtm.caption or ""
         if target_body:
+            # Is this message already in the record? The text handler
+            # stored it when it was written; storing it again here put
+            # the same message in the record twice, under two different
+            # names for the same person (measured 2026-10-27: id 3379 in
+            # rows 10690 and 10693). The record is the source of truth,
+            # so it holds a message once.
+            #
+            # A lookup that fails counts as "not recorded": a duplicate
+            # row is noise, a lost message is a hole in the one thing
+            # that must not have holes.
+            recorded = False
             try:
-                await _persist_message(
-                    chat_id, thread_id, "user", target_body,
-                    sender_name=_name_of(rtm.from_user),
-                    telegram_message_id=rtm.message_id,
-                )
+                recorded = await _already_recorded(chat_id, rtm.message_id)
             except Exception as exc:
-                log.info(f"[dispatch] persist of the replied-to message "
-                    f"failed: {exc!r}")
+                log.info(f"[dispatch] record lookup of the replied-to "
+                    f"message failed: {exc!r}")
+            if recorded:
+                log.info(f"[dispatch] replied-to message {rtm.message_id} "
+                    f"is already in the record; not storing it twice")
+            else:
+                try:
+                    await _persist_message(
+                        chat_id, thread_id, "user", target_body,
+                        sender_name=_name_of(rtm.from_user),
+                        telegram_message_id=rtm.message_id,
+                    )
+                except Exception as exc:
+                    log.info(f"[dispatch] persist of the replied-to message "
+                        f"failed: {exc!r}")
     #    1b. The reply itself.
     body = msg.text or msg.caption or ""
     content = f"[reply to {tag}] {body}" if tag else body

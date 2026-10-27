@@ -240,41 +240,22 @@ wording, change it, or drop the flag again.
 
 ## Open — code, not blocked on anyone
 
-### The record can hold the same message twice
+### The two writers name the same person differently
 
-**Status:** open since 2026-10-27, found while measuring the delete
-tool's live test. Not a blocker, and not a lie in the record -- but the
-record is the source of truth, so a message that is in it twice is
-noise in the one thing that must not be noisy.
+**Status:** open since 2026-10-27. The duplicate is closed (see "Closed
+— and why"); the names are not.
 
-Measured on the production database: the operator's message "Удали
-сообщение 1" (Telegram id 3379) is in `messages` **twice** -- row 10690,
-written by the text handler under the display name ("Vasisualy
-Lohankin"), and row 10693, written six hours later by the group-absorb
-path under the short name ("Vasisualy"). The second row was written
-when another human replied to that message: the absorb path stores the
-message that was replied to, so that "the message where he said X" is
-findable at all -- and it stores it without asking whether the record
-already holds it.
+The text handler stores the display name ("Vasisualy Lohankin"); the
+group-absorb path stores the short one ("Vasisualy"), because the two
+read the name from different places in the update. The record therefore
+carries one person under two names -- the shape the search-by-sender
+has already tripped over once ("Dmitriklim" against "Димриклим").
 
-Two consequences, both measured:
-
-  * a search for that message returns it twice, with the same Telegram
-    id in both rows;
-  * the two rows carry **different sender names** for the same person,
-    which is the shape of the problem the search-by-sender has already
-    tripped over once ("Dmitriklim" against "Димриклим").
-
-The fix is small and belongs where the row is written: before the
-absorb path stores the message that was replied to, ask the record
-whether it already holds a row with that `telegram_message_id`, and do
-not write a second one. The sender name of the copy is a second
-question -- the two writers name the same person differently -- and the
-two should be made to agree, or one of them should be dropped.
-
-Not started: the operator had not been asked yet, and the fix touches
-the path that decides what the bot records about other people's
-speaking.
+**What it needs:** a decision on which name the record uses -- the
+display name, the @username or the first name -- and one place that
+resolves it, so that both writers write the same string. Until then,
+a search by sender can find the same person twice or not at all,
+depending on which of the two names it was given.
 
 ### T-FREEZE-EMPTY-1 — the empty-response fallback never reaches the user
 
@@ -420,6 +401,7 @@ Not repeated here; each line points at the record.
 | Review waves 1–8 | `docs/archive/2026-10/`; `docs/review/README.md` |
 | The side-car on v2.10.2, with a writable rootfs | `CHANGELOG.md` § Unreleased; `docs/BASH-SANDBOX.md` § The sandbox's posture |
 | The bot can take a message back out of the chat | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-10 |
+| The record holds a message once | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-13 |
 
 ---
 
@@ -761,6 +743,41 @@ A second, parallel mechanism would have to be kept in step with the
 first, and nothing it would catch is not caught today. Closed as
 subsumed rather than done: the machinery is there if a future test
 needs it.
+
+### The record held a message twice — closed 2026-10-27
+
+**Status:** ✅ **closed 2026-10-27.** The absorb path asks the record
+whether it already holds the message that was replied to, and stores it
+only if it does not. The question is asked by `telegram_message_id` — a
+message id is unique inside its chat, its text is not — and a lookup
+that fails counts as "not recorded": a duplicate row is noise, a
+message missing from the record is a hole.
+
+**What it was.** Measured on the production database: the operator's
+message "Удали сообщение 1" (Telegram id 3379) was in `messages`
+**twice** — row 10690, written by the text handler under the display
+name ("Vasisualy Lohankin"), and row 10693, written six hours later by
+the group-absorb path under the short name ("Vasisualy"). The second
+row was written when another human replied to that message: the absorb
+path stores the message that was replied to, so that "the message where
+he said X" is findable at all — and it stored it without asking whether
+the record already held it.
+
+**Where the fix lives.** `persistence.already_recorded` is the reader
+(a read, like every other read of the record), `storage.search_messages`
+is the query, and `dispatch_group` is the decision. One concept — one
+owner: the SQL stayed in `storage`, and the absorb path reaches the
+record through `persistence` rather than through the database module.
+
+**What did not move.** The rows that are already duplicated stay where
+they are. The record is the operator's, and deleting rows from it is
+not ours to do — the fix is about what happens next, not about
+rewriting what happened.
+
+**Still open, and a separate question:** the two writers name the same
+person differently ("Vasisualy Lohankin" against "Vasisualy"). The
+duplicate is gone; the naming is not — see "The two writers name the
+same person differently" above.
 
 ## House rules for this file
 

@@ -896,6 +896,47 @@ The bot's own answers carry no marker: they are stored BEFORE they are
 sent, so their id does not exist yet. That is not a gap — it is why
 the ids of the bot's own messages live in a separate log (X-10).
 
+**X-13 — The record holds a message once.**
+`AUTO`
+`tests/test_record_message_once.py`.
+
+The operator's record is the source of truth — it is kept for a LoRA
+dataset — so a message in it twice is noise in the one thing that must
+not be noisy.
+
+Measured on the production database on 2026-10-27: the operator's
+message "Удали сообщение 1" (Telegram id 3379) sat in `messages`
+**twice** — row 10690, written by the text handler under the display
+name ("Vasisualy Lohankin"), and row 10693, written six hours later by
+the group-absorb path under the short name ("Vasisualy"). The two rows
+also carried **different names for the same person**, which is the shape
+the search-by-sender has already tripped over once ("Dmitriklim" against
+"Димриклим").
+
+The second row was written when another human replied to that message.
+The absorb path stores the message a human replied to — so that "the
+message where he said X" is findable at all — and it stored it without
+asking whether the record already held it.
+
+The rules:
+
+  * **the absorb path asks the record before it stores the message that
+    was replied to**, and stores it only if the record does not hold it;
+  * **the question is asked BY ID.** A message id is unique inside its
+    chat; the text of a message is not — two messages by the same person
+    can carry the same words, and a check by text would drop the second
+    one from the record. This is the direction that matters: a dedup
+    that eats real messages is worse than a duplicate row;
+  * **a lookup that fails means "not recorded".** A duplicate row is
+    noise; a message missing from the record is a hole in the one thing
+    that must not have holes;
+  * **the record is read through `persistence`; the SQL lives in
+    `storage`.** One concept — one owner.
+
+The duplicates that are already in the record stay there. Deleting rows
+from the operator's record is not ours to do: the fix is about what
+happens next, not about rewriting what happened.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1249,8 +1290,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_telegram_id_recorded.py` | 5 | Every message the bot stores carries the Telegram id it came from |
 | `test_chat_history_search.py` | 12 | The bot's own record of the chat, and what it buys |
 | `test_message_id_in_context.py` | 13 | The conversation shows the model the Telegram id of every message |
+| `test_record_message_once.py` | 6 | The record holds a message once, not twice |
 
-159 test files in total; the table above is the ones that guard a rule in
+160 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

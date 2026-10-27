@@ -56,6 +56,45 @@ holds the id, and an id the record does not hold is refused before
 Telegram is asked to do anything. The record itself is not touched by a
 deletion — that was the operator's rule from the start, and it holds.
 
+### The record holds a message once
+
+Measured on the production database on 2026-10-27: the operator's
+message "Удали сообщение 1" (Telegram id 3379) was in `messages`
+**twice** — row 10690, written by the text handler under the display
+name ("Vasisualy Lohankin"), and row 10693, written six hours later by
+the group-absorb path under the short name ("Vasisualy"). The second
+row was written when another human replied to that message: the absorb
+path stores the message that was replied to — so that "the message
+where he said X" is findable at all — and it stored it without asking
+whether the record already held it.
+
+The record is the source of truth, and the operator keeps it for a LoRA
+dataset, so a message in it twice is noise in the one thing that must
+not be noisy. And the two rows carried different names for the same
+person — the shape the search-by-sender has already tripped over once
+("Dmitriklim" against "Димриклим").
+
+What changed:
+
+  * `persistence.already_recorded(chat_id, telegram_message_id)` — a
+    read, like every other read of the record;
+  * the group-absorb path asks it before it stores the message that was
+    replied to, and stores it only if the record does not hold it.
+
+The question is asked **by id**: a message id is unique inside its
+chat, the text of a message is not — and a dedup that eats real
+messages is worse than a duplicate row. A lookup that fails counts as
+"not recorded": a duplicate row is noise, a message missing from the
+record is a hole in the one thing that must not have holes.
+
+The rows that are already duplicated stay where they are. Deleting rows
+from the operator's record is not ours to do.
+
+`tests/test_record_message_once.py` (6 tests) guards the rule, and
+`scripts/mutation_harness_record_once.py` proves the tripwires are
+load-bearing: 5 mutations caught, and the group-B mutation (the
+tripwire gone AND the behaviour gone) leaves the suite green.
+
 ### The delete tool stopped guessing, and started naming the cause
 
 The operator tested the `delete_messages` tool in LlmChatPlace on
