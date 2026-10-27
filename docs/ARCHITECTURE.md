@@ -212,8 +212,10 @@ use them).
 
 The block is one variable: `LLAMABOT_MCP_SERVERS`, a JSON array of
 server objects (`name`, `url`, and optionally `token`, `include`,
-`exclude`, `gate`). The bot ships with none configured -- the
-servers are the operator's, and the model cannot add one.
+`exclude`, `gate`). The repository ships with none configured -- the
+servers are the operator's, and the model cannot add one. (Production
+has had one since 2026-10-27: the bot's own side-car, read-only tools
+only, gated to the allowlisted chat.)
 
 ## bash_command — killer feature, defence in depth
 

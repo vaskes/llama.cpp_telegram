@@ -115,6 +115,49 @@ The configuration block in `config.py` also stopped claiming that the
 side-car cannot be reached: it was wrong, and wrong in the direction
 that would have hidden the fix.
 
+### The MCP import is on in production
+
+The operator's call on 2026-10-27 (19:01 MSK): switch it on, against
+the bot's own side-car, with the shell excluded and the gate on the
+allowlisted chat. The production `.env` carries one line:
+
+```json
+[{"name": "sandbox", "url": "http://127.0.0.1:8090/mcp",
+  "token_env": "AGENT_STACK_TOKEN",
+  "include": ["read_file", "file_info"],
+  "exclude": ["bash", "delete_file"],
+  "gate": "dev-chat"}]
+```
+
+Measured on the deployed tree afterwards:
+
+  * the registry inventories **2** tools (`sandbox_read_file`,
+    `sandbox_file_info`) and the model is shown **10** — 8 native and
+    the 2 imported;
+  * the imported `bash` is absent, and that is the point: the bot
+    already has `bash_command` against the same side-car, and two
+    shells on one machine are two policies. There is exactly one shell
+    in the model's list;
+  * the gate is real: a chat outside `LLAMABOT_DEV_ALLOWED_CHAT_IDS` is
+    shown no imported tool, and a call from it is refused before it
+    reaches the wire;
+  * a live turn — real engine, real tools, real dispatcher, only the
+    Telegram boundary replaced — called
+    `sandbox_read_file({"path": "/workspace/.agent-sessions.json"})`
+    and the side-car's answer came back to the model.
+
+Two operational notes, both paid for once:
+
+  * **the container had to be recreated, not restarted.** `env_file` is
+    read when the container is created; a `restart` keeps the old
+    environment, so the bot would have looked alive and stayed mute;
+  * the backup of the previous `.env`, the container state and a copy
+    of the database is in
+    `/opt/telegrambot/backups/pre-mcp-20261027-190154/`.
+
+The debt that stayed open: the MCP door still has no model-facing read
+cap of its own — see `docs/TODO.md`.
+
 ### The conversation shows the model the id of every message
 
 The operator's live test of 2026-10-27 (01:21 MSK): "Сообщение 1",

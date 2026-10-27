@@ -27,10 +27,10 @@
 
 | | |
 |---|---|
-| HEAD | 112 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file, the writable rootfs and the pin that follows it, the lost answer that came back as an empty success, the stdin trap that eats the side-car's end marker, the tool that takes a message back out of the chat, the split of the chunk summaries out of `storage.py`, the Telegram id of every stored message, the search over the bot's own record, the Telegram id of every message the conversation shows to the model, and the record that holds a message once) |
-| Production | **deployed and verified** (2026-10-27 17:59 MSK, commit `be810e3`). **The bot has two classes of tools now**: the native ones (Telegram, the shell, the record) and the ones imported from MCP servers -- the bot asks a server what it offers, shows the model those tools under the name `<server>_<tool>`, and sends the model's call back to the server that offered it. The servers are the operator's: one config block (`LLAMABOT_MCP_SERVERS`, a JSON array), and the bot ships with none configured. Measured on the deployed tree: with a server pointed at donsetch-http the registry found 4 tools, the model saw 12 (8 native + 4 imported) and a `web_web_search` call reached the server and returned real results; with no server the model sees the 8 native tools. The engine's own tools are **not** offered to the model -- the bot cannot execute them, and its `donsetch_web_search` carries a different schema under the same name. The bot container runs `be810e3` with 0 restarts, `/healthz` is 200, the fatal scan is 0 and the ERROR count is 0. **The conversation shows the model the Telegram id of every message it carries** (a `[telegram id N]` line of its own, directly above the text): a message the user names by what it wrote ("Сообщение 1") now resolves to an id instead of being guessed. Measured on the deployed tree by replaying the operator's own turn ("Удали сообщение 1") against the real engine, the real store and the real tools -- with only the Telegram boundary replaced, so nothing in the operator's channel was actually deleted: the model called `delete_messages({'message_ids': [3369]})`, and 3369 IS "Сообщение 1". The same turn on the previous tree called **no tool at all** (`tool_calls=0`, 9851 characters of reasoning) and asked the operator to clarify, after answering with two ids that belonged to the BOT's own messages. The guard did not move: the dispatcher still asks the record whether it holds the id, and the record is not touched by a deletion. The chat's own record is searchable (`search_messages`): the `messages` table carries the Telegram id of the message every row came from, the tool reads the record with informal filters (a substring of the body, a substring of the sender's name, or nothing for the newest messages), and the ids it returns are in reach for `delete_messages`. The whole chain was walked on a COPY of the production database (never on the live one): the search found the row, the record vouched for its id and not for an invented one, Telegram was asked to delete the message, and **the row was still there afterwards** -- the rule is that the chat is a surface and the record is not. The rows before the column existed stay NULL; every new message carries its id. **The record now holds a message once**: the group-absorb path asks the record whether it already holds the message that was replied to, and stores it only if it does not -- by `telegram_message_id`, because a message id is unique inside its chat and its text is not. Measured on the deployed tree against a COPY of the production database: the record holds the operator's message id 3379 twice (rows 10690 and 10693), the lookup answers True for that id and False for an id nobody wrote -- so the next absorb would not write it again, and a message the record does not hold is still written. The live database was not touched: 349 rows before and after, one duplicated id. The rows that are already duplicated stay where they are -- deleting rows from the operator's record is not ours to do |
-| Pytest | `2723 passed, 20 skipped` locally (the live-sandbox file is excluded, as in CI) |
-| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `be810e3` (`lint` + `Push on main`, both success) |
+| HEAD | 116 commits past the `v0.13.0-stable` tag (trailer cleanup, codebook, the `dev` limits profile, the Stop-button gate, the answer-files feature, the offline replay of it, the chunked summaries, the removal of edit-replace, the answer split, the smoke-test script, the troubleshooting guide, the smoke script's log window, the sandbox file door, the human-readable failure notice, the English UI and its tripwire, the command menu in webhook mode, the native code block, the boot readiness, the sandbox contract, the transcript that duplicated a delivered file, the writable rootfs and the pin that follows it, the lost answer that came back as an empty success, the stdin trap that eats the side-car's end marker, the tool that takes a message back out of the chat, the split of the chunk summaries out of `storage.py`, the Telegram id of every stored message, the search over the bot's own record, the Telegram id of every message the conversation shows to the model, the record that holds a message once, the MCP module, and the MCP import that is on in production) |
+| Production | **deployed and verified** (2026-10-27, code commit `77805ba`; the container was recreated at 19:01 MSK when the MCP block was added -- the same image, a new environment). **The bot has two classes of tools now**: the native ones (Telegram, the shell, the record) and the ones imported from MCP servers -- the bot asks a server what it offers, shows the model those tools under the name `<server>_<tool>`, and sends the model's call back to the server that offered it. The servers are the operator's: one config block (`LLAMABOT_MCP_SERVERS`, a JSON array), and the repository ships with none configured. **Production has had one since 2026-10-27 19:01 MSK**: the bot's own side-car (`http://127.0.0.1:8090/mcp` -- the same host-network loopback the shell tool already used), with `include: read_file, file_info`, `exclude: bash, delete_file` and `gate: dev-chat`. Measured on the deployed tree after the switch: the registry inventories 2 tools, the model is shown 10 (8 native + 2 imported), a chat outside the allowlist is shown none and its call is refused before it reaches the wire, and a live turn called `sandbox_read_file` on a real file in the sandbox and the side-car's answer came back. The imported `bash` is excluded on purpose -- the bot already has `bash_command` against the same side-car, and two shells on one machine are two policies. The engine's own tools are **not** offered to the model -- the bot cannot execute them, and its `donsetch_web_search` carries a different schema under the same name. The bot container runs `77805ba` with 0 restarts, `/healthz` is 200, the fatal scan is 0 and the ERROR count is 0. **The conversation shows the model the Telegram id of every message it carries** (a `[telegram id N]` line of its own, directly above the text): a message the user names by what it wrote ("Сообщение 1") now resolves to an id instead of being guessed. Measured on the deployed tree by replaying the operator's own turn ("Удали сообщение 1") against the real engine, the real store and the real tools -- with only the Telegram boundary replaced, so nothing in the operator's channel was actually deleted: the model called `delete_messages({'message_ids': [3369]})`, and 3369 IS "Сообщение 1". The same turn on the previous tree called **no tool at all** (`tool_calls=0`, 9851 characters of reasoning) and asked the operator to clarify, after answering with two ids that belonged to the BOT's own messages. The guard did not move: the dispatcher still asks the record whether it holds the id, and the record is not touched by a deletion. The chat's own record is searchable (`search_messages`): the `messages` table carries the Telegram id of the message every row came from, the tool reads the record with informal filters (a substring of the body, a substring of the sender's name, or nothing for the newest messages), and the ids it returns are in reach for `delete_messages`. The whole chain was walked on a COPY of the production database (never on the live one): the search found the row, the record vouched for its id and not for an invented one, Telegram was asked to delete the message, and **the row was still there afterwards** -- the rule is that the chat is a surface and the record is not. The rows before the column existed stay NULL; every new message carries its id. **The record now holds a message once**: the group-absorb path asks the record whether it already holds the message that was replied to, and stores it only if it does not -- by `telegram_message_id`, because a message id is unique inside its chat and its text is not. Measured on the deployed tree against a COPY of the production database: the record holds the operator's message id 3379 twice (rows 10690 and 10693), the lookup answers True for that id and False for an id nobody wrote -- so the next absorb would not write it again, and a message the record does not hold is still written. The live database was not touched: 349 rows before and after, one duplicated id. The rows that are already duplicated stay where they are -- deleting rows from the operator's record is not ours to do |
+| Pytest | `2729 passed, 20 skipped` locally (the live-sandbox file is excluded, as in CI) |
+| CI | `lint.yml`: ruff (advisory) + pytest on Python **3.11** and **3.12** -- green on `1a1fa59` (`lint` + `Push on main`, both success) |
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | 63 `.py` files in `telegram-bot/` (`mcp_client.py` and `mcp_registry.py`) (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count did not move |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
@@ -47,53 +47,24 @@ Sizes are `splitlines()`-based and are recomputed by
 These are not forgotten; they are parked on a question only the operator
 can answer. Each one records the decision that unblocks it.
 
-### The side-car's MCP tools are live-checked, and not switched on
+### The MCP door has no model-facing read cap
 
-**Status:** open since 2026-10-27. Everything is built and measured; one
-line of the production `.env` is missing, and that line is the operator's
-to write.
+**Status:** open since 2026-10-27. This is the side-car's debt, not the
+bot's: the bot imported the door, and what the door lets through is the
+side-car's business. It survived the switch because the door was
+switched on.
 
-Measured on 2026-10-27 against the deployed side-car **v2.12.1**: the
-bot's own side-car answers `POST /mcp` with 200 and offers four tools
-(`bash`, `read_file`, `file_info`, `delete_file`). The bot's container
-runs in the **host** network, so `127.0.0.1:8090` — the address its
-shell tool already uses — is the same server the MCP endpoint lives on.
-Nothing had to be published, moved or rebuilt; the config block is the
-whole change:
+The deployment's binary limit is 50 MiB and the MCP face's own ceiling
+is 64 MiB, so the effective cap today is 50 MiB — and the face reads
+the whole file into memory and base64-encodes it. One call can
+therefore cost the machine ~117 MiB of RAM for an answer no chat model
+can use. The HTTP door's 50 MiB is right for a download; the MCP door is
+a different door.
 
-```json
-[{"name": "sandbox", "url": "http://127.0.0.1:8090/mcp",
-  "token_env": "AGENT_STACK_TOKEN",
-  "include": ["read_file", "file_info"],
-  "exclude": ["bash", "delete_file"],
-  "gate": "dev-chat"}]
-```
-
-**Why `bash` is excluded:** the bot already has `bash_command`, and it
-talks to the SAME sandbox. Two shells with two policies is one too many
-— the model would have a native tool and an imported twin of it.
-
-**Why `delete_file` is excluded:** the bot has no destructive file tool
-and does not need one; the operator can turn it on later.
-
-**What the decision is:** whether the production `.env` gets this line
-(the bot ships without it), and whether the gate stays `dev-chat` (only
-the allowlisted chats) or becomes `always`.
-
-The live check on the deployed code: the model is shown two imported
-tools (`sandbox_read_file`, `sandbox_file_info`); a text file comes back
-as text; a binary file comes back as
-`[binary file: mcp-probe.bin (application/octet-stream), 4096 bytes -- the
-content is not inlined]`; a path outside the workspace is refused by the
-sandbox with its reason.
-
-**One thing the side-car still owes the bot:** a model-facing read cap
-on the MCP door. The deployment's binary limit is 50 MiB and the MCP
-face's own ceiling is 64 MiB, so the effective cap today is 50 MiB — and
-the face reads the whole file into memory and base64-encodes it. One
-call can therefore cost the machine ~117 MiB of RAM for an answer no
-chat model can use. The HTTP door's 50 MiB is right for a download; the
-MCP door is a different door.
+**What it needs:** a cap on the MCP face's own read, well below the
+download limit, and a refusal that names the cap instead of a silently
+truncated file. The bot cannot enforce it from its side: it sees the
+server's answer, not the file.
 
 ### The bot delivers a file twice — the fix is in production; nobody has watched it happen
 
@@ -480,6 +451,7 @@ Not repeated here; each line points at the record.
 | The side-car on v2.10.2, with a writable rootfs | `CHANGELOG.md` § Unreleased; `docs/BASH-SANDBOX.md` § The sandbox's posture |
 | The bot can take a message back out of the chat | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-10 |
 | The record holds a message once | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-13 |
+| The MCP import, on in production | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-14 |
 
 ---
 
@@ -487,6 +459,59 @@ Not repeated here; each line points at the record.
 
 The items below were decided and are done. They are here because the
 *reasoning* is worth keeping, not because they are pending.
+
+### The MCP import is on in production
+
+**Status:** ✅ **closed 2026-10-27, 19:01 MSK.** The operator decided to
+switch it on: the bot's own side-car, the shell excluded, the gate on
+the allowlisted chat. The production `.env` carries the one line that
+says so, and the deployed bot talks to its side-car over it.
+
+The line, as it stands in `/opt/telegrambot/bot/app/.env`:
+
+```json
+[{"name": "sandbox", "url": "http://127.0.0.1:8090/mcp",
+  "token_env": "AGENT_STACK_TOKEN",
+  "include": ["read_file", "file_info"],
+  "exclude": ["bash", "delete_file"],
+  "gate": "dev-chat"}]
+```
+
+**The gate stayed `dev-chat`.** `always` would have handed the sandbox's
+files to every chat in the forum supergroup; the capability is wanted in
+the operator's chat, not in everyone else's. The profile is `dev`, and
+`dev-chat` in a `dev` profile means exactly the allowlisted chats —
+measured, not assumed: the registry shows 2 tools to the allowlisted
+chat and 0 to any other, and a call from a chat outside it is refused
+before it reaches the wire.
+
+**Why `bash` is excluded:** the bot already has `bash_command`, and it
+talks to the SAME sandbox. Two shells with two policies is one too many
+— the model would have a native tool and an imported twin of it. The
+exclusion is visible in the inventory: the model is shown 10 tools, of
+which 8 native, and there is exactly one shell between them.
+
+**Why `delete_file` is excluded:** the bot has no destructive file tool
+and does not need one; the operator can turn it on later.
+
+**Measured on the deployed tree, after the switch:** the registry
+inventories 2 tools (`sandbox_read_file`, `sandbox_file_info`); the model
+is shown 10 (8 native + 2 imported); `sandbox_file_info` on a 668 KB
+binary answers with the file's facts (name, size, mime, mtime) and
+`sandbox_read_file` on a text file answers with the text; the earlier
+live check on the same tree showed a binary arriving as
+`[binary file: ... -- the content is not inlined]` and a path outside
+the workspace refused by the sandbox with its reason. A live turn — the
+real engine, the real tools, the real dispatcher, only the Telegram
+boundary replaced — called
+`sandbox_read_file({"path": "/workspace/.agent-sessions.json"})` and the
+side-car's answer came back to the model.
+
+**What it cost:** one line in the operator's `.env`, and a container
+recreate. `env_file` is read when the container is created, so a
+`restart` would have kept the old environment and the old silence — a
+restart that looks successful and changes nothing. The backup is in
+`/opt/telegrambot/backups/pre-mcp-20261027-190154/`.
 
 ### The side-car on the production host — v2.10.2, with a writable rootfs
 
