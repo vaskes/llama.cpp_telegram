@@ -20,6 +20,52 @@ retry, the leaked token, the attribution cleanup, the codebook, the
 deployment profile that finally has its own numbers, and the MCP
 module.
 
+### A tag deploys the bot, and the door is narrow
+
+`T-FREEZE-AUTO-3`. The bot reached the production host by hand: a
+script on the host, a command typed into a shell. Every deploy was one
+person's memory of the order of the steps, and a step that is easy to
+forget is a step that gets forgotten.
+
+`.github/workflows/deploy.yml` deploys the bot when a **tag** is pushed,
+and can be run by hand from the Actions tab for a specific commit.
+
+The workflow is deliberately thin. It says *when* to deploy and *which
+commit*; it says *how to reach the host* (an ed25519 key from the
+repository's Actions secrets, a pinned host key, `ssh` with one
+argument). It says **nothing about the deployment itself** — the compose
+file, the `.env`, the volume and the backup are the operator's, and they
+stay in the host's own script `/opt/telegrambot/deploy_bot.sh`, which is
+the same script the operator runs by hand. A CI deploy and a hand deploy
+that share a script cannot drift apart; two copies of the topology in
+two places could.
+
+The key is a **forced command**: sshd runs only that script, and the
+client's command line arrives as *data* in `$SSH_ORIGINAL_COMMAND`, not
+as a shell command. The script refuses anything that is not a hex object
+name before it reaches git — measured: a command line of
+`not-a-sha; rm -f /tmp/pwned` was refused, and the file it named was
+not touched.
+
+The host's script was extended with the checks the operator already ran
+by hand — the health endpoint, the restart count, the smoke test — and
+it backs up before it touches anything, so a failure at any step leaves
+the previous image running. A deploy that does not say whether the bot
+works reports success by having stopped.
+
+The properties are pinned, not remembered: `tests/test_deploy_workflow.py`
+asserts that a tag deploys and a pull request never does, that the token
+can read the repository and nothing else, that the host's key is pinned,
+and that the workflow carries no topology. The mutation harness
+`scripts/mutation_harness_deploy_workflow.py` puts each of them back
+(7 caught, 1 survived — the group-B mutation, where the tripwires are
+removed along with the behaviour, and the suite goes green).
+
+**Where to look:** `docs/CODEBOOK.md` § X-18;
+`docs/ARCHITECTURE.md` § The deploy workflow;
+`tests/test_deploy_workflow.py`;
+`scripts/mutation_harness_deploy_workflow.py`.
+
 ### The empty-answer fallback reaches the user
 
 The model sometimes spends its whole budget on reasoning and writes

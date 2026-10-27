@@ -399,6 +399,39 @@ bearer token.
     failure mode this repository keeps meeting. Run it as a script to
     print the transcripts.
 
+### The deploy workflow
+
+`.github/workflows/deploy.yml` deploys the bot to the production host when
+a **tag** is pushed, and it can be run by hand from the Actions tab for
+a specific commit. The workflow is deliberately thin:
+
+  * it says **when** to deploy (the tag, or the operator's manual run)
+    and **which commit** (`git rev-parse HEAD`);
+  * it says **how to reach the host**: an ed25519 key from the
+    repository's Actions secrets, a pinned host key
+    (`DEPLOY_KNOWN_HOSTS`), `StrictHostKeyChecking=yes`, and one `ssh`
+    call whose last argument is the commit sha;
+  * it says **nothing about the deployment itself**. The compose file,
+    the `.env`, the volume and the backup are the operator's, and they
+    live in the host's own script `/opt/telegrambot/deploy_bot.sh` —
+    the same script the operator runs by hand, so a CI deploy and a
+    hand deploy cannot drift apart.
+
+The key is a **forced command**: sshd runs only that script with the
+client's command line in `$SSH_ORIGINAL_COMMAND`, and the script
+refuses anything that is not a hex object name before it reaches git.
+The client's command line is data there, never a shell command — which
+is why the workflow can pass the sha without opening a shell on the
+host.
+
+The script's last steps are the checks (the health endpoint, the
+restart count, the smoke test), because a deploy that does not say
+whether the bot works reports success by having stopped.
+
+The properties above are pinned by `tests/test_deploy_workflow.py`; the
+mutation harness `scripts/mutation_harness_deploy_workflow.py` puts
+each of them back and watches the suite notice.
+
 ## Deployment profiles (T35)
 
 Three profiles, picked at container start via

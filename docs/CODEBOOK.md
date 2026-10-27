@@ -1081,6 +1081,36 @@ next to the internal marker it is not to be confused with. The other
 failure sentences live in `user_notice.py`; this one predates that
 module and has not been moved yet.
 
+**X-18 — The deploy door is narrow, and what it opens is on the host.**
+`AUTO`
+`tests/test_deploy_workflow.py`.
+
+A tag push deploys the bot to the production host (T-FREEZE-AUTO-3). The
+rules:
+
+  * **the trigger is a tag.** A tag is a release, and a release is the
+    operator's own action — so the tag IS the approval. A push to a
+    branch does not deploy, and a pull request never deploys: anyone can
+    open a pull request;
+  * **the deploy logic is not in the repository.** The compose file, the
+    `.env`, the volume and the backup belong to the host's script
+    (`/opt/telegrambot/deploy_bot.sh`), which is also what the operator
+    runs by hand. A second copy in the repository is a second copy that
+    nobody updates — the "two copies of a fact" rule, one level up;
+  * **the host's script is the only way in.** The CI's key is a forced
+    command: sshd runs that script and nothing else, and the commit sha
+    arrives as *data* in `$SSH_ORIGINAL_COMMAND`, validated as a hex
+    object name before it reaches git. A key that can run an arbitrary
+    command on the production host is not a deploy key;
+  * **the host's key is pinned**, not discovered. A deploy that trusts
+    whatever answers the port deploys to whoever answered;
+  * **the token can read the repository and nothing else.** The deploy
+    job needs the source, not the ability to push;
+  * **a deploy that does not say whether the bot works is a deploy that
+    reports success by having stopped.** The script's last steps are the
+    checks: the health endpoint, the restart count, the smoke test — and
+    a failure at any of them leaves the previous image running.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1441,8 +1471,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
 | `test_one_name_per_person.py` | 6 | One person, one name in the record |
 | `test_empty_answer_fallback.py` | 5 | The empty-answer fallback reaches the user |
+| `test_deploy_workflow.py` | 8 | The deploy door: a tag deploys, a pull request does not |
 
-165 test files in total; the table above is the ones that guard a rule in
+166 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

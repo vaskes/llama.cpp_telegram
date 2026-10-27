@@ -293,15 +293,6 @@ rather than against the old one. The side-car release notes
 so the door the bot uses did not move — but the *version* in the
 contract does.
 
-### T-FREEZE-AUTO-3 — a deploy workflow (`.github/workflows/deploy.yml`)
-
-**Status:** open, **needs an operator decision and a secret.**
-
-CI/CD that deploys on tag push. It needs a deploy SSH key in the
-repository's Actions secrets, and the deployment topology (compose file
-path, `.env` handling, volume mounts) is the operator's, not the repo's.
-There is no secret configured for it today.
-
 ---
 
 ## Accepted as documented risk — not a bug, not a task
@@ -408,6 +399,7 @@ Not repeated here; each line points at the record.
 | One person, one name in the record | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16 |
 | The empty-answer fallback reaches the user | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-17 |
 | The MCP import, on in production | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-14 |
+| The deploy workflow, with the topology on the host | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-18 |
 
 ---
 
@@ -904,6 +896,46 @@ searchable by the name they carry.
 
 **Where to look:** `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16;
 `telegram-bot/sender_name.py`; `tests/test_one_name_per_person.py`.
+
+### T-FREEZE-AUTO-3 — a deploy workflow — closed 2026-10-27
+
+**Decision (the operator delegated it on 2026-10-27, "делай с 6 по 10"):
+the deploy logic stays on the host; the repository gets the trigger, the
+docs and the tripwire.** The topology — the compose file, the `.env`,
+the volume, the backup — is the operator's, and a second copy of it in
+the repository is a second copy that nobody updates.
+
+**What was there:** nothing. A workflow that deploys on a tag push, with
+no secret behind it and no tripwire on the properties that make it safe.
+
+**What is there now:**
+
+  * `.github/workflows/deploy.yml` — the trigger (a tag, or a manual run
+    from the Actions tab), the commit (`git rev-parse HEAD`), and one
+    `ssh` call. Nothing about the deployment itself: the workflow does
+    not even name the compose file;
+  * the deploy key is **limited to one script** on the host. sshd runs
+    `/opt/telegrambot/deploy_bot.sh` with a forced command, and the
+    client's command line arrives as *data* in `$SSH_ORIGINAL_COMMAND` —
+    verified: a command line of `not-a-sha; rm -f /tmp/pwned` was refused
+    and the file it named was not touched. The script validates the
+    value as a hex object name before it reaches git;
+  * the host's key is **pinned** (`DEPLOY_KNOWN_HOSTS`), not discovered;
+  * the token can read the repository and nothing else
+    (`permissions: contents: read`);
+  * the host's script was extended with the **checks** the operator
+    already ran by hand: the health endpoint, the restart count, the
+    smoke test — and it backs up before it touches anything, so a
+    failure leaves the previous image running.
+
+**What was measured:** the forced command refuses a non-hex value and
+does not execute it; the sha reaches the script as an argument. The
+first real CI deploy is the tag that carries this wave.
+
+**Where to look:** `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-18;
+`docs/ARCHITECTURE.md` § The deploy workflow;
+`tests/test_deploy_workflow.py`;
+`scripts/mutation_harness_deploy_workflow.py`.
 
 ## House rules for this file
 
