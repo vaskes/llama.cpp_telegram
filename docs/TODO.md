@@ -293,39 +293,6 @@ rather than against the old one. The side-car release notes
 so the door the bot uses did not move — but the *version* in the
 contract does.
 
-### T-FREEZE-EMPTY-1 — the empty-response fallback never reaches the user
-
-**Status:** open since 2026-10-24. Found by the offline replay of the
-answer-files feature, not by a test that was written for it.
-
-When the model spends its whole budget on reasoning, `call_llama` returns
-a diagnostic string that starts with `EMPTY_RESPONSE_PREFIX`. The handler
-retries once; if the retry is empty too, it assigns
-`EMPTY_RESPONSE_USER_FALLBACK` to `bot_response` — and then
-`_persist_for_reply` returns the answer's prose over it. The fallback is
-discarded, and the user gets the diagnostic with the reasoning tail
-instead of the friendly "не удалось получить ответ" message.
-
-**Measured on the production bot, 2026-10-24:** assistant turn id 10369 in
-the production database, 3618 characters — the diagnostic, with a
-45108-character reasoning tail behind it.
-
-**Why it was not fixed inside the answer-files change:** it is a different
-feature (the empty-answer retry, 2026-10-22), and the operator has to
-choose what the user should see — the friendly fallback or the raw
-diagnostic. Changing it would change production behaviour under cover of
-another feature, which is exactly what the CODEBOOK's "one concern" rule
-exists to prevent.
-
-**Note:** `tests/test_artifact_e2e.py` pins the current behaviour (the
-diagnostic reaches the chat), so fixing this will break that test on
-purpose.
-
-**What it needs:** the operator's choice, and then the fix in
-`_persist_for_reply` or in the handlers, plus the test that the user
-actually sees the chosen text.
-
-
 ### T-FREEZE-AUTO-3 — a deploy workflow (`.github/workflows/deploy.yml`)
 
 **Status:** open, **needs an operator decision and a secret.**
@@ -439,6 +406,7 @@ Not repeated here; each line points at the record.
 | The bot can take a message back out of the chat | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-10 |
 | The record holds a message once | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-13 |
 | One person, one name in the record | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-16 |
+| The empty-answer fallback reaches the user | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-17 |
 | The MCP import, on in production | `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-14 |
 
 ---
@@ -872,6 +840,38 @@ rewriting what happened.
 differently ("Vasisualy Lohankin" against "Vasisualy"). That was a
 separate question, and it is answered below — see "One person, one
 name in the record".
+
+### T-FREEZE-EMPTY-1 — the empty-response fallback never reaches the user — closed 2026-10-27
+
+**Decision (the operator delegated it on 2026-10-27, "делай с 6 по
+10"):** the chat gets the sentence, the record keeps the diagnostic.
+
+**What was wrong:** the empty-response retry chose the fallback and
+assigned it to `bot_response` — and the next statement,
+`_persist_for_reply`, returned the answer's prose over it. The
+assignment was thrown away in the same breath, the log said "sending
+fallback", and the user got the diagnostic. On the production bot
+(2026-10-24) that was 3618 characters, with a 45108-character reasoning
+tail behind it.
+
+**The fix:** the fallback is chosen in `_persist_for_reply` — the one
+seam that decides what the chat gets — and the three dead assignments in
+the handlers are gone. The record still holds the diagnostic, because
+what happened is what the bot remembers; the log names the cause.
+
+**Why it was not fixed inside the answer-files change:** it is a
+different feature (the empty-answer retry, 2026-10-22), and the choice
+was the operator's. Changing it under cover of another feature is
+exactly what the CODEBOOK's "one concern" rule exists to prevent.
+
+**The test that pinned the old behaviour was changed on purpose:**
+`tests/test_artifact_e2e.py` asserted that the diagnostic reaches the
+chat, and it now asserts the opposite — the fallback in the chat, the
+diagnostic in the record.
+
+**Where to look:** `CHANGELOG.md` § Unreleased; `docs/CODEBOOK.md` § X-17;
+`tests/test_empty_answer_fallback.py`;
+`scripts/mutation_harness_empty_fallback.py`.
 
 ### One person, one name in the record — closed 2026-10-27
 

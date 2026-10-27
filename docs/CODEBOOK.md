@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1444 lines, and it is
+Our largest file right now is `handlers.py` at 1468 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -420,7 +420,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1444 and is registered. The threshold is 1000 because
+`handlers.py` is 1468 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -1049,6 +1049,40 @@ The rules:
 
 ---
 
+**X-17 — The chat gets a sentence; the record keeps what happened.**
+`AUTO`
+`tests/test_empty_answer_fallback.py`.
+
+When the model writes nothing, the answer is a diagnostic: a technical
+string about the model's internals, with its reasoning tail attached. On
+2026-10-24 the production bot sent one to the chat — 3618 characters,
+with a 45108-character reasoning tail behind it (assistant turn 10369).
+
+The rules:
+
+  * **the seam that decides what the chat gets is one place.**
+    `_persist_for_reply` returns "the text to send", and the fallback is
+    chosen there. Not in the four handlers: four copies of a decision is
+    four chances to make it differently, and the copy in the handler was
+    already being overwritten;
+  * **a failure that is assigned and then overwritten is a failure that
+    was not handled.** The retry branch assigned the fallback to
+    `bot_response`, and the next statement returned the answer's prose
+    over it. The log said "sending fallback" and the chat got the
+    diagnostic;
+  * **the record keeps the diagnostic.** What happened is what the bot
+    remembers. The sentence the user read is not what happened, and the
+    next turn needs the truth;
+  * **the log names the cause**, so the operator can see it without
+    reading the chat.
+
+**Where the wording lives:** the sentence is `config.EMPTY_RESPONSE_USER_FALLBACK`,
+next to the internal marker it is not to be confused with. The other
+failure sentences live in `user_notice.py`; this one predates that
+module and has not been moved yet.
+
+---
+
 ### 3.7 The language of the bot
 
 **X-5 — Every text the user reads is English.**
@@ -1406,8 +1440,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_mcp_import_wiring.py` | 6 | The imported tools reach the model and the dispatcher |
 | `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
 | `test_one_name_per_person.py` | 6 | One person, one name in the record |
+| `test_empty_answer_fallback.py` | 5 | The empty-answer fallback reaches the user |
 
-164 test files in total; the table above is the ones that guard a rule in
+165 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
@@ -1434,7 +1469,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1444 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1468 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -1591,6 +1626,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1444 lines and healthy — it only decides when somebody
+> `handlers.py` is 1468 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.

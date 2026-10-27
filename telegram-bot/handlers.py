@@ -348,6 +348,13 @@ async def _persist_for_reply(context, update, chat_id, thread_id, answer,
     split their answer since v0.10.1; the photo and document paths
     joined them on 2026-10-24 (T-FREEZE-CHUNK-1), when a long answer
     to a photo turned into `Message_too_long`.
+
+    A diagnostic is not an answer either. When the model wrote nothing
+    and the empty-response retry was exhausted, the text that goes out
+    is the fallback sentence, and the diagnostic stays in the record.
+    That is the rule the rest of the bot follows: the chat gets a
+    sentence the user can act on, and the detail goes to the log and
+    to the record.
     """
     text = await _apply_rating_and_persist(
         context, update, chat_id, thread_id, answer.raw, rating_active,
@@ -356,7 +363,24 @@ async def _persist_for_reply(context, update, chat_id, thread_id, answer,
         return None
     if abort_event is not None and abort_event.is_set():
         return None
-    return answer.text
+    sent = answer.text
+    if sent and sent.startswith(EMPTY_RESPONSE_PREFIX):
+        # The chat gets a sentence the user can act on; the log and the
+        # record get what actually happened.
+        #
+        # The diagnostic is a technical string about the model's
+        # internals, and it can be three kilobytes of it with the
+        # model's reasoning tail attached. It reached the chat because
+        # the empty-response retry chose the fallback and this function
+        # then returned the answer's prose over it -- the fallback was
+        # assigned and thrown away in the same breath (T-FREEZE-EMPTY-1).
+        #
+        # The record keeps the diagnostic: what happened is what the
+        # bot remembers. What the user reads is the sentence.
+        log.info(f"[persist_for_reply] the model returned no answer; the "
+                 f"user gets the fallback. {sent.splitlines()[0][:200]}")
+        sent = EMPTY_RESPONSE_USER_FALLBACK
+    return sent
 
 
 
@@ -746,8 +770,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 bot_response = answer.text
                 log.info(f"[handle_photo] retry succeeded")
             else:
-                log.info(f"[handle_photo] retry also empty, sending fallback")
-                bot_response = EMPTY_RESPONSE_USER_FALLBACK
+                log.info(f"[handle_photo] retry also empty")
+                # The fallback is chosen in `_persist_for_reply`.
         # === Edit-during-LLM detection: removed (was v0.4) ===
         # Earlier versions compared the user's current message
         # text against a snapshot taken at handler entry, to
@@ -1143,8 +1167,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     bot_response = answer.text
                     log.info(f"[handle_document] retry succeeded")
                 else:
-                    log.info(f"[handle_document] retry also empty, sending fallback")
-                    bot_response = EMPTY_RESPONSE_USER_FALLBACK
+                    log.info(f"[handle_document] retry also empty")
+                    # The fallback is chosen in `_persist_for_reply`.
             # Edit-during-LLM detection removed: the check is a
             # no-op without a concurrent getUpdates consumer.
             # See handle_photo for the full rationale.
@@ -1362,8 +1386,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     bot_response = answer.text
                     log.info(f"[handle_text] retry succeeded")
                 else:
-                    log.info(f"[handle_text] retry also empty, sending fallback")
-                    bot_response = EMPTY_RESPONSE_USER_FALLBACK
+                    log.info(f"[handle_text] retry also empty")
+                    # The fallback is chosen in `_persist_for_reply`.
             # Edit-during-LLM detection removed: the check is a
             # no-op without a concurrent getUpdates consumer.
             # See handle_photo for the full rationale.

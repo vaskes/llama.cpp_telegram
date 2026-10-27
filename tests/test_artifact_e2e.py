@@ -61,6 +61,7 @@ if str(BOT) not in sys.path:
 
 import access  # noqa: E402
 import chat_utils  # noqa: E402
+import config  # noqa: E402
 import handlers  # noqa: E402
 import state  # noqa: E402
 import storage  # noqa: E402
@@ -331,19 +332,22 @@ async def test_the_diagnostic_with_a_reasoning_tail_carries_no_file():
     reasoning tail is the model thinking out loud about a failure; it is
     not a deliverable, and it must not become a document.
 
-    What the chat gets is the diagnostic itself, not
-    EMPTY_RESPONSE_USER_FALLBACK: the retry branch assigns the fallback
-    to `bot_response`, and then `_persist_for_reply` returns the
-    answer's prose over it. That is a separate defect (T-FREEZE-EMPTY-1
-    in docs/TODO.md), and it is recorded rather than quietly fixed here
-    -- the fallback is what the user should see, or the diagnostic is,
-    and that is the operator's call.
+    What the chat gets is the fallback sentence, not the diagnostic. The
+    chat gets a sentence the user can act on; the diagnostic and the
+    tail stay in the record, which is what happened. This used to be
+    pinned the other way round -- the diagnostic reached the chat, and
+    the fallback was assigned and thrown away in the same breath. That
+    was T-FREEZE-EMPTY-1, and the operator's decision (2026-10-27) is
+    the one this file now pins.
     """
     tr = await _replay(REASONING_DIAGNOSTIC, user_id=9105)
 
     assert tr.documents == [], "the reasoning tail became a file"
-    assert tr.texts == [REASONING_DIAGNOSTIC]
-    assert tr.assistant_answers == [REASONING_DIAGNOSTIC]
+    assert tr.texts == [config.EMPTY_RESPONSE_USER_FALLBACK], (
+        f"the chat got something other than the fallback: {tr.texts!r}")
+    assert tr.assistant_answers == [REASONING_DIAGNOSTIC], (
+        "the record must keep what happened, not the sentence the user was "
+        "shown")
 
 
 async def test_the_bots_own_tool_trace_is_not_a_file():

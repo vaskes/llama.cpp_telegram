@@ -20,6 +20,43 @@ retry, the leaked token, the attribution cleanup, the codebook, the
 deployment profile that finally has its own numbers, and the MCP
 module.
 
+### The empty-answer fallback reaches the user
+
+The model sometimes spends its whole budget on reasoning and writes
+nothing. `call_llama` then returns a diagnostic, the handlers retry
+once, and when the retry is empty too the user should read a sentence
+they can act on.
+
+They never did. The retry branch assigned the fallback to `bot_response`,
+and `_persist_for_reply` returned the answer's prose over it — the
+assignment was thrown away in the same breath, the log said "sending
+fallback", and the chat got the diagnostic. On the production bot
+(2026-10-24) that was 3618 characters, with a 45108-character reasoning
+tail behind it: assistant turn 10369.
+
+**The decision (the operator delegated it, 2026-10-27):** the chat gets
+the sentence, the record keeps the diagnostic. That is the rule the rest
+of the bot already follows — the chat gets a sentence the user can act
+on, the detail goes to the log and to the record.
+
+What changed:
+
+  * **`handlers._persist_for_reply`** — the one seam that decides what
+    the chat gets. A diagnostic is replaced by the fallback there, and
+    the log names the cause;
+  * **the three dead assignments in the handlers are gone.** They said
+    "sending fallback" while the diagnostic went out;
+  * **the record is unchanged**: what happened is what the bot
+    remembers, and the sentence the user read is not what happened.
+
+`tests/test_artifact_e2e.py` asserted the old behaviour — the
+diagnostic in the chat — and now asserts the opposite. That test was
+pinned as a known defect on purpose, and it is changed on purpose.
+
+**Where to look:** `docs/CODEBOOK.md` § X-17;
+`tests/test_empty_answer_fallback.py`;
+`scripts/mutation_harness_empty_fallback.py`.
+
 ### One person, one name in the record
 
 The operator's decision (2026-10-27): the full Telegram nickname is the
