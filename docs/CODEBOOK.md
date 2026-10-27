@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1468 lines, and it is
+Our largest file right now is `handlers.py` at 1493 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -366,10 +366,10 @@ There are four, and it is worth reading what they are:
 
 | Function | Lines | What it is |
 |---|---|---|
-| `call_llama` | 366 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
+| `call_llama` | 222 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
 | `run_one` | 345 | One tool-loop iteration, nine concerns. Debt item 08. |
-| `handle_photo` | 252 | One concern plus a media path. Debt item 13. |
-| `handle_text` | 214 | Not debt. Same shape as `handle_photo`. |
+| `handle_photo` | 253 | One concern plus a media path. Debt item 13. |
+| `handle_text` | 211 | Not debt. Same shape as `handle_photo`. |
 
 The fourth one is the reason this rule exists. `handle_text` crossed 200
 lines at some point during nine days of refactoring, and nobody noticed,
@@ -420,7 +420,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1468 and is registered. The threshold is 1000 because
+`handlers.py` is 1493 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -1174,6 +1174,35 @@ workspace is the operator's, and the bot is a guest in it — so the
 difference between the two is not the size of the thing being removed
 but who asked.
 
+**X-20 — A decoration cannot end the turn.**
+`AUTO`
+`tests/test_typing_indicator.py`.
+
+On 2026-10-27 a voice message was lost in production. The turn died
+before the model was ever asked: `send_action` raised
+`telegram.error.NetworkError` — an `httpx.ConnectError` to the Telegram
+API — and three of the four handlers had no guard around that call. The
+next update, 44 seconds later, was served normally, so the hiccup was
+over by then: the message was lost to a moment of network trouble,
+because the handler had asked the API for a decoration without a guard.
+
+The rules:
+
+  * **the indicator is decoration; the turn is the work.** A Telegram
+    API that refuses the indicator for a moment must not cost the user
+    their turn.
+  * **one helper, one guard.** Three of the four handlers had no guard
+    at all and the fourth carried its own copy: four call sites is four
+    chances to forget. The helper owns the guard and the handlers call
+    it — and the tripwire checks that no handler talks to Telegram
+    about the indicator on its own.
+  * **the refusal is logged.** An operator who is told that a message
+    was lost needs to see the indicator fail.
+  * **a cancellation is not a network hiccup.** The guard catches
+    `Exception`, so `CancelledError` still cancels the turn. A guard
+    that caught `BaseException` would swallow the cancellation and leave
+    the task running.
+
 ---
 
 ### 3.7 The language of the bot
@@ -1549,8 +1578,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_one_name_per_person.py` | 6 | One person, one name in the record |
 | `test_empty_answer_fallback.py` | 5 | The empty-answer fallback reaches the user |
 | `test_release_workflow.py` | 10 | The release door: a tag releases, and the release cannot reach the host |
+| `test_typing_indicator.py` | 6 | The typing indicator cannot end the turn |
 
-166 test files in total; the table above is the ones that guard a rule in
+167 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
@@ -1577,7 +1607,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1468 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1493 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -1734,6 +1764,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1468 lines and healthy — it only decides when somebody
+> `handlers.py` is 1493 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.

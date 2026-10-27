@@ -411,6 +411,34 @@ async def _open_thinking(update, *, label: str):
     return thinking, _sender_display_name(update.message.from_user)
 
 
+# === _typing_indicator ===
+
+
+async def _typing_indicator(chat, *, label: str) -> None:
+    """Show the typing indicator, and never let it cost the user an answer.
+
+    2026-10-27: a voice message was lost in production. The turn died
+    on `telegram.error.NetworkError` -- an `httpx.ConnectError` to the
+    Telegram API -- raised by `send_action`, which the handler called
+    unguarded before anything else. The hiccup was over by the time the
+    next update arrived (the very next text message was served normally),
+    but the voice message was already gone: the handler had given up.
+
+    The indicator is decoration. A Telegram API that refuses it for a
+    moment must not cost the user their turn, so the failure is logged
+    and the turn goes on.
+
+    `except Exception`, not `BaseException`: a cancelled turn must still
+    cancel. The four handlers called `send_action` each on their own;
+    three of them had no guard at all, and the fourth had one copy of it
+    inline. One helper, one guard.
+    """
+    try:
+        await chat.send_action(action='typing')
+    except Exception as e:
+        log.warning(f"[{label}] send_action FAILED: {type(e).__name__}: {e!r}")
+
+
 # === _turn_context ===
 
 
@@ -612,7 +640,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # BaseException rather than Exception: a cancelled handler leaks the same
     # way and would never appear in a log.
     try:
-        await update.message.chat.send_action(action='typing')
+        await _typing_indicator(update.message.chat, label='handle_photo')
         thinking = None
         # T67.2: the v0.9.1 `persisted` flag and its two rollbacks are gone with
         # the image write. They existed solely to undo _persist_message when the
@@ -911,7 +939,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # BaseException rather than Exception: a cancelled handler leaks the same
     # way and would never appear in a log.
     try:
-        await update.message.chat.send_action(action='typing')
+        await _typing_indicator(update.message.chat, label='handle_voice')
         thinking = None
         # Built before the try: the except below calls turn.rollback(), and a Turn
         # constructed inside the try is unbound for any exception raised before
@@ -1078,7 +1106,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # BaseException rather than Exception: a cancelled handler leaks the same
         # way and would never appear in a log.
         try:
-            await update.message.chat.send_action(action='typing')
+            await _typing_indicator(update.message.chat, label='handle_document')
             doc = update.message.document
             # Reject oversized documents before downloading. We will only ever
             # read the first 16 KB of text from the file, so anything bigger is
@@ -1310,10 +1338,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # BaseException because a cancelled handler leaks the same way and would
         # never appear in a log.
         try:
-            try:
-                await update.message.chat.send_action(action='typing')
-            except Exception as e:
-                log.warning(f"[handle_text] send_action FAILED: {type(e).__name__}: {e!r}")
+            await _typing_indicator(update.message.chat, label='handle_text')
             # v0.9.2: persist AFTER thinking+abort_event are wired so a Stop
             # click during the LLM call can roll the message back.
             opened = await _open_thinking(update, label='handle_text')

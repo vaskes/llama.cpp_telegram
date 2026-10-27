@@ -86,7 +86,14 @@ STAGES = [
     # code the moment someone dedups, and a tripwire that reds on correct
     # code is one people delete.
     "_acquire_turn_slot",
-    "send_action",
+    # The typing indicator. Since 2026-10-27 the handlers ask for it
+    # through `_typing_indicator`, which owns the guard: a Telegram API
+    # that refuses the indicator must not cost the user the turn. The
+    # stage is the helper call, because that is what the handler does;
+    # `tests/test_typing_indicator.py` is where the helper itself is
+    # pinned (it really sends the indicator, and it really swallows the
+    # failure).
+    "_typing_indicator",
     # The thinking message, the sender name and the stop button, as one
     # stage: block F moved them into `_open_thinking`. Order inside that
     # helper is fixed, which is why the tuple is gone.
@@ -278,12 +285,13 @@ def test_the_reply_is_sent_after_the_turn_is_persisted(handler):
 
 @pytest.mark.parametrize("handler", HANDLERS)
 def test_no_handler_sends_thinking_before_taking_the_slot(handler):
-    """`send_action` is the typing indicator. Before the slot it means a
-    user who was already being told to wait also gets a rejection
-    message.
+    """The typing indicator comes after the slot.
+
+    Before the slot it means a user who was already being told to wait
+    also gets a rejection message.
 
     The slot is taken inside `_acquire_turn_slot`, so the comparison is
     against that call."""
     fn = _handler(handler)
-    assert min(_sites(fn, "_acquire_turn_slot")) < min(_sites(fn, "send_action")), \
+    assert min(_sites(fn, "_acquire_turn_slot")) < min(_sites(fn, "_typing_indicator")), \
         f"{handler}: typing starts before the slot is held"
