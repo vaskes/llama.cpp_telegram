@@ -15,7 +15,12 @@ this file is the human-readable summary.
 
 ## [Unreleased]
 
-**After `v0.14.0-stable`.** The next cycle starts here.
+**After `v0.14.1-stable`.** The next cycle starts here.
+
+## [v0.14.1-stable] — 2026-10-27 — The delivery removes nothing
+
+**After `v0.14.0-stable`.** The documentation sweep, and the delivery that
+delivers the file and leaves it alone.
 
 * The documentation follows the release-as-artifact refactor: the README's
   Architecture section now shows how a tag becomes a running container, and
