@@ -50,10 +50,12 @@ __all__ = [
     "ENGINE_TIMEOUT_MESSAGE",
     "ENGINE_ERROR_MESSAGE",
     "GENERIC_FAILURE_MESSAGE",
+    "TELEGRAM_UNREACHABLE_MESSAGE",
     "DOWNLOAD_FAILURE_MESSAGE",
     "TOPIC_CREATE_FAILURE_MESSAGE",
     "TOPIC_DELETE_FAILURE_MESSAGE",
     "engine_failure_message",
+    "failure_message",
 ]
 
 #: The engine did not answer the connection. It is down, restarting, or
@@ -85,6 +87,20 @@ ENGINE_ERROR_MESSAGE = (
 GENERIC_FAILURE_MESSAGE = (
     "❌ Something broke on the bot's side. Try again — if it keeps "
     "happening, tell the admin: the details are in the logs."
+)
+
+#: The bot could not reach Telegram. Not the bot's own logic, and not the
+#: engine: the transport to Telegram's API is down or flaky.
+#:
+#: Measured on 2026-10-28: the bot answered a question in the group with
+#: "Something broke on the bot's side" while the log said
+#: `telegram.error.NetworkError: httpx.ConnectError`. The generic wording
+#: pointed the user at the wrong culprit -- the bot was fine, Telegram was
+#: not answering -- and the operator read it as a broken build.
+TELEGRAM_UNREACHABLE_MESSAGE = (
+    "📡 The bot could not reach Telegram — the connection to Telegram's "
+    "API is down or flaky right now. Nothing is wrong with your question: "
+    "try again in a minute."
 )
 
 #: The file could not be pulled from Telegram.
@@ -126,3 +142,46 @@ def engine_failure_message(
     if isinstance(exc, httpx.TimeoutException):
         return ENGINE_TIMEOUT_MESSAGE
     return ENGINE_ERROR_MESSAGE
+
+
+def failure_message(exc: BaseException) -> str:
+    """The sentence the user reads when the bot caught a failure.
+
+    It names the culprit, because there are three of them and the user
+    can act on each differently: the engine is down, Telegram is not
+    answering, or the bot itself broke. The generic sentence ("something
+    broke on the bot's side") was true for the last one only, and it was
+    the one the operator read when Telegram was the problem.
+
+    Telegram's own transport errors come first: they are the case the
+    generic wording got wrong, and they are not httpx errors -- PTB
+    wraps the httpx exception in its own class.
+    """
+    if _is_telegram_transport_error(exc):
+        return TELEGRAM_UNREACHABLE_MESSAGE
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout,
+                        httpx.TimeoutException)):
+        return engine_failure_message(exc)
+    return GENERIC_FAILURE_MESSAGE
+
+
+def _is_telegram_transport_error(exc: BaseException) -> bool:
+    """True when the failure was the transport to Telegram, not the bot.
+
+    PTB's `NetworkError` (and `TimedOut`, which derives from it) means
+    the request to Telegram's API did not complete: connection refused,
+    reset, timed out.
+
+    `BadRequest` derives from `NetworkError` in PTB -- a historical
+    grouping, not a statement about the connection. It means the
+    connection worked and the REQUEST was wrong ("Message to be replied
+    not found"), so it is not a transport failure and must not be
+    reported as "Telegram is unreachable".
+    """
+    try:
+        from telegram import error as telegram_error
+    except Exception:  # pragma: no cover - PTB is a hard dependency
+        return False
+    if isinstance(exc, telegram_error.BadRequest):
+        return False
+    return isinstance(exc, telegram_error.NetworkError)

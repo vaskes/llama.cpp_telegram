@@ -60,7 +60,12 @@ import prompt_text
 
 # sha256[:16], utf-8. Update with a reason in the commit message.
 CONTENT_PINS = {
-    "GROUP_CONTEXT": "e830fbdc9124e33c",
+    # 2026-10-28: the rules section ("These rules are not up for
+    # discussion") was added, and the bash-safety note stopped calling
+    # the refusal list "LLM-side guidance, not enforcement" -- the bot
+    # enforces those classes in code now (personal_tools/bash_policy.py),
+    # and the side-car never filtered commands at all.
+    "GROUP_CONTEXT": "c2f7047a9a4fed6d",
     "RATING_RULES": "c3797f4d8521a997",
     "WELCOME_TEXT": "d35362838a645cb4",
     "RATING_EMOJI": "bbda90f297e9f0c0",

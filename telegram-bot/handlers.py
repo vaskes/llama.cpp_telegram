@@ -37,7 +37,7 @@ import tempfile
 # the prose, so that they can arrive as documents. `llm_files` sends
 # them.
 from llm_result import _format_executed_tools, unwrap_answer
-from user_notice import (DOWNLOAD_FAILURE_MESSAGE, GENERIC_FAILURE_MESSAGE)
+from user_notice import DOWNLOAD_FAILURE_MESSAGE, failure_message
 from llm_files import send_files
 from llm_abort import finalize_aborted_turn
 # The answers the bot sends are remembered, so the delete_messages tool
@@ -848,7 +848,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.exception(f"[ERR photo] {type(e).__name__}: {e}")
         # T67.2: no rollback needed — the image was never written.
         try:
-            await _reply(update, GENERIC_FAILURE_MESSAGE)
+            await _reply(update, failure_message(e))
         except Exception:
             pass
     finally:
@@ -1044,7 +1044,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             log.exception("[ERR voice] rollback failed")
         try:
-            await _reply(update, GENERIC_FAILURE_MESSAGE)
+            await _reply(update, failure_message(e))
         except Exception:
             log.exception("[ERR voice] error reply failed")
     finally:
@@ -1235,7 +1235,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 log.exception("[ERR doc] rollback failed")
             try:
-                await _reply(update, GENERIC_FAILURE_MESSAGE)
+                await _reply(update, failure_message(e))
             except Exception:
                 log.exception("[ERR doc] error reply failed")
         finally:
@@ -1438,7 +1438,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.exception(f"[ERR text] {type(e).__name__}: {e}")
             traceback.print_exc()
             await turn.rollback('aborted')
-            await _reply(update, GENERIC_FAILURE_MESSAGE)
+            await _reply(update, failure_message(e))
         finally:
             # T46: revert T45 (and original T41) edit_text pattern.
             # The success path already sends the final response via

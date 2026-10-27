@@ -51,11 +51,12 @@ telegram-bot/
 ├── llm_*.py               # 23 leaf modules, one decision each
 └── personal_tools/
     ├── bash_command.py    # T38: bash execution via sandbox side-car
+    ├── bash_policy.py     # the command classes the bot refuses, in code
     └── file_transport.py  # the file door: pull bytes out, leave the copy
 ```
 
-64 top-level modules, 168 test files, 2806 tests collected in a checkout.
-CI collects 2787 of them — the sandbox-marked file is excluded by name.
+64 top-level modules, 171 test files, 2891 tests collected in a checkout.
+CI collects 2872 of them — the sandbox-marked file is excluded by name.
 
 ### The leaf modules of `call_llama`
 

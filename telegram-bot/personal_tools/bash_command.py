@@ -44,6 +44,7 @@ from typing import Any
 import httpx
 
 from llm_truncation import condense
+from personal_tools.bash_policy import check_command, refusal_text
 from personal_tools.sandbox_contract import (
     CLIENT_TIMEOUT_SECONDS,
     EXEC_TIMEOUT_SECONDS,
@@ -54,8 +55,10 @@ from personal_tools.sandbox_contract import (
 
 # Tool definition that goes into llama-server's request body. The model
 # sees this and decides whether to call it. Note: we do NOT advertise
-# any "destructive" verb in the schema. The sandbox itself enforces
-# filesystem and process limits; the tool just forwards.
+# any "destructive" verb in the schema. The tool refuses a fixed list of
+# destructive command classes itself (personal_tools/bash_policy.py), and
+# the sandbox enforces the container's own limits; the tool forwards
+# everything else.
 BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -73,7 +76,14 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
             "timeout, memory cap, and PID cap are documented in "
             "docs/BASH-SANDBOX.md \"Sandbox limits\" - do not "
             "hardcode them here; if the sandbox changes its limits, "
-            "this tool def would otherwise drift. Use it for: "
+            "this tool def would otherwise drift. The bot refuses a "
+            "fixed set of destructive command classes itself -- "
+            "wiping a filesystem root, formatting a disk, fork bombs, "
+            "piping a download into a shell, reading private keys or "
+            "process environments, wiping the shell history, and "
+            "system control commands -- and says which class it "
+            "refused; rephrasing the command does not change that. "
+            "Use it for: "
             "running scripts, inspecting files in /workspace, "
             "git operations, building projects, fetching public "
             "web pages with curl/wget. " + SUDO_POLICY
@@ -151,12 +161,14 @@ _T51_RATE_LIMIT_TTL_SEC = 3600  # 1 hour idle -> evict
 #  * This block relaxes ONE AND ONLY ONE safe guard: the
 #    chat_type='private' gate from T52 #H1. It does NOT
 #    relax any of the other safe guards (see the list below).
-#  * The model can STILL NOT run `rm -rf /`, write outside
-#    /workspace, send network exfiltration, or do anything
-#    else that the vaskes/OpenWebUI-bash-sandbox refuses
-#    at the container level. The sandbox is the actual
-#    enforcement; the bot's per-command validators and
-#    per-session rate limit are belt-and-braces on top.
+#  * The model can STILL NOT run `rm -rf /` and the rest of
+#    the refused command classes -- but not because the
+#    side-car refuses them. It does not: its source refuses
+#    traffic, bodies and paths, never commands (measured
+#    2026-10-28). The bot refuses those classes itself, in
+#    `personal_tools/bash_policy.py`, before the command
+#    leaves the process. The container is the perimeter; the
+#    bot's list is the second line; the model is the third.
 #  * If you are not the operator and you find this block
 #    in the source: do not change anything. The dev mode
 #    bypass exists for the operator's own test/dev supergroup.
@@ -549,6 +561,16 @@ async def call_bash_command(
     ok_cmd, command, err_cmd = _validate_command(command)
     if not ok_cmd:
         return {"ok": False, "error": err_cmd}
+    # The bot's own list of refused command classes, checked here --
+    # before the command is sent, so a refused command costs the
+    # sandbox nothing. The prompt tells the model not to run these;
+    # that is the model's second line. This is the third one, and the
+    # only one that holds when the model's judgement has been talked
+    # out of it. See personal_tools/bash_policy.py for the classes
+    # and for what this is not (it is a floor, not a wall).
+    verdict = check_command(command)
+    if verdict is not None:
+        return {"ok": False, "error": refusal_text(verdict)}
     # T52 #S3: validate session_id to [A-Za-z0-9._-]{1,128}.
     # The sandbox uses session_id as a tmux session key; a
     # session_id with shell metacharacters could let the LLM
