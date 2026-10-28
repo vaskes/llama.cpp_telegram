@@ -1815,6 +1815,16 @@ The rules:
   * **a backup is checked against the live database** -- the row counts
     have to agree, or the deploy fails loudly instead of writing down
     a stale image;
+  * **a WAL backup is normalized into one file** -- `backup()` copies the
+    pages and leaves the copy in WAL mode, with `-wal` and `-shm` next to
+    it (measured 2026-10-28: the file header says 2/2). The snapshot is
+    switched to the rollback journal, so it can be copied anywhere and
+    read on its own;
+  * **the comparison tolerates a database that moves** -- the live
+    numbers are read before the copy and after it, and the snapshot must
+    not be behind either reading. A strict equality check would abort a
+    healthy deploy every time a message happened to arrive during the
+    backup;
   * **the file is folded in within a turn** -- the checkpoint threshold
     is a deployment setting (`limits.WAL_AUTOCHECKPOINT_PAGES`), not
     SQLite's default, and the write path runs the checkpoint;
@@ -1828,6 +1838,13 @@ copy of the file has what the database has, the threshold is not
 SQLite's default, and the checkpoint actually ran. Reverting the fix
 makes three of the five red -- without it the copy does not even have
 the `messages` table, because the schema itself was still in the WAL.
+
+The deploy half of this rule lives on the host, in
+`/opt/telegrambot/deploy_bot.sh`, which is not in this repository -- so
+no test here covers it, and the host's own smoke test is what judges a
+deploy. It was patched on 2026-10-28: the snapshot reads through the
+WAL, it is one self-contained file, and it is compared with the live
+database.
 
 ---
 

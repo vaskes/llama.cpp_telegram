@@ -52,7 +52,22 @@ the `messages` table, because the schema itself was still in the WAL.
 The other half of the repair -- a backup that reads through the WAL,
 and a deploy that compares the snapshot with the live database --
 belongs to the host's `deploy_bot.sh`, which is not in this
-repository. It is handled on the host, separately from this release.
+repository. It was applied on the host on 2026-10-28: the snapshot is
+written with Python's `backup()`, which reads through the WAL; it is
+switched out of WAL mode afterwards, so the artifact is one file that
+can be copied anywhere and read on its own; and it is compared with the
+live database -- read before the copy and after it, so a database that
+moves while the backup runs does not abort a healthy deploy. A snapshot
+that is behind either reading fails the deploy, and so does a snapshot
+that did not read through the WAL.
+
+The write itself was made on the host on the same day: one
+`PRAGMA wal_checkpoint(TRUNCATE)` folded the 499 valid WAL frames into
+the file and dropped the 503 frames of the transaction that the 18:12
+reboot had interrupted. The database file went from 512 000 to
+733 184 bytes, the WAL from 4 128 272 to 0, and the fingerprint of all
+538 rows was the same before and after: the history moved into the
+file, and not one message changed.
 
 ### An external review, closed in the order the work was worth doing
 
