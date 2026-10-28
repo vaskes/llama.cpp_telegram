@@ -412,8 +412,7 @@ def main():
         # proved anything. The run is a failure, not a detail.
         print("THE RUN MEASURED NOTHING IN FULL -- a refused or invalid "
               "mutation is a hole in the evidence.", flush=True)
-        return 1
-    return 0
+    return 1 if (wrong or refused or invalid) else 0
 
 
 if __name__ == "__main__":

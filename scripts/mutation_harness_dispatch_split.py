@@ -183,12 +183,20 @@ def main():
 
     print(f"{'id':5} {'verdict':10} detail")
     caught = 0
+    refused = invalid = 0
     for mid, v, d in results:
         print(f"{mid:5} {v:10} {d[:80]}")
         if v.startswith("CAUGHT"):
             caught += 1
+        elif v == "REFUSED":
+            refused += 1
+        elif v == "INVALID":
+            invalid += 1
     print(f"\n{caught}/{len(results)} поймано")
-    return 0 if caught == len(results) else 1
+    # A refused or invalid mutation is not a mutation that proved
+    # anything. The run is a failure, not a detail -- and the verdict
+    # names the counters, so the shape is the same in every harness.
+    return 1 if (caught != len(results) or refused or invalid) else 0
 
 
 if __name__ == "__main__":

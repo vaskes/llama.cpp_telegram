@@ -2066,6 +2066,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_mcp_client.py` | 18 | One MCP server, one protocol, one name for the tool |
 | `test_mcp_registry.py` | 22 | What the servers offer, and who may call it |
 | `test_mcp_import_wiring.py` | 6 | The imported tools reach the model and the dispatcher |
+| `test_mutation_harness_verdicts.py` | 4 | A refused mutation fails the run, in every harness |
 | `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
 | `test_one_name_per_person.py` | 6 | One person, one name in the record |
 | `test_empty_answer_fallback.py` | 6 | The empty-answer fallback reaches the user |
@@ -2087,7 +2088,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-181 test files in total; the table above is the ones that guard a rule in
+182 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
