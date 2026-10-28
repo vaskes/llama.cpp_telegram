@@ -69,6 +69,11 @@ TARGETS = [
     "tests/test_shell_isolation.py",
     "tests/test_drift_r8_known_tools.py",
     "tests/test_prompts.py",
+    # The name the record carries is guarded here: this is the file
+    # that asserts the last-resort label is "user_<id>" and not a bare
+    # id. Without it in the suite, the mutation that puts the bare id
+    # back was not caught by anything -- the proof was green and empty.
+    "tests/test_s1_sender_sanitisation.py",
 ]
 
 #: A mutation that hangs the suite is still a catch, but it has to be
@@ -78,6 +83,8 @@ SUITE_TIMEOUT = 300
 STORAGE = ROOT / "telegram-bot" / "storage.py"
 HANDLERS = ROOT / "telegram-bot" / "handlers.py"
 ABSORB = ROOT / "telegram-bot" / "dispatch_group.py"
+#: The policy for the name the record carries moved here.
+SENDER_NAME = ROOT / "telegram-bot" / "sender_name.py"
 HISTORY = ROOT / "telegram-bot" / "llm_history.py"
 DELETE = ROOT / "telegram-bot" / "llm_delete.py"
 DISPATCH = ROOT / "telegram-bot" / "llm_dispatch.py"
@@ -134,9 +141,16 @@ MUTATIONS = [
          "    if False:\n", 1),
     ]),
     ("the record carries a bare user id again", "CAUGHT", [
-        (ABSORB,
-         r'    return getattr\(user, "first_name", None\) or "unknown"\n',
-         '    return f"id={getattr(user, \'id\', \'?\')}"\n', 1),
+        # The policy for the name the record carries moved out of the
+        # group dispatch into its own module, and the last resort is
+        # now "user_<id>" rather than "unknown": the anchor that
+        # expected the old function in the old file found nothing and
+        # the mutation was REFUSED.
+        (SENDER_NAME,
+         r'    if getattr\(user, "id", None\) is not None:\n'
+         r'        return f"user_\{user\.id\}"\n',
+         '    if getattr(user, "id", None) is not None:\n'
+         '        return f"id={getattr(user, \'id\', \'?\')}"\n', 1),
     ]),
     ("the tool is not in the isolation whitelist", "CAUGHT", [
         (ISOLATION,

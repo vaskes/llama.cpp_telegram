@@ -130,12 +130,17 @@ MUTATIONS = [
     ]),
     ("the reply path tracks bot replies again", "CAUGHT", [
         (HANDLERS,
-         r"    await _reply\(update, text\)\n",
-         "    await _reply(update, text)\n"
+         # The reply helper returns what it sent now, so the call is
+         # "return await _reply(...)" and it takes the parse mode: the
+         # anchor that expected a bare "await _reply(update, text)"
+         # found nothing and the mutation was REFUSED.
+         r"    return await _reply\(update, text, parse_mode=parse_mode\)\n",
+         "    await _reply(update, text, parse_mode=parse_mode)\n"
          "    try:\n"
          "        _register_bot_reply(1, 2, 3)\n"
          "    except Exception:\n"
-         "        pass\n", 1),
+         "        pass\n"
+         "    return None\n", 1),
     ]),
 
     # --- group B: the tripwires ------------------------------------
