@@ -389,49 +389,32 @@ async def _execute_send_file(args, deps: DispatchDeps) -> ToolExecution:
     except _ft.FileTransportError as e:
         return ToolExecution(text=f"[send_file: {path}: {e.message}]")
 
-    # 3. The delivery. The file is handed over as a file object, not as
-    #    a bytes object the bot had to hold: the bytes are pulled once,
-    #    into a file, and the upload reads that file. (PTB reads the
-    #    file into memory when it builds the request -- that is its own
-    #    behaviour, measured in telegram/_utils/files.py -- so this is
-    #    one copy at upload time rather than a copy per stage.)
-    sent = None
-    try:
-        with open(fetched.path, "rb") as handle:
-            from telegram import InputFile
-            sent = await deps.bot.send_document(
-                chat_id=deps.chat_id,
-                document=InputFile(handle, filename=fetched.name),
-                # The reply keeps the document in the topic the question
-                # came from -- in a forum supergroup a plain send lands
-                # in General.
-                reply_to_message_id=deps.current_message_id,
-            )
-    except Exception as e:
-        return ToolExecution(text=f"[send_file: sending {name} failed: {e!r}]")
-    finally:
-        try:
-            os.unlink(fetched.path)
-        except OSError:
-            pass
+    # 3. Stage it.  The document goes out WITH THE ANSWER, not in the
+    #    middle of the turn: the operator's rule of 2026-10-28.  Before
+    #    this, the tool sent the file the moment the model called it --
+    #    and the model was still working at that point, its reasoning
+    #    still streaming into the chat, so the file landed in the middle
+    #    of a thought.  The bytes are pulled once, here, and hashed on
+    #    the way; the upload reads the temp file later.
+    from llm_staged import StagedFile, stage
+
+    entry = _entry("send_file", args, deps.iteration,
+                   size=fetched.size, sha256=fetched.sha256, staged=True)
+    stage((deps.chat_id, deps.current_message_id),
+          StagedFile(path=fetched.path, name=fetched.name,
+                     size=fetched.size, sha256=fetched.sha256,
+                     ledger=entry))
 
     # 4. The sandbox copy stays. The delivery removes nothing on its
     #    own -- the operator's ruling of 2026-10-27. If the file is
     #    supposed to go, that is a request the model carries out through
     #    the shell, where the intent is explicit.
 
-    # The pointer is Telegram's own id for the delivered file, not the
-    # path in the sandbox: the path dies with the sandbox, and the
-    # channel's id can be re-sent without pulling the bytes again.
-    file_id = getattr(getattr(sent, "document", None), "file_id", None)
-
     return ToolExecution(
-        text=(f"[send_file: sent {name} ({fetched.size} bytes, "
-              f"sha256 {fetched.sha256}) to the chat; the sandbox copy is "
-              f"still at {path}]"),
-        ledger=_entry("send_file", args, deps.iteration,
-                      size=fetched.size, sha256=fetched.sha256,
-                      file_id=file_id),
+        text=(f"[send_file: staged {name} ({fetched.size} bytes, "
+              f"sha256 {fetched.sha256}) for delivery with the answer; "
+              f"the sandbox copy is still at {path}]"),
+        ledger=entry,
     )
 
 

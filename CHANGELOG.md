@@ -95,6 +95,31 @@ stale, and a stale finding is worth a measurement rather than a rewrite.
   deliberate decision with a comment next to it, not an accident.
 
 
+### A file leaves the chat with the answer
+
+The `send_file` tool handed the file over the moment the model asked
+for it -- while the model was still working, its reasoning still
+streaming into the chat. So the file appeared between two thoughts of
+a sentence the user was reading. The operator's rule (2026-10-28): a
+file made for the operator goes out with the answer to the user.
+
+The tool now does the expensive part -- the bytes come out of the
+sandbox over the file door, once, hashed on the way -- and stages
+them; the answer's delivery sends them, last, after the prose. The
+bucket is keyed by the turn, so two turns cannot hand each other a
+file; a turn the user stopped drops its files; and a bucket nobody
+collected is emptied, with the temp copy behind it.
+
+* New module `telegram-bot/llm_staged.py` -- the shelf.
+* `telegram-bot/llm_dispatch.py` -- `send_file` stages instead of
+  sending; it does not reach Telegram at all.
+* `telegram-bot/llm_files.py` -- the answer's delivery sends the
+  staged files, last.
+* `telegram-bot/llm_sendfile.py` -- the description the model reads
+  says when the file goes out.
+* CODEBOOK **X-29**; `tests/test_send_file_tool.py` (16 -> 20).
+
+
 ## [v0.17.0-stable] — 2026-10-28 — The transcript has a budget, and one turn is one message
 
 **After `v0.16.0-stable`.** The chat stops getting a wall of console noise,

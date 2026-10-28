@@ -37,7 +37,7 @@ from logconf import get_logger
 
 log = get_logger(__name__)
 
-__all__ = ["send_files"]
+__all__ = ["send_files", "deliver_staged"]
 
 #: Telegram's own document limit is 50 MB.  This cap is not about
 #: Telegram: an answer that turned into a 50 MB file was not a file
@@ -57,12 +57,79 @@ async def send_files(update, files) -> None:
     A failure to send one file does not stop the others: the user
     asked for the content, and one bad file is not a reason to drop
     the rest of the answer on the floor.
+
+    The files the model staged during the turn go out with the answer,
+    after it: the operator's rule of 2026-10-28 -- a file made for the
+    operator leaves with the answer to the user, not in the middle of
+    the turn, where it used to land between two thoughts of a reasoning
+    that was still streaming.
     """
     for artifact in files or ():
         try:
             await _send_one(update, artifact)
         except Exception:
             log.exception(f"[send_files] {artifact.filename} could not be sent")
+    await deliver_staged(update, _turn_key(update))
+
+
+def _turn_key(update) -> tuple:
+    """The turn a staged file belongs to: the chat and the user's message.
+
+    The tool that staged the file knows the same pair, so the two meet
+    here.  The message id is what keeps two turns of the same chat
+    apart.
+    """
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    message_id = getattr(getattr(update, "message", None), "message_id", None)
+    return (chat_id, message_id)
+
+
+async def deliver_staged(update, key) -> None:
+    """The files the model staged during the turn, sent with the answer.
+
+    `key` is the turn: (chat id, the id of the user's message).  These
+    are the files the model asked the sandbox for -- it fetched them
+    over the file door and put them on the shelf, because a file that
+    goes out in the middle of a turn lands in the chat while the user
+    is still reading the model's reasoning (the operator's rule of
+    2026-10-28).
+
+    They go out the way the sandbox's `send_file` always sent them: no
+    caption, a reply to the message that asked for them, in the topic
+    the question came from.  The channel's own id for the file is
+    written back into the tool's ledger, which is where it belongs --
+    the id exists only after the delivery.
+    """
+    import llm_staged
+
+    for item in llm_staged.take(key):
+        try:
+            await _send_staged_one(update, item)
+        except Exception:
+            log.exception(f"[send_files] {item.name} could not be sent")
+
+
+async def _send_staged_one(update, item) -> None:
+    """One staged file, as a document."""
+    from telegram import InputFile
+
+    kwargs = _thread_kwargs(update)
+    try:
+        with open(item.path, "rb") as handle:
+            sent = await update.message.reply_document(
+                document=InputFile(handle, filename=item.name), **kwargs)
+        file_id = getattr(getattr(sent, "document", None), "file_id", None)
+        if file_id and isinstance(item.ledger, dict):
+            item.ledger["file_id"] = file_id
+        log.info(f"[send_files] {item.name} ({item.size} bytes) went out "
+                 f"with the answer")
+    finally:
+        try:
+            import os
+
+            os.unlink(item.path)
+        except OSError:
+            pass
 
 
 async def _send_one(update, artifact) -> None:

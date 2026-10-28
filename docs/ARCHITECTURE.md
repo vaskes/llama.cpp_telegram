@@ -55,7 +55,7 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, leave the copy
 ```
 
-64 top-level modules, 180 test files. The size of the suite is the
+65 top-level modules, 180 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.
@@ -70,7 +70,7 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       461  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
+  llm_dispatch.py       444  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      575  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
@@ -85,13 +85,14 @@ tests, none of which build a full `call_llama`.
   llm_abort.py             64  finalize_aborted_turn
   llm_result.py           346  Answer, unwrap_answer
   llm_artifact.py         487  Artifact, extract_files
-  llm_files.py            144  send_files
+  llm_files.py            211  send_files, deliver_staged
+  llm_staged.py            119  StagedFile, stage, take, discard, staged_count, clear_all
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape
   llm_thinking.py       128  ThinkingThrottle, push_thinking
   llm_toolargs.py       215  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
   llm_tools.py          312  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
-  llm_sendfile.py         82  send_file_tool_def
+  llm_sendfile.py         85  send_file_tool_def
   llm_delete.py           855  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal, requested_ids
   llm_history.py          256  search_messages_tool_def, run_search, known_ids
   llm_truncation.py      119  condense

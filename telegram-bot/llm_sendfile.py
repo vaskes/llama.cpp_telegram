@@ -49,7 +49,7 @@ def send_file_tool_def() -> dict:
         "function": {
             "name": "send_file",
             "description": (
-                "Send a file from the sandbox workspace to the chat as a "
+                "Hand a file from the sandbox workspace to the user as a "
                 "Telegram document. Use it when the user asks for a FILE: "
                 "an archive, an image, a generated script, a binary blob, "
                 "anything you have created with bash_command. Create the "
@@ -60,7 +60,10 @@ def send_file_tool_def() -> dict:
                 "sandbox serves files that exist, not downloads in flight. "
                 "If the file is over the sandbox's own size limit the call "
                 "comes back with its real size, so read the answer before "
-                "retrying. The delivery does NOT delete the sandbox copy: "
+                "retrying. The document goes out WITH YOUR ANSWER, not "
+                "while you are still working: call this once, and mention "
+                "the file in your answer so the user knows what arrived. "
+                "The delivery does NOT delete the sandbox copy: "
                 "the file is still there afterwards, and the answer says "
                 "so. Only remove it with bash_command, and only when the "
                 "user asked for it to be removed."

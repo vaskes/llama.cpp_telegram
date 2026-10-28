@@ -1732,6 +1732,39 @@ retried). The mutation harness `scripts/mutation_harness_transcript.py`
 proves the tripwire is load-bearing: the branch that used to retry is
 mutated back, and the test catches it.
 
+**X-29 — A file leaves the chat with the answer.** `AUTO`
+`tests/test_send_file_tool.py`.
+
+The `send_file` tool exists because a binary has no text form: the
+model makes a file in the sandbox and the bot hands the bytes over.
+It used to hand them over the moment the model asked -- while the
+model was still working, its reasoning still streaming into the chat.
+So the file appeared between two thoughts of a sentence the user was
+reading. The operator's rule (2026-10-28): a file made for the
+operator goes out with the answer to the user.
+
+So the tool does the expensive part -- the bytes come out of the
+sandbox over the file door, once, hashed on the way -- and *stages*
+them; the answer's delivery sends them, last, after the prose.
+
+The rules:
+
+  * **a file never leaves the chat while the turn is running** -- the
+    tool that stages it does not reach Telegram at all;
+  * **the staged files belong to their turn** -- the bucket is keyed
+    by the chat and the user's message, so two turns cannot hand each
+    other a file;
+  * **a turn the user stopped drops its files** -- the user cancelled
+    the turn, and a document arriving after the cancel is exactly the
+    surprise this rule is about;
+  * **what nobody collected is litter** -- a bucket nobody came back
+    for is emptied, and the temp copy behind it goes with it.
+
+Checked by `tests/test_send_file_tool.py` (20): the tool sends
+nothing, the delivery carries the bytes, the bucket is per turn, a
+stopped turn drops its file, and a stowaway check on the source of
+the tool catches a second way to send.
+
 ---
 
 ## 4. Rules for the reviewer and the harness
@@ -1933,7 +1966,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 
 | `test_console_output_in_chat.py` | 9 | The console output goes into the chat; it is not a file |
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
-| `test_send_file_tool.py` | 16 | A file from the sandbox reaches the chat as a document -- and the delivery removes nothing |
+| `test_send_file_tool.py` | 20 | A file from the sandbox reaches the chat as a document, with the answer -- and the delivery removes nothing |
 | `test_file_transport.py` | 16 | The file door: the bytes, the digest, the version -- and no way to delete |
 | `test_sandbox_contract.py` | 16 | The bot's claims about the sandbox match the sandbox we run |
 | `test_donsetch_contract.py` | 10 | The bot's claims about donsetch match the donsetch we pin -- and the model is told the handle |

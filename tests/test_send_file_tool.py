@@ -71,6 +71,47 @@ class SimpleMessage:
     document = SimpleDocument()
 
 
+class _FakeChatMessage:
+    """What the handler has: the user's message, and what was replied."""
+
+    def __init__(self, message_id=4242, thread_id=None):
+        self.message_id = message_id
+        self.message_thread_id = thread_id
+        self.documents = []
+
+    async def reply_document(self, **kwargs):
+        self.documents.append(kwargs)
+        return SimpleMessage()
+
+
+class _FakeChat:
+    def __init__(self, chat_id):
+        self.id = chat_id
+
+
+class _FakeUpdate:
+    """The update the handler hands to the delivery."""
+
+    def __init__(self, chat_id=-1004461679108, message_id=4242,
+                 thread_id=None):
+        self.effective_chat = _FakeChat(chat_id)
+        self.message = _FakeChatMessage(message_id, thread_id)
+
+
+async def _deliver(deps, update=None):
+    """Run the delivery the handler runs at the end of the turn.
+
+    Through `send_files`, because that is where it lives: the answer's
+    files and the staged ones go out together, and the staged ones go
+    out last.
+    """
+    import llm_files
+
+    update = update or _FakeUpdate(deps.chat_id, deps.current_message_id)
+    await llm_files.send_files(update, [])
+    return update.message.documents
+
+
 def _deps(bot=None):
     return DispatchDeps(
         bot=bot or _FakeBot(),
@@ -81,6 +122,16 @@ def _deps(bot=None):
         custom_tools={},
         donsetch_tools={},
     )
+
+
+@pytest.fixture(autouse=True)
+def _clean_staging_area():
+    """The shelf is process-wide, so a test that stages a file and never
+    delivers it must not hand that file to the next test."""
+    import llm_staged
+
+    yield
+    llm_staged.clear_all()
 
 
 @pytest.fixture
@@ -102,39 +153,88 @@ def sandbox(monkeypatch, tmp_path):
     return fake
 
 
-async def test_the_file_is_sent_as_a_document(sandbox):
-    """The whole point: the bytes travel, not a description of them."""
+async def test_the_tool_does_not_send_anything(sandbox):
+    """The operator's rule of 2026-10-28: a file made for the operator
+    goes out with the answer to the user -- never in the middle of the
+    turn.
+
+    Before this, the tool sent the document the moment the model called
+    it, and the model was still working at that point: its reasoning was
+    still streaming into the chat, and the file landed between two
+    thoughts.  The tool fetches the bytes and stages them; the handler
+    sends them after the answer.
+    """
     sandbox.files[PATH] = PAYLOAD
     deps = _deps()
 
     outcome = await execute_tool("send_file", {"path": PATH}, deps)
 
     assert outcome.empty is False, (
-        "sending a file is progress; an empty result would count the "
+        "staging a file is progress; an empty result would count the "
         "turn as fruitless and the loop would give up")
-    assert "sent random10k.bin" in outcome.text
-    assert len(deps.bot.documents) == 1
-    sent = deps.bot.documents[0]
-    payload = sent["document"].input_file_content
+    assert "staged random10k.bin" in outcome.text, outcome.text
+    assert deps.bot.documents == [], (
+        "the tool sent the document itself: a file must not leave the "
+        "chat while the turn is still running")
+    assert deps.bot.events == [], (
+        f"the tool talked to Telegram: {deps.bot.events}")
+
+
+async def test_the_delivery_carries_the_bytes(sandbox):
+    """What the user opens is the file, not a description of it."""
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+
+    await execute_tool("send_file", {"path": PATH}, deps)
+    sent = await _deliver(deps)
+
+    assert len(sent) == 1, sent
+    payload = sent[0]["document"].input_file_content
     assert payload == PAYLOAD, (
         "the document has to carry the file's bytes")
-    assert sent["chat_id"] == deps.chat_id
+
+
+async def test_the_staged_file_belongs_to_its_turn(sandbox):
+    """Two turns in the same chat must not hand each other a file: the
+    bucket is keyed by the turn, not by the chat."""
+    import llm_staged
+
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+
+    await execute_tool("send_file", {"path": PATH}, deps)
+
+    other = (deps.chat_id, deps.current_message_id + 1)
+    assert llm_staged.staged_count(other) == 0
+    assert llm_staged.staged_count(
+        (deps.chat_id, deps.current_message_id)) == 1
 
 
 async def test_the_ledger_carries_the_pointer(sandbox):
     """The pointer is the channel's own id for the file, not the path in
     the sandbox: the path dies with the sandbox, and the channel's id
-    can be re-sent without pulling the bytes again."""
+    can be re-sent without pulling the bytes again.
+
+    The id exists only after the delivery, so the ledger says "staged"
+    while the file waits for the answer and gains the pointer when it
+    goes out."""
     sandbox.files[PATH] = PAYLOAD
     deps = _deps()
 
     outcome = await execute_tool("send_file", {"path": PATH}, deps)
 
     entry = outcome.ledger
-    assert entry is not None, "a delivered file left no trace in the ledger"
+    assert entry is not None, "a staged file left no trace in the ledger"
     assert entry["name"] == "send_file"
     assert entry["size"] == len(PAYLOAD)
     assert entry["sha256"] == hashlib.sha256(PAYLOAD).hexdigest()
+    assert entry["staged"] is True, (
+        "the ledger has to say that the file is waiting for the answer")
+    assert "file_id" not in entry, (
+        "the channel's id does not exist before the delivery")
+
+    await _deliver(deps)
+
     assert entry["file_id"] == "BQACAgIAAxFILEID", (
         "the pointer is the channel's id, not the path in the sandbox")
 
@@ -255,11 +355,33 @@ async def test_the_document_lands_in_the_topic_of_the_question(sandbox):
     in the topic the user asked in."""
     sandbox.files[PATH] = b"x" * 10
     deps = _deps()
+    update = _FakeUpdate(deps.chat_id, deps.current_message_id,
+                          thread_id=25)
+
     await execute_tool("send_file", {"path": PATH}, deps)
-    sent = deps.bot.documents[0]
-    assert sent.get("reply_to_message_id") == deps.current_message_id, (
-        "without the reply the document lands in General, not in the "
+    sent = await _deliver(deps, update)
+
+    assert sent[0].get("message_thread_id") == 25, (
+        "without the topic id the document lands in General, not in the "
         "topic the user asked in")
+
+
+async def test_a_stopped_turn_drops_its_file(sandbox):
+    """The user pressed Stop: the turn is cancelled, and a document
+    arriving after the cancel is exactly the surprise the rule is
+    about."""
+    import llm_staged
+
+    sandbox.files[PATH] = PAYLOAD
+    deps = _deps()
+
+    await execute_tool("send_file", {"path": PATH}, deps)
+    llm_staged.discard((deps.chat_id, deps.current_message_id))
+
+    assert llm_staged.staged_count(
+        (deps.chat_id, deps.current_message_id)) == 0
+    sent = await _deliver(deps)
+    assert sent == [], "a cancelled turn still handed over its file"
 
 
 async def test_a_missing_file_says_so(sandbox):
@@ -310,12 +432,19 @@ async def test_the_refusal_of_an_oversized_file_is_pinned_verbatim(sandbox):
         f"the bytes were pulled anyway: {sandbox.requests}")
 
 
-async def test_the_temp_file_is_removed(sandbox, tmp_path):
-    """The pulled file is litter if it stays in the bot's container."""
+async def test_the_temp_file_is_removed_after_the_delivery(sandbox, tmp_path):
+    """The pulled file is litter if it stays in the bot's container -- and
+    it has to outlive the tool call, because that is where the bytes
+    wait for the answer."""
     sandbox.files[PATH] = PAYLOAD
     deps = _deps()
 
     await execute_tool("send_file", {"path": PATH}, deps)
+
+    assert list(tmp_path.iterdir()) != [], (
+        "the bytes have to survive the tool call: they ARE the file")
+
+    await _deliver(deps)
 
     assert list(tmp_path.iterdir()) == [], (
         f"the temp file stayed behind: {list(tmp_path.iterdir())}")
@@ -350,6 +479,24 @@ def test_the_tool_is_advertised_only_with_the_sandbox():
     assert defn["function"]["name"] == "send_file"
     assert "path" in defn["function"]["parameters"]["properties"]
     assert defn["function"]["parameters"]["required"] == ["path"]
+
+
+def test_the_send_file_tool_cannot_reach_telegram():
+    """The stowaway check for the operator's rule of 2026-10-28.
+
+    The behavioural test above pins what the tool does with a real
+    dispatcher; this one pins the source, because a second way to send
+    a document (a different call, a helper) would not show up in the
+    fake bot's list of events.  The check is on the code of the tool
+    itself, not on the wording of the answer.
+    """
+    src = (BOT_DIR / "llm_dispatch.py").read_text(encoding="utf-8")
+    body = src.split("async def _execute_send_file", 1)[1]
+    body = body.split("\nasync def ", 1)[0]
+    for forbidden in ("send_document", "reply_document", "send_photo"):
+        assert forbidden not in body, (
+            f"the send_file tool reaches Telegram through {forbidden}: a "
+            "file must not leave the chat while the turn is still running")
 
 
 if __name__ == "__main__":
