@@ -1683,7 +1683,8 @@ The rules:
 Checked by `tests/test_transcript_budget.py` (the chat's copy fits the
 budget, the head and the tail are kept, the drop is counted, the
 remembered copy keeps every command, a zero budget means no transcript
-in the chat, and a 44-command turn is at most two chat messages) and
+in the chat, and a 44-command turn with a short answer is at most two
+chat messages) and
 `tests/test_limits.py` (the budget follows the environment, the
 repository's default is 4000, and a negative one is refused at import).
 The mutation harness `scripts/mutation_harness_transcript.py` proves

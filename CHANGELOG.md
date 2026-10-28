@@ -47,7 +47,9 @@ Two fixes, both measured:
   (`RetryAfter`) is still retried, because there the message was *not*
   accepted and a retry cannot duplicate anything.
 
-A 44-command turn is now at most two chat messages.
+The transcript that reached the chat was 77 044 characters; now it is
+at most 4 000. The review that was the last message of thirty is the
+last message of three.
 
 ### The README stopped selling the shell
 
