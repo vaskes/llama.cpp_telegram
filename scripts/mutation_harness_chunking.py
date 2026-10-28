@@ -93,11 +93,16 @@ TEST_SKELETON = ROOT / "tests" / "test_handler_skeleton.py"
 
 # The helper as it is written today. Group A breaks it; group B removes
 # it together with the tests that catch it.
+#: The loop that splits the answer. The call grew a `parse_mode` and
+#: the result is remembered now, so the old anchor -- which expected
+#: the bare `await send_reply(...)` -- matched nothing: the mutation
+#: was REFUSED, and a REFUSED mutation was counted as neither caught
+#: nor survived. The behaviour is the same; the call is not.
 SPLIT_LOOP = """    for chunk in chunks:
         # strip=False: a chunk trimmed at the boundary loses the space
         # between the last word of this chunk and the first word of the
         # next one.
-        await send_reply(update, chunk, strip=False)
+        sent = await send_reply(update, chunk, strip=False, parse_mode="HTML")
 """
 
 # (name, expectation, [(path, pattern, replacement, expected_sites)])
@@ -110,7 +115,7 @@ MUTATIONS = [
     # --- group A: the behaviour -------------------------------------
     ("the answer is not split any more", "CAUGHT", [
         (HANDLERS, re.escape(SPLIT_LOOP),
-         "    await send_reply(update, text, strip=False)\n", 1),
+         "        await send_reply(update, text, strip=False, parse_mode=\"HTML\")\n", 1),
     ]),
     ("the piece is bigger than Telegram accepts", "CAUGHT", [
         (CHAT_UTILS, r"TELEGRAM_TEXT_CHUNK = 4000\n",
@@ -118,8 +123,8 @@ MUTATIONS = [
     ]),
     ("the piece is trimmed at the boundary", "CAUGHT", [
         (HANDLERS,
-         r"        await send_reply\(update, chunk, strip=False\)\n",
-         "        await send_reply(update, chunk)\n", 1),
+         r"        sent = await send_reply\(update, chunk, strip=False, parse_mode=\"HTML\"\)\n",
+         "        sent = await send_reply(update, chunk, parse_mode=\"HTML\")\n", 1),
     ]),
     ("the photo handler sends the answer on its own", "CAUGHT", [
         (HANDLERS,
@@ -133,7 +138,7 @@ MUTATIONS = [
          r"            # The files go out even when there is no prose: an answer that\n"
          r"            # is nothing but a document has no prose to send, and dropping\n"
          r"            # the file would leave the user with nothing at all\.\n"
-         r"            await send_files\(update, answer\.files\)\n"
+         r"            await send_files\(update, answer\.files, thinking=thinking\)\n"
          r"        except Exception as e:\n"
          r"            log\.exception\(f\"\[ERR doc\]",
          "            if bot_response:\n"
@@ -141,7 +146,7 @@ MUTATIONS = [
          "            # The files go out even when there is no prose: an answer that\n"
          "            # is nothing but a document has no prose to send, and dropping\n"
          "            # the file would leave the user with nothing at all.\n"
-         "            await send_files(update, answer.files)\n"
+         "            await send_files(update, answer.files, thinking=thinking)\n"
          "        except Exception as e:\n"
          "            log.exception(f\"[ERR doc]", 1),
     ]),
@@ -160,7 +165,7 @@ MUTATIONS = [
          r"            # The files go out even when there is no prose: an answer that\n"
          r"            # is nothing but a document has no prose to send, and dropping\n"
          r"            # the file would leave the user with nothing at all\.\n"
-         r"            await send_files\(update, answer\.files\)\n"
+         r"            await send_files\(update, answer\.files, thinking=thinking\)\n"
          r"        except Exception as e:\n"
          r"            import traceback",
          "            if bot_response:\n"
@@ -168,7 +173,7 @@ MUTATIONS = [
          "            # The files go out even when there is no prose: an answer that\n"
          "            # is nothing but a document has no prose to send, and dropping\n"
          "            # the file would leave the user with nothing at all.\n"
-         "            await send_files(update, answer.files)\n"
+         "            await send_files(update, answer.files, thinking=thinking)\n"
          "        except Exception as e:\n"
          "            import traceback", 1),
     ]),
@@ -184,8 +189,17 @@ MUTATIONS = [
         (TEST_CHUNKING,
          r"def test_the_helper_is_where_the_split_happens\(\):",
          "def _disabled_test_the_helper_is_where_the_split_happens():", 1),
+        # The short-answer test catches the same mutation from the
+        # other side: with the split gone, a short answer would be
+        # sent through a path the helper no longer has. Left standing,
+        # it caught a mutation this one claims to have removed -- and a
+        # group-B mutation caught by a test it did not remove is not a
+        # group-B mutation at all.
+        (TEST_CHUNKING,
+         r"async def test_a_short_answer_to_a_photo_is_still_one_message\(\):",
+         "async def _disabled_test_a_short_answer_to_a_photo_is_still_one_message():", 1),
         (HANDLERS, re.escape(SPLIT_LOOP),
-         "    await send_reply(update, text, strip=False)\n", 1),
+         "        await send_reply(update, text, strip=False, parse_mode=\"HTML\")\n", 1),
     ]),
     ("the structural tripwires are gone, and the photo handler sends on "
      "its own", "SURVIVED", [
