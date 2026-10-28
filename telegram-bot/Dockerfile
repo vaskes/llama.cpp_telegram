@@ -6,9 +6,13 @@ WORKDIR /app
 # if the operator runs the container directly without docker-compose.
 ENV PYTHONUNBUFFERED=1
 
-# Copy requirements.txt first for better Docker layer caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy the requirement files first for better Docker layer caching.
+# The image installs requirements.lock, not requirements.txt: the lock
+# pins the whole set (the three direct dependencies and their
+# transitives), so a rebuild a month later installs the same versions
+# the deployment was measured against.
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 
 # Create an unprivileged user for the bot process. Combined with
 # `network_mode: host` in docker-compose.yml, a RCE in python-telegram-bot

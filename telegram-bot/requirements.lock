@@ -1,0 +1,36 @@
+# requirements.lock -- the exact package set the image installs.
+#
+# requirements.txt names the three DIRECT dependencies
+# (python-telegram-bot, httpx, aiohttp). Everything they pull in was
+# resolved at build time, so a rebuild a month later could install
+# different versions of the transitives: the three pins were exact and
+# the other thirteen were whatever the index said that day.
+#
+# Generated 2026-10-28 on Python 3.11 (the version the image runs):
+#
+#   python -m venv /tmp/lock && /tmp/lock/bin/pip install \
+#       -r telegram-bot/requirements.txt && /tmp/lock/bin/pip freeze
+#
+# The set below is the one measured inside the running production
+# image (docker exec tb-bot pip list --format=freeze), so it is what
+# ships today -- not a fresh resolution that happens to look similar.
+#
+# To change a dependency: change requirements.txt, re-resolve, and
+# regenerate this file in the same commit. tests/test_requirements_lock.py
+# fails if the two disagree.
+aiohttp==3.9.5
+aiosignal==1.4.0
+anyio==4.15.1
+attrs==26.1.0
+certifi==2026.10.23
+frozenlist==1.8.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.27.0
+idna==3.20
+multidict==6.9.1
+propcache==0.5.4
+python-telegram-bot==21.0
+sniffio==1.3.1
+typing_extensions==4.16.0
+yarl==1.25.1
