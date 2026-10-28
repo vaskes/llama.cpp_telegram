@@ -17,6 +17,84 @@ this file is the human-readable summary.
 
 **After `v0.17.0-stable`.** The next cycle starts here.
 
+### An external review, closed in the order the work was worth doing
+
+Qwen went over the repository on 2026-10-28 and listed twenty findings.
+This wave closes the short ones, does the full ones, and measures the
+long one before touching it -- because the long one turned out to be
+stale, and a stale finding is worth a measurement rather than a rewrite.
+
+#### Short
+
+* **The transcription API listened on every interface of the host.**
+  `whisper-api` runs on host network, so the server bound
+  `0.0.0.0:8000`: any process on the host could reach the
+  transcription API. The only consumer is the bot, on the same host,
+  at `http://127.0.0.1:8000` -- so the bind is loopback-only now.
+  Measured on the production host after the change: the listener is
+  `127.0.0.1:8000`, the LAN address refuses the connection, the bot
+  still gets 200 from inside its container, and a transcription
+  returns 200 with text.
+* **The whisper image was a moving tag.** `latest-cpu` is now the
+  digest that actually runs.
+* **The compose named a model variable the server never reads.** The
+  server reads `WHISPER__MODEL` (pydantic-settings, nested delimiter
+  `__`); the compose said `WHISPER_MODEL`, and the service quietly ran
+  the image default -- `Systran/faster-whisper-small`, not the
+  `large-v3` the file claimed. The compose now says what runs, and
+  says in a comment that the old name was inert.
+* **The allowlist parsed Unicode digits.** `str.isdigit()` is true for
+  `٣`, and `int("٣")` is 3 -- an id written in Arabic-Indic digits
+  authorised user 3. The allowlist parses ASCII digits now.
+* **The tree did not compile on Python 3.14.** A docstring in
+  `tests/test_c4_thinking.py` carried surrogate escapes, and 3.14
+  encodes docstrings to UTF-8: the whole file was lost. Measured on
+  3.14.10 against v0.17.0 -- **2902 collected, 1 collection error**,
+  and the README's badge off by exactly the 28 tests the file held.
+  The suite now runs on 3.14 in CI, so the next version break is a
+  red job instead of a quiet loss.
+* **The submodules were pinned to branches.** `.gitmodules` said
+  `branch = main` and `branch = master` while the README said
+  "pinned"; the pin is the commit in the index, and nothing in the
+  release flow runs `--remote`.
+* **pytest disabled capture for the whole suite**, so every test's
+  stdout landed in the CI log as if it were the test's own output.
+
+#### Full
+
+* **The concurrency caps were constants.** `state.py` hardcoded 4 and 2
+  while every other limit in the bot resolves through `limits.py` by
+  profile. The values are unchanged; they are settings now
+  (`LLAMABOT_GLOBAL_LLM_SEM_LIMIT`, `LLAMABOT_PER_USER_SEMAPHORE_LIMIT`).
+* **The transitives were resolved at build time.** Three exact pins and
+  thirteen packages a rebuild could change. The image installs
+  `requirements.lock` now, whose set matches the running production
+  image package for package.
+* **The lint job could not fail.** It was `continue-on-error` with
+  `--exit-zero` on one file. It gates on the rules that catch code
+  which would not run (E9/F63/F7/F82 -- clean on ruff 0.17.2) and
+  reports the stylistic tail (566 findings) without gating.
+
+#### Measured, not believed
+
+* The long finding was **stale**: it quotes `call_llama` as "222 in the
+  body plus 345 in the loop" as if that were the state of the tree.
+  The tree already answers this one -- `call_llama.py` is 377 lines,
+  the tool loop lives in `llm_iteration.run_one` (345), and both are
+  registered in the size budget with a measured length, a reason and a
+  trigger. The four handlers in `handlers.py` (1504 lines) are four
+  handlers of one shape, which is the healthy case by the codebook's
+  own rule. So this wave did not rewrite it: the finding is three
+  waves old, and the open work it points at is debt items 03, 08 and
+  13 -- deliberate refactors with their own tripwires, not a review
+  comment.
+
+#### Left alone, on purpose
+
+* `socket.getaddrinfo` is patched process-wide in `bot.py`. That is a
+  deliberate decision with a comment next to it, not an accident.
+
+
 ## [v0.17.0-stable] — 2026-10-28 — The transcript has a budget, and one turn is one message
 
 **After `v0.16.0-stable`.** The chat stops getting a wall of console noise,

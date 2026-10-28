@@ -34,9 +34,9 @@ telegram-bot/
 ├── prompt_text/           # the prompt prose, split by topic
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
-├── limits.py              # profile-based token/timeout limits (466)
-├── config.py # env-var read at import time (478)
-├── state.py               # per-chat runtime state (225)
+├── limits.py              # profile-based token/timeout limits (513)
+├── config.py # env-var read at import time (496)
+├── state.py               # per-chat runtime state (231)
 ├── storage.py             # SQLite: messages, threads, topics (886)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (200)
 ├── persistence.py         # conversation-history assembly (214)
@@ -55,7 +55,7 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, leave the copy
 ```
 
-64 top-level modules, 174 test files. The size of the suite is the
+64 top-level modules, 180 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.

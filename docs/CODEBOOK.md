@@ -1958,15 +1958,21 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_release_workflow.py` | 10 | The release door: a tag releases, and the release cannot reach the host |
 | `test_typing_indicator.py` | 6 | The typing indicator cannot end the turn |
 | `test_readme_release_claims.py` | 7 | The README's badges and clone-pins follow the tree and the tags |
-| `test_limits.py` | 23 | The turn's budget outlives the command it runs -- and the iteration cap is a setting |
+| `test_limits.py` | 27 | The turn's budget outlives the command it runs -- and the iteration cap is a setting |
 | `test_transcript_budget.py` | 10 | The chat's transcript is bounded; the bot's memory keeps the whole thing |
 | `test_t48_timeout.py` | 3 | A timeout is not a second chance: one user turn, one message |
 | `test_bash_policy.py` | 10 | The bot refuses the destructive command classes in code |
 | `test_prompt_rules_are_fixed.py` | 6 | The rules in the system message are not changeable by a message |
 | `test_failure_message_culprit.py` | 8 | A refusal names the culprit: the engine, Telegram, or the bot |
 | `test_doc_section_pointers.py` | 4 | A pointer names a section that exists, and never a moving one |
+| `test_config_allowlist.py` | 5 | The allowlist parses ASCII digits, so an id written in another script does not authorise another user |
+| `test_submodule_pins.py` | 3 | The submodule pins are commits, not branches that move under the tree |
+| `test_whisper_compose.py` | 3 | The transcription API listens on loopback, on a pinned image, and names the model the server reads |
+| `test_requirements_lock.py` | 3 | The lock and the direct requirements agree, and the image installs the lock |
+| `test_lint_workflow.py` | 5 | The lint job gates on the rules that catch code that would not run; the stylistic tail only reports |
+| `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 
-174 test files in total; the table above is the ones that guard a rule in
+180 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
