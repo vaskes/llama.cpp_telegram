@@ -17,6 +17,31 @@ this file is the human-readable summary.
 
 **After `v0.19.0-stable`.** The next cycle starts here.
 
+### The evidence was green and empty
+
+The harnesses all say the same thing about themselves: an anchor that has
+drifted is REFUSED, never reported as SURVIVED. The wording was true and
+the exit code was not. **Twenty-six of the thirty harnesses** counted a
+refused or invalid mutation, printed it on its own line, and then ignored
+it in the verdict -- so a harness whose anchors had drifted printed a green
+summary and returned 0. The hole had been open since 2026-10-27.
+
+Every harness now fails its run on a refused or invalid mutation
+(`26fe585`), and the tripwire that guards it is in the tree
+(`71bb04e`): the AST is asked whether the verdict names the refused and
+the invalid counters, whether those counters are assigned where the verdict
+sits, and whether a refused row is counted as a survivor anywhere. The
+tripwire was checked against the hole -- with the counter dropped from one
+harness, it fails and names the harness.
+
+The last dead anchors are alive again as well (`9164b5f`). A scanner that
+reads every shape the harnesses use -- the umbrella form, the per-feature
+form with and without an expected count, the dispatch-split form with its
+literal patterns, and the readme-claims harness that builds its mutations
+from the tree -- finds **487 anchors, 0 dead**. The first scanner read two
+shapes of six and called the rest "unknown", which is "not measured", not
+"in order".
+
 ## [v0.19.0-stable] — 2026-10-29 — The pin names the side-car that runs, and a refused mutation fails the run
 
 **After `v0.18.0-stable`.** The bot's claim about the side-car names the

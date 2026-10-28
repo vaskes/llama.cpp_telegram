@@ -34,7 +34,7 @@
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | the top-level modules of `telegram-bot/` -- the map and the count are in `docs/ARCHITECTURE.md`, recomputed from the tree by `tests/test_docs_current.py` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count does not move for that |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
-| Open review cycle | none — the cycle of the TODO's code items (6 to 10) closed on 2026-10-27, the operator answered the four open questions on 2026-10-28, and the refusal list is in production since 2026-10-28 (`v0.15.1-stable`). What is left is the measurement backlog: five harnesses that still measure nothing, and the CI job that would run them |
+| Open review cycle | none — the cycle of the TODO's code items (6 to 10) closed on 2026-10-27, the operator answered the four open questions on 2026-10-28, and the refusal list is in production since 2026-10-28 (`v0.15.1-stable`). What is left is the measurement backlog and the CI job that would run the harnesses. **The measurement backlog is closed** (2026-10-29): the "five harnesses that still measure nothing" is corrected here -- a scanner that reads every shape the harnesses use finds **487 anchors, 0 dead** (it found 39 dead anchors and 17 unreadable ones before), and a refused or invalid mutation now **fails the run** in all thirty harnesses instead of being counted, printed and ignored. What is left is the CI job that would run the harnesses |
 
 The numbers in `TECH-DEBT.md` are `splitlines()`-based and are recomputed by
 `tests/test_tech_debt_index.py`, which fails if they go stale.
@@ -382,8 +382,10 @@ wording, change it, or drop the flag again.
 
 ### Six mutation harnesses measure nothing, and one convention is not covered
 
-**Status:** open since 2026-10-28 — the measurement is done and one
-harness is fixed in this cycle; the other five are a follow-up.
+**Status:** the measurement half is **closed** (2026-10-29); what is left
+is the CI job and the section-pointer convention. The measurement is
+done and one harness is fixed in this cycle; the other five are a
+follow-up.
 **What was measured (2026-10-28, on `38d4c44`):** a mutation harness
 finds its mutation site by a **literal pattern in the tree**. When the
 tree moves, the pattern stops matching, the harness calls the mutation
@@ -419,6 +421,31 @@ pointers checks the backticked-path form (`docs/CODEBOOK.md` § X-23).
 The link form (`[docs/SECURITY.md](SECURITY.md) §3.5`) and the
 bare-number form ("§2", "§8") are not checked, and both can rot the
 same way.
+
+**Corrected in this cycle (2026-10-29) -- the measurement half is
+closed, and the wording above is a copy of a moment.** Two things were
+true here and are not true any more:
+
+* *"the other five are a follow-up"* -- they are not. Every anchor in
+  every harness was re-measured, and the harnesses were re-anchored
+  where the code had moved (`c12b318`, `373cfdd`, `9deab90`,
+  `9164b5f`). A scanner that reads **every shape** the harnesses use --
+  the umbrella form, the per-feature form with and without an expected
+  count, the dispatch-split form with its literal patterns, and the
+  readme-claims harness that builds its mutations from the tree -- finds
+  **487 anchors, 0 dead**. The first pass of the scanner read two shapes
+  of six and called the rest "unknown", which is "not measured", not "in
+  order"; the count of 487 is the second pass.
+* *"no harness runs in CI"* is still true, and it is the bigger half
+  that is left. But the hole under it was deeper than the CI job: **26
+  of the 30 harnesses counted a refused mutation, printed it, and
+  ignored it in the verdict**, so the green run they would have given
+  CI was green and empty. That is fixed in all thirty now (`26fe585`),
+  and the tripwire that keeps it fixed is in the tree (`71bb04e`).
+
+The CI job itself is still open, and the section-pointer convention
+above is still open. `dispatch_split` is still not a CI candidate -- it
+mutates the production host over ssh on purpose.
 
 ## Accepted as documented risk — not a bug, not a task
 
