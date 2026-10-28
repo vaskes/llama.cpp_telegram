@@ -434,3 +434,76 @@ def test_the_transcript_budget_must_not_be_negative():
             raise AssertionError('expected ValueError on a negative budget')
     finally:
         _restore_env()
+
+
+def test_the_concurrency_caps_are_profile_settings():
+    """The size of a semaphore is a deployment setting.
+
+    They used to be literals in state.py (4 and 2), which made
+    state.py the one place in the bot where a limit was not a
+    deployment setting. The values are unchanged; what changed is
+    that a profile now carries them and an env var can override.
+    """
+    try:
+        for profile in ('public', 'personal', 'dev'):
+            limits = _reload_with({'LLAMABOT_DEPLOYMENT_PROFILE': profile})
+            assert limits.GLOBAL_LLM_SEM_LIMIT == 4, profile
+            assert limits.PER_USER_SEMAPHORE_LIMIT == 2, profile
+    finally:
+        _restore_env()
+
+
+def test_the_concurrency_caps_take_an_env_override():
+    try:
+        limits = _reload_with({'LLAMABOT_GLOBAL_LLM_SEM_LIMIT': '8',
+                               'LLAMABOT_PER_USER_SEMAPHORE_LIMIT': '5'})
+        assert limits.GLOBAL_LLM_SEM_LIMIT == 8
+        assert limits.PER_USER_SEMAPHORE_LIMIT == 5
+    finally:
+        _restore_env()
+
+
+def test_state_hands_out_the_deployments_numbers():
+    """state.py exposes the names four modules import; the value it
+    hands out has to be the limit's, not a literal.
+
+    Run in a subprocess on purpose: reloading state in-process would
+    replace the process-wide abort-event registry while other modules
+    still hold the old one.
+    """
+    import pathlib
+    import subprocess
+    root = pathlib.Path(__file__).resolve().parent.parent
+    script = ("import sys; sys.path.insert(0, 'telegram-bot'); import state; "
+              "print(state._GLOBAL_LLM_SEM_LIMIT, state._PER_USER_SEMAPHORE_LIMIT)")
+    env = dict(os.environ)
+    env.update({"LLAMABOT_GLOBAL_LLM_SEM_LIMIT": "8",
+                "LLAMABOT_PER_USER_SEMAPHORE_LIMIT": "5"})
+    out = subprocess.run([sys.executable, "-c", script], cwd=root, env=env,
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == ["8", "5"], out.stdout
+
+
+def test_a_zero_concurrency_cap_is_refused():
+    """A semaphore of zero would block every turn forever, and a typo
+    that silently means 'never' is worse than a refusal at import."""
+    try:
+        try:
+            _reload_with({'LLAMABOT_GLOBAL_LLM_SEM_LIMIT': '0'})
+        except ValueError as e:
+            assert 'GLOBAL_LLM_SEM_LIMIT' in str(e)
+        else:
+            raise AssertionError('expected ValueError on a zero global cap')
+        try:
+            # The global cap is set back to a valid value: the env of the
+            # previous case is still in os.environ, and the first check
+            # that trips would otherwise be the global one.
+            _reload_with({'LLAMABOT_GLOBAL_LLM_SEM_LIMIT': '4',
+                          'LLAMABOT_PER_USER_SEMAPHORE_LIMIT': '0'})
+        except ValueError as e:
+            assert 'PER_USER_SEMAPHORE_LIMIT' in str(e)
+        else:
+            raise AssertionError('expected ValueError on a zero per-user cap')
+    finally:
+        _restore_env()

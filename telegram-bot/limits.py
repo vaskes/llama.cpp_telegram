@@ -219,6 +219,14 @@ _PUBLIC_DEFAULTS = {
     "LLAMA_HTTP_TIMEOUT_SEC": 7920.0, # LOOP_BUDGET_SEC * 1.1
     "LLAMA_MODELS_TIMEOUT_SEC": 10.0, # unchanged
     "TRANSCRIBE_TIMEOUT_SEC":  120.0, # unchanged
+    # Concurrency: how many LLM turns may run at the same time. The
+    # global cap is across the whole bot, the per-user cap is for one
+    # user. These two used to be constants in state.py -- the one limit
+    # in the bot that was not a deployment setting, while every other
+    # limit resolved through this module by profile. The values are
+    # unchanged; what changed is that a deployment can set them.
+    "GLOBAL_LLM_SEM_LIMIT":    4,
+    "PER_USER_SEMAPHORE_LIMIT": 2,
 }
 
 _PERSONAL_DEFAULTS = {
@@ -242,6 +250,14 @@ _PERSONAL_DEFAULTS = {
     "LLAMA_HTTP_TIMEOUT_SEC": 7920.0, # LOOP_BUDGET_SEC * 1.1
     "LLAMA_MODELS_TIMEOUT_SEC": 30.0, # unchanged
     "TRANSCRIBE_TIMEOUT_SEC":  300.0, # unchanged
+    # Concurrency: how many LLM turns may run at the same time. The
+    # global cap is across the whole bot, the per-user cap is for one
+    # user. These two used to be constants in state.py -- the one limit
+    # in the bot that was not a deployment setting, while every other
+    # limit resolved through this module by profile. The values are
+    # unchanged; what changed is that a deployment can set them.
+    "GLOBAL_LLM_SEM_LIMIT":    4,
+    "PER_USER_SEMAPHORE_LIMIT": 2,
 }
 
 _DEV_DEFAULTS = {
@@ -278,6 +294,14 @@ _DEV_DEFAULTS = {
     "LLAMA_HTTP_TIMEOUT_SEC": 7920.0, # LOOP_BUDGET_SEC * 1.1
     "LLAMA_MODELS_TIMEOUT_SEC": 30.0,
     "TRANSCRIBE_TIMEOUT_SEC":  300.0,
+    # Concurrency: how many LLM turns may run at the same time. The
+    # global cap is across the whole bot, the per-user cap is for one
+    # user. These two used to be constants in state.py -- the one limit
+    # in the bot that was not a deployment setting, while every other
+    # limit resolved through this module by profile. The values are
+    # unchanged; what changed is that a deployment can set them.
+    "GLOBAL_LLM_SEM_LIMIT":    4,
+    "PER_USER_SEMAPHORE_LIMIT": 2,
 }
 
 
@@ -331,6 +355,20 @@ LOOP_BUDGET_SEC            = _env_or("LLAMABOT_LOOP_BUDGET_SEC",    _PROFILE_DEF
 LLAMA_HTTP_TIMEOUT_SEC     = _env_or("LLAMABOT_LLAMA_HTTP_TIMEOUT",  _PROFILE_DEFAULTS["LLAMA_HTTP_TIMEOUT_SEC"])
 LLAMA_MODELS_TIMEOUT_SEC   = _env_or("LLAMABOT_LLAMA_MODELS_TIMEOUT", _PROFILE_DEFAULTS["LLAMA_MODELS_TIMEOUT_SEC"])
 TRANSCRIBE_TIMEOUT_SEC     = _env_or("LLAMABOT_TRANSCRIBE_TIMEOUT", _PROFILE_DEFAULTS["TRANSCRIBE_TIMEOUT_SEC"])
+
+# === Concurrency caps ===
+#
+# How many LLM turns may run at the same time. The global cap is across
+# the whole bot; the per-user cap is for one user, and it is the number
+# the codebook's "two lost tokens lock a user out" rule is written
+# against.
+#
+# These two lived in state.py as constants. state.py is the right place
+# for the semaphores themselves -- they are process state -- but not
+# for their size: a number that says how much of the machine a turn may
+# use is a deployment setting, like every other limit here.
+GLOBAL_LLM_SEM_LIMIT     = _env_or("LLAMABOT_GLOBAL_LLM_SEM_LIMIT",     _PROFILE_DEFAULTS["GLOBAL_LLM_SEM_LIMIT"])
+PER_USER_SEMAPHORE_LIMIT = _env_or("LLAMABOT_PER_USER_SEMAPHORE_LIMIT", _PROFILE_DEFAULTS["PER_USER_SEMAPHORE_LIMIT"])
 # T65.1 — silent reaction turn. A reply addressed to another human produces a
 # reaction and nothing else: no answer, no visible reasoning. A reaction is one
 # emoji plus a short reasoning trace, so this is far below the normal budget.
@@ -446,6 +484,15 @@ if MAX_TOKENS_CAPTION <= 0:
     raise ValueError("MAX_TOKENS_CAPTION must be positive")
 if LOOP_BUDGET_SEC <= 0:
     raise ValueError("LOOP_BUDGET_SEC must be positive")
+if GLOBAL_LLM_SEM_LIMIT <= 0:
+    raise ValueError(
+        f"GLOBAL_LLM_SEM_LIMIT must be positive (got {GLOBAL_LLM_SEM_LIMIT})."
+    )
+if PER_USER_SEMAPHORE_LIMIT <= 0:
+    raise ValueError(
+        f"PER_USER_SEMAPHORE_LIMIT must be positive (got "
+        f"{PER_USER_SEMAPHORE_LIMIT})."
+    )
 if MAX_ITER <= 0:
     raise ValueError(
         f"MAX_ITER must be positive (got {MAX_ITER}). A turn that may "

@@ -17,8 +17,14 @@ import asyncio
 import time
 from collections import OrderedDict
 
-_GLOBAL_LLM_SEM_LIMIT = 4
-_PER_USER_SEMAPHORE_LIMIT = 2
+# The sizes of the semaphores below are deployment settings: they live
+# in limits.py, which resolves every limit by profile and by env var.
+# They used to be constants here, which made state.py the one place in
+# the bot where a limit was not a deployment setting. The names stay --
+# four modules import them from here -- but the value is now the
+# profile's, not a literal.
+from limits import GLOBAL_LLM_SEM_LIMIT as _GLOBAL_LLM_SEM_LIMIT
+from limits import PER_USER_SEMAPHORE_LIMIT as _PER_USER_SEMAPHORE_LIMIT
 _ABORT_EVENTS_MAXSIZE = 200
 _USER_SEMAPHORES_MAXSIZE = 500
 
@@ -88,8 +94,8 @@ def _get_user_semaphore(chat_id: int, user_id: int) -> asyncio.BoundedSemaphore:
         _user_semaphores.move_to_end(key)
         return _user_semaphores[key]
     # No `from config import _PER_USER_SEMAPHORE_LIMIT` here. The
-    # constant is defined 80 lines up in THIS module; `config` re-exports
-    # it, so importing it back closed the cycle
+    # value is imported from limits.py, which is a leaf (env only), so
+    # importing it back cannot close the cycle
     # `config -> state -> config` that TECH-DEBT #2 declared eliminated.
     # The cycle check walked module-level imports only, so it stayed green.
     sem = asyncio.BoundedSemaphore(_PER_USER_SEMAPHORE_LIMIT)
