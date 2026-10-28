@@ -51,6 +51,37 @@ after the swap: the service reports `donsetch 4.10.2`, the health endpoint
 answers, and the bot's own client gets the human-readable text result
 ("# Search results …"), not the `[meta]` envelope.
 
+### The README says what this is
+
+The README was a list of releases that had already shipped, followed by a
+list of features, in a project that is neither. It is now what it should
+have been: **the harness, component by component**, with the release
+history in the CHANGELOG (where it belongs) and the current release's
+substance in three lines.
+
+The frame is *The Anatomy of an Agent Harness*: a production harness has
+twelve components, and naming them is what lets you reason about the part
+that is not the model. **[docs/HARNESS.md](docs/HARNESS.md)** maps all
+twelve onto this tree — where each one lives, what guards it, and what is
+missing — and then makes the three decisions the article argues about:
+the twelve components (nine are built and guarded, one is deliberately
+absent, one is thin), the seven architectural decisions (with ours
+written down, including the three where the obvious answer is the wrong
+one), and what the frame changes about how the work is described.
+
+The tools paragraph now says what the code does: **any tool of any MCP
+server** can be called, not only the four web tools. The native client
+for those four is still there, because it wants the server's split shape
+— and two doors to one server is now written down as a decision with a
+plan to collapse it into one, instead of being an accident.
+
+The road that comes out of the mapping is in
+[docs/TODO.md](docs/TODO.md#the-harness-road--from-here-to-the-deliberate-harness-opened-2026-10-28):
+six steps, in the order we can afford them, each with the "done when" it
+has to satisfy. The first three are the ones the mapping says are gaps
+rather than polish — one door per service, a trace of every turn, and
+tools scoped by turn.
+
 ## [v0.15.1-stable] — 2026-10-28 — The rules are code, and the badges tell the truth
 
 **After `v0.15.0-stable`.** A chat message cannot rewrite the rules any

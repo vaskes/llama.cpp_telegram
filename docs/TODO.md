@@ -48,6 +48,107 @@ of those is recomputed by a test, and this table points at them.
 
 ---
 
+## The harness road — from here to the deliberate harness (opened 2026-10-28)
+
+> **The frame.** The operator asked for the harness article to be read
+> and the project to be mapped onto it. The mapping is
+> [docs/HARNESS.md](HARNESS.md): the twelve components of a production
+> agent harness, where each one lives in this tree, what guards it, and
+> what is missing. This section is the **order of the work** that comes
+> out of that mapping.
+>
+> **The end state, in one sentence:** every one of the twelve components
+> is present, measured and guarded — the three that are missing or thin
+> are closed, and the two doors to the same service are one door.
+
+### What we already have, so this is not a from-zero plan
+
+Nine of the twelve components are not merely present but **guarded**: a
+test fails when the claim breaks. The rules that protect the host live
+in code (`bash_policy.py`), a refusal names the culprit
+(`failure_message()`), the prompt is pinned by sha256
+(`tests/test_prompts.py`), the version claims are compared with the
+pinned sources (`test_sandbox_contract.py`, `test_donsetch_contract.py`),
+and the suite is 2909 cases plus 28 mutation harnesses. The article's
+verdict — that the harness, not the model, is what separates a demo from
+production — is a verdict this repository has already been living by
+for eight waves. The road below is about the three places where it has
+not.
+
+### The three gaps, in the order we can afford them
+
+| # | Gap | Why it is this position in the order |
+|---|---|---|
+| 1 | **Two doors to one server.** The bot has a native client for donsetch's four web tools *and* the generic MCP module; both talk to the same server on the same host. | Small, and it is now a *configuration* rather than an accident: since the pin moved to v4.10.2, the split shape the native client wants is an explicit server-side knob (`mcp.text_only = false`). |
+| 2 | **No trace of a turn.** We have logs; we do not have a per-turn record of what the model was shown, what it called, what it cost and how long it took. | Everything below needs measurement. Scoping the tools cannot be judged without knowing what the model was shown; the context firewall cannot be judged without knowing where the tokens went. |
+| 3 | **Every tool, every turn.** The model is shown all eight native tools plus whatever the MCP servers contribute, on every turn, whatever the message is about. | The article's first mistake, measured here: a production incident cost this project about forty million tokens of degenerate generation, and the tool schemas are a fixed tax on every single turn. |
+| 4 | **No context firewall for long jobs.** A long shell command's output is truncated to a budget; the part the model needed is the part that gets cut. | The shell is the long job here. This is the subagent idea without an agent: the artifact goes to a file, the model gets a handle. |
+| 5 | **No subagents.** One agent per chat. | Deliberate for now — a Telegram chat has nobody to hand work to. A subagent is a context firewall, and a firewall with nothing behind it is a cost. Revisit when a second surface appears. |
+| 6 | **Reasoning at every step.** The loop reasons before every tool call, including the ones that only needed execution. | Last: it is the largest change to the loop, and the article's number (3.6x on bounded work) is from someone else's workloads, not ours. Measure before believing it. |
+
+### The steps, with the "done when" for each
+
+**Step 1 — one door per service.** *Size: small.*
+The native donsetch client wants the split shape (a human-readable text
+result instead of the MCP `[meta]` envelope). The generic MCP client can
+have the same shape, because the shape is a server-side setting. So:
+either the generic client unwraps the envelope and the native client
+goes, or the native client stays and donsetch is excluded from the
+generic registry.
+*Done when:* exactly one door per server exists in the code, and a
+tripwire fails when a second one appears. The claim "the model can call
+any tool of any MCP server" then has exactly one meaning.
+
+**Step 2 — a trace per turn.** *Size: small-to-medium.*
+One JSONL line per turn: the tool schemas the model was shown (names
+and byte count), the model calls, the tools it called, the tokens, the
+latency, the outcome. Written next to the existing data directory.
+*Done when:* a turn writes one line, and the operator can read the last
+turn without grepping a container's logs.
+
+**Step 3 — scope the tools by turn.** *Size: large.*
+The machinery already exists: profile gates, per-server `include` /
+`exclude`, a per-chat allowlist. What is missing is the last step —
+deciding the tool set **from the turn** (what the message is about), so
+a "what's the weather" turn does not carry the shell's schema.
+*Done when:* the tool set is a function of the turn, the schema bytes
+per turn are measured, and a regression test fails when a simple
+message starts carrying the whole toolbox.
+
+**Step 4 — the context firewall.** *Size: medium.*
+A command whose output exceeds the budget leaves the output **in the
+sandbox**, and the model gets the path plus a summary; it reads the
+piece it needs with a follow-up command. The answer stops being lost to
+a truncation marker.
+*Done when:* a command that produces more than the budget leaves the
+whole answer on disk, and the model can fetch it in pieces — measured
+end to end, not in a unit test.
+
+**Step 5 — plan-and-execute for bounded work.** *Size: large, and
+measured first.* The article's second mistake: reasoning at every step
+is expensive. Before changing the loop, measure our own turns: how many
+model calls does a turn that needs three tools actually make, and how
+many of them reason about a step that only needed execution?
+
+**Step 6 — subagents.** *Size: large. Gated.* Only when there is a
+second surface to serve (a second chat type, a scheduled job), because
+until then a subagent is a cost with nothing behind it.
+
+### What this road explicitly does not do
+
+- It does not change the model default, and it does not add a "clever"
+  planner in front of the loop.
+- It does not narrow the **dev** profile: the operator ruled on
+  2026-10-28 that the dev profile stays wide on purpose, so that the
+  product can be broken on purpose.
+- It does not touch the production configuration without the operator's
+  explicit "да".
+- It does not make the harness thinner. The article notes that harness
+  thickness should fall as models improve; our model is a 27B on a
+  small GPU, and a thin harness would mean the task is nobody's job.
+
+---
+
 ## Open — waiting on the operator, or on a deploy to land
 
 These are not forgotten; they are parked on a question only the operator
