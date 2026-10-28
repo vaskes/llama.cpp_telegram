@@ -6,14 +6,14 @@
 [![Release](https://img.shields.io/github/v/release/vaskes/llama.cpp_telegram?label=release)](../../releases)
 [![Tests: 2992](https://img.shields.io/badge/tests-2992-brightgreen)](tests/)
 
-> **Current stable: `v0.19.0-stable`** (2026-10-29, commit `a700941`).
+> **Current stable: `v0.20.0-stable`** (2026-10-29).
 > Pin to a tag — see the clone command below.
 >
 > ⚠️ **Do NOT `git clone <url>` without `--branch`.** The default
 > branch is bleeding-edge and may include unreleased refactors
 > that have not been human-tested. Pin to a tag:
 > ```bash
-> git clone --branch v0.19.0-stable https://github.com/vaskes/llama.cpp_telegram.git
+> git clone --branch v0.20.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 > ```
 > Bleeding edge is for contributors only. See [Releases](../../releases)
 > for the full stable-tag history.
@@ -279,7 +279,7 @@ See [docs/SETUP.md](docs/SETUP.md) for step-by-step.
 Short version:
 
 ```bash
-git clone --branch v0.19.0-stable https://github.com/vaskes/llama.cpp_telegram.git
+git clone --branch v0.20.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 cd llama.cpp_telegram
 sudo ./scripts/install.sh
 sudo $EDITOR /opt/telegram-bot/.env   # BOT_TOKEN, ALLOWED_USER_IDS

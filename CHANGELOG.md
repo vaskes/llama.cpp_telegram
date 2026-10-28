@@ -8,14 +8,19 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.19.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.20.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
 ## [Unreleased]
 
-**After `v0.19.0-stable`.** The next cycle starts here.
+**After `v0.20.0-stable`.** The next cycle starts here.
+
+## [v0.20.0-stable] — 2026-10-29 — The evidence is no longer green and empty
+
+**After `v0.19.0-stable`.** The harnesses that prove this repository's
+rules are honest now prove them, and a fresh measurement says so.
 
 ### The evidence was green and empty
 
