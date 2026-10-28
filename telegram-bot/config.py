@@ -90,7 +90,25 @@ MODEL = os.environ.get("MODEL", "").strip()
 # === Authorization (LOCKDOWN) ===
 ALLOWED_USER_IDS_RAW = os.environ.get("ALLOWED_USER_IDS", "").strip()
 ALLOWED_USERNAMES_RAW = os.environ.get("ALLOWED_USERNAMES", "").strip()
-ALLOWED_USER_IDS = {int(x) for x in ALLOWED_USER_IDS_RAW.split(",") if x.strip().isdigit()}
+def _parse_user_ids(raw: str) -> set[int]:
+    """Parse the allowlist of Telegram user ids.
+
+    Only ASCII digits count. `str.isdigit()` is True for the Unicode
+    digit characters -- "\u0663" is a digit -- and `int("\u0663")`
+    returns 3, so an id written in Arabic-Indic digits would have
+    quietly authorised user 3. The allowlist is a security boundary:
+    it parses exactly what it looks like, and anything it does not
+    understand is not an id.
+    """
+    out: set[int] = set()
+    for part in raw.split(","):
+        s = part.strip()
+        if s.isascii() and s.isdigit():
+            out.add(int(s))
+    return out
+
+
+ALLOWED_USER_IDS = _parse_user_ids(ALLOWED_USER_IDS_RAW)
 ALLOWED_USERNAMES = {x.lstrip("@").lower() for x in ALLOWED_USERNAMES_RAW.split(",") if x.strip()}
 
 # LOCKDOWN: True when BOTH ALLOWED_USER_IDS and ALLOWED_USERNAMES
