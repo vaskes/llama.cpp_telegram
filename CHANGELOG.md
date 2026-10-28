@@ -17,6 +17,40 @@ this file is the human-readable summary.
 
 **After `v0.15.1-stable`.** The next cycle starts here.
 
+### The web-tools server is pinned, and the production service caught up
+
+The bot talks to [dondai44423/donsetch](https://github.com/dondai44423/donsetch)
+over MCP, and the version it was written against lived in a sentence in the
+README — "Donsetch 4.7.4 split-shape" — that nobody recomputed. The
+production service had been running 4.7.4 for months while the repository
+was the only place that said so.
+
+donsetch now joins the sandbox side-car in the tree as a git submodule,
+pinned at the tag the production service runs, with the same discipline
+the sandbox has:
+
+- `telegram-bot/personal_tools/donsetch_contract.py` — the pin, the floor
+  below which the split shape the native client expects is not there, the
+  server-side knob that produces that shape, and the submodule's license
+  (AGPL-3.0; the sandbox is MIT);
+- `tests/test_donsetch_contract.py` — the contract's number, the
+  submodule's own `Cargo.toml` and the pin in the tree cannot drift apart,
+  the checked-out commit is compared with the gitlink, and **every tool
+  the bot's client calls is checked against the pinned server's own
+  dispatch**: a renamed tool on the server side is a red test here, not a
+  failed call in production.
+
+The production service was updated to **v4.10.2** on 2026-10-28 (the
+release that fixed the eight compromised intermediate CA keys and put the
+MCP response mode behind an explicit `mcp.text_only` default). The
+update was not a checkout: from v4.10 on, the split shape is opt-in, so
+the deployment now says `DONSETCH_MCP__TEXT_ONLY=false` explicitly, and
+the image was rebuilt with the `INSTALL_CHROME` argument the previous
+image had — a rebuild without it silently drops the browser tier. Measured
+after the swap: the service reports `donsetch 4.10.2`, the health endpoint
+answers, and the bot's own client gets the human-readable text result
+("# Search results …"), not the `[meta]` envelope.
+
 ## [v0.15.1-stable] — 2026-10-28 — The rules are code, and the badges tell the truth
 
 **After `v0.15.0-stable`.** A chat message cannot rewrite the rules any
