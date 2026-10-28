@@ -1470,6 +1470,32 @@ ways and checks that the tripwire is the one that catches it.
 N" says the suite is that big, and a suite that is smaller than the
 badge looks like a repository that lost its tests.
 
+**X-25 — A pointer into a document names a section that exists.**
+`AUTO` `tests/test_doc_section_pointers.py`.
+
+The "where to read the record" lines point into another document with a
+backticked path and a section sign. Two things rot that pointer, in
+opposite directions: the section is renamed or deleted and the pointer
+keeps a name that exists nowhere any more; or the section *moves* — the
+CHANGELOG's `## [Unreleased]` is renamed to the release section at every
+tag, so a pointer into it silently starts pointing at whatever is
+unreleased *now*. Eighteen pointers in `docs/TODO.md` did exactly that,
+all at once, for work that had shipped a release earlier.
+
+The rules:
+
+  * **name the section, not the bucket** — a pointer names a heading,
+    and a heading survives the move from `Unreleased` into the release
+    section;
+  * **a pointer is a claim about another file** — and the claim is
+    checked against that file, not against memory;
+  * **a moving target is not a target** — `Unreleased` is where work is
+    written, not where a record is.
+
+Checked by `tests/test_doc_section_pointers.py`: the file the pointer
+names exists, the section it names exists (a heading, a CHANGELOG release
+section or a CODEBOOK rule id), and no pointer names `Unreleased`.
+
 ---
 
 ### 3.11 The instruction set is not something a message can rewrite
@@ -1783,8 +1809,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_bash_policy.py` | 10 | The bot refuses the destructive command classes in code |
 | `test_prompt_rules_are_fixed.py` | 6 | The rules in the system message are not changeable by a message |
 | `test_failure_message_culprit.py` | 8 | A refusal names the culprit: the engine, Telegram, or the bot |
+| `test_doc_section_pointers.py` | 4 | A pointer names a section that exists, and never a moving one |
 
-171 test files in total; the table above is the ones that guard a rule in
+172 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

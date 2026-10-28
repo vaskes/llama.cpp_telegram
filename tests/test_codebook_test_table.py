@@ -120,10 +120,12 @@ def test_the_declared_test_counts_match_the_files(text, rows):
 def test_the_total_number_of_test_files_is_right(text):
     """The sentence under the table.
 
-    Counted with a margin rather than exactly: a test file added without
-    a row in the table is a normal thing to do, and the sentence is
-    about the size of the suite, not about the completeness of the
-    table. The table's completeness is the previous test's job.
+    Counted exactly, not with a margin. The margin was a hole with a
+    number in it: the sentence was free to drift five files in either
+    direction, and a reader could not tell a fresh sentence from a
+    stale one. The sentence is about the size of the suite, and the
+    number rides in the same commit as the test files it counts -- the
+    table's own completeness is the previous test's job.
     """
     m = TOTAL.search(text)
     assert m, (
@@ -131,9 +133,10 @@ def test_the_total_number_of_test_files_is_right(text):
         "a document that quotes a count has to say what it counts")
     declared = int(m.group(1))
     actual = len(list(TESTS.glob("test_*.py")))
-    assert abs(declared - actual) <= 5, (
+    assert declared == actual, (
         f"the CODEBOOK says {declared} test files, the tree has {actual}. "
-        "Update the sentence, or the sentence is a lie with a number in it.")
+        "Update the sentence in the same commit as the tests, or the "
+        "sentence is a lie with a number in it.")
 
 
 def test_the_shorthand_row_is_not_mistaken_for_a_file(text):

@@ -202,6 +202,34 @@ def test_a_key_entry_point_still_exists():
     assert not gone, f"entry points referenced from the map are gone: {gone}"
 
 
+def test_the_summary_line_matches_the_tree():
+    """The one-line summary of the tree is a claim about the tree.
+
+    `docs/ARCHITECTURE.md` ends its map with "64 top-level modules, 172
+    test files". Both numbers move whenever a module or a test file is
+    added, and nothing recomputed them -- the summary was a snapshot of
+    a moment, and the suite's size in it was already behind.
+
+    The size of the suite is quoted in one place only now -- the
+    README's badge, checked against the collected tests -- because a
+    number in two places is a number nobody recomputes.
+    """
+    text = ARCH.read_text(encoding="utf-8")
+    m = re.search(r"(\d+) top-level modules, (\d+) test files", text)
+    assert m, (
+        "the architecture map no longer states how many modules and test "
+        "files the tree has -- the sentence this check reads is gone, and "
+        "the check would pass by finding nothing")
+    said_modules, said_tests = int(m.group(1)), int(m.group(2))
+    actual_modules = len(list(BOT.glob("*.py")))
+    actual_tests = len(list((REPO / "tests").glob("test_*.py")))
+    assert said_modules == actual_modules, (
+        f"the map says {said_modules} top-level modules, the tree has "
+        f"{actual_modules}")
+    assert said_tests == actual_tests, (
+        f"the map says {said_tests} test files, the tree has {actual_tests}")
+
+
 def test_the_check_can_see_a_stale_number():
     """Control. A freshness check that cannot fail is the exact thing it
     exists to prevent, so this runs the same comparison on a table with a

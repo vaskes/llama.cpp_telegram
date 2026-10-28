@@ -55,8 +55,10 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, leave the copy
 ```
 
-64 top-level modules, 171 test files, 2891 tests collected in a checkout.
-CI collects 2872 of them — the sandbox-marked file is excluded by name.
+64 top-level modules, 172 test files. The size of the suite is the
+README's badge — one number, one place, recomputed from the tree by
+`tests/test_readme_release_claims.py`; CI collects the same suite minus
+the sandbox-marked file, which it excludes by name.
 
 ### The leaf modules of `call_llama`
 
