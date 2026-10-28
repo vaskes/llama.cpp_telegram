@@ -34,6 +34,18 @@ from llm_json import dumps_body, scrub_surrogates  # noqa: E402
 from llm_thinking import (FLOOD_BACKOFF_SEC, MAX_PAYLOAD,  # noqa: E402
                           THROTTLE_SEC, ThinkingThrottle, push_thinking)
 
+# The lone surrogates Qwen emits, built at runtime instead of written as
+# escapes in this file. Python 3.14 rejects a source whose string
+# constants carry lone surrogates ("compile() ... ValueError ... if a
+# string source contains surrogate characters" -- the 3.14 docs), and an
+# external review measured this file failing to collect on 3.14 (28
+# tests lost, and the README's test badge off by exactly that many).
+# The values are identical: chr(0xD83D) is the character the escape
+# produced.
+LONE_HIGH = chr(0xD83D)
+LONE_LOW = chr(0xDC4D)
+SURROGATE_PAIR = LONE_HIGH + LONE_LOW
+
 pytestmark = pytest.mark.tech_debt(
     item=3,
     reason="Pins TECH-DEBT #3 C4: the last two nested closures in "
@@ -278,10 +290,10 @@ async def test_throttling_records_the_push_not_the_skip(clock):
 
 def test_lone_surrogates_become_the_replacement_char():
     """T54. Qwen sometimes emits tool_call arguments with emoji as
-    \ud83d\udc4d instead of UTF-8 bytes; ensure_ascii=False passes them
+    a surrogate pair instead of UTF-8 bytes; ensure_ascii=False passes them
     through and llama-server answers 500."""
-    got = scrub_surrogates('{"emoji": "\ud83d\udc4d"}')
-    assert "\ud83d" not in got
+    got = scrub_surrogates('{"emoji": "' + SURROGATE_PAIR + '"}')
+    assert LONE_HIGH not in got
     assert json.dumps(got, ensure_ascii=False)      # would raise otherwise
 
 
@@ -291,9 +303,9 @@ def test_clean_text_passes_through_unchanged():
 
 
 def test_it_recurses_into_dicts_and_lists():
-    obj = {"a": "до\ud83dпосле", "b": [{"c": "\ud83d"}, ["\ud83d\udc4d"]]}
+    obj = {"a": "до" + LONE_HIGH + "после", "b": [{"c": LONE_HIGH}, [SURROGATE_PAIR]]}
     got = scrub_surrogates(obj)
-    assert "\ud83d" not in json.dumps(got, ensure_ascii=False)
+    assert LONE_HIGH not in json.dumps(got, ensure_ascii=False)
 
 
 def test_non_containers_pass_through_by_identity():
@@ -315,7 +327,7 @@ def test_dumps_body_keeps_cyrillic_and_data_urls_intact():
 def test_dumps_body_scrubs_before_it_serialises():
     """One call, both jobs -- the reason dumps_body exists rather than a
     scrub next to a json.dumps at each call site."""
-    raw = dumps_body({"messages": [{"content": "👍"}], "x": "\ud83d"})
+    raw = dumps_body({"messages": [{"content": "👍"}], "x": LONE_HIGH})
     assert "\\ud83d" not in raw.decode("utf-8")
 
 
@@ -496,4 +508,4 @@ async def test_the_control_path_actually_edits():
 def test_the_scrubber_control_is_not_a_no_op():
     """If scrub_surrogates did nothing, the other scrubber tests would
     be trivially true."""
-    assert scrub_surrogates("\ud83d") != "\ud83d"
+    assert scrub_surrogates(LONE_HIGH) != LONE_HIGH
