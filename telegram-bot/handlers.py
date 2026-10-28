@@ -515,16 +515,31 @@ async def _reply(update, text, **kwargs):
     replies faster than Telegram accepts, RetryAfter is raised;
     we sleep retry_after+1s and retry up to 3 times.
 
-    T48: also retries on telegram.error.TimedOut (httpx 5s
+    T48: also handles telegram.error.TimedOut (httpx 5s
     default). When the Telegram Bot API takes longer than 5s
     to acknowledge a sendMessage, TimedOut is raised even
     though the message was almost always delivered. The bot
     used to re-raise this and the handle_text except block
     would send a second "❌ Error: Timed out" message,
-    producing two messages for one user turn. Now we retry
-    up to 3 times with exponential backoff, and if all
-    attempts time out we return None and log a warning
-    (assuming Telegram will deliver the message anyway).
+    producing two messages for one user turn.
+
+    2026-10-28: the TimedOut branch does NOT resend either, and
+    that is the second half of the same fix. It used to retry up
+    to 3 times with exponential backoff, and every retry is a
+    DUPLICATE, not a second chance: the Bot API's sendMessage
+    has no idempotency key, so the message Telegram already
+    accepted is delivered again under a new id. Measured on
+    production the same day: an answer that went out as 22
+    messages was delivered as 30 -- 8 of them exact copies --
+    because 8 sends timed out while Telegram was busy with the
+    burst. T48's own words were "the message was almost always
+    delivered" and "assuming Telegram will deliver the message
+    anyway"; retrying anyway is what produced the copies. So a
+    timeout is now logged and the message is treated as
+    delivered: one user turn, one message.
+
+    RetryAfter is different and still retries: a 429 is Telegram
+    saying "not yet", and the message was NOT accepted.
     """
     from telegram.error import BadRequest, RetryAfter, TimedOut
     if _is_group_chat(update):
@@ -540,12 +555,14 @@ async def _reply(update, text, **kwargs):
             await asyncio.sleep(wait_s)
         except TimedOut as e:
             last_err = e
-            # Telegram usually delivered the message; the
-            # timeout is in our read of the response. Exponential
-            # backoff: 1s, 2s, 4s.
-            backoff = 2 ** attempt
-            log.info(f"[_reply] TimedOut attempt {attempt+1}/3, sleeping {backoff}s")
-            await asyncio.sleep(backoff)
+            # The message was almost always delivered: the timeout is
+            # in our read of the response, not in Telegram's handling
+            # of the request. Resending it would deliver the same
+            # message a second time (see the docstring) -- a copy in
+            # the chat is worse than a message we cannot confirm.
+            log.info(f"[_reply] TimedOut on attempt {attempt+1}/3: "
+                     "Telegram most likely delivered it; not resending")
+            return None
         except BadRequest as e:
             # The message we are answering is gone. The delete tool can
             # remove the very message the bot is about to reply to --
@@ -566,17 +583,11 @@ async def _reply(update, text, **kwargs):
                      f"without the quote. chat_id={chat_id} text_len={len(text)}")
             kwargs["allow_sending_without_reply"] = True
             return await update.message.reply_text(text, **kwargs)
-    # Exhausted retries. For RetryAfter, re-raise so the
-    # caller's except block runs (the user already saw the
-    # LLM response if at least one try went through). For
-    # TimedOut, assume delivered and return None - the user
-    # does NOT get a duplicate "❌ Error" message.
-    if isinstance(last_err, TimedOut):
-        chat_id = update.effective_chat.id if update.effective_chat else None
-        log.info(f"[_reply] all 3 TimedOut attempts failed; assuming Telegram "
-            f"delivered the message for chat_id={chat_id}. Suppressing "
-            f"duplicate error reply. text_len={len(text)}")
-        return None
+    # Exhausted retries. Only RetryAfter can get here: a TimedOut
+    # returns on the spot, because resending a message Telegram most
+    # likely already delivered is a copy, not a retry. For RetryAfter
+    # we re-raise, so the caller's except block runs (the user
+    # already saw the LLM response if at least one try went through).
     raise last_err
 
 # === _reject_in_group ===

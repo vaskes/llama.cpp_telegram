@@ -4,7 +4,7 @@
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Release](https://img.shields.io/github/v/release/vaskes/llama.cpp_telegram?label=release)](../../releases)
-[![Tests: 2914](https://img.shields.io/badge/tests-2914-brightgreen)](tests/)
+[![Tests: 2930](https://img.shields.io/badge/tests-2930-brightgreen)](tests/)
 
 > **Current stable: `v0.16.0-stable`** (2026-10-28, commit `775f2cb`).
 > Pin to a tag — see the clone command below.
@@ -55,7 +55,7 @@ gaps and the reasoning, is in **[docs/HARNESS.md](docs/HARNESS.md)**.
 | 7 | State management | `state.py`, `turn.py` | ✅ |
 | 8 | Error handling | `llm_finish.py`, `llm_abort.py` | ✅ |
 | 9 | Guardrails and safety | `bash_policy.py`, `access.py`, `tool_isolation.py` | ✅ |
-| 10 | Verification loops | 2909 tests, 28 mutation harnesses, the tripwires | ✅ |
+| 10 | Verification loops | the test badge, the mutation harnesses, the tripwires | ✅ |
 | 11 | Subagent orchestration | — | ⛔ absent, deliberately |
 | 12 | Observability | `logconf.py`, `/healthz`, the deploy record | ⚠️ thin |
 

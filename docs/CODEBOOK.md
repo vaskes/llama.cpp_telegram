@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1493 lines, and it is
+Our largest file right now is `handlers.py` at 1504 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -462,7 +462,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1493 and is registered. The threshold is 1000 because
+`handlers.py` is 1504 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -1632,6 +1632,107 @@ cap's number of iterations, and the repository's default is 15).
 
 ---
 
+### 3.13 A cap that decides how much of the turn the chat sees is a setting
+
+**X-27 — The transcript the chat gets is bounded; the one the bot remembers is not.** `AUTO`
+`tests/test_transcript_budget.py`, `tests/test_limits.py`.
+
+The bot puts a transcript of the commands the model ran in front of the
+answer, because the operator asked for it by name on 2026-10-24: the
+console output belongs in the chat, and a transcript without its output
+is half a transcript.
+
+The transcript had a cap per command — 2000 characters of what one
+command printed — and no cap on the whole thing. So its size grew with
+the number of commands the model ran, and nothing in the code noticed.
+Measured on production, 2026-10-28: a review task ran 44 commands, the
+transcript came to 77 044 characters, the answer to 81 154 — and the
+chat got **22 messages** of console noise in front of the 4 110
+characters of actual review. The flood then hit Telegram's rate limit,
+and 8 of those 22 messages were delivered **twice** (that is X-28).
+
+Forty-four commands of noise is not a transcript, it is a wall. And the
+number that bounds it is not the code's to pick: the same deployment
+that wants the output in the chat on a three-command turn may want it
+out of the chat on a forty-four-command one. So the budget is a
+setting, `LLAMABOT_MAX_TRANSCRIPT_CHARS`, next to the other knobs, and
+the repository ships 4000 — one Telegram message.
+
+The cut is head plus tail, at command granularity, with the drop
+marked: the head carries what the turn started with, the tail carries
+what it ended with, and the tail is the part the model quotes back in
+its answer. A cut that says nothing about its own size is a cut the
+reader cannot trust.
+
+And the bot's **memory** keeps the whole transcript. Delivery and
+memory are two different artefacts: the user has to be able to read the
+answer without scrolling through a wall, and the next turn has to be
+able to ask what a command printed.
+
+The rules:
+
+  * **the chat's copy of a transcript is bounded as a whole** — a
+    per-command cap is not a cap;
+  * **the bound is a deployment setting** — the same test that puts
+    `LOOP_BUDGET_SEC` in `limits` applies here;
+  * **the cut is marked with what it dropped** — the number of commands
+    that are not shown is part of the marker;
+  * **what the bot remembers is not the chat's business** — the bound
+    applies to the delivery, not to the memory.
+
+Checked by `tests/test_transcript_budget.py` (the chat's copy fits the
+budget, the head and the tail are kept, the drop is counted, the
+remembered copy keeps every command, a zero budget means no transcript
+in the chat, and a 44-command turn is at most two chat messages) and
+`tests/test_limits.py` (the budget follows the environment, the
+repository's default is 4000, and a negative one is refused at import).
+The mutation harness `scripts/mutation_harness_transcript.py` proves
+the tripwires are load-bearing: ten mutations of the two seams, all
+ten caught.
+
+---
+
+### 3.14 A resend of a message that was probably delivered is a copy, not a retry
+
+**X-28 — One user turn, one message.** `AUTO`
+`tests/test_t48_timeout.py`.
+
+`sendMessage` has no idempotency key. When the call times out, the
+message was most likely delivered anyway — the timeout is in our read
+of the response, not in Telegram's handling of the request — so
+sending it again delivers **the same message a second time**, under a
+new id, in the middle of a chat the user is reading.
+
+T48 (2026-10-19) had already worked out that a timeout must not
+become an error message; it made the bot retry up to three times
+instead, and its own words were "the message was almost always
+delivered" and "assuming Telegram will deliver the message anyway".
+Retrying anyway is what produced the copies. Measured on production,
+2026-10-28: an answer that went out as 22 messages was delivered as
+**30** — 8 of them exact duplicates, visible in the chat as the same
+paragraph of console noise twice.
+
+`RetryAfter` is the opposite case and still retries: a 429 is Telegram
+saying "not yet", and the message was **not** accepted. A retry there
+is a second chance, not a copy.
+
+The rules:
+
+  * **a timed-out send is logged, not repeated** — the message is
+    treated as delivered, because it almost always was;
+  * **a 429 is retried** — nothing was accepted, so nothing can be
+    duplicated;
+  * **one user turn, one message** — the user is reading a chat, not a
+    log of what the bot tried.
+
+Checked by `tests/test_t48_timeout.py` (a timeout returns None instead
+of raising, is attempted exactly once, and a `RetryAfter` is still
+retried). The mutation harness `scripts/mutation_harness_transcript.py`
+proves the tripwire is load-bearing: the branch that used to retry is
+mutated back, and the test catches it.
+
+---
+
 ## 4. Rules for the reviewer and the harness
 
 These are the ones that cost me personally, three waves running. They are about
@@ -1855,14 +1956,16 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_empty_answer_fallback.py` | 6 | The empty-answer fallback reaches the user |
 | `test_release_workflow.py` | 10 | The release door: a tag releases, and the release cannot reach the host |
 | `test_typing_indicator.py` | 6 | The typing indicator cannot end the turn |
-| `test_readme_release_claims.py` | 6 | The README's badges and clone-pins follow the tree and the tags |
-| `test_limits.py` | 21 | The turn's budget outlives the command it runs -- and the iteration cap is a setting |
+| `test_readme_release_claims.py` | 7 | The README's badges and clone-pins follow the tree and the tags |
+| `test_limits.py` | 23 | The turn's budget outlives the command it runs -- and the iteration cap is a setting |
+| `test_transcript_budget.py` | 10 | The chat's transcript is bounded; the bot's memory keeps the whole thing |
+| `test_t48_timeout.py` | 3 | A timeout is not a second chance: one user turn, one message |
 | `test_bash_policy.py` | 10 | The bot refuses the destructive command classes in code |
 | `test_prompt_rules_are_fixed.py` | 6 | The rules in the system message are not changeable by a message |
 | `test_failure_message_culprit.py` | 8 | A refusal names the culprit: the engine, Telegram, or the bot |
 | `test_doc_section_pointers.py` | 4 | A pointer names a section that exists, and never a moving one |
 
-173 test files in total; the table above is the ones that guard a rule in
+174 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
@@ -1889,7 +1992,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1493 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1504 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -2046,6 +2149,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1493 lines and healthy — it only decides when somebody
+> `handlers.py` is 1504 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.

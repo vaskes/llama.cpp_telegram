@@ -255,3 +255,39 @@ def test_every_clone_command_pins_the_current_stable():
         f"these clone commands pin something other than {current}: {wrong}. "
         f"The pin is the current stable release -- the README warns "
         f"against cloning `main` two paragraphs above.")
+
+
+#: The live documents that describe the harness in prose. The CHANGELOG
+#: and the CODEBOOK are history and may quote old counts on purpose;
+#: these three are read as the current state, so a number in them is a
+#: claim about today.
+LIVE_DOCS = ("README.md", "docs/HARNESS.md", "docs/TODO.md")
+
+#: A test count written out in prose. The badge is the one place the
+#: number lives -- see `test_the_badge_counts_the_tests_that_are_there`.
+PROSE_COUNT = re.compile(r"\b\d{3,5} (tests|cases)\b")
+
+
+def test_the_test_count_lives_in_the_badge_and_nowhere_else():
+    """One number, one place.
+
+    The README's component table used to say "2909 tests" and the
+    harness document used to say "the 2909-case suite" -- both written
+    by hand, both a release behind, and neither recomputed by
+    anything. The badge is the place that has a tripwire behind it;
+    every other copy is a number that rots silently, in the paragraph
+    a reader trusts most.
+
+    The CHANGELOG and the CODEBOOK are history, and history may quote
+    the count of its day.
+    """
+    offenders = []
+    for rel in LIVE_DOCS:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for m in PROSE_COUNT.finditer(text):
+            line = text[:m.start()].count("\n") + 1
+            offenders.append(f"{rel}:{line}: {m.group(0)}")
+    assert not offenders, (
+        "a test count written in prose, outside the badge: "
+        f"{offenders}. The badge is the one place the number lives -- "
+        "point at the badge instead of copying it.")

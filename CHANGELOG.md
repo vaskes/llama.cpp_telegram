@@ -17,6 +17,38 @@ this file is the human-readable summary.
 
 **After `v0.16.0-stable`.** The next cycle starts here.
 
+### The chat stopped getting a wall of console noise
+
+Measured on production, 2026-10-28, on a code-review turn. The model ran
+44 commands; the transcript of what they printed came to **77 044
+characters**, the answer to **81 154** — and the chat got **22 messages**
+of console noise in front of the 4 110 characters of actual review.
+
+The transcript had a cap per command (2000 characters of output) and
+no cap on the whole thing, so its size grew with the number of commands
+the model ran. Nothing in the code noticed, and the flood then hit
+Telegram's rate limit: **8 of those 22 messages were delivered twice**,
+because a send that timed out was retried with the same text.
+
+Two fixes, both measured:
+
+- **the chat's copy of the transcript is bounded as a whole** — the head
+  and the tail of the command list, at command granularity, with the
+  drop marked ("... 39 of 44 commands are not shown ..."). The bot's
+  memory keeps the whole transcript, so a follow-up question about what
+  a command printed still has the answer. The budget is a setting,
+  `LLAMABOT_MAX_TRANSCRIPT_CHARS` (default 4000 — one message; 0 means
+  no transcript in the chat), because how much of a turn the chat sees
+  is the operator's call, not the code's;
+- **a timed-out send is no longer repeated** — `sendMessage` has no
+  idempotency key, so resending a message Telegram already accepted
+  delivers it again under a new id. A timeout is now logged and the
+  message is treated as delivered: one user turn, one message. A 429
+  (`RetryAfter`) is still retried, because there the message was *not*
+  accepted and a retry cannot duplicate anything.
+
+A 44-command turn is now at most two chat messages.
+
 ### The README stopped selling the shell
 
 The block was headed "Killer feature" and opened with "The unique selling

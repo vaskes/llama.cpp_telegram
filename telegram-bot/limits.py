@@ -381,6 +381,46 @@ MAX_TOKENS_REACT_ONLY      = _env_or("LLAMABOT_MAX_TOKENS_REACT_ONLY", 2048)
 MAX_ITER = _env_or("LLAMABOT_MAX_ITER", 15)
 
 
+# === The tool trace the CHAT gets ===
+#
+# When the model runs shell commands, the bot puts a transcript of them
+# in front of the answer: what it ran, and what it printed. The
+# operator asked for that on 2026-10-24 ("the console output belongs in
+# the chat") because without it the user sees the model's paraphrase and
+# nothing else -- and because a transcript without its output is half a
+# transcript.
+#
+# WHAT IT COST, measured rather than assumed. The transcript had a cap
+# per command (2000 characters of output) and NO cap on the whole thing,
+# so its size grew with the number of commands the model ran. Measured
+# on production, 2026-10-28: a review task ran 44 commands, the
+# transcript came to 77 044 characters, the answer to 81 154 -- and the
+# chat got 22 messages of console noise in front of the 4 110
+# characters of actual review. The flood then hit Telegram's rate
+# limit: 8 of those 22 messages were delivered TWICE, because a send
+# that timed out was retried with the same text (see handlers._reply).
+# Forty-four commands of noise is not a transcript, it is a wall.
+#
+# So the transcript is bounded as a whole: the head and the tail of the
+# command list are kept, the middle is dropped, and the drop is marked
+# with the number of commands that are not shown. The head carries what
+# the turn started with; the tail carries what it ended with, and the
+# tail is the part the model quotes in its answer.
+#
+# The bot's MEMORY keeps the whole transcript (`raw` in
+# llm_result.unwrap_answer): a follow-up question about what a command
+# printed still has the answer. Delivery and memory are two different
+# artefacts, and only the chat's copy is bounded.
+#
+# 0 means: the chat gets no transcript at all. The model still ran the
+# commands, the memory still has them, and the answer still arrives.
+#
+# The value belongs to the deployment: the repository ships 4000 (one
+# Telegram message), and a deployment that wants a clean chat sets it
+# to 0.
+MAX_TRANSCRIPT_CHARS = _env_or("LLAMABOT_MAX_TRANSCRIPT_CHARS", 4000)
+
+
 # === call_llama signature default ===
 # The default in call_llama()'s signature is what a future
 # caller who doesn't specify max_tokens will get. It tracks
@@ -410,6 +450,12 @@ if MAX_ITER <= 0:
     raise ValueError(
         f"MAX_ITER must be positive (got {MAX_ITER}). A turn that may "
         "not iterate is a turn that may not use a tool at all."
+    )
+if MAX_TRANSCRIPT_CHARS < 0:
+    raise ValueError(
+        f"MAX_TRANSCRIPT_CHARS must not be negative (got "
+        f"{MAX_TRANSCRIPT_CHARS}). 0 is a valid budget -- it means the "
+        "chat gets no transcript -- but a negative one is a typo."
     )
 if LLAMA_HTTP_TIMEOUT_SEC <= LOOP_BUDGET_SEC:
     # The httpx timeout must be greater than the loop budget

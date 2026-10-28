@@ -85,6 +85,17 @@ And the files the answer carries (`extract_files`) are not counted as
 "a file was delivered": those come out of the model's own text, so the
 transcript cannot be showing them a second time.
 
+The bound, and where it lives
+-----------------------------
+
+The transcript's size grows with the number of commands the model ran,
+so the chat's copy is bounded by `limits.MAX_TRANSCRIPT_CHARS` -- the
+head and the tail of the command list, with the middle dropped and the
+drop marked.  The remembered copy (`raw`) is not bounded: a follow-up
+question about what a command printed has to have the answer.  The
+number is a setting because it decides how much of the turn the chat
+sees, and that is the operator's call -- not the code's.
+
 Pure: no client, no clock, no await. That is the point of the
 extraction and it is what makes it testable on its own.
 """
@@ -94,6 +105,7 @@ from typing import NamedTuple
 
 from llm_artifact import Artifact, extract_files
 from llm_truncation import condense
+import limits
 
 __all__ = ["Answer", "unwrap_answer"]
 
@@ -124,8 +136,69 @@ class Answer(NamedTuple):
 #: its context; the chat gets enough of it to see what happened.
 MAX_TRANSCRIPT_OUTPUT_CHARS = 2000
 
+#: The marker that says how many commands the bounded transcript left
+#: out. The wording follows `llm_truncation.MIDDLE_DROPPED`: a cut that
+#: says nothing about its own size is a cut the reader cannot trust.
+COMMANDS_DROPPED = "[... {dropped} of {total} commands are not shown ...]"
 
-def _format_executed_tools(executed_tools) -> str:
+
+def _fit_blocks(blocks, budget):
+    """The head and the tail of `blocks` that fit in `budget`.
+
+    Head + tail, not head only: the head carries what the turn started
+    with (and the sandbox's own "the beginning no longer fits" marker),
+    the tail carries what it ended with -- and the tail is the part the
+    model quotes back in its answer. The middle goes, and the number
+    that went with it is the marker's job, not this function's.
+
+    The cut is at command granularity, not character granularity: a
+    half-printed command in the middle of a transcript reads like a
+    broken command, and the reader has to guess what it was.
+
+    Returns `(head, tail, dropped)`.
+    """
+    if not blocks:
+        return [], [], 0
+    # The fence and the marker are part of the budget: a cut that spends
+    # the whole limit on the text and then adds a marker on top is a cut
+    # that does not fit.
+    marker = COMMANDS_DROPPED.format(dropped=len(blocks), total=len(blocks))
+    overhead = (len("```bash\n") + len(marker) + 1 + len("```"))
+    room = budget - overhead
+    if room <= 0:
+        return [], [], len(blocks)
+    total = sum(len(b) + 1 for b in blocks)
+    if total <= room:
+        return list(blocks), [], 0
+
+    head_room = room // 2
+    tail_room = room - head_room
+
+    head = []
+    used = 0
+    for b in blocks:
+        need = len(b) + 1
+        if used + need > head_room:
+            break
+        head.append(b)
+        used += need
+
+    tail = []
+    used = 0
+    # The tail stops where the head stops: the two must not meet, or a
+    # command would be shown twice.
+    for i in range(len(blocks) - 1, len(head) - 1, -1):
+        need = len(blocks[i]) + 1
+        if used + need > tail_room:
+            break
+        tail.insert(0, blocks[i])
+        used += need
+
+    dropped = len(blocks) - len(head) - len(tail)
+    return head, tail, dropped
+
+
+def _format_executed_tools(executed_tools, budget=None) -> str:
     """T44: render a fenced ```` ```bash ... ``` ```` block with the
     bash commands the model ran this turn AND what they printed.
 
@@ -141,9 +214,22 @@ def _format_executed_tools(executed_tools) -> str:
     out of the chat and delivered it as a file. A transcript without
     its output is half a transcript.
 
+    `budget` bounds the WHOLE block, because the per-command cap alone
+    does not: the size of a transcript grows with the number of
+    commands the model ran, and a 44-command turn produced 77 044
+    characters of console noise in front of a 4 110-character answer
+    (measured on production, 2026-10-28). The head and the tail of the
+    command list are kept and the middle is dropped, with the drop
+    marked. `budget=None` means NO bound — that is the copy the bot
+    remembers, and it keeps everything (see `unwrap_answer`).
+    `budget=0` means no transcript at all: the chat gets the answer
+    alone.
+
     Returns "" if there is nothing to show.
     """
     if not executed_tools:
+        return ""
+    if budget is not None and budget <= 0:
         return ""
     bash_cmds = []
     for t in executed_tools:
@@ -157,14 +243,13 @@ def _format_executed_tools(executed_tools) -> str:
             bash_cmds.append((cmd, t.get("stdout") or ""))
     if not bash_cmds:
         return ""
-    lines = ["```bash"]
+    blocks = []
     for cmd, printed in bash_cmds:
-        lines.append(f"$ {cmd}")
+        out = printed.rstrip("\n")
         # A new name, not a rebind of the loop variable: the flag-order
         # tripwire reads `x = x.strip()` inside a loop as "the flag is
         # read before it is bound", and it is right to -- the shape
         # that took production down twice.
-        out = printed.rstrip("\n")
         if out.strip():
             # The cut is marked, and it keeps both ends. The sandbox
             # prints its "the beginning no longer fits" marker on the
@@ -172,7 +257,20 @@ def _format_executed_tools(executed_tools) -> str:
             # so the middle is what goes. The user sees that something
             # was dropped instead of a transcript that looks complete.
             out = condense(out, MAX_TRANSCRIPT_OUTPUT_CHARS)
-            lines.append(out)
+        block = f"$ {cmd}"
+        if out.strip():
+            block += "\n" + out
+        blocks.append(block)
+
+    head, tail, dropped = blocks, [], 0
+    if budget is not None:
+        head, tail, dropped = _fit_blocks(blocks, budget)
+    lines = ["```bash"]
+    lines.extend(head)
+    if dropped:
+        lines.append(COMMANDS_DROPPED.format(dropped=dropped,
+                                              total=len(blocks)))
+    lines.extend(tail)
     lines.append("```")
     return "\n".join(lines)
 
@@ -236,5 +334,13 @@ def unwrap_answer(result) -> Answer:
             # model's answer; the transcript stays in `raw`, which is
             # what the bot remembers.
             if not _delivered_a_file(executed):
-                prose = trace + "\n\n" + prose
+                # The chat's copy is bounded; the remembered one is not.
+                # Delivery and memory are two different artefacts: the
+                # user must be able to read the answer without scrolling
+                # through 22 messages of console noise, and the next turn
+                # must still be able to ask what a command printed.
+                chat_trace = _format_executed_tools(
+                    executed, budget=limits.MAX_TRANSCRIPT_CHARS)
+                if chat_trace:
+                    prose = chat_trace + "\n\n" + prose
     return Answer(prose, files, raw)

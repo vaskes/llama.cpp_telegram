@@ -13,7 +13,7 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1493 lines)
+├── handlers.py            # handle_text/photo/voice/document (1504 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   377 lines file, 222 in the function, 345 in the loop
 ├── mcp_client.py # MCP protocol for ONE server (382)
@@ -34,7 +34,7 @@ telegram-bot/
 ├── prompt_text/           # the prompt prose, split by topic
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
-├── limits.py              # profile-based token/timeout limits (420)
+├── limits.py              # profile-based token/timeout limits (466)
 ├── config.py # env-var read at import time (478)
 ├── state.py               # per-chat runtime state (225)
 ├── storage.py             # SQLite: messages, threads, topics (886)
@@ -55,7 +55,7 @@ telegram-bot/
     └── file_transport.py  # the file door: pull bytes out, leave the copy
 ```
 
-64 top-level modules, 173 test files. The size of the suite is the
+64 top-level modules, 174 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.
@@ -83,7 +83,7 @@ tests, none of which build a full `call_llama`.
   llm_stream.py         310  StreamOutcome, stream_iteration, _fallback_to_nonstream
   user_notice.py         128  engine_failure_message
   llm_abort.py             64  finalize_aborted_turn
-  llm_result.py           240  Answer, unwrap_answer
+  llm_result.py           346  Answer, unwrap_answer
   llm_artifact.py         487  Artifact, extract_files
   llm_files.py            144  send_files
   llm_request.py        161  StreamAccumulators, build_request_body, log_request_shape

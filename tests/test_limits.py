@@ -396,3 +396,41 @@ def test_call_llama_uses_limits_for_timeouts():
             if mod_name in ('call_llama', 'limits'):
                 del sys.modules[mod_name]
         _restore_env()
+
+
+def test_the_transcript_budget_is_a_setting_and_not_a_constant():
+    """How much of the executed-tool transcript reaches the CHAT is the
+    operator's setting.
+
+    Measured on production, 2026-10-28: a 44-command turn produced
+    77 044 characters of console noise in front of a 4 110-character
+    answer -- 22 chat messages, 8 of them delivered twice. The
+    transcript's size grows with the number of commands the model ran,
+    so the number that bounds it cannot be a constant in the code: a
+    deployment that wants a clean chat says so in its own environment.
+    """
+    try:
+        limits = _reload_with({})
+        assert limits.MAX_TRANSCRIPT_CHARS == 4000, (
+            f"the repository's default transcript budget is "
+            f"{limits.MAX_TRANSCRIPT_CHARS}, not 4000")
+        limits = _reload_with({'LLAMABOT_MAX_TRANSCRIPT_CHARS': '0'})
+        assert limits.MAX_TRANSCRIPT_CHARS == 0, (
+            "0 (no transcript in the chat) is a valid budget and a "
+            "deployment must be able to set it")
+    finally:
+        _restore_env()
+
+
+def test_the_transcript_budget_must_not_be_negative():
+    """A negative budget is a typo, and a typo that silently means
+    "everything" is worse than a refusal at import."""
+    try:
+        try:
+            _reload_with({'LLAMABOT_MAX_TRANSCRIPT_CHARS': '-1'})
+        except ValueError as e:
+            assert 'MAX_TRANSCRIPT_CHARS' in str(e)
+        else:
+            raise AssertionError('expected ValueError on a negative budget')
+    finally:
+        _restore_env()

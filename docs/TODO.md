@@ -69,7 +69,7 @@ in code (`bash_policy.py`), a refusal names the culprit
 (`failure_message()`), the prompt is pinned by sha256
 (`tests/test_prompts.py`), the version claims are compared with the
 pinned sources (`test_sandbox_contract.py`, `test_donsetch_contract.py`),
-and the suite is 2909 cases plus 28 mutation harnesses. The article's
+and the suite is the badge's test count plus the mutation harnesses under `scripts/`. The article's
 verdict — that the harness, not the model, is what separates a demo from
 production — is a verdict this repository has already been living by
 for eight waves. The road below is about the three places where it has
