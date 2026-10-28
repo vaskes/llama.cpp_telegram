@@ -159,8 +159,16 @@ MUTATIONS = [
     # a coroutine, and `coroutine.is_terminal` is not an attribute --
     # so this one dies loudly, which is why it is here: it proves the
     # await is load-bearing and not decorative.
+    #
+    # The pattern follows the call site: it used to end at
+    # `custom_tools=CUSTOM_TOOLS,` and stopped matching when the
+    # `reply_to_message_id` argument was added after it. A REFUSED
+    # mutation is not a neutral outcome -- it is a hole in the
+    # evidence, and the fix is to point the pattern at the code that
+    # is there.
     ("call_llama stops awaiting the loop", C, [
-        (r"custom_tools=CUSTOM_TOOLS,\n *\)\.run\(\)", "custom_tools=CUSTOM_TOOLS\n    )", 1)]),
+        (r"custom_tools=CUSTOM_TOOLS,\n *reply_to_message_id=reply_to_message_id,\n *\)\.run\(\)",
+         "custom_tools=CUSTOM_TOOLS,\n        reply_to_message_id=reply_to_message_id,\n    )", 1)]),
 
     # ---- the contract of the named type ------------------------------
     ("the outcome type stops defaulting to 'not terminal'", I, [
