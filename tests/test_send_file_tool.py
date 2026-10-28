@@ -501,3 +501,70 @@ def test_the_send_file_tool_cannot_reach_telegram():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+async def test_the_thinking_bubble_goes_down_before_the_file_goes_out():
+    """A file must not land under a live "thinking..." message.
+
+    The operator's rule of 2026-10-28: a file made for the operator
+    goes out with the answer.  A document that appears while the
+    reasoning bubble is still on screen reads as part of the thought
+    -- that is what the operator saw in the chat.
+
+    The order lives in one place (`send_files`) so that nobody can
+    reorder the two later by accident.
+    """
+    import llm_files
+    from llm_artifact import Artifact
+
+    events = []
+
+    class _Thinking:
+        async def delete(self):
+            events.append("bubble")
+
+    class _Message:
+        message_id = 4242
+        message_thread_id = None
+
+        async def reply_document(self, **kwargs):
+            events.append("document")
+            return SimpleMessage()
+
+    class _Chat:
+        id = -1004461679108
+
+    class _Update:
+        effective_chat = _Chat()
+        message = _Message()
+
+    artifact = Artifact(filename="answer.json", content="{}", language="json")
+    await llm_files.send_files(_Update(), [artifact], thinking=_Thinking())
+
+    assert events == ["bubble", "document"], (
+        "the reasoning bubble has to be gone before the document goes out; "
+        f"the chat saw {events}"
+    )
+
+
+def test_every_file_delivery_passes_the_thinking_bubble():
+    """Every delivery in the handlers hands over the bubble to close.
+
+    Otherwise a handler can be written that sends files while the
+    reasoning is still on screen, and nothing would notice.
+    """
+    import ast
+
+    tree = ast.parse((BOT_DIR / "handlers.py").read_text(encoding="utf-8"))
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "send_files"
+    ]
+    assert calls, "the handlers deliver files at all"
+    for call in calls:
+        names = {kw.arg for kw in call.keywords}
+        assert "thinking" in names, (
+            "a send_files call without the thinking bubble would leave the "
+            f"document under a live thought (line {call.lineno})"
+        )

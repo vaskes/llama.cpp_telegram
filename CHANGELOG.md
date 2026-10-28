@@ -110,14 +110,27 @@ bucket is keyed by the turn, so two turns cannot hand each other a
 file; a turn the user stopped drops its files; and a bucket nobody
 collected is emptied, with the temp copy behind it.
 
+The **order** was the second half of the rule, and it was wrong in
+production: every handler sent the prose, then the files, and only
+then deleted the "thinking..." bubble. A document that arrives while
+that bubble is still on screen reads as part of the thought -- which
+is what the operator saw. The bubble now goes down first, inside the
+one place the files leave from, so nobody can reorder the two later
+by accident.
+
 * New module `telegram-bot/llm_staged.py` -- the shelf.
 * `telegram-bot/llm_dispatch.py` -- `send_file` stages instead of
   sending; it does not reach Telegram at all.
 * `telegram-bot/llm_files.py` -- the answer's delivery sends the
-  staged files, last.
+  staged files, last, and the bubble goes down before them.
+* `telegram-bot/llm_thinking.py` -- `close_thinking`, the one place
+  that takes the bubble down; it never raises.
 * `telegram-bot/llm_sendfile.py` -- the description the model reads
   says when the file goes out.
-* CODEBOOK **X-29**; `tests/test_send_file_tool.py` (16 -> 20).
+* `whisper-api/.env.example` -- the variable the server actually
+  reads (`WHISPER__MODEL`), not the one nobody read.
+* CODEBOOK **X-29**; `tests/test_send_file_tool.py` (16 -> 22);
+  `tests/test_t46_silent_delete.py` (6 -> 7).
 
 
 ## [v0.17.0-stable] — 2026-10-28 — The transcript has a budget, and one turn is one message

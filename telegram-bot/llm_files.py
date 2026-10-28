@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 
 from chat_utils import TELEGRAM_TEXT_CHUNK, _rate_limit_send
+from llm_thinking import close_thinking
 from logconf import get_logger
 
 log = get_logger(__name__)
@@ -51,7 +52,7 @@ _MAX_FILE_BYTES = 10 * 1024 * 1024
 _TEXT_CHUNK = TELEGRAM_TEXT_CHUNK
 
 
-async def send_files(update, files) -> None:
+async def send_files(update, files, *, thinking=None) -> None:
     """Send every file of an answer as its own document.
 
     A failure to send one file does not stop the others: the user
@@ -63,7 +64,14 @@ async def send_files(update, files) -> None:
     operator leaves with the answer to the user, not in the middle of
     the turn, where it used to land between two thoughts of a reasoning
     that was still streaming.
+
+    The reasoning bubble goes down FIRST, and that order is the point:
+    a document that arrives under a live "thinking..." message reads
+    as part of the thought.  The bubble is closed here, in the one
+    place the files leave from, so nobody can reorder the two later
+    by accident.
     """
+    await close_thinking(thinking)
     for artifact in files or ():
         try:
             await _send_one(update, artifact)

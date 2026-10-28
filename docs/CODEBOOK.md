@@ -1758,12 +1758,20 @@ The rules:
     the turn, and a document arriving after the cancel is exactly the
     surprise this rule is about;
   * **what nobody collected is litter** -- a bucket nobody came back
-    for is emptied, and the temp copy behind it goes with it.
+    for is emptied, and the temp copy behind it goes with it;
+  * **the reasoning bubble goes down before the file does** -- a
+    document that arrives under a live "thinking..." message reads as
+    part of the thought.  The production order was prose, then file,
+    then bubble deleted: that is what the operator saw, and it is the
+    order the delivery now refuses to have.
 
-Checked by `tests/test_send_file_tool.py` (20): the tool sends
+Checked by `tests/test_send_file_tool.py` (22): the tool sends
 nothing, the delivery carries the bytes, the bucket is per turn, a
-stopped turn drops its file, and a stowaway check on the source of
-the tool catches a second way to send.
+stopped turn drops its file, the bubble is down before the document
+goes out, and a stowaway check on the source of the tool catches a
+second way to send.  The bubble's own deletion is pinned by
+`tests/test_t46_silent_delete.py` (7): it is delegated to one helper
+in all four handlers, and that helper never raises.
 
 ---
 
@@ -1966,7 +1974,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 
 | `test_console_output_in_chat.py` | 9 | The console output goes into the chat; it is not a file |
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
-| `test_send_file_tool.py` | 20 | A file from the sandbox reaches the chat as a document, with the answer -- and the delivery removes nothing |
+| `test_send_file_tool.py` | 22 | A file from the sandbox reaches the chat as a document, with the answer -- and the delivery removes nothing |
 | `test_file_transport.py` | 16 | The file door: the bytes, the digest, the version -- and no way to delete |
 | `test_sandbox_contract.py` | 16 | The bot's claims about the sandbox match the sandbox we run |
 | `test_donsetch_contract.py` | 10 | The bot's claims about donsetch match the donsetch we pin -- and the model is told the handle |

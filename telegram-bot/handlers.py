@@ -39,6 +39,7 @@ import tempfile
 from llm_result import _format_executed_tools, unwrap_answer
 from user_notice import DOWNLOAD_FAILURE_MESSAGE, failure_message
 from llm_files import send_files
+from llm_thinking import close_thinking
 from llm_abort import finalize_aborted_turn
 # The answers the bot sends are remembered, so the delete_messages tool
 # can take one back: the Bot API cannot list a chat's messages.
@@ -848,7 +849,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # The files go out even when there is no prose: an answer that
         # is nothing but a document has no prose to send, and dropping
         # the file would leave the user with nothing at all.
-        await send_files(update, answer.files)
+        await send_files(update, answer.files, thinking=thinking)
     except Exception as e:
         # `log.exception`, not `log.info`: every real failure in this file
         # was logged at INFO, which left `journalctl -p warning` empty
@@ -864,11 +865,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     finally:
         # T46: revert T45. See handle_text for rationale.
-        if thinking is not None:
-            try:
-                await thinking.delete()
-            except Exception:
-                pass
+        try:
+            await close_thinking(thinking)
+        except Exception:
+            pass
         # B1: the abort event is only registered when a thinking message
         # exists, so there is nothing to pop otherwise -- and reaching for
         # thinking.message_id anyway raised AttributeError. 2026-10-22: the
@@ -1044,7 +1044,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # The files go out even when there is no prose: an answer that
         # is nothing but a document has no prose to send, and dropping
         # the file would leave the user with nothing at all.
-        await send_files(update, answer.files)
+        await send_files(update, answer.files, thinking=thinking)
     except Exception as e:
         log.exception(f"[ERR voice] {type(e).__name__}: {e}")
         # Rollback is best-effort here. Unguarded, a rollback failure
@@ -1060,11 +1060,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.exception("[ERR voice] error reply failed")
     finally:
         # T46: revert T41. See handle_text for rationale.
-        if thinking is not None:
-            try:
-                await thinking.delete()
-            except Exception:
-                pass
+        try:
+            await close_thinking(thinking)
+        except Exception:
+            pass
         # Same LRU cleanup the other three handlers do. Voice was the
         # one that skipped it, so a stream of voice notes spent up to a
         # quarter of the _ABORT_EVENTS_MAXSIZE budget on entries nothing
@@ -1235,7 +1234,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # The files go out even when there is no prose: an answer that
             # is nothing but a document has no prose to send, and dropping
             # the file would leave the user with nothing at all.
-            await send_files(update, answer.files)
+            await send_files(update, answer.files, thinking=thinking)
         except Exception as e:
             log.exception(f"[ERR doc] {type(e).__name__}: {e}")
             # The user sent a document and is waiting. text/photo/voice
@@ -1253,11 +1252,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             # T46: revert T45. See handle_text for rationale.
-            if thinking is not None:
-                try:
-                    await thinking.delete()
-                except Exception:
-                    pass
+            try:
+                await close_thinking(thinking)
+            except Exception:
+                pass
             # B1: the abort event is registered only when a thinking message
             # exists, so there is nothing to pop otherwise. The per-user slot is
             # released by this handler's outermost finally, not here -- see the
@@ -1443,7 +1441,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # The files go out even when there is no prose: an answer that
             # is nothing but a document has no prose to send, and dropping
             # the file would leave the user with nothing at all.
-            await send_files(update, answer.files)
+            await send_files(update, answer.files, thinking=thinking)
         except Exception as e:
             import traceback
             log.exception(f"[ERR text] {type(e).__name__}: {e}")
@@ -1461,7 +1459,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # sees the final answer in a single, separate message
             # which is the desired behaviour.
             try:
-                await thinking.delete()
+                await close_thinking(thinking)
             except Exception:
                 pass
             # Deregister the per-task abort event so a subsequent

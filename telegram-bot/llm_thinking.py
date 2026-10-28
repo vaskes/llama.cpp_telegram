@@ -69,6 +69,25 @@ class ThinkingThrottle:
         return now - self.last_push < THROTTLE_SEC
 
 
+async def close_thinking(thinking_msg) -> None:
+    """Take the reasoning bubble down.
+
+    The bubble is the user's window into the model's thinking, and it
+    has to be gone before the answer's files go out: a document that
+    lands under a live "thinking..." message reads as part of the
+    thought (the operator's rule of 2026-10-28).
+
+    A bubble that is already gone, or that Telegram refuses to delete,
+    is not an error: the answer still has to go out.
+    """
+    if thinking_msg is None:
+        return
+    try:
+        await thinking_msg.delete()
+    except Exception as e:
+        log.info(f"[thinking delete] {type(e).__name__}: {e}")
+
+
 async def push_thinking(reasoning_text: str, *, thinking_msg, silent: bool,
                         throttle: ThinkingThrottle,
                         force: bool = False) -> bool:
