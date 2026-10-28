@@ -47,10 +47,14 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: The side-car is another repository (a submodule) and `docs/archive/`
-#: is a dated record, not instructions. Neither is scanned.
-SKIP_DIRS = {".git", ".mavis", ".home", "__pycache__", "node_modules",
-             "sandbox", "venv", "archive"}
+#: The side-car is another repository (a submodule) and `docs/archive/` is
+#: a dated record, not instructions. Neither is scanned. `donsetch` is a
+#: second submodule, and `.worktrees/` holds other checkouts of THIS
+#: repository: their markdown is a copy of these documents at an older
+#: commit, so a pointer that was fixed here is still broken there -- and
+#: the tree would go red on the copy instead of on the truth.
+SKIP_DIRS = {".git", ".mavis", ".home", ".worktrees", "__pycache__",
+             "donsetch", "node_modules", "sandbox", "venv", "archive"}
 
 #: A pointer: a backticked path to a markdown file, then a section sign.
 #: The name runs to the end of the clause -- a semicolon, a pipe or the
