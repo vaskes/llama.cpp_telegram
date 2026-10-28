@@ -76,7 +76,7 @@ in one place and a test fails when the tree drifts away from it.
 
 ## What the bot can do
 
-- 🐚 **Run shell commands in a sandbox** (`bash_command`, personal mode only) — see the [killer feature](#-killer-feature-bash_command-personal-mode-only) above. Defence in depth: profile gate, tool whitelist (T38.5), soft-reject unknown tools (T43/T49), per-chat tmux session.
+- 🐚 **Run shell commands in a sandbox** (`bash_command`, personal mode only) — see the [sandboxed shell](#-bash_command-the-sandboxed-shell-personal-mode-only) below. Defence in depth: profile gate, tool whitelist (T38.5), soft-reject unknown tools (T43/T49), per-chat tmux session.
 - 💬 Text, conversation context (last 20 messages per sub-talk / topic)
 - 🖼 Image analysis (vision models in llama.cpp)
 - 🤤 Voice messages via Whisper
@@ -90,7 +90,8 @@ in one place and a test fails when the tree drifts away from it.
   `web_screenshot`) are one such server, [donsetch-http](https://github.com/dondai44423/donsetch);
   the bot also keeps a native client for them, because that client
   wants the server's split shape (see "Related" below). `bash_command`
-  (sandboxed shell, personal mode only) is the killer feature.
+  (sandboxed shell, personal mode only) is the one tool that comes with
+  a threat model.
 - 🔒 **Whitelist** by Telegram `user_id` / `@username` (env vars, LOCKDOWN by default in private mode)
 - 💾 **Persistent conversation history** in SQLite, per (chat_id, thread_id) — survives restarts
 - 🧠 **GROUP_CONTEXT system prompt** — LlmChatPlace rules (10-step rating scale, [llm] tag, truth-over-style, no tone policing) injected on every call_llama, in both tool and rating modes. Survives model switches and /reset.
@@ -107,15 +108,14 @@ and webhook (sub-second latency, requires a public endpoint with TLS).
 See [docs/WEBHOOK.md](docs/WEBHOOK.md) for when to use which and how
 to set up webhook mode.
 
-## 🐚 Killer feature: `bash_command` (personal mode only)
+## 🐚 `bash_command`: the sandboxed shell (personal mode only)
 
-> **The unique selling point of this bot.** As of `v0.11.0`
-> (and every release since), the model can call a `bash_command`
-> tool that runs shell commands in a hardened sandbox container.
-> No other public Telegram bot offers a comparable capability
-> with this threat model: read files, run scripts, manage
-> projects, remember state across calls in a persistent tmux
-> session — all from inside a Telegram chat.
+> **The shell, in a container.** The model can call a `bash_command`
+> tool that runs shell commands in a hardened sandbox container: read
+> files, run scripts, manage projects, remember state across calls in a
+> persistent tmux session. A harness needs a shell to do anything at
+> all, so this is ordinary equipment — and the one tool that comes
+> with a threat model.
 >
 > **🚨 DO NOT ENABLE IN PUBLIC ANONYMOUS CHATS.** The
 > `bash_command` tool is gated to `LLAMABOT_DEPLOYMENT_PROFILE=personal`
@@ -306,7 +306,7 @@ script with that tag. See
 - **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — common issues, including group-mode gotchas
 - **[CHANGELOG.md](CHANGELOG.md)** — release notes for humans
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — where the project goes next: the three open operator decisions, the one manual test, and the research spike that is deliberately last
-- **[docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md)** — `bash_command` killer feature: setup, threat model, repository dependency, compatibility matrix, operator runbook (v0.11.0+)
+- **[docs/BASH-SANDBOX.md](docs/BASH-SANDBOX.md)** — the sandboxed shell: setup, threat model, repository dependency, compatibility matrix, operator runbook (v0.11.0+)
 - **[docs/TOOL-ISOLATION.md](docs/TOOL-ISOLATION.md)** — defence in depth: bot-side tool whitelist against llama-server's native `--agent` / MCP-loaded tools; the security boundary that lets `bash_command` stay safe
 - **[docs/README.md](docs/README.md)** — the map of the documentation tree: what is live, what is archived, and what each document answers
 - **[docs/TODO.md](docs/TODO.md)** — the active backlog (the only live task list in the repo)

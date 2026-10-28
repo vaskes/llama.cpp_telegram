@@ -17,6 +17,28 @@ this file is the human-readable summary.
 
 **After `v0.16.0-stable`.** The next cycle starts here.
 
+### The README stopped selling the shell
+
+The block was headed "Killer feature" and opened with "The unique selling
+point of this bot ... No other public Telegram bot offers a comparable
+capability with this threat model". Two problems with that, in a README
+whose next section says every claim is checked:
+
+- **a shell is not a differentiator for a harness.** The README now
+  describes the bot as a harness by component; a harness without a shell
+  has nothing to work on, so the tool is ordinary equipment and the
+  honest register is "the shell, in a container";
+- **the competitive claim was unchecked.** "No other public Telegram bot
+  offers a comparable capability" is a claim about every other bot in
+  the world, and nobody recomputes it — the same class of rot as a
+  version number copied into prose.
+
+The block now says what the tool is, what it costs (a threat model) and
+where the runbook is. The same words went out of `docs/ARCHITECTURE.md`
+and `docs/BASH-SANDBOX.md`; the anchor the "What the bot can do" list
+points at was renamed with it, and it said "above" while the section
+was below.
+
 ## [v0.16.0-stable] — 2026-10-28 — The harness, the handle, and a setting instead of a constant
 
 **After `v0.15.1-stable`.** The bot is a harness, the model is told how

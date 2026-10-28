@@ -222,14 +222,13 @@ servers are the operator's, and the model cannot add one. (Production
 has had one since 2026-10-27: the bot's own side-car, read-only tools
 only, gated to the allowlisted chat.)
 
-## bash_command — killer feature, defence in depth
+## bash_command — the sandboxed shell, defence in depth
 
 The `bash_command` tool gives the model a general-purpose shell in
 a sandboxed Linux container. State (cwd, env, history, running
 processes) persists across calls in the same chat via tmux
-sessions keyed by `chat-{chat_id}`. This is the bot's killer
-feature since v0.11.0, and it is **the most dangerous code
-path in the entire bot**. The defence layers are:
+sessions keyed by `chat-{chat_id}`. It is **the most dangerous
+code path in the entire bot**. The defence layers are:
 
   1. **Profile gate** (`LLAMABOT_DEPLOYMENT_PROFILE=personal`).
      The tool is structurally absent in `public` profile; no

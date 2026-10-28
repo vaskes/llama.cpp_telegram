@@ -16,14 +16,12 @@ own container. The bot never executes shell locally; it forwards
 the call over HTTP with a bearer token and gets back the
 command's output.
 
-This is the killer feature. As of this writing, no public
-Telegram bot offers a comparable capability with this threat
-model: the model can read files, run scripts, install packages
-(within the sandbox's allowed set), and remember state across
-calls in a persistent shell — all without the operator opening
-a terminal on the host. Combined with `donsetch_web_*` tools
-the bot becomes a general-purpose AI assistant in a Telegram
-chat.
+A harness without a shell has nothing to work on: the model can
+read files, run scripts, install packages (within the sandbox's
+allowed set), and remember state across calls in a persistent
+shell — all without the operator opening a terminal on the host.
+Combined with `donsetch_web_*` tools the bot becomes a
+general-purpose AI assistant in a Telegram chat.
 
 ## Why this is dangerous
 
