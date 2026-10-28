@@ -67,12 +67,15 @@ from pathlib import Path
 
 DEFAULT_ROOT = "/opt/telegrambot/bot/repo"
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT)
-IMAGE = "bot-testimg311"
+IMAGE = os.environ.get("MUTATION_HARNESS_IMAGE", "")
 TARGETS = "tests/test_blockers.py"# Short on purpose: a mutation that hangs must be scored within a
 # bounded time rather than stalling the whole harness.
 PER_TEST_TIMEOUT = 150
 
 H = ROOT / "telegram-bot" / "handlers.py"
+#: The unwrap of call_llama's return value -- one form, used by the
+#: primary path and the retry alike.
+R = ROOT / "telegram-bot" / "llm_result.py"
 T = ROOT / "telegram-bot" / "turn.py"
 NL = chr(10)
 
@@ -130,54 +133,78 @@ atexit.register(_write_marker)
 # --- the mutations ----------------------------------------------------
 
 def _drop_guard(m):
-    return (m.group(1)
-            + m.group(2)[:m.group(2).index("return")]
-            + "pass" + NL)
+    """The check is removed; the call stays.
+
+    Group 1 is the call, group 2 the check including its `return`. The
+    `pass` takes the indent of the `if` it replaces.
+    """
+    check = m.group(2)
+    indent = check[:len(check) - len(check.lstrip())]
+    return m.group(1) + indent + "pass" + NL
 
 
-GUARD = r'f"\[handle_photo\][^\n]*\n *f"[^\n]*\n'
-GUARD_V = r'f"\[handle_voice\][^\n]*\n *f"[^\n]*\n'
-GUARD_D = r'f"\[handle_document\][^\n]*\n *f"[^\n]*\n'
-GUARD_T = r'"\[handle_text\][^\n]*\n *"[^\n]*\n'   # not an f-string
+#: The four handlers used to carry their own copy of the guard, and
+#: each mutation removed the copy of one of them. The copies are gone:
+#: the thinking message is opened by one helper now, and each handler
+#: checks the result itself. So the mutation is still per-handler -- it
+#: removes the check of one handler -- but the site it removes is the
+#: `if opened is None` after that handler's call.
+GUARD = r"handle_photo"
+GUARD_V = r"handle_voice"
+GUARD_D = r"handle_document"
+GUARD_T = r"handle_text"   # not an f-string
 
 
-def guard_pattern(warn):
-    """Group 1 is the indent, group 2 the whole guard including `return`."""
-    return (r"( *)(if thinking is None:\n"
-            r" *log\.warning\(" + warn + r" *return\n)")
+def guard_pattern(label):
+    """Group 1 is the call, group 2 the whole check including `return`."""
+    return (r"( *opened = await _open_thinking\(update, label='" + label
+            + r"'\)\n)"
+            r"( *if opened is None:\n"
+            r" *return\n)")
 
 
 MUTATIONS = [
-    ("the retry treats call_llama's dict as text (wave 1 blocker)", H, [
-        (r" *bot_response = _result\.get\(\"text\"\) or \"\"",
-         lambda m: m.group(0).split("=")[0] + "= _result",
-         4),
+    # The four handlers used to carry their own copy of the unwrap, and
+    # the mutation removed all four. There is one copy now --
+    # `unwrap_answer` in llm_result.py -- so the mutation removes that
+    # one. The defect is the same: the dict is treated as the text.
+    ("the retry treats call_llama's dict as text (wave 1 blocker)", R, [
+        (r"    text = result\.get\(\"text\"\) or \"\"\n",
+         "    text = result\n",
+         1),
     ]),
-    ("the retry drops the executed-tools preamble (wave 1 blocker)", H, [
-        (r"(_hist = _format_executed_tools\(_exec\)\n)"
-         r"( *if _hist:\n)"
-         r"( *bot_response = _hist \+ \"\\n\\n\" \+ bot_response\n)",
+    ("the retry drops the executed-tools preamble (wave 1 blocker)", R, [
+        # The trace reaches the chat through the preamble the unwrap
+        # puts in front of the prose. The mutation used to drop the
+        # preamble where it was assembled -- four copies, one per
+        # handler -- and the assembly moved: there is one copy now,
+        # and the chat's copy is the one the tripwire looks at. So the
+        # mutation drops the chat's preamble, which is the defect it is
+        # named for: the chat answers without the tool trace.
+        (r"( *if chat_trace:\n)"
+         r"( *prose = chat_trace \+ \"\\n\\n\" \+ prose\n)",
          # `pass` takes the indent of the line it replaces -- the body,
          # one level deeper than the `if`. Putting it at the `if`'s own
          # indent is an IndentationError, and the harness scores that
          # INVALID rather than measuring anything.
-         lambda m: (m.group(1) + m.group(2)
-                    + m.group(3).split("_retry_text")[0] + "pass" + NL),
-         4),
+         lambda m: (m.group(1)
+                    + m.group(2).split("prose =")[0] + "pass" + NL),
+         1),
     ]),
     # The retry path builds its preamble from `_retry_exec`, which the
     # mutation above does not touch. Four sites, three sites, and it
     # assigns `_retry_text` where the other path assigns `bot_response`.
     # They read the same in a diff and are not the same code -- which is
     # why an anchor written against one found nothing in the other.
-    ("the retry drops its own executed-tools preamble", H, [
-        (r"(_retry_hist = _format_executed_tools\(_retry_exec\)\n)"
-         r"( *if _retry_hist:\n)"
-         r"( *_retry_text = _retry_hist \+ \"\\n\\n\" \+ _retry_text\n)",
-         lambda m: (m.group(1) + m.group(2)
-                    + m.group(3).split("_retry_text")[0] + "pass" + NL),
-         3),
-    ]),
+    # The retry path used to carry its own copy of the unwrap, built
+    # from `_retry_exec` and assigning `_retry_text`. There is one copy
+    # now -- `unwrap_answer` serves the primary path and the retry
+    # alike -- so a mutation of "the retry's own preamble" has no
+    # separate site to remove: it would be the same mutation as the
+    # one above, measuring the same thing twice and calling it two
+    # proofs. The retry's own guard is
+    # test_retry_keeps_the_executed_tools_preamble, and it is that
+    # tripwire which the mutation above has to turn red.
     ("thinking-is-None guard removed (handle_photo)", H, [
         (guard_pattern(GUARD), _drop_guard, 1)]),
     ("thinking-is-None guard removed (handle_voice)", H, [
@@ -240,13 +267,25 @@ MUTATIONS = [
 # --- running ----------------------------------------------------------
 
 def _run_once():
+    if IMAGE:
+        return subprocess.run(
+            f"rm -f /tmp/mut.db && docker run --rm "
+            f"-v {ROOT}:{ROOT} -w {ROOT} "
+            f"-e BOT_TOKEN=1:fake -e CONVERSATIONS_DB=/tmp/mut.db "
+            f"{IMAGE} python -m pytest {TARGETS} -q --tb=line -p no:cacheprovider",
+            shell=True, capture_output=True, text=True,
+            timeout=PER_TEST_TIMEOUT)
+    # The checkout is enough: the suite runs with the current
+    # interpreter. The harness used to require the docker image
+    # unconditionally, so it could only run on the production host --
+    # and a proof that can only run on one machine is not a proof, it
+    # is a ritual.
+    env = dict(os.environ, BOT_TOKEN="1:fake", CONVERSATIONS_DB="/tmp/mut.db")
     return subprocess.run(
-        f"rm -f /tmp/mut.db && docker run --rm "
-        f"-v {ROOT}:{ROOT} -w {ROOT} "
-        f"-e BOT_TOKEN=1:fake -e CONVERSATIONS_DB=/tmp/mut.db "
-        f"{IMAGE} python -m pytest {TARGETS} -q --tb=line -p no:cacheprovider",
-        shell=True, capture_output=True, text=True,
-        timeout=PER_TEST_TIMEOUT)
+        [sys.executable, "-m", "pytest", *TARGETS.split(),
+         "-q", "--tb=line", "-p", "no:cacheprovider"],
+        cwd=str(ROOT), capture_output=True, text=True,
+        timeout=PER_TEST_TIMEOUT, env=env)
 
 
 def run_tests():
