@@ -144,8 +144,12 @@ MUTATIONS = [
     # reports "all pass", the verdict is not wired to the cases at all.
     ("reply-to: a case fails and only the last case decides",
      A, [
-         (r'(\"reply to another human in group\", \"supergroup\", True, 10, 20, \"agreed\", )True\)',
-          r'\1False)', 1),
+         # The case carries two more fields now, so the anchor that
+         # expected the tuple to end at the expected value matched
+         # nothing: the mutation was REFUSED, and a REFUSED mutation
+         # is neither caught nor survived.
+         (r'(\"reply to another human in group\", \"supergroup\", True, 10, 20, \"agreed\", )True(, None, None)\)',
+          r'\1False\2)', 1),
          (r'( *)(if got != expected:\n'
           r' *log\.warning\(f"  \[FAIL\] \{label\}: got=\{got\} expected=\{expected\}"\)\n'
           r'( *)rpl_ok = False\n)',

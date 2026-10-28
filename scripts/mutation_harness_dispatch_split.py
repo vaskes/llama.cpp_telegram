@@ -43,8 +43,8 @@ MUTATIONS = [
     ("E2", "dispatch_webhook.py",
      "        start_summarise_on_boot()\n", "        pass\n", 1),
     ("E3", "dispatch_webhook.py",
-     "        start_reanchor_scheduler()\n        start_summarise_on_boot()\n",
-     "        pass\n", 1),
+     "            start_reanchor_scheduler()\n            start_summarise_on_boot()\n",
+     "            pass\n", 1),
     ("F4", "dispatch.py",
      "    await app.process_update(upd)\n", "    pass\n", 1),
 ]
