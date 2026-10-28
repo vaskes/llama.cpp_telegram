@@ -1784,6 +1784,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_send_file_tool.py` | 16 | A file from the sandbox reaches the chat as a document -- and the delivery removes nothing |
 | `test_file_transport.py` | 16 | The file door: the bytes, the digest, the version -- and no way to delete |
 | `test_sandbox_contract.py` | 16 | The bot's claims about the sandbox match the sandbox we run |
+| `test_donsetch_contract.py` | 8 | The bot's claims about donsetch match the donsetch we pin |
 | `test_engine_failure_message.py` | 9 | What the user reads when the engine could not be reached |
 | `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |
 | `test_truncation_markers.py` | 7 | A cut says so -- on every path that cuts |
@@ -1811,7 +1812,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_failure_message_culprit.py` | 8 | A refusal names the culprit: the engine, Telegram, or the bot |
 | `test_doc_section_pointers.py` | 4 | A pointer names a section that exists, and never a moving one |
 
-172 test files in total; the table above is the ones that guard a rule in
+173 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

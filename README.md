@@ -4,7 +4,7 @@
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Release](https://img.shields.io/github/v/release/vaskes/llama.cpp_telegram?label=release)](../../releases)
-[![Tests: 2897](https://img.shields.io/badge/tests-2897-brightgreen)](tests/)
+[![Tests: 2909](https://img.shields.io/badge/tests-2909-brightgreen)](tests/)
 
 > **Current stable: `v0.15.1-stable`** (2026-10-28, commit `98c2316`).
 > Pin to a tag — see the clone command below.
@@ -223,7 +223,7 @@ The bot can:
 - 🛡 **Malformed tool-call JSON rejection** — defensive parse in the dispatcher; runaway Qwen-500 loops (10× duplicated keys) caught and rejected with feedback to the LLM.
 - ⏹ **Per-handler Stop button** — the ⏹ on a thinking message aborts THAT handler only. Keyed on (chat_id, thinking.message_id), not (chat_id, user_id) so concurrent handlers don't overwrite each other. **v0.9.1**: image abort now also rolls back the persisted user message, so the next text prompt is not answered about the cancelled image.
 - 🎬 **Non-streaming tool-call path** — vision tasks (handle_photo) now run the unified tool loop instead of returning empty when the LLM emits a tool_call on a non-streaming POST.
-- 🤖 **Donsetch 4.7.4 split-shape** — `DONSETCH_MCP__TEXT_ONLY=false` in the compose file gives back the human-readable text response that the bot's `donsetch_call` was designed for.
+- 🤖 **Donsetch** — a third-party MCP server (AGPL-3.0, pinned as a submodule) that answers the web tools. The bot's native client wants the **split shape**: a human-readable text result instead of the MCP `[meta]` envelope, which the server produces with `DONSETCH_MCP__TEXT_ONLY=false`. The pinned version lives in `telegram-bot/personal_tools/donsetch_contract.py` -- one place, checked against the tree.
 - 🧵 **Two deployment modes**:
   - **Private chat** — 1 user, multi-thread via `/newsub` `/sub` `/subs` (in-DB sub-talks)
   - **Group with Telegram Topics** — N users, native forum topics via `/newsub` (creates a Telegram topic), `/subs` (lists topics), `/delsub` (deletes a topic). Replies stay in the topic where the user is.
@@ -422,6 +422,14 @@ For tool-calling (web search, fetch, crawl, screenshots):
 Rust MCP server with Playwright headless Chrome; aggregates 6 search engines
 (Bing, DDG, Mojeek, Yahoo, Brave, Google) and bypasses CAPTCHA via real
 browser rendering.
+
+It is pinned here as a git submodule (`donsetch/`), the same way the
+sandbox side-car is pinned: the version the bot is tested against is the
+version the tree carries, and `tests/test_donsetch_contract.py` fails if
+the two drift apart. The pin itself lives in
+`telegram-bot/personal_tools/donsetch_contract.py` -- one place, so the
+documents cannot quote a version of their own. The sandbox is MIT; this
+one is AGPL-3.0 -- a submodule is a separate work with its own terms.
 
 ## Credits
 
