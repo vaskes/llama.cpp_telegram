@@ -337,7 +337,7 @@ def main():
     dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--short"],
                            capture_output=True, text=True)
     print("tree after the run:", dirty.stdout.strip() or "clean")
-    return 1 if wrong else 0
+    return 1 if (wrong or refused or invalid) else 0
 
 
 if __name__ == "__main__":

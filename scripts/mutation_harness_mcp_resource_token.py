@@ -299,7 +299,7 @@ def main():
     if dirty.stdout.strip():
         print("THE TREE IS DIRTY:\n" + dirty.stdout, flush=True)
         return 1
-    return 0 if not wrong else 1
+    return 1 if (wrong or refused or invalid) else 0
 
 
 if __name__ == "__main__":

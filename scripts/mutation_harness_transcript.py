@@ -270,7 +270,7 @@ def main():
     print(f"\n=== {len(MUTATIONS)} mutations: "
           f"{caught} caught, {survived} survived, "
           f"{refused} refused, {invalid} invalid ===", flush=True)
-    return 1 if survived or refused else 0
+    return 1 if (survived or refused or invalid) else 0
 
 
 if __name__ == "__main__":
