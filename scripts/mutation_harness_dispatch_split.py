@@ -13,6 +13,7 @@ report INVALID is a decoration:
   * the suite is the judge. A hang is caught-by-hang, not a pass.
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -22,7 +23,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 HOST = sys.argv[1] if len(sys.argv) > 1 else "root@85.136.112.144"
-SSH = ["ssh", "-i", "/root/.ssh/mavis_host", "-p", "12007", HOST]
+PORT = os.environ.get("MUTATION_HARNESS_SSH_PORT", "12007")
+# The key and the test image are the two things this harness cannot
+# invent: the key to reach the host, and an image that carries the
+# suite's dependencies. Both used to be written down, and the key was
+# written down as a path that exists nowhere -- on the host or in a
+# checkout -- so the harness could not run at all, and it reported a
+# clean run while measuring nothing. Now they are named by the
+# environment, and the defaults are the ones the host had.
+KEY = os.environ.get("MUTATION_HARNESS_SSH_KEY", "/root/.ssh/mavis_host")
+IMAGE = os.environ.get("MUTATION_HARNESS_IMAGE", "bot-testimg311")
+SSH = ["ssh", "-i", KEY, "-p", PORT,
+       # accept-new, not a blind yes: a host key that CHANGED still
+       # fails, and a host seen for the first time is written down.
+       "-o", "StrictHostKeyChecking=accept-new", HOST]
 
 # (id, file, old, new, n_expected)
 MUTATIONS = [
@@ -83,7 +97,7 @@ def run_suite(workdir: str) -> dict:
     cmd = SSH + [
         f"cd {workdir} && docker run --rm "
         f"-v {workdir}:/w -w /w -e CONVERSATIONS_DB=/tmp/mut.db "
-        f"-e ALLOWED_USER_IDS=1 bot-testimg311 "
+        f"-e ALLOWED_USER_IDS=1 {IMAGE} "
         f"python -m pytest tests/ -q -p no:cacheprovider --tb=no "
         f"--ignore=tests/test_shell_integration.py",
     ]
@@ -135,7 +149,8 @@ def push(workdir: str, files: dict):
         p = Path(workdir) / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-        r = subprocess.run(["scp", "-i", "/root/.ssh/mavis_host", "-P", "12007",
+        r = subprocess.run(["scp", "-i", KEY, "-P", PORT,
+                            "-o", "StrictHostKeyChecking=accept-new",
                             str(p), f"{HOST}:{workdir}/{rel}"],
                            capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
