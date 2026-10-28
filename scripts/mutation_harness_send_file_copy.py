@@ -132,23 +132,23 @@ MUTATIONS = [
          r"    #    the shell, where the intent is explicit\.\n",
          OLD_CALL, 1),
         (DISPATCH,
-         r"        text=\(f\"\[send_file: sent \{name\} \(\{fetched\.size\} bytes, \"\n"
-         r"              f\"sha256 \{fetched\.sha256\}\) to the chat; the sandbox copy is \"\n"
-         r"              f\"still at \{path\}\]\"\),\n",
+         r"        text=\(f\"\[send_file: staged \{name\} \(\{fetched\.size\} bytes, \"\n"
+         r"              f\"sha256 \{fetched\.sha256\}\) for delivery with the answer; \"\n"
+         r"              f\"the sandbox copy is still at \{path\}\]\"\),\n",
          OLD_TEXT, 1),
     ]),
     ("the answer claims the copy was removed", "CAUGHT", [
         (DISPATCH,
-         r"              f\"sha256 \{fetched\.sha256\}\) to the chat; the sandbox copy is \"\n"
-         r"              f\"still at \{path\}\]\"\),\n",
-         "              f\"sha256 {fetched.sha256}) to the chat; the sandbox copy was \"\n"
-         "              f\"removed]\"),\n", 1),
+         r"              f\"sha256 \{fetched\.sha256\}\) for delivery with the answer; \"\n"
+         r"              f\"the sandbox copy is still at \{path\}\]\"\),\n",
+         "              f\"sha256 {fetched.sha256}) for delivery with the answer; \"\n"
+         "              f\"the sandbox copy was removed]\"),\n", 1),
     ]),
     ("the answer says nothing about where the file is", "CAUGHT", [
         (DISPATCH,
-         r"              f\"sha256 \{fetched\.sha256\}\) to the chat; the sandbox copy is \"\n"
-         r"              f\"still at \{path\}\]\"\),\n",
-         "              f\"sha256 {fetched.sha256}) to the chat]\"),\n", 1),
+         r"              f\"sha256 \{fetched\.sha256\}\) for delivery with the answer; \"\n"
+         r"              f\"the sandbox copy is still at \{path\}\]\"\),\n",
+         "              f\"sha256 {fetched.sha256}) for delivery with the answer]\"),\n", 1),
     ]),
     ("the delete capability comes back into the transport", "CAUGHT", [
         (TRANSPORT,
@@ -167,6 +167,16 @@ MUTATIONS = [
           r"(?m)^async def test_the_answer_does_not_claim_the_copy_was_removed\(sandbox\):\n",
           "async def test_the_answer_does_not_claim_the_copy_was_removed(sandbox):\n"
           "    return\n", 1),
+         # The staging test catches the same mutation from the other
+         # side: it asserts that the tool stages the file and says so
+         # ("staged ...bin"). The old text says "sent", so the
+         # assertion failed even though this mutation never removed
+         # that test -- and a group-B mutation caught by a test it did
+         # not remove is not a group-B mutation at all.
+         (SEND_TEST,
+          r"(?m)^async def test_the_tool_does_not_send_anything\(sandbox\):\n",
+          "async def test_the_tool_does_not_send_anything(sandbox):\n"
+          "    return\n", 1),
          (TRANSPORT_TEST,
           r"(?m)^def test_the_transport_cannot_delete_a_file\(\):\n",
           "def test_the_transport_cannot_delete_a_file():\n    return\n", 1),
@@ -180,9 +190,9 @@ MUTATIONS = [
           r"    #    the shell, where the intent is explicit\.\n",
           OLD_CALL, 1),
          (DISPATCH,
-          r"        text=\(f\"\[send_file: sent \{name\} \(\{fetched\.size\} bytes, \"\n"
-          r"              f\"sha256 \{fetched\.sha256\}\) to the chat; the sandbox copy is \"\n"
-          r"              f\"still at \{path\}\]\"\),\n",
+          r"        text=\(f\"\[send_file: staged \{name\} \(\{fetched\.size\} bytes, \"\n"
+          r"              f\"sha256 \{fetched\.sha256\}\) for delivery with the answer; \"\n"
+          r"              f\"the sandbox copy is still at \{path\}\]\"\),\n",
           OLD_TEXT, 1),
      ]),
 ]
