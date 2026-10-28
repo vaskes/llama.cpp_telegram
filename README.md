@@ -6,7 +6,7 @@
 [![Release](https://img.shields.io/github/v/release/vaskes/llama.cpp_telegram?label=release)](../../releases)
 [![Tests: 2897](https://img.shields.io/badge/tests-2897-brightgreen)](tests/)
 
-> **Current stable: `v0.15.1-stable`** (2026-10-28).
+> **Current stable: `v0.15.1-stable`** (2026-10-28, commit `98c2316`).
 > Pin to a tag — see the clone command below.
 >
 > `v0.15.1` is the **rules-in-code** release: a chat message cannot
