@@ -514,6 +514,7 @@ and the side-car's behaviour cannot drift apart.
 | `4a6c465` (v2.10.2) | this branch | The stdin trap is fixed (the command reads EOF instead of the protocol), the exec limit is the proxy's knob (`AGENT_EXEC_TIMEOUT`), and the proxy waits longer than the limit so the answer that says "this timed out" survives. |
 | `a396101` (v2.12.1) | this branch | The MCP door (v2.12.0) — the one the bot's import uses. The side-car dropped the search engine's read-only mount, so the posture above changed with it. |
 | `b2174e8` (v2.13.0) | this branch | The model's read budget on the MCP door (`AGENT_MCP_MAX_READ_BYTES`, 1 MiB by default): a file over the budget is refused with a sentence that names the size and the limit, and the HTTP file door keeps its own limit. |
+| `72b0e3a` (v2.14.8) | this branch | The pin the production side-car runs: the fourth review of v2.14.7, whose findings were all about a check that looked like it was checking something. Every knob this bot quotes -- the exec range 5..3600, the MCP read budget, the memory limit, the process limit -- reads the same in v2.14.8 as in v2.14.0, so no claim moved with the pin; what moved is that the pin names the side-car that is actually deployed. |
 
 The bot treats the sandbox as a black box: it sends JSON over
 HTTP and gets JSON back. As long as the wire format is
