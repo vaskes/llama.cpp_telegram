@@ -131,6 +131,77 @@ async def fetch_tools_from_llama():
     return []
 
 
+#: The four web tools, as the model is shown them.
+#:
+#: They live in a constant, and not inline in the builder, because the
+#: description is a CLAIM about the server's interface: the search
+#: result carries a handle, the fetch takes one. A claim that cannot be
+#: read cannot be checked -- and the version of this text that said
+#: "Returns titles + snippets + URLs" is what cost a production turn
+#: fifteen guessed URLs (2026-10-28).
+DONSETCH_WEB_TOOL_DEFS: list = [
+    {
+        'type': 'function',
+        'function': {
+            'name': 'donsetch_web_search',
+            'description': 'Web search: aggregated results from 10+ keyless engines (DuckDuckGo, Brave, Startpage, etc.), reranked. Use when the user asks about news, current events, prices, technical docs, anything requiring fresh data. Each result comes back as a compact HANDLE (e.g. S7wfjEZlQ) plus its title, its domain and a snippet. The HANDLE is how you read the page: pass it to donsetch_web_fetch as "@S7wfjEZlQ" (the bare handle works too). Do NOT invent a URL from the title: the paths are unguessable, a guessed URL 404s, and a run of guesses burns the turn.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'query': {'type': 'string', 'description': 'Search query, e.g. "bitcoin price today"'},
+                    'max_results': {'type': 'integer', 'description': 'Max results to return (default 7, max 12). Use only when default is insufficient.'},
+                },
+                'required': ['query']
+            }
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'donsetch_web_fetch',
+            'description': 'Read one page as clean markdown. Use after web_search to read a specific page. The "url" argument takes the HANDLE the search returned (with or without a leading @) or an http(s) URL; prefer the handle, it is the exact page the search found. Returns title, body text, and source URL.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'url': {'type': 'string', 'description': 'A handle from web_search (e.g. "@S7wfjEZlQ" or "S7wfjEZlQ") or an http(s) URL to read'},
+                    'max_chars': {'type': 'integer', 'description': 'Max markdown chars (default 16000). Lower for previews.'},
+                },
+                'required': ['url']
+            }
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'donsetch_web_crawl',
+            'description': 'Read multiple pages from one site. Use when you need breadth (e.g. all docs, all products). Slower than fetch.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'url': {'type': 'string', 'description': 'Seed URL to crawl from'},
+                    'max_pages': {'type': 'integer', 'description': 'Max pages (default 10, cap 200)'},
+                },
+                'required': ['url']
+            }
+        }
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'donsetch_web_screenshot',
+            'description': 'Capture a URL as a rendered PNG (headless browser). Use when you need to see a page visually.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'url': {'type': 'string', 'description': 'http(s) URL to capture'},
+                },
+                'required': ['url']
+            }
+        }
+    },
+]
+
+
 async def build_tool_defs(*, bot, chat_id, chat_type,
                           reply_to_message_id=None,
                           current_message_id=None) -> list[dict]:
@@ -156,66 +227,7 @@ async def build_tool_defs(*, bot, chat_id, chat_type,
     # but donsetch doesn't load, see llama.cpp #13845 or similar). Adding
     # the tools here means the model can call them via tool_calls and we
     # dispatch in this Python process.
-    bot_side_tool_defs = [
-        {
-            'type': 'function',
-            'function': {
-                'name': 'donsetch_web_search',
-                'description': 'Web search: aggregated results from 10+ keyless engines (DuckDuckGo, Brave, Startpage, etc.), reranked. Use when the user asks about news, current events, prices, anything requiring fresh data. Returns titles + snippets + URLs. Follow up with donsetch_web_fetch to read a specific URL.',
-                'parameters': {
-                    'type': 'object',
-                    'properties': {
-                        'query': {'type': 'string', 'description': 'Search query, e.g. "bitcoin price today"'},
-                        'max_results': {'type': 'integer', 'description': 'Max results to return (default 7, max 12). Use only when default is insufficient.'},
-                    },
-                    'required': ['query']
-                }
-            }
-        },
-        {
-            'type': 'function',
-            'function': {
-                'name': 'donsetch_web_fetch',
-                'description': 'Read one URL as clean markdown. Use after web_search to read a specific page. Returns title, body text, and source URL.',
-                'parameters': {
-                    'type': 'object',
-                    'properties': {
-                        'url': {'type': 'string', 'description': 'http(s) URL to read'},
-                        'max_chars': {'type': 'integer', 'description': 'Max markdown chars (default 16000). Lower for previews.'},
-                    },
-                    'required': ['url']
-                }
-            }
-        },
-        {
-            'type': 'function',
-            'function': {
-                'name': 'donsetch_web_crawl',
-                'description': 'Read multiple pages from one site. Use when you need breadth (e.g. all docs, all products). Slower than fetch.',
-                'parameters': {
-                    'type': 'object',
-                    'properties': {
-                        'url': {'type': 'string', 'description': 'Seed URL to crawl from'},
-                        'max_pages': {'type': 'integer', 'description': 'Max pages (default 10, cap 200)'},
-                    },
-                    'required': ['url']
-                }
-            }
-        },
-        {
-            'type': 'function',
-            'function': {
-                'name': 'donsetch_web_screenshot',
-                'description': 'Capture a URL as a rendered PNG (headless browser). Use when you need to see a page visually.',
-                'parameters': {
-                    'type': 'object',
-                    'properties': {
-                        'url': {'type': 'string', 'description': 'http(s) URL to capture'},
-                    },
-                    'required': ['url']
-                }
-            }
-        },
+    bot_side_tool_defs = list(DONSETCH_WEB_TOOL_DEFS) + [
         {
             'type': 'function',
             'function': {

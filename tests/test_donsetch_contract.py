@@ -218,3 +218,53 @@ def test_the_submodule_is_the_repository_the_contract_names():
         f"the contract says the submodule is {DONSETCH_REPO}, and "
         f".gitmodules does not say that")
     assert "donsetch" in modules, "there is no donsetch entry in .gitmodules"
+
+
+def _web_tool(name: str) -> dict:
+    """The tool definition the MODEL is shown, from the tree."""
+    import llm_tools
+    for tool in llm_tools.DONSETCH_WEB_TOOL_DEFS:
+        if tool.get("function", {}).get("name") == name:
+            return tool["function"]
+    raise AssertionError(f"the bot does not offer a tool named {name}")
+
+
+def test_the_search_tool_tells_the_model_about_the_handle():
+    """The search returns a handle; the description has to say so.
+
+    Measured on the production host, 2026-10-28: the search's split-shape
+    result carries a compact handle (`S7wfjEZlQ`), a title, a domain and a
+    snippet -- and no URL. The tool description used to claim "Returns
+    titles + snippets + URLs" and told the model to follow up with
+    `web_fetch` "to read a specific URL". The model did what it was
+    told: it guessed URLs, got a 404 for every guess, and the turn ended
+    at the iteration limit having read nothing.
+
+    The pinned server's own README says the same thing the tool must say
+    ("compact, unguessable link and search handles"), so this check has
+    an external anchor: the bot's description and the server's
+    documentation must not disagree.
+    """
+    description = _web_tool("donsetch_web_search")["description"]
+    assert "handle" in description.lower(), (
+        "the search tool's description does not mention the handle the "
+        "search result actually carries -- the model will guess URLs")
+    readme = (DONSETCH / "README.md").read_text(encoding="utf-8")
+    assert "handle" in readme.lower(), (
+        "the pinned donsetch's README no longer mentions handles -- the "
+        "server's documented interface moved and the bot's description "
+        "has to be re-checked against it")
+
+
+def test_the_fetch_tool_accepts_a_handle():
+    """The fetch takes the handle; the parameter has to say so."""
+    function = _web_tool("donsetch_web_fetch")
+    description = function.get("description", "")
+    url_param = function.get("parameters", {}).get("properties", {}).get(
+        "url", {})
+    assert "handle" in description.lower(), (
+        "the fetch tool's description does not say that it takes the "
+        "handle from the search")
+    assert "handle" in str(url_param.get("description", "")).lower(), (
+        "the url parameter's description does not say that a handle "
+        "is accepted there")

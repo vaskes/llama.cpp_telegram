@@ -61,6 +61,15 @@ you.
                               ones it absorbed from the group, and
                               its own answers
 
+**READING A PAGE THE SEARCH FOUND.** `donsetch_web_search` returns a
+compact HANDLE per result (e.g. `S7wfjEZlQ`) together with the title,
+the domain and a snippet. Read the page by passing that handle to
+`donsetch_web_fetch` as `@S7wfjEZlQ` (the bare handle works too).
+Do NOT invent a URL from the title: the paths are unguessable, a
+guessed URL answers 404, and a run of guesses burns the turn without
+reading anything. When you need several pages, ask for all of them in
+ONE turn -- the bot runs the calls of one turn together.
+
 **USE THE TOOLS ABOVE NORMALLY.** When a user's request
 matches one of these tools, call it. The bot executes
 whitelisted tool calls just like any other LLM tool. Do

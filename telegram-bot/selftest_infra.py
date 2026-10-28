@@ -26,6 +26,7 @@ are not tidied up.
 """
 import asyncio
 import os
+import re
 
 from state import _abort_events, _register_abort_event
 from logconf import get_logger
@@ -87,6 +88,41 @@ async def check_donsetch_integration() -> bool:
             assert isinstance(r2, str), f'web_fetch result is not str: {type(r2)}'
             assert 'Example Domain' in r2, f'web_fetch missing "Example Domain": {r2[:200]}'
             log.info(f'  [OK] web_fetch: {len(r2)} chars, markdown content delivered')
+
+            # THE HANDLE ROUND TRIP. A search result carries a compact
+            # handle, not a URL, and the handle is what reads the page.
+            # The bot's tool description says so, and the model is told
+            # so -- but a description that lies is how a turn ends in
+            # fifteen guessed URLs and a 404 each.
+            #
+            # So this is the property, not the wording: search, take the
+            # handle out of the result, fetch THAT handle, and the page
+            # the search found comes back. If the server's result shape
+            # changes (no more handles, or a handle the fetch refuses),
+            # this goes red here -- in the container that talks to the
+            # live server -- instead of quietly costing the model its
+            # turn.
+            r3 = await donsetch_call('web_search',
+                {'query': 'python 3.13 release', 'max_results': 2})
+            _handle = None
+            for _line in r3.splitlines():
+                _m = re.match(r'^\s*\d+\.\s+(\S+)\s+·', _line)
+                if _m:
+                    _handle = _m.group(1)
+                    break
+            assert _handle, (
+                f'no handle in the search result -- the model cannot read '
+                f'a page the search found without guessing its URL: '
+                f'{r3[:300]}')
+            r4 = await donsetch_call('web_fetch',
+                {'url': f'@{_handle}', 'max_chars': 800})
+            assert isinstance(r4, str), f'handle fetch is not str: {type(r4)}'
+            assert 'http' in r4, (
+                f'fetching the handle @{_handle} did not return a page: '
+                f'{r4[:200]}')
+            assert 'not found' not in r4.lower(), (
+                f'fetching the handle @{_handle} answered 404: {r4[:200]}')
+            log.info(f'  [OK] handle round trip: search -> @{_handle} -> page')
 
         await _rt()
     except AssertionError as e:

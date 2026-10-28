@@ -90,7 +90,7 @@ tests, none of which build a full `call_llama`.
   llm_thinking.py       128  ThinkingThrottle, push_thinking
   llm_toolargs.py       215  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
-  llm_tools.py          300  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
+  llm_tools.py          312  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
   llm_sendfile.py         82  send_file_tool_def
   llm_delete.py           855  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal, requested_ids
   llm_history.py          256  search_messages_tool_def, run_search, known_ids

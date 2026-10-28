@@ -65,7 +65,7 @@ CONTENT_PINS = {
     # the refusal list "LLM-side guidance, not enforcement" -- the bot
     # enforces those classes in code now (personal_tools/bash_policy.py),
     # and the side-car never filtered commands at all.
-    "GROUP_CONTEXT": "c2f7047a9a4fed6d",
+    "GROUP_CONTEXT": "621b991d82d69ef1",
     "RATING_RULES": "c3797f4d8521a997",
     "WELCOME_TEXT": "d35362838a645cb4",
     "RATING_EMOJI": "bbda90f297e9f0c0",

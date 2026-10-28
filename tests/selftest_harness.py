@@ -201,10 +201,23 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "tools/call":
             name = (body.get("params") or {}).get("name")
             text = {
-                "web_search": "Search results\n\n1. python 3.13 release\n"
-                              "2. python 3.12 release",
-                "web_fetch": "# Example Domain\n\nThis domain is for use "
-                             "in examples.",
+                # The real shape, not a convenient one. The search's
+                # split-shape result carries a compact HANDLE, a title, a
+                # domain and a snippet -- and no URL. A stub that
+                # returned titles alone would have hidden the whole
+                # defect: the model cannot read a page the search found
+                # without the handle, and the production turn of
+                # 2026-10-28 died of fifteen guessed URLs because the
+                # tool description promised URLs the server never
+                # sends. The stub has to look like the server, or it
+                # cannot catch that.
+                "web_search": "Search results\n\n"
+                              "1. StUbHandle01 · python 3.13 release : "
+                              "python.org · 1 index family\n"
+                              "2. StUbHandle02 · python 3.12 release : "
+                              "python.org · 1 index family",
+                "web_fetch": "# Example Domain\n\nhttps://example.com/\n\n"
+                             "This domain is for use in examples.",
             }.get(name, "[selftest stub: no canned result for %r]" % (name,))
             self._send_json({"jsonrpc": "2.0", "id": body.get("id"),
                              "result": {"content": [

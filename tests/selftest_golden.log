@@ -127,8 +127,9 @@
 [OK] rating mode prepends RATING_RULES (structured-output contract) on top of GROUP_CONTEXT
 [selftest] GROUP_CONTEXT tests: all pass
 [selftest] running real donsetch integration test...
-[OK] web_search: 266 chars, "Search results" present, no [meta] envelope
-[OK] web_fetch: 258 chars, markdown content delivered
+[OK] web_search: 356 chars, "Search results" present, no [meta] envelope
+[OK] web_fetch: 280 chars, markdown content delivered
+[OK] handle round trip: search -> @StUbHandle01 -> page
 [selftest] real donsetch integration tests: all pass
 [selftest] running per-handler abort_event key test...
 [OK] two concurrent in-flight handlers keep distinct events

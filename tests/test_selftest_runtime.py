@@ -75,9 +75,16 @@ GOLDEN = TESTS / "selftest_golden.log"
 # own message, and the implicit reply every message in a forum topic
 # carries. The golden diff was exactly those two lines.
 #
+# 94 -> 95 on 2026-10-28: the donsetch block gained the handle round
+# trip -- search, take the handle out of the result, fetch THAT handle,
+# and get the page the search found. The production turn of that day
+# burned fifteen iterations on guessed URLs because the search does not
+# return URLs, and the model was told that it did. The golden diff was
+# exactly those three lines: the two counters and the new marker.
+#
 # Bump this deliberately when a block is added, never as a side effect
 # of something failing.
-EXPECTED_VERDICTS = 94
+EXPECTED_VERDICTS = 95
 
 # Run once per session. It starts a stub server and spawns a
 # subprocess, and the whole point is that it is cheap enough to run on
