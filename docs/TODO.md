@@ -155,6 +155,31 @@ These are not forgotten; they are parked on a question only the operator
 can answer, or on a deploy that has not run yet. Each one records the
 decision that unblocks it.
 
+### The chat got a wall of console noise — the fix is in the repository; the deploy has not run
+
+**Status:** open since 2026-10-28. Measured on production, on a
+code-review turn: the model ran 44 commands, the transcript of what they
+printed came to 77 044 characters, and the chat got **22 messages** of
+console noise in front of the 4 110 characters of actual review. The
+flood then hit Telegram's rate limit, and **8 of those 22 messages were
+delivered twice** — a send that timed out was retried with the same text,
+and `sendMessage` has no idempotency key, so the retry was a copy.
+
+The fix is in `main` (`6e3e6e7`): the transcript's copy for the chat is
+bounded as a whole by a new setting, `LLAMABOT_MAX_TRANSCRIPT_CHARS`
+(repository default 4000, 0 = no transcript in the chat at all), cut at
+command granularity (head + tail) with the drop marked; the bot's memory
+keeps the whole transcript; and a timed-out send is no longer repeated.
+CODEBOOK X-27 and X-28; `scripts/mutation_harness_transcript.py` — 12
+mutations, 12 caught.
+
+**Unblocked by:** a release and a deploy. The production bot still runs
+`v0.16.0-stable`.
+
+**Decide:** the production value of `LLAMABOT_MAX_TRANSCRIPT_CHARS` — the
+default 4000 (one message of transcript in front of the answer) or 0 (no
+transcript in the chat at all).
+
 ### The bot delivers a file twice — the fix is in production; nobody has watched it happen
 
 **Status:** open since 2026-10-25. The deploy half is done — the fix is
