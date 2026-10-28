@@ -135,8 +135,15 @@ MUTATIONS = [
          "        return Answer(prose, files, result)\n", 1),
     ]),
     ("the executed-tool trace is no longer in front of the answer", RES, [
-        (r'            prose = trace \+ "\\n\\n" \+ prose\n',
-         "            pass\n", 1),
+        # The trace that goes into the chat is built apart from the raw
+        # one now -- the delivery and the memory are two artefacts --
+        # so the variable is named chat_trace and the anchor that
+        # expected the old name found nothing: the mutation was
+        # REFUSED.
+        (r'                if chat_trace:\n'
+         r'                    prose = chat_trace \+ "\\n\\n" \+ prose\n',
+         "                if chat_trace:\n"
+         "                    pass\n", 1),
     ]),
     ("a file that cannot be uploaded is dropped", FILES, [
         (r"            await _send_as_text\(update, artifact, kwargs\)\n"
@@ -148,8 +155,13 @@ MUTATIONS = [
          "    return {}\n", 1),
     ]),
     ("the chat gets the code as well as the document", HAND, [
-        (r"    return answer\.text\n",
-         "    return answer.raw\n", 1),
+        # The answer is put in a variable first now and the function
+        # returns that variable, so the anchor that expected a bare
+        # "return answer.text" found nothing: the mutation was
+        # REFUSED. The defect it puts back is the same one: the chat
+        # gets the raw log -- the console noise -- instead of the prose.
+        (r"    sent = answer\.text\n",
+         "    sent = answer.raw\n", 1),
     ]),
     ("the handlers send no files", HAND, [
         (r"answer\.files", "[]", 4),
@@ -163,11 +175,15 @@ MUTATIONS = [
     # on the prose drops exactly those files. Two mutations, because
     # the two pairs of handlers sit at different indentation levels.
     ("the files only go out when there is prose (photo, voice)", HAND, [
-        (r"(?m)^        await send_files\(update, answer\.files\)$",
+        # The handlers pass the thinking message to send_files now, so
+        # the anchor that expected the two-argument call matched
+        # nothing: the mutation was REFUSED, and a REFUSED mutation is
+        # neither caught nor survived.
+        (r"(?m)^        await send_files\(update, answer\.files, thinking=thinking\)$",
          "            await send_files(update, answer.files)", 2),
     ]),
     ("the files only go out when there is prose (text, document)", HAND, [
-        (r"(?m)^            await send_files\(update, answer\.files\)$",
+        (r"(?m)^            await send_files\(update, answer\.files, thinking=thinking\)$",
          "                await send_files(update, answer.files)", 2),
     ]),
 ]
