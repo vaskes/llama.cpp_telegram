@@ -1,6 +1,11 @@
 services:
   whisper-api:
-    image: fedirz/faster-whisper-server:latest-cpu
+    # 2026-10-28: pinned by digest. The tag "latest-cpu" is a moving
+    # target: a rebuild a month later would pull a different engine
+    # than the one this deployment was measured against. The digest
+    # is the image that actually runs (measured on the production
+    # host, 2026-10-28).
+    image: fedirz/faster-whisper-server@sha256:760e5e43d427dc6cfbbc4731934b908b7de9c7e6d5309c6a1f0c8c923a5b6030
     container_name: whisper-api
     restart: unless-stopped
     # 2026-10-13: switch from lan_macvlan (static 192.168.10.3) to
@@ -9,12 +14,26 @@ services:
     # breaks the bot -> whisper call now that the bot is on
     # host network.
     #
-    # The whisper-api process inside the container binds on
-    # 0.0.0.0:8000 on the host's interfaces. The bot (also on
-    # host network) reaches it at http://192.168.10.7:8000 (or
-    # http://localhost:8000, same thing).
+    # 2026-10-28: the bind is loopback-only. On host network the
+    # process listened on 0.0.0.0:8000, so every process on the host
+    # could reach the transcription API. The only consumer is the bot,
+    # which runs on the same host and calls http://127.0.0.1:8000
+    # (WHISPER_URL in the bot's .env) -- so UVICORN_HOST=127.0.0.1
+    # keeps that call working and closes the host-wide door.
     network_mode: host
     environment:
-      - WHISPER_MODEL=Systran/faster-distil-whisper-large-v3
+      # The model the server actually loads. The variable name is
+      # WHISPER__MODEL, not WHISPER_MODEL: the server reads its
+      # settings through pydantic-settings with env_nested_delimiter
+      # "__", so the section is WHISPER and the field is MODEL. The
+      # compose used to say WHISPER_MODEL=Systran/faster-distil-whisper-large-v3,
+      # which the server never read -- it loaded the image default,
+      # Systran/faster-whisper-small (measured in the server log on
+      # the production host, 2026-10-28). If you want the large
+      # model, change the value below and expect a much heavier CPU
+      # load; the operator has not asked for that yet.
+      - WHISPER__MODEL=Systran/faster-whisper-small
+      - UVICORN_HOST=127.0.0.1
+      - UVICORN_PORT=8000
     volumes:
       - ./cache:/root/.cache
