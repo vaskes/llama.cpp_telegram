@@ -69,7 +69,12 @@ TARGETS = [
 SUITE_TIMEOUT = 300
 
 ART = ROOT / "telegram-bot" / "context_budget.py"
-STO = ROOT / "telegram-bot" / "storage.py"
+#: The summary code moved out of `storage.py` into `storage_summaries.py`
+#: when the storage module was split. The anchor still pointed at the
+#: old file, found nothing there, and the mutation was REFUSED -- so
+#: the harness counted it as neither caught nor survived and the proof
+#: was green and empty. The code is unchanged; the path is.
+STO = ROOT / "telegram-bot" / "storage_summaries.py"
 SUM = ROOT / "telegram-bot" / "summarize.py"
 REA = ROOT / "telegram-bot" / "reanchor.py"
 

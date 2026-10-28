@@ -119,8 +119,15 @@ MUTATIONS = [
     ]),
     ("the tool is not in the isolation whitelist", "CAUGHT", [
         (ISOLATION,
-         r"    \"delete_messages\",\n\}\)\n",
-         "})\n", 1),
+         # The anchor used to be the name followed by the end of the
+         # set -- the name was the last entry then. It is not the last
+         # entry any more, so the anchor matched nothing and the
+         # mutation was REFUSED: the harness counted it as neither
+         # caught nor survived, and the proof was green and empty.
+         # The anchor is now the name followed by the comment that
+         # introduces the next entry, so it survives a reordering.
+         r"    \"delete_messages\",\n    # search_messages: implemented in llm_history\.py",
+         "    # search_messages: implemented in llm_history.py", 1),
     ]),
     ("the module reaches for the database", "CAUGHT", [
         (TOOL,
@@ -169,13 +176,22 @@ MUTATIONS = [
     ]),
     ("the message the user replied to is out of reach", "CAUGHT", [
         (TOOL,
-         r"    allowed = authorized_ids\(chat_id, reply_to_message_id, current_message_id\)\n",
-         "    allowed = authorized_ids(chat_id, None, None)\n", 1),
+         # The call grew a line when the known ids were added, so the
+         # one-line anchor matched nothing and the mutation was
+         # REFUSED. The anchor is the call as it is written now.
+         r"    allowed = authorized_ids\(chat_id, reply_to_message_id, current_message_id,\n"
+         r"                              known_ids\)\n",
+         "    allowed = authorized_ids(chat_id, None, None,\n"
+         "                              known_ids)\n", 1),
     ]),
     ("the reply-to id does not reach the tool", "CAUGHT", [
         (DISPATCH,
-         r"            reply_to_message_id=deps\.reply_to_message_id,\n            current_message_id=deps\.current_message_id\)\n",
-         "            reply_to_message_id=None)\n", 1),
+         # The call carries the id on its own line now, with the
+         # current id next to it: the old two-line anchor matched
+         # nothing and the mutation was REFUSED.
+         r"            reply_to_message_id=deps\.reply_to_message_id,\n"
+         r"            current_message_id=deps\.current_message_id,\n",
+         "            reply_to_message_id=None,\n", 1),
     ]),
     ("the cause of Telegram's refusal is guessed", "CAUGHT", [
         (TOOL,
@@ -184,8 +200,11 @@ MUTATIONS = [
     ]),
     ("the description does not say whose message an id is", "CAUGHT", [
         (TOOL,
-         r"These are the BOT's messages, not the user's\.",
-         "These are YOUR messages.", 1),
+         # The sentence is the second half of a concatenation now, and
+         # it ends in " -- never" rather than in a full stop: the old
+         # anchor matched nothing and the mutation was REFUSED.
+         r"            \+ \"\. These are the BOT's messages, not the user's -- never \"\n",
+         "            + \".\"\n", 1),
     ]),
     ("the message the user just wrote is not in the description",
      "CAUGHT", [
@@ -301,6 +320,15 @@ MUTATIONS = [
         (TEST_TOOL,
          r"(?m)^async def test_the_current_message_id_is_refused_when_it_is_not_the_turn\(\):\n",
          "async def test_the_current_message_id_is_refused_when_it_is_not_the_turn():\n    return\n", 1),
+        # The refusal's own test catches the same mutation from the
+        # other side: it asserts that the answer the operator reads
+        # names the id that was refused. Left standing, it caught the
+        # mutation this one claims to have removed -- and a group-B
+        # mutation caught by a test it did not remove is not a group-B
+        # mutation at all.
+        (TEST_TOOL,
+         r"(?m)^async def test_the_refusal_does_not_dump_the_bots_own_message_ids\(\):\n",
+         "async def test_the_refusal_does_not_dump_the_bots_own_message_ids():\n    return\n", 1),
         (TOOL,
          r"        unknown = \[i for i in ids if i not in allowed\]\n"
          r"        targets = \[i for i in ids if i in allowed\]\n",
@@ -322,8 +350,10 @@ MUTATIONS = [
          r"(?m)^async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher\(\):\n",
          "async def test_the_reply_to_id_reaches_the_tool_through_the_dispatcher():\n    return\n", 1),
         (TOOL,
-         r"    allowed = authorized_ids\(chat_id, reply_to_message_id, current_message_id\)\n",
-         "    allowed = authorized_ids(chat_id, None, None)\n", 1),
+         r"    allowed = authorized_ids\(chat_id, reply_to_message_id, current_message_id,\n"
+         r"                              known_ids\)\n",
+         "    allowed = authorized_ids(chat_id, None, None,\n"
+         "                              known_ids)\n", 1),
     ]),
     ("the plumbing tripwire is gone, and the reply-to id stops travelling",
      "SURVIVED", [
@@ -337,8 +367,9 @@ MUTATIONS = [
          r"(?m)^async def test_the_current_message_id_reaches_the_tool\(\):\n",
          "async def test_the_current_message_id_reaches_the_tool():\n    return\n", 1),
         (DISPATCH,
-         r"            reply_to_message_id=deps\.reply_to_message_id,\n            current_message_id=deps\.current_message_id\)\n",
-         "            reply_to_message_id=None)\n", 1),
+         r"            reply_to_message_id=deps\.reply_to_message_id,\n"
+         r"            current_message_id=deps\.current_message_id,\n",
+         "            reply_to_message_id=None,\n", 1),
     ]),
     ("the cause tripwire is gone, and the cause is guessed wrong",
      "SURVIVED", [
@@ -364,8 +395,8 @@ MUTATIONS = [
          r"(?m)^def test_the_tool_name_is_registered_for_the_isolation_layer\(\):\n",
          "def test_the_tool_name_is_registered_for_the_isolation_layer():\n    return\n", 1),
         (ISOLATION,
-         r"    \"delete_messages\",\n\}\)\n",
-         "})\n", 1),
+         r"    \"delete_messages\",\n    # search_messages: implemented in llm_history\.py",
+         "    # search_messages: implemented in llm_history.py", 1),
     ]),
 ]
 
