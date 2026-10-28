@@ -17,6 +17,19 @@ this file is the human-readable summary.
 
 **After `v0.20.0-stable`.** The next cycle starts here.
 
+### The last harness could not run at all
+
+The dispatch-split harness named the key it authenticates with as a
+path that exists nowhere -- not in a checkout, not on the host -- and
+it named the test image it runs the suite in as one that was never
+built. It could not run, and it reported a clean run while measuring
+nothing: eight INVALID rows, a summary of zero, an exit code of zero.
+
+The key and the image are now named by the environment, with the old
+values as the defaults. Measured on the production host afterwards:
+the workdir is laid down, the suite runs inside the image, and the
+mutations are scored.
+
 ## [v0.20.0-stable] — 2026-10-29 — The evidence is no longer green and empty
 
 **After `v0.19.0-stable`.** The harnesses that prove this repository's
