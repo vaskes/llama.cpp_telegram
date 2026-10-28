@@ -20,8 +20,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/opt/telegrambot/bot/repo")
-IMAGE = "bot-testimg311"
+#: The tree the harness runs against. It used to be the production
+#: path, hardcoded -- so the harness could only ever run on the
+#: production host, and the anchors that pointed into it read as
+#: unreadable everywhere else. A harness that can only prove things on
+#: one machine proves nothing in a checkout.
+DEFAULT_ROOT = "/opt/telegrambot/bot/repo"
+ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT)
+IMAGE = os.environ.get("MUTATION_HARNESS_IMAGE", "")
 TARGETS = "tests/test_llm_stream.py tests/test_c2_sse.py tests/test_c4_thinking.py"
 PER_TEST_TIMEOUT = 150
 MARKER = Path("/tmp/mutharness_stream.state")
@@ -151,13 +157,27 @@ MUTATIONS = [
 
 def run_tests():
     try:
-        r = subprocess.run(
-            f"rm -f /tmp/mut.db && docker run --rm "
-            f"-v {ROOT}:{ROOT} -w {ROOT} "
-            f"-e BOT_TOKEN=1:fake -e CONVERSATIONS_DB=/tmp/mut.db "
-            f"{IMAGE} python -m pytest {TARGETS} -q --tb=line -p no:cacheprovider",
-            shell=True, capture_output=True, text=True,
-            timeout=PER_TEST_TIMEOUT)
+        if IMAGE:
+            r = subprocess.run(
+                f"rm -f /tmp/mut.db && docker run --rm "
+                f"-v {ROOT}:{ROOT} -w {ROOT} "
+                f"-e BOT_TOKEN=1:fake -e CONVERSATIONS_DB=/tmp/mut.db "
+                f"{IMAGE} python -m pytest {TARGETS} -q --tb=line -p no:cacheprovider",
+                shell=True, capture_output=True, text=True,
+                timeout=PER_TEST_TIMEOUT)
+        else:
+            # The checkout is enough: the suite runs with the current
+            # interpreter. The harness used to require the docker image
+            # unconditionally, so it could only run on the production
+            # host -- and a proof that can only run on one machine is
+            # not a proof, it is a ritual.
+            env = dict(os.environ, BOT_TOKEN="1:fake",
+                       CONVERSATIONS_DB="/tmp/mut.db")
+            r = subprocess.run(
+                [sys.executable, "-m", "pytest", *TARGETS.split(),
+                 "-q", "--tb=line", "-p", "no:cacheprovider"],
+                cwd=str(ROOT), capture_output=True, text=True,
+                timeout=PER_TEST_TIMEOUT, env=env)
     except subprocess.TimeoutExpired:
         return "hang", "the suite did not finish"
     out = r.stdout + r.stderr

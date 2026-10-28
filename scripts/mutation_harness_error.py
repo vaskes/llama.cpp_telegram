@@ -20,14 +20,26 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/opt/telegrambot/bot/repo")
-IMAGE = "bot-testimg311"
-TARGETS = "tests/test_nonstream_error.py"
+#: The tree the harness runs against. It used to be the production
+#: path, hardcoded -- so the harness could only ever run on the
+#: production host, and the anchors that pointed into it read as
+#: unreadable everywhere else. A harness that can only prove things on
+#: one machine proves nothing in a checkout.
+DEFAULT_ROOT = "/opt/telegrambot/bot/repo"
+ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT)
+IMAGE = os.environ.get("MUTATION_HARNESS_IMAGE", "")
+#: The suite the mutations are measured against. The notice test is
+#: here because the sentence the user reads is guarded there: without
+#: it, a mutation of that sentence was caught by nothing at all.
+TARGETS = ("tests/test_nonstream_error.py "
+           "tests/test_engine_failure_message.py")
 PER_TEST_TIMEOUT = 150
 MARKER = Path("/tmp/mutharness_stream.state")
 _mutating = {}
 
 S = ROOT / "telegram-bot" / "llm_nonstream.py"
+#: The sentence the user reads when the engine fails is built here.
+NOTICE = ROOT / "telegram-bot" / "user_notice.py"
 NL = chr(10)
 
 
@@ -111,11 +123,21 @@ MUTATIONS = [
          "    status = response.status_code\n"
          "    body = response.text[:500]\n", 1)]),
     ("the retry path also carries a message", S, [
-        (r' *message="" if retry else f"\[llama-server request failed: \{exc\}\]",',
-         '        message=f"[llama-server request failed: {exc}]",', 1)]),
-    ("the failure message loses the exception text", S, [
-        (r'f"\[llama-server request failed: \{exc\}\]"',
-         '"[llama-server request failed]"', 1)]),
+        # The sentence the user reads is built by the notice module now
+        # -- it picks one of three wordings by the kind of failure --
+        # so the anchor that expected the inline f-string found
+        # nothing: the mutation was REFUSED. The defect it puts back
+        # is the same one: a retry carries a message to the user.
+        (r'        message="" if retry else engine_failure_message\(exc, status=status\),',
+         '        message=engine_failure_message(exc, status=status),', 1)]),
+    ("the failure message loses the exception text", NOTICE, [
+        # The sentence the user reads comes from the notice module now,
+        # and the module picks one of three wordings by the kind of
+        # failure. The mutation puts back the defect it is named for:
+        # the user gets a message that says nothing about the failure
+        # instead of the one that names it.
+        (r'    return ENGINE_ERROR_MESSAGE\n',
+         '    return GENERIC_FAILURE_MESSAGE\n', 1)]),
     ("the body is no longer truncated", S, [
         (r'body = response\.text\[:500\] if response is not None else ""',
          "body = response.text if response is not None else \"\"", 1)]),
@@ -124,13 +146,27 @@ MUTATIONS = [
 
 def run_tests():
     try:
-        r = subprocess.run(
-            f"rm -f /tmp/mut.db && docker run --rm "
-            f"-v {ROOT}:{ROOT} -w {ROOT} "
-            f"-e BOT_TOKEN=1:fake -e CONVERSATIONS_DB=/tmp/mut.db "
-            f"{IMAGE} python -m pytest {TARGETS} -q --tb=line -p no:cacheprovider",
-            shell=True, capture_output=True, text=True,
-            timeout=PER_TEST_TIMEOUT)
+        if IMAGE:
+            r = subprocess.run(
+                f"rm -f /tmp/mut.db && docker run --rm "
+                f"-v {ROOT}:{ROOT} -w {ROOT} "
+                f"-e BOT_TOKEN=1:fake -e CONVERSATIONS_DB=/tmp/mut.db "
+                f"{IMAGE} python -m pytest {TARGETS} -q --tb=line -p no:cacheprovider",
+                shell=True, capture_output=True, text=True,
+                timeout=PER_TEST_TIMEOUT)
+        else:
+            # The checkout is enough: the suite runs with the current
+            # interpreter. The harness used to require the docker image
+            # unconditionally, so it could only run on the production
+            # host -- and a proof that can only run on one machine is
+            # not a proof, it is a ritual.
+            env = dict(os.environ, BOT_TOKEN="1:fake",
+                       CONVERSATIONS_DB="/tmp/mut.db")
+            r = subprocess.run(
+                [sys.executable, "-m", "pytest", *TARGETS.split(),
+                 "-q", "--tb=line", "-p", "no:cacheprovider"],
+                cwd=str(ROOT), capture_output=True, text=True,
+                timeout=PER_TEST_TIMEOUT, env=env)
     except subprocess.TimeoutExpired:
         return "hang", "the suite did not finish"
     out = r.stdout + r.stderr
