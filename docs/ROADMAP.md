@@ -4,14 +4,26 @@
 > items — is [`TODO.md`](TODO.md). The two complement each other and only
 > one of them is a task list.
 >
-> **Updated 2026-10-27**, against the `v0.14.0-stable` tag.
+> **Updated 2026-10-28**, against the `v0.15.1-stable` tag.
 
 ---
 
 ## Where we are
 
-`v0.14.0-stable` is the release after `v0.13.0-stable`. What it changed
+`v0.15.1-stable` is the release after `v0.15.0-stable`. What it changed
 structurally:
+
+- **The rules are code, not prose.** The eight destructive command classes
+  live in `personal_tools/bash_policy.py` and are checked before the command
+  leaves the process; a message in the chat is a request and not a rule
+  change; a refusal names the culprit. See CODEBOOK rules **X-23** and
+  **X-24**.
+- **Every number in the README is recomputed.** The badge's test count is
+  collected from the tree, the release is read from the tags, and a pointer
+  into a document names a section that exists. See rules **X-22** and
+  **X-25**.
+
+And what `v0.14.0-stable` changed, for the record:
 
 - **A release is the deployable unit.** The CI builds the image from the
   tagged commit and attaches it to the GitHub Release; the production

@@ -8,14 +8,50 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.15.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.15.1-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
 ## [Unreleased]
 
-**After `v0.15.0-stable`.** The next cycle starts here.
+**After `v0.15.1-stable`.** The next cycle starts here.
+
+## [v0.15.1-stable] — 2026-10-28 — The rules are code, and the badges tell the truth
+
+**After `v0.15.0-stable`.** A chat message cannot rewrite the rules any
+more, and every number in the README is recomputed from the tree.
+
+### A pointer names a section that exists
+
+The "where to read the record" lines point into another document with a
+backticked path and a section sign, and nothing checked that the section
+they name is still there. A heading is renamed or deleted, the pointer
+keeps the old name, and the reader follows it into a document that does
+not have it.
+
+The worse half is a section that **moves**. The CHANGELOG's `## [Unreleased]`
+is where the work in flight is written; at the next tag it is renamed to the
+release section, and every pointer into it silently starts pointing at
+whatever is unreleased *now*. Eighteen pointers in `docs/TODO.md` did
+exactly that -- for work that had shipped a release earlier, in sections
+that had a name and a tag.
+
+So a pointer names the section, and a name survives the move. Every one of
+the eighteen now names a heading, and a tripwire checks the whole tree:
+the file the pointer names exists, the section it names exists (a heading,
+a release section or a CODEBOOK rule id), and no pointer names
+`Unreleased`. Rule **X-25**, tripwire
+`tests/test_doc_section_pointers.py` (4).
+
+The same wave found the harness that was supposed to prove the badge's
+claims. It named them in its own source -- `Tests: 2806`,
+`v0.15.0-stable` -- so every one of those was a copy of the tree, and a
+copy rots. When the badge's number moved from 2806 to 2891, six of its
+fifteen operations were REFUSED: the pattern no longer matched, the
+harness said so, and it reported a clean run while measuring nothing. It
+reads the claims out of the tree now, imports the shape of a claim from
+the tripwire itself, and a refused or invalid mutation fails the run.
 
 ### The rules are not something a message can rewrite
 

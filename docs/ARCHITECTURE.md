@@ -1,4 +1,4 @@
-# Architecture (v0.14.0-stable)
+# Architecture (v0.15.1-stable)
 
 > **Read this first if you are deploying the bot for the first time.**
 > The bot runs as a thin proxy between Telegram and a local
@@ -545,7 +545,7 @@ no tokenizer to ask, and the estimate is deliberately conservative
   * [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common
     failure modes.
   * [CHANGELOG.md](../CHANGELOG.md) — release notes
-    (`v0.14.0-stable` is the current release; see the
+    (`v0.15.1-stable` is the current release; see the
     [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases)
     for the full stable-tag history).
   * [docs/README.md](README.md) — the map of the documentation tree.
