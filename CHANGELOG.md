@@ -8,14 +8,73 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.18.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.19.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
 ## [Unreleased]
 
-**After `v0.18.0-stable`.** The next cycle starts here.
+**After `v0.19.0-stable`.** The next cycle starts here.
+
+## [v0.19.0-stable] — 2026-10-29 — The pin names the side-car that runs, and a refused mutation fails the run
+
+**After `v0.18.0-stable`.** The bot's claim about the side-car names the
+side-car that runs, and the harness that proves the claim cannot be green
+and empty any more.
+
+### The pin followed the side-car, and the claim followed the pin
+
+The side-car's fourth review of v2.14.7 shipped as **v2.14.8** (`72b0e3a`),
+and the production host moved to it on 2026-10-28 at 20:36 UTC. The
+repository's pin still said v2.14.0, so the bot carried a claim about a
+side-car that was no longer the one it talked to.
+
+The pin now says v2.14.8 (`8eb0381`), and the three places that stated the
+version in prose state the version that is true:
+
+  * the contract's own docstring said "the pin is v2.13.0" -- the budget
+    sentence next to it is a historical fact and stays, but the pin in the
+    sentence was wrong (`a6d5d8c`);
+  * the production row in `docs/TODO.md` said the side-car runs v2.14.0. It
+    runs v2.14.8, moved by the host's own deploy script; the history of the
+    move stays in the row and the row that said v2.14.0 is marked as a copy
+    of a moment;
+  * the compatibility table had no row for the version that is pinned, so
+    its promise -- "the pinned tags are the operator's guarantee that they
+    have been smoke-tested together" -- covered a version nobody had tested
+    against.
+
+Nothing the bot quotes moved with the pin: the exec range is 5..3600, the
+MCP read budget is 1 MiB, `mem_limit` is 4g and `pids_limit` is 256 in
+v2.14.8 exactly as in v2.14.0 (read in the side-car's own source at the
+tag). What moved is that the claim is now true.
+
+### A refused mutation is a hole in the proof, not a pass
+
+The harness that proves the contract's version claim had an anchor of
+`"2.9.1"` -- a version this repository stopped pinning months ago. The
+mutation "the contract names a version the sandbox does not have" found no
+site, was REFUSED, and a REFUSED mutation was counted as neither caught nor
+survived: the proof was green and empty. The same anchor appeared twice, so
+both the version mutation and the "the version tripwire is gone" mutation
+were dead.
+
+The anchor now names the version the contract actually has, read from the
+contract at load time, and moves it to a version the pinned sandbox does
+not declare (2.14.8 -> 2.14.7). A pin bump changes the tree, not this
+file.
+
+And the verdict fails the run on a refusal or an invalid mutation: a
+mutation that never reached the code proved nothing about it. The harness
+printed "N refused" and returned 0. The rule the harness states about
+itself -- "a drifted anchor is REFUSED, never reported as SURVIVED" -- now
+applies to the exit code and not only to the wording (`9deab90`).
+
+Measured on the tree: 13 mutations, 10 caught, 3 survived, 0 refused, 0
+invalid. The version mutation is caught by
+`test_the_contract_names_the_version_the_pinned_sandbox_declares` and by
+nothing else, so it proves what it claims to prove.
 
 ## [v0.18.0-stable] — 2026-10-28 — The database file is the database, and a file leaves with the answer
 
