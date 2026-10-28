@@ -23,12 +23,18 @@ an `IterationResult` into a turn's answer, and the guards inside
 import atexit
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/opt/telegrambot/bot/repo")
+# The repository root, wherever this file is run from. It used to be
+# hard-coded to /opt/telegrambot/bot/repo -- a path that stopped
+# existing when the production host lost its git clone (2026-10-28,
+# the "a release is the deployable unit" refactor). A harness that
+# cannot find the tree it is supposed to mutate measures nothing.
+ROOT = Path(__file__).resolve().parent.parent
 IMAGE = "bot-testimg311"
 TARGETS = ("tests/test_llm_iteration.py tests/test_llm_stream.py "
            "tests/test_loop_flag_order.py tests/test_c3_loop_guard.py "
@@ -165,17 +171,42 @@ MUTATIONS = [
 ]
 
 
+def _docker_available() -> bool:
+    return shutil.which("docker") is not None
+
+
 def run_tests():
-    try:
-        r = subprocess.run(
-            f"rm -f /tmp/mut.db && docker run --rm "
-            f"-v {ROOT}:{ROOT} -w {ROOT} "
-            f"-e BOT_TOKEN=1:fake -e CONVERSATIONS_DB=/tmp/mut.db "
-            f"{IMAGE} python -m pytest {TARGETS} -q --tb=line -p no:cacheprovider",
-            shell=True, capture_output=True, text=True,
-            timeout=PER_TEST_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return "hang", "the suite did not finish"
+    """Run the harness's targets, in the container if there is one.
+
+    The container is the production-like environment (the clean
+    CONVERSATIONS_DB, the fake token, the 3.11 interpreter). Where
+    there is no Docker -- a development sandbox, a laptop -- the same
+    targets run locally with the same environment, because a harness
+    that can only run in one place is a harness that is not run.
+    """
+    env = dict(os.environ)
+    env.update({"BOT_TOKEN": "1:fake", "CONVERSATIONS_DB": "/tmp/mut.db"})
+    if _docker_available():
+        try:
+            r = subprocess.run(
+                f"rm -f /tmp/mut.db && docker run --rm "
+                f"-v {ROOT}:{ROOT} -w {ROOT} "
+                f"-e BOT_TOKEN=1:fake -e CONVERSATIONS_DB=/tmp/mut.db "
+                f"{IMAGE} python -m pytest {TARGETS} -q --tb=line -p no:cacheprovider",
+                shell=True, capture_output=True, text=True,
+                timeout=PER_TEST_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return "hang", "the suite did not finish"
+    else:
+        Path("/tmp/mut.db").unlink(missing_ok=True)
+        try:
+            r = subprocess.run(
+                [sys.executable, "-m", "pytest", *TARGETS.split(),
+                 "-q", "--tb=line", "-p", "no:cacheprovider"],
+                cwd=str(ROOT), env=env, capture_output=True, text=True,
+                timeout=PER_TEST_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return "hang", "the suite did not finish"
     out = r.stdout + r.stderr
     tail = [l for l in out.splitlines() if "passed" in l or "failed" in l]
     return ("fail" if r.returncode != 0 else "pass"), \
