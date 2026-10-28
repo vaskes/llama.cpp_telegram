@@ -82,6 +82,73 @@ has to satisfy. The first three are the ones the mapping says are gaps
 rather than polish — one door per service, a trace of every turn, and
 tools scoped by turn.
 
+### The model is told how to read a page the search found
+
+A production turn on 2026-10-28 — "test your web search, fetch the pages
+it found and check that they are relevant" — ended at the tool-calling
+iteration limit with nothing read. The log says why: fifteen calls, one
+per iteration, and the model spent them **guessing URLs** —
+`mikrotikdocs.fyi/routing/bgp`, `/bgp`, `/bgp-peering`,
+`/bgp-configuration` — every one of them a 404, with the search page
+re-fetched four times at a growing `max_chars`.
+
+The guesswork was the tool description's fault. It said the search
+"Returns titles + snippets + URLs" and to follow up with `web_fetch`
+"to read a specific URL". The server does not return URLs: in the split
+shape the result carries a compact **handle** (`S7wfjEZlQ`), a title, a
+domain and a snippet. The handle is what reads the page —
+`web_fetch` accepts it, with or without a leading `@` — and the pinned
+server's own README says so ("compact, unguessable link and search
+handles"). The model did exactly what it was told, and the description
+was wrong.
+
+So the descriptions now say what the server does: the search returns a
+handle, the fetch takes one, and a URL invented from a title is a 404.
+The prompt says the same thing where the model reads the tool list. The
+four web-tool definitions moved into a constant
+(`llm_tools.DONSETCH_WEB_TOOL_DEFS`) so the description is a thing a
+test can read, and two new tripwires check it against the pinned
+server's own documentation.
+
+And the property is checked where it can be measured: the in-container
+selftest now does the round trip — search, take the handle out of the
+result, fetch *that handle*, get the page the search found. It passes
+against the live service (`[OK] handle round trip: search -> @ShZwhxJnJ
+-> page`) and against the stub, which was taught the real result shape
+— a stub that returned titles alone would have hidden this defect.
+
+The iteration limit itself was not the cause: it is 15
+(`MAX_ITER` in `llm_iteration.py`), and a search plus a few page reads
+fits in it. Raising it would have bought fifteen more guessed URLs.
+
+### The iteration cap is a setting, not a constant
+
+`MAX_ITER = 15` sat in `telegram-bot/llm_iteration.py` as a constant, and
+it decided something an operator has to answer for: how long a turn may
+run, how much GPU it may burn, and whether a long task finishes at all.
+The operator's verdict on 2026-10-28 was that a constant is the wrong
+place for a number like that — and the reason is not taste: a public bot
+wants a small cap (every iteration of a loop that will not finish is GPU
+time other users are waiting on) and a single-operator box wants a large
+one (the work there is long, and the operator is the only one paying for
+the GPU). The same binary, two opposite answers, and a constant gives an
+answer neither of them chose.
+
+So the cap moved to `limits.py`, beside the knobs it belongs with, and
+became **`LLAMABOT_MAX_ITER`**. The repository ships **15** — the value
+every deployment inherits — and the production deployment sets **999**.
+The knob's description says what raising it costs, because the number is
+not free: every iteration adds two messages to the context, and a model
+that is stuck spends the whole cap. (Measured on production, 2026-10-28:
+a turn that asked for a web search burned all fifteen iterations
+guessing URLs that answered 404, one guess per iteration, and answered
+nothing — which is why the number is a setting and not a promise.)
+
+New rule in the CODEBOOK: **X-26 — a cap that decides how much work a
+turn may do is a setting**, checked by `tests/test_limits.py` (the cap
+follows the environment, the repository's default is 15, a non-positive
+value is refused at import) and `tests/test_llm_iteration.py`.
+
 ## [v0.15.1-stable] — 2026-10-28 — The rules are code, and the badges tell the truth
 
 **After `v0.15.0-stable`.** A chat message cannot rewrite the rules any

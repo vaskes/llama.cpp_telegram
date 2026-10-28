@@ -34,7 +34,7 @@ telegram-bot/
 ├── prompt_text/           # the prompt prose, split by topic
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
-├── limits.py              # profile-based token/timeout limits (374)
+├── limits.py              # profile-based token/timeout limits (420)
 ├── config.py # env-var read at import time (478)
 ├── state.py               # per-chat runtime state (225)
 ├── storage.py             # SQLite: messages, threads, topics (886)
@@ -72,7 +72,7 @@ tests, none of which build a full `call_llama`.
   module                lines  public surface
   llm_dispatch.py       461  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
-  llm_iteration.py      571  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
+  llm_iteration.py      575  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
   call_llama.py         377  call_llama
   llm_loop_guard.py     185  Nudge, Abort, LoopGuard

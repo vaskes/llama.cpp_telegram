@@ -26,6 +26,7 @@ BOT = Path(__file__).resolve().parent.parent / "telegram-bot"
 if str(BOT) not in sys.path:
     sys.path.insert(0, str(BOT))
 
+import limits  # noqa: E402
 import llm_iteration as LI  # noqa: E402
 from llm_iteration import IterationResult, ToolLoop  # noqa: E402
 
@@ -104,7 +105,7 @@ async def test_run_passes_the_zero_based_iteration_number():
     await loop.run()
 
     assert seen[0] == 0, f"iterations are numbered from {seen[0]}"
-    assert seen == list(range(LI.MAX_ITER)), "the counter skips or repeats"
+    assert seen == list(range(limits.MAX_ITER)), "the counter skips or repeats"
 
 
 @pytest.mark.asyncio
@@ -130,7 +131,7 @@ async def test_an_exhausted_loop_returns_the_fallback_it_collected():
 
     assert out == "half an answer", \
         "the loop threw away the last thing the model actually said"
-    assert len(seen) == LI.MAX_ITER
+    assert len(seen) == limits.MAX_ITER
 
 
 @pytest.mark.asyncio
@@ -141,11 +142,17 @@ async def test_an_exhausted_loop_with_no_fallback_says_so():
 
 
 @pytest.mark.asyncio
-async def test_the_cap_is_fifteen():
-    """Pinned by value, not by presence. 15 was chosen; a silent change
+async def test_the_repository_default_cap_is_fifteen():
+    """Pinned by value, not by presence.
+
+    The cap is a SETTING now (`limits.MAX_ITER`, `LLAMABOT_MAX_ITER`),
+    so a deployment may raise it -- the production one does. What this
+    pins is the value the REPOSITORY ships, because that is what every
+    other deployment inherits: a silent change of the default from 15
     to 50 turns a 10-second hang into a 30-minute one, and nothing
-    else in the suite notices."""
-    assert LI.MAX_ITER == 15
+    else in the suite notices.
+    """
+    assert limits.MAX_ITER == 15
 
 
 @pytest.mark.asyncio
@@ -154,8 +161,8 @@ async def test_run_does_not_call_the_iteration_past_the_cap():
 
     await loop.run()
 
-    assert len(seen) == LI.MAX_ITER, \
-        f"the loop ran {len(seen)} iterations, cap is {LI.MAX_ITER}"
+    assert len(seen) == limits.MAX_ITER, \
+        f"the loop ran {len(seen)} iterations, cap is {limits.MAX_ITER}"
 
 
 # ---------------------------------------------------------------------------

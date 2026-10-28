@@ -302,6 +302,41 @@ def test_max_tokens_must_be_positive():
         _restore_env()
 
 
+def test_the_iteration_cap_is_a_setting_and_not_a_constant():
+    """The cap on the iterations of one turn is the operator's setting.
+
+    It was a constant -- 15, in llm_iteration.py -- until 2026-10-28,
+    and the operator's answer to that was worth a tripwire: a public
+    bot and a single-operator box want opposite caps, and a cap this
+    important has to live with the other knobs, in `limits`, where a
+    deployment can set it.
+    """
+    try:
+        limits = _reload_with({})
+        assert limits.MAX_ITER == 15, (
+            f"the repository's default cap is {limits.MAX_ITER}, not 15")
+        limits = _reload_with({'LLAMABOT_MAX_ITER': '999'})
+        assert limits.MAX_ITER == 999
+        assert limits.MAX_ITER == 999, (
+            "the cap did not follow the environment -- a deployment that "
+            "raises the knob would silently keep the old cap")
+    finally:
+        _restore_env()
+
+
+def test_the_iteration_cap_must_be_positive():
+    """Zero iterations is a turn that may not use a tool at all."""
+    try:
+        try:
+            _reload_with({'LLAMABOT_MAX_ITER': '0'})
+        except ValueError as e:
+            assert 'MAX_ITER' in str(e)
+        else:
+            raise AssertionError('expected ValueError on a zero iteration cap')
+    finally:
+        _restore_env()
+
+
 def test_selftest_max_tokens_smaller_than_production():
     try:
         limits = _reload_with({})

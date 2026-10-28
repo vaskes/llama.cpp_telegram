@@ -340,6 +340,47 @@ TRANSCRIBE_TIMEOUT_SEC     = _env_or("LLAMABOT_TRANSCRIBE_TIMEOUT", _PROFILE_DEF
 MAX_TOKENS_REACT_ONLY      = _env_or("LLAMABOT_MAX_TOKENS_REACT_ONLY", 2048)
 
 
+# === The tool loop's iteration cap ===
+#
+# How many times one turn may ask the engine and act on what it said.
+#
+# An ITERATION is one round of the loop: the engine is asked, the tools
+# it asked for run, their results go back into the context, and the
+# loop asks again. Fifteen iterations is a turn that can read a page,
+# look at the answer, and correct itself a few times over.
+#
+# WHY THIS IS A SETTING AND NOT A CONSTANT. It was a constant -- 15,
+# in llm_iteration.py -- until 2026-10-28, and that was wrong: a cap
+# this important has to be the operator's, because the two deployments
+# want opposite things. A public bot wants a SMALL cap: every
+# iteration of a loop that will not finish is GPU time that other
+# users' messages are waiting on. A single-operator box wants a LARGE
+# one: the work there is long (a crawl, a build, a research task) and
+# the operator is the only one paying for the GPU.
+#
+# WHAT RAISING IT COSTS, measured rather than assumed:
+#
+#  * the context grows by two messages per iteration (the assistant
+#    turn and the tool result), and the request is rebuilt from it
+#    every time -- so the tokens and the latency of every later
+#    iteration grow with it;
+#  * a model that is STUCK spends the whole cap. Measured on
+#    production, 2026-10-28: a turn that asked for a web search
+#    burned all fifteen iterations GUESSING URLs that answered 404 --
+#    one guess per iteration -- and answered nothing at all. A
+#    hundred iterations would have been a hundred guesses.
+#
+# So a large cap is not a free win: it is the room a long task needs
+# AND the room a runaway loop gets. Raise it when the task is long
+# and the model is known to make progress; keep it small when the
+# model might not be.
+#
+# The value belongs to the deployment: the repository ships 15, and a
+# deployment that needs more sets LLAMABOT_MAX_ITER in its own
+# environment.
+MAX_ITER = _env_or("LLAMABOT_MAX_ITER", 15)
+
+
 # === call_llama signature default ===
 # The default in call_llama()'s signature is what a future
 # caller who doesn't specify max_tokens will get. It tracks
@@ -365,6 +406,11 @@ if MAX_TOKENS_CAPTION <= 0:
     raise ValueError("MAX_TOKENS_CAPTION must be positive")
 if LOOP_BUDGET_SEC <= 0:
     raise ValueError("LOOP_BUDGET_SEC must be positive")
+if MAX_ITER <= 0:
+    raise ValueError(
+        f"MAX_ITER must be positive (got {MAX_ITER}). A turn that may "
+        "not iterate is a turn that may not use a tool at all."
+    )
 if LLAMA_HTTP_TIMEOUT_SEC <= LOOP_BUDGET_SEC:
     # The httpx timeout must be greater than the loop budget
     # so the client doesn't fire its own timeout mid-loop.

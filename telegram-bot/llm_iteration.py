@@ -62,7 +62,11 @@ from tool_isolation import known_tool_names
 
 log = get_logger(__name__)
 
-MAX_ITER = 15
+# The cap on the iterations of one turn lives in `limits`, together with
+# the rest of the deployment's knobs. It was 15 here as a constant until
+# 2026-10-28, and that was wrong: a cap that decides how much work a
+# turn may do is the operator's setting, not a line in this file. The
+# default is still 15; `limits.MAX_ITER` says what raising it costs.
 ITERATION_LIMIT_MESSAGE = (
     '[bot: exceeded tool-calling iteration limit. '
     'Please try a simpler question, /reset, or a different model.]')
@@ -143,7 +147,7 @@ class ToolLoop:
 
     async def run(self) -> Any:
         """Drive the iterations and return the turn's answer."""
-        for iteration in range(MAX_ITER):
+        for iteration in range(limits.MAX_ITER):
             result = await self.run_one(iteration)
             if result.is_terminal:
                 return result.terminal

@@ -107,18 +107,22 @@ MUTATIONS = [
          "            if result.is_terminal:\n"
          "                return None\n", 1)]),
     # The iteration cap. 15 was chosen; 16 turns a 10s hang into a
-    # longer one and no test notices until production.
-    ("the iteration cap moves off MAX_ITER", I, [
-        (r"for iteration in range\(MAX_ITER\):", "for iteration in range(50):", 1)]),
+    # longer one and no test notices until production. The cap is a
+    # setting now (limits.MAX_ITER, LLAMABOT_MAX_ITER) -- the
+    # mutation moves it off the setting and onto a literal, which is
+    # the same defect wearing a different hat: a deployment that
+    # raises the knob would silently keep the old cap.
+    ("the iteration cap moves off the setting", I, [
+        (r"for iteration in range\(limits\.MAX_ITER\):", "for iteration in range(50):", 1)]),
     # The carry-out after the loop. Removing it turns every exhausted
     # loop into a canned "too many iterations" for a user who was two
     # tokens away from an answer.
     ("the exhausted loop forgets its last fallback", I, [
         (r" *if self\.final_fallback:\n *return self\.final_fallback\n", "", 1)]),
     ("the exhausted loop returns the fallback before the cap", I, [
-        (r"for iteration in range\(MAX_ITER\):",
+        (r"for iteration in range\(limits\.MAX_ITER\):",
          "if self.final_fallback:\n            return self.final_fallback\n"
-         "        for iteration in range(MAX_ITER):", 1)]),
+         "        for iteration in range(limits.MAX_ITER):", 1)]),
 
     # ---- run_one's own guards ----------------------------------------
     # Both exits here carry a real payload; a mutation that turns one

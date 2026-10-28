@@ -1582,6 +1582,56 @@ tripwires are the ones doing the work.
 
 ---
 
+### 3.12 A cap that decides how much work a turn may do is a setting
+
+**X-26 — The knob lives with the other knobs.** `AUTO`
+`tests/test_limits.py`, `tests/test_llm_iteration.py`.
+
+The cap on the iterations of one turn was `MAX_ITER = 15`, written into
+`telegram-bot/llm_iteration.py` as a constant, and it decided something
+an operator has to answer for: how long a turn may run, how much GPU it
+may burn, and whether a long task finishes at all. The operator's
+verdict on 2026-10-28 was not subtle — a constant is the wrong place
+for a number like that — and he was right about the reason a constant
+is wrong: the two deployments want opposite answers, and a constant
+gives them one answer that neither of them chose.
+
+A public bot wants a small cap: every iteration of a loop that will
+not finish is GPU time that other users' messages are waiting on. A
+single-operator box wants a large one: the work there is long, and the
+operator is the only one paying for the GPU. Both are the same binary,
+and the difference is a deployment fact — the same kind of fact as
+`LLAMABOT_LOOP_BUDGET_SEC` or `LLAMABOT_MAX_TOKENS`, which have always
+been settings.
+
+So the cap moved to `limits.py` beside the others, became
+`LLAMABOT_MAX_ITER`, and the repository ships 15 — the value every
+deployment inherits — while the production deployment sets what it
+needs. The description of the knob says what raising it costs, because
+the number is not free: every iteration adds two messages to the
+context, and a model that is stuck spends the whole cap. Measured on
+production, 2026-10-28: a turn that asked for a web search burned all
+fifteen iterations guessing URLs that answered 404, one guess per
+iteration, and answered nothing.
+
+The rules:
+
+  * **a cap on what the bot may DO is a deployment setting** — the same
+    test that puts `LOOP_BUDGET_SEC` in `limits` applies to the
+    iteration cap;
+  * **the repository keeps the conservative default** — the value every
+    deployment inherits is the small one, and a deployment that wants
+    more says so in its own environment;
+  * **the knob says what it costs** — a limit without a description is
+    a number somebody raises once and regrets.
+
+Checked by `tests/test_limits.py` (the cap follows the environment, the
+repository's default is 15, and a non-positive value is refused at
+import) and `tests/test_llm_iteration.py` (the loop runs exactly the
+cap's number of iterations, and the repository's default is 15).
+
+---
+
 ## 4. Rules for the reviewer and the harness
 
 These are the ones that cost me personally, three waves running. They are about
@@ -1806,7 +1856,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_release_workflow.py` | 10 | The release door: a tag releases, and the release cannot reach the host |
 | `test_typing_indicator.py` | 6 | The typing indicator cannot end the turn |
 | `test_readme_release_claims.py` | 6 | The README's badges and clone-pins follow the tree and the tags |
-| `test_limits.py` | 19 | The turn's budget outlives the command it runs |
+| `test_limits.py` | 21 | The turn's budget outlives the command it runs -- and the iteration cap is a setting |
 | `test_bash_policy.py` | 10 | The bot refuses the destructive command classes in code |
 | `test_prompt_rules_are_fixed.py` | 6 | The rules in the system message are not changeable by a message |
 | `test_failure_message_culprit.py` | 8 | A refusal names the culprit: the engine, Telegram, or the bot |
