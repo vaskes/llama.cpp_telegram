@@ -83,6 +83,34 @@ DOC = ROOT / "docs" / "BASH-SANDBOX.md"
 TEST_CONTRACT = ROOT / "tests" / "test_sandbox_contract.py"
 TEST_TRANSPORT = ROOT / "tests" / "test_file_transport.py"
 
+#: The version the contract names right now, read from the contract.
+#: The anchor used to be the literal ``"2.9.1"`` -- a version this repo
+#: stopped pinning months ago. The mutation it belongs to then found no
+#: site, was REFUSED, and the harness scored a refused mutation as
+#: neither caught nor survived: the proof was green and empty.
+#:
+#: So the anchor names the version that is *there*, and the mutation
+#: moves it to a version the pinned sandbox does not declare. A pin
+#: bump changes the tree, not this file: the harness follows the pin
+#: instead of rotting on the next one.
+def _pinned_version() -> str:
+    text = CONTRACT.read_text(encoding="utf-8")
+    m = re.search(r'SANDBOX_PINNED_VERSION = "([^"]+)"', text)
+    if not m:
+        raise SystemExit(
+            "the contract does not name a pinned version -- the harness "
+            "cannot build an anchor for a line that is not there")
+    return m.group(1)
+
+
+PINNED_VERSION = _pinned_version()
+#: A version the pinned sandbox does not declare, so the tripwire that
+#: compares the contract with the sandbox's own source has to go red.
+#: The patch number is one lower, so the wrong version stays below the
+#: pinned one and cannot collide with a future release.
+WRONG_VERSION = ".".join(
+    PINNED_VERSION.split(".")[:-1] + [str(int(PINNED_VERSION.split(".")[-1]) - 1)])
+
 # (name, expectation, [(path, pattern, replacement, expected_sites)])
 #
 # expectation "CAUGHT"  -- the suite has to go red.
@@ -93,8 +121,8 @@ MUTATIONS = [
     # --- group A: the behaviour -------------------------------------
     ("the contract names a version the sandbox does not have", "CAUGHT", [
         (CONTRACT,
-         r'SANDBOX_PINNED_VERSION = "2\.9\.1"',
-         'SANDBOX_PINNED_VERSION = "2.9.0"', 1),
+         rf'SANDBOX_PINNED_VERSION = "{re.escape(PINNED_VERSION)}"',
+         f'SANDBOX_PINNED_VERSION = "{WRONG_VERSION}"', 1),
     ]),
     ("the privilege mode is claimed by a sandbox too old for it", "CAUGHT", [
         (CONTRACT,
@@ -149,8 +177,8 @@ MUTATIONS = [
          r"(?m)^def test_the_contract_names_the_version_the_pinned_sandbox_declares\(\):\n",
          "def test_the_contract_names_the_version_the_pinned_sandbox_declares():\n    return\n", 1),
         (CONTRACT,
-         r'SANDBOX_PINNED_VERSION = "2\.9\.1"',
-         'SANDBOX_PINNED_VERSION = "2.9.0"', 1),
+         rf'SANDBOX_PINNED_VERSION = "{re.escape(PINNED_VERSION)}"',
+         f'SANDBOX_PINNED_VERSION = "{WRONG_VERSION}"', 1),
     ]),
     ("the permission tripwires are gone, and a 403 is a token again",
      "SURVIVED", [
@@ -313,10 +341,20 @@ def main():
           f"{invalid} invalid  ({len(MUTATIONS)} mutations)", flush=True)
     if wrong:
         print("WRONG VERDICT:", wrong, flush=True)
+    # A refused or invalid mutation is a hole in the proof, not a pass:
+    # the mutation never reached the code, so it proved nothing about
+    # it. Counting it as neither caught nor survived let a dead anchor
+    # sit in this file for months while the harness printed a green
+    # line. The rule the harness holds itself to says so: "a drifted
+    # anchor is REFUSED, never reported as SURVIVED" -- and a refused
+    # mutation has to be loud enough to stop the run.
+    if refused or invalid:
+        print(f"HOLE IN THE PROOF: {refused} refused, {invalid} invalid "
+              f"-- those mutations proved nothing", flush=True)
     dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--short"],
                            capture_output=True, text=True)
     print("tree after the run:", dirty.stdout.strip() or "clean")
-    return 1 if wrong else 0
+    return 1 if wrong or refused or invalid else 0
 
 
 if __name__ == "__main__":
