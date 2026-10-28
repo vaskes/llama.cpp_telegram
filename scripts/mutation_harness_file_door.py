@@ -79,6 +79,12 @@ TARGETS = [
 SUITE_TIMEOUT = 300
 
 DISPATCH = ROOT / "telegram-bot" / "llm_dispatch.py"
+#: The cleanup of the fetched temp file moved here when the delivery
+#: became a step of its own: the tool stages the bytes, the handler
+#: sends them with the answer, and the shelf drops what nobody came
+#: back for. The anchor still pointed at the old cleanup in the
+#: dispatcher, found nothing there, and the mutation was REFUSED.
+FILES = ROOT / "telegram-bot" / "llm_files.py"
 TRANSPORT = ROOT / "telegram-bot" / "personal_tools" / "file_transport.py"
 ITERATION = ROOT / "telegram-bot" / "llm_iteration.py"
 RESULT = ROOT / "telegram-bot" / "llm_result.py"
@@ -120,10 +126,18 @@ MUTATIONS = [
          "", 1),
     ]),
     ("the temp file of a pull is left behind", "CAUGHT", [
-        (DISPATCH,
+        # The cleanup of the pulled temp file is the delivery's job now:
+        # the bytes have to outlive the tool call (they ARE the file the
+        # operator gets), so they are removed when the answer goes out.
+        # The anchor pointed at the old cleanup in the dispatcher, which
+        # was removed when the delivery became a step of its own -- the
+        # mutation found nothing there and was REFUSED.
+        (FILES,
          r"    finally:\n"
          r"        try:\n"
-         r"            os\.unlink\(fetched\.path\)\n"
+         r"            import os\n"
+         r"\n"
+         r"            os\.unlink\(item\.path\)\n"
          r"        except OSError:\n"
          r"            pass\n",
          "    finally:\n        pass\n", 1),
@@ -208,12 +222,14 @@ MUTATIONS = [
     ("the tripwire for the temp file is gone, and so is the cleanup",
      "SURVIVED", [
         (TEST_SEND,
-         r"async def test_the_temp_file_is_removed\(sandbox, tmp_path\):",
-         "async def _disabled_test_the_temp_file_is_removed(sandbox, tmp_path):", 1),
-        (DISPATCH,
+         r"async def test_the_temp_file_is_removed_after_the_delivery\(sandbox, tmp_path\):",
+         "async def _disabled_test_the_temp_file_is_removed_after_the_delivery(sandbox, tmp_path):", 1),
+        (FILES,
          r"    finally:\n"
          r"        try:\n"
-         r"            os\.unlink\(fetched\.path\)\n"
+         r"            import os\n"
+         r"\n"
+         r"            os\.unlink\(item\.path\)\n"
          r"        except OSError:\n"
          r"            pass\n",
          "    finally:\n        pass\n", 1),
