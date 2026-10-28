@@ -1775,6 +1775,62 @@ in all four handlers, and that helper never raises.
 
 ---
 
+### 3.15 A WAL database's file is not the database
+
+**X-30 — A backup of a WAL database is a copy that reads through the WAL; the file alone is a snapshot of the last checkpoint.** `AUTO`
+`tests/test_storage_checkpoint.py`.
+
+SQLite in WAL mode does not write into the database file when a row
+changes. It writes the changed pages into `conversations.db-wal` and
+copies them into `conversations.db` at a checkpoint. A reader that
+opens the database the normal way sees both and reads the current
+state. A reader that opens the **file** alone sees only what was
+folded in before the last checkpoint.
+
+Measured on production, 2026-10-28 22:30 MSK. The database file's
+last write was 01:32:59. The WAL carried every message since -- 111
+more rows, up to 17:01. `PRAGMA integrity_check` said `ok` throughout,
+the bot read 538 messages, and the history had not collapsed: it had
+moved into the WAL, where a plain copy of the file does not follow it.
+
+The cause was SQLite's own default. The checkpoint threshold is 1000
+WAL pages -- 4 MB with the 4 KB page size this bot uses -- and the
+WAL never got near it, so the checkpoint never ran. The file froze
+and stayed frozen for the better part of a day.
+
+The consequence was in the deploy. The backup step was
+`cp "$DB" "$BACKUP/conversations.db.snapshot"` -- a copy of the file,
+without the WAL. So the three deploy backups of that day (03:47,
+15:29, 16:30) each held a 15-hour-old snapshot and called it a
+backup, and nothing compared the snapshot with the live database, so
+a stale one passed for a good one. A restore from it would have rolled
+the history back to 01:32, which is what "the database collapsed"
+looks like from the outside.
+
+The rules:
+
+  * **a backup of a WAL database reads through the WAL** -- `.backup`
+    (or Python's `Connection.backup()`) writes one consistent file
+    that holds the current state; copying the file does not;
+  * **a backup is checked against the live database** -- the row counts
+    have to agree, or the deploy fails loudly instead of writing down
+    a stale image;
+  * **the file is folded in within a turn** -- the checkpoint threshold
+    is a deployment setting (`limits.WAL_AUTOCHECKPOINT_PAGES`), not
+    SQLite's default, and the write path runs the checkpoint;
+  * **"the database is fine" is not "the backup has the history"** --
+    `integrity_check` says the file is not damaged; it says nothing
+    about what a copy of that file contains.
+
+Checked by `tests/test_storage_checkpoint.py` (5): the file alone
+carries the last message, a whole turn's messages land in the file, a
+copy of the file has what the database has, the threshold is not
+SQLite's default, and the checkpoint actually ran. Reverting the fix
+makes three of the five red -- without it the copy does not even have
+the `messages` table, because the schema itself was still in the WAL.
+
+---
+
 ## 4. Rules for the reviewer and the harness
 
 These are the ones that cost me personally, three waves running. They are about
@@ -2012,8 +2068,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_requirements_lock.py` | 3 | The lock and the direct requirements agree, and the image installs the lock |
 | `test_lint_workflow.py` | 5 | The lint job gates on the rules that catch code that would not run; the stylistic tail only reports |
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
+| `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-180 test files in total; the table above is the ones that guard a rule in
+181 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

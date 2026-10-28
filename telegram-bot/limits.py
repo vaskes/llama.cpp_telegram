@@ -459,6 +459,33 @@ MAX_ITER = _env_or("LLAMABOT_MAX_ITER", 15)
 MAX_TRANSCRIPT_CHARS = _env_or("LLAMABOT_MAX_TRANSCRIPT_CHARS", 4000)
 
 
+# === The WAL checkpoint threshold ===
+#
+# How many pages of the write-ahead log may pile up before SQLite folds
+# them back into the database file.
+#
+# WHY THIS IS A SETTING AND NOT A CONSTANT, measured on production
+# 2026-10-28 22:30 MSK. SQLite's default is 1000 pages -- 4 MB with the
+# 4 KB page size this bot uses. Production's WAL never got near that
+# threshold, so the checkpoint never ran, and the database FILE stopped
+# being the truth: the file's last write was 01:32:59 while the WAL
+# carried every message since -- 111 more rows, up to 17:01.
+#
+# The history had not collapsed. It had moved into the WAL, where a
+# plain copy of the file does not follow it. The deploy's backup did
+# exactly that plain copy, so the three deploy backups of that day
+# (03:47, 15:29, 16:30) each held a 15-hour-old snapshot and called it
+# a backup.
+#
+# So the number is small on purpose: the file must be current within a
+# turn, because the file is what anybody copies.
+#
+# The value belongs to the deployment: the repository ships 64 pages
+# (256 KB), and a deployment that wants a lazier checkpoint sets
+# LLAMABOT_WAL_AUTOCHECKPOINT.
+WAL_AUTOCHECKPOINT_PAGES = _env_or("LLAMABOT_WAL_AUTOCHECKPOINT", 64)
+
+
 # === call_llama signature default ===
 # The default in call_llama()'s signature is what a future
 # caller who doesn't specify max_tokens will get. It tracks
@@ -503,6 +530,13 @@ if MAX_TRANSCRIPT_CHARS < 0:
         f"MAX_TRANSCRIPT_CHARS must not be negative (got "
         f"{MAX_TRANSCRIPT_CHARS}). 0 is a valid budget -- it means the "
         "chat gets no transcript -- but a negative one is a typo."
+    )
+if WAL_AUTOCHECKPOINT_PAGES <= 0:
+    raise ValueError(
+        f"WAL_AUTOCHECKPOINT_PAGES must be positive (got "
+        f"{WAL_AUTOCHECKPOINT_PAGES}). A checkpoint threshold of zero "
+        "means the WAL is never folded back into the database file, and "
+        "the file is what every backup copies."
     )
 if LLAMA_HTTP_TIMEOUT_SEC <= LOOP_BUDGET_SEC:
     # The httpx timeout must be greater than the loop budget

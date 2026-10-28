@@ -72,6 +72,7 @@ from typing import Optional
 
 from logconf import get_logger
 from storage_summaries import SummaryStore
+import limits
 log = get_logger(__name__)
 
 
@@ -383,8 +384,50 @@ class Storage(SummaryStore):
                     f"move the DB to a local volume.")
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA foreign_keys=ON")
+            # How many WAL pages may pile up before SQLite folds them
+            # back into the file. The default (1000 pages, 4 MB) was
+            # never reached in production, so the file stayed frozen
+            # while the WAL carried the hours -- and the file is what
+            # every backup copies. See limits.py for the measurement.
+            c.execute(
+                f"PRAGMA wal_autocheckpoint={limits.WAL_AUTOCHECKPOINT_PAGES}"
+            )
             self._local.conn = c
         return self._local.conn
+
+    def _checkpoint(self, c: sqlite3.Connection) -> None:
+        """Fold the WAL into the database file, so the FILE is the truth.
+
+        In WAL mode SQLite writes new pages to `conversations.db-wal`
+        and copies them into `conversations.db` at a checkpoint. A
+        reader that opens the database the normal way sees both; a
+        reader that opens the FILE alone -- what a plain `cp` of the
+        database is, and what the deploy's backup was -- sees only what
+        was folded in before the last checkpoint.
+
+        Measured on production, 2026-10-28 22:30 MSK: the file's last
+        write was 01:32:59 and the WAL carried the next 15 hours (111
+        more rows, up to 17:01). The deploy's backup copied the file,
+        so it captured a 15-hour-old snapshot and called it a backup.
+        A restore from it would have "collapsed" the history.
+
+        A PASSIVE checkpoint never blocks a writer and never waits for
+        another connection: if another thread is mid-read, this one
+        does less and the autocheckpoint picks the rest up later.
+        """
+        try:
+            busy, log_frames, checkpointed = c.execute(
+                "PRAGMA wal_checkpoint(PASSIVE)"
+            ).fetchone()
+        except sqlite3.Error as exc:
+            log.warning(f"[storage] WARN: wal_checkpoint failed: {exc!r}")
+            return
+        if busy:
+            log.warning(
+                f"[storage] WARN: wal_checkpoint is busy "
+                f"({checkpointed}/{log_frames} pages folded in); the "
+                "database file lags the WAL until the next write"
+            )
 
     # --- thread lifecycle ---
 
@@ -398,6 +441,7 @@ class Storage(SummaryStore):
                 (chat_id, thread_id),
             )
             c.commit()
+            self._checkpoint(c)
             return True
         except sqlite3.IntegrityError:
             return False
@@ -433,6 +477,7 @@ class Storage(SummaryStore):
                 (chat_id, thread_id),
             )
             c.commit()
+            self._checkpoint(c)
             return msg_count
         except Exception:
             c.rollback()
@@ -561,6 +606,7 @@ class Storage(SummaryStore):
             (chat_id, thread_id),
         )
         c.commit()
+        self._checkpoint(c)
 
     def touch_thread(self, chat_id: int, thread_id: str) -> None:
         """Bump last_used without changing the active thread."""
@@ -571,6 +617,7 @@ class Storage(SummaryStore):
             (chat_id, thread_id),
         )
         c.commit()
+        self._checkpoint(c)
 
     # --- known_topics (group mode only) ---
     # Telegram Bot API does NOT expose a "list all forum topics"
@@ -595,6 +642,7 @@ class Storage(SummaryStore):
             (chat_id, message_thread_id, name),
         )
         c.commit()
+        self._checkpoint(c)
 
     def list_known_topics(self, chat_id: int) -> list[dict]:
         """Return all known topics in this group, sorted by name.
@@ -667,6 +715,7 @@ class Storage(SummaryStore):
             (chat_id, message_thread_id),
         )
         c.commit()
+        self._checkpoint(c)
 
     # --- messages ---
 
@@ -700,6 +749,7 @@ class Storage(SummaryStore):
              telegram_message_id),
         )
         c.commit()
+        self._checkpoint(c)
         return cur.lastrowid
 
     def get_messages(self, chat_id: int, thread_id: str,
@@ -827,6 +877,7 @@ class Storage(SummaryStore):
             (chat_id, thread_id),
         )
         c.commit()
+        self._checkpoint(c)
         return cur.rowcount > 0
 
     def delete_message_ids(self, chat_id: int, thread_id: str,
@@ -854,6 +905,7 @@ class Storage(SummaryStore):
             (chat_id, thread_id, *ids),
         )
         c.commit()
+        self._checkpoint(c)
         return cur.rowcount
 
 

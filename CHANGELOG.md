@@ -17,6 +17,43 @@ this file is the human-readable summary.
 
 **After `v0.17.0-stable`.** The next cycle starts here.
 
+### The database file was not the database
+
+SQLite in WAL mode does not write into the database file when a row
+changes: it writes the changed pages into `conversations.db-wal` and
+copies them into `conversations.db` at a checkpoint. Measured on
+production, 2026-10-28 22:30 MSK: the file's last write was 01:32:59
+and the WAL carried every message since -- 111 more rows, up to 17:01.
+`PRAGMA integrity_check` said `ok` throughout, the bot read 538
+messages, and the history had not collapsed. It had moved into the WAL,
+where a plain copy of the file does not follow it.
+
+The cause was SQLite's own default: the checkpoint threshold is 1000
+WAL pages -- 4 MB with the 4 KB page size this bot uses -- and the
+WAL never got near it, so the checkpoint never ran and the file stayed
+frozen for the better part of a day.
+
+The deploy's backup step was `cp "$DB" "$BACKUP/conversations.db.snapshot"`
+-- a copy of the file, without the WAL. So the three deploy backups of
+that day (03:47, 15:29, 16:30) each held a 15-hour-old snapshot, and
+nothing compared a snapshot with the live database, so a stale one
+passed for a good one. A restore from it would have rolled the history
+back to 01:32, which is what "the database collapsed" looks like from
+the outside.
+
+The write path now folds the WAL back into the file after every write,
+and the threshold is a deployment setting
+(`LLAMABOT_WAL_AUTOCHECKPOINT`, 64 pages) rather than SQLite's
+default. `tests/test_storage_checkpoint.py` reads the file the way a
+plain copy reads it -- with no WAL next to it -- and three of its five
+cases are red without the fix: without it, the copy does not even have
+the `messages` table, because the schema itself was still in the WAL.
+
+The other half of the repair -- a backup that reads through the WAL,
+and a deploy that compares the snapshot with the live database --
+belongs to the host's `deploy_bot.sh`, which is not in this
+repository. It is handled on the host, separately from this release.
+
 ### An external review, closed in the order the work was worth doing
 
 Qwen went over the repository on 2026-10-28 and listed twenty findings.
