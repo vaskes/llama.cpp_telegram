@@ -704,3 +704,45 @@ async def test_send_reply_does_not_crash_on_empty_text(monkeypatch, tmp_path):
     _handlers._reply.assert_awaited_once()
     sent_text = _handlers._reply.await_args.args[1]
     assert sent_text == _handlers.EMPTY_RESPONSE_FALLBACK
+
+
+def test_the_failure_notice_path_never_swallows_silently():
+    """When the bot fails and cannot even say so, the log must say it.
+
+    The voice and document handlers log the failure of the failure
+    notice. The photo path swallowed it, so a user whose Telegram was
+    down left nothing behind -- not for them, and not for the operator
+    reading the journal. The check is on the AST: a comment is not a
+    log line, and a neighbouring handler's log does not cover this one.
+    """
+    import ast
+    from pathlib import Path
+
+    bot_dir = Path(__file__).resolve().parent.parent / "telegram-bot"
+    tree = ast.parse((bot_dir / "handlers.py").read_text(encoding="utf-8"))
+
+    silent = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        # The call that can fail lives in the TRY body; the handler is
+        # the thing that decides what happens when it does.
+        guarded = " ".join(ast.dump(stmt) for stmt in node.body)
+        if "_reply" not in guarded or "failure_message" not in guarded:
+            continue
+        for handler in node.handlers:
+            logged = any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Name)
+                and n.func.value.id == "log"
+                for n in ast.walk(handler)
+            )
+            if not logged:
+                silent.append(handler.lineno)
+
+    assert not silent, (
+        f"these handlers swallow the failure of the failure notice without "
+        f"logging it: {silent}. The user gets nothing, and the operator "
+        "sees nothing."
+    )

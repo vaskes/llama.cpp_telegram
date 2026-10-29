@@ -862,7 +862,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await _reply(update, failure_message(e))
         except Exception:
-            pass
+            # The voice and document handlers log this; the photo path
+            # was the one that swallowed it, so a user whose Telegram
+            # was down left nothing behind -- not for them, not for us.
+            log.exception("[ERR photo] error reply failed")
     finally:
         # T46: revert T45. See handle_text for rationale.
         try:

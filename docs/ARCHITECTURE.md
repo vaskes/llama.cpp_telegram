@@ -13,7 +13,7 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1502 lines)
+├── handlers.py            # handle_text/photo/voice/document (1505 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   377 lines file, 222 in the function, 345 in the loop
 ├── mcp_client.py # MCP protocol for ONE server (382)

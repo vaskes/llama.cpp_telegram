@@ -8,9 +8,9 @@ CODEBOOK S-1 and S-6. Two claims, each falsifiable:
     register, with its current size declared.
 
 Why 200 and not "smaller is better": the number is not the point, the
-*registration* is. `handlers.py` is 1502 lines and healthy -- four
+*registration* is. `handlers.py` is 1505 lines and healthy -- four
 handlers of one shape, where a fix to the skeleton breaks four call
-sites identically. `handle_photo` at 252 and `handle_text` at 211 are
+sites identically. `handle_photo` at 255 and `handle_text` at 211 are
 that shape. `call_llama` at 222 and `run_one` at 345 are not, and they
 are registered as open debt, which is where the difference has to show
 up.
@@ -78,7 +78,7 @@ EXCEPTIONS = {
     ),
     "handle_photo": (
         "handlers.py",
-        252,
+        255,
         "2026-10-23",
         "One concern (a photo) plus a media path. Same shape as the other "
         "three handlers, so the repetition is the point -- a fix to the "
@@ -86,7 +86,11 @@ EXCEPTIONS = {
         "It grew again on 2026-10-27, by one line: the photo is the one "
         "turn that is not persisted, so its current turn is built by hand "
         "-- and without the Telegram id on it, the photo was the one "
-        "message whose id the model could not see.",
+        "message whose id the model could not see. It grew again on "
+        "2026-10-29, by three lines: the photo path stopped swallowing "
+        "the failure of its own failure notice and logs it instead, "
+        "so the handler is three lines longer and one silent failure "
+        "shorter.",
         "Split only together with the other three handlers, never alone: "
         "one handler on its own is four shapes, not one.",
     ),
