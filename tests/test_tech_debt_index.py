@@ -109,6 +109,38 @@ def test_index_does_not_contradict_a_closed_item():
 # drift properly, because it recomputes instead of matching.
 
 
+def test_the_index_does_not_restate_a_size_claim():
+    """The index is navigation; sizes live in the item files.
+
+    A number copied into the index is a number nobody recomputes, and the
+    ones that were there had already drifted: the item 8 row named a
+    `call_llama` size the function no longer had, and the item 13 row
+    said "closed" next to a cost that was no longer being paid. The item
+    files carry the history, and the size each of them states is
+    recomputed by the marker under it.
+    """
+    index = INDEX.read_text(encoding="utf-8")
+    rows = [line for line in index.splitlines()
+            if re.match(r"^\|\s*\d+\s*\|", line)]
+    assert rows, (
+        "the status table of the index is empty -- this check would pass "
+        "on nothing, which is the shape of a check that protects nothing"
+    )
+    bad = []
+    for row in rows:
+        for pattern, what in (
+            (r"\d{3,}\s*lines?\b", "a line count"),
+            (r"\d+\s*\u2192\s*\d+", "a size transition"),
+            (r"\d+\s+(?:leaf\s+)?modules\b", "a module count"),
+        ):
+            if re.search(pattern, row):
+                bad.append(f"{what}: {row.strip()}")
+    assert not bad, (
+        "the index must not restate a size claim -- put it in the item "
+        "file, where it is recomputed:\n" + "\n".join(bad)
+    )
+
+
 def test_named_tripwires_exist():
     """A marker pointing at a test that was renamed or deleted is a lie."""
     missing = []

@@ -1,4 +1,4 @@
-# Architecture (v0.15.1-stable)
+# Architecture
 
 > **Read this first if you are deploying the bot for the first time.**
 > The bot runs as a thin proxy between Telegram and a local
@@ -19,7 +19,7 @@ telegram-bot/
 ├── mcp_client.py # MCP protocol for ONE server (382)
 ├── mcp_registry.py # the tools imported from the MCP servers (318)
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
-├── dispatch_group.py # human-to-human reply absorb (164)
+├── dispatch_group.py # human-to-human reply absorb (165)
 ├── dispatch_polling.py    # startup + getUpdates loop (352)
 ├── dispatch_webhook.py    # PTB assembly + handler registration (429)
 ├── webhook.py             # aiohttp server + secret check (267)
@@ -48,7 +48,7 @@ telegram-bot/
 ├── http_clients.py        # the shared httpx helpers (87)
 ├── logconf.py # logging configuration (142)
 ├── selftest.py            # in-tree selftest entry (239) + 7 selftest_*.py leaves
-├── llm_*.py               # 23 leaf modules, one decision each
+├── llm_*.py               # 24 leaf modules, one decision each
 └── personal_tools/
     ├── bash_command.py    # T38: bash execution via sandbox side-car
     ├── bash_policy.py     # the command classes the bot refuses, in code
@@ -81,7 +81,7 @@ tests, none of which build a full `call_llama`.
   llm_nonstream.py      442  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         310  StreamOutcome, stream_iteration, _fallback_to_nonstream
-  user_notice.py         128  engine_failure_message
+  user_notice.py         187  engine_failure_message
   llm_abort.py             64  finalize_aborted_turn
   llm_result.py           346  Answer, unwrap_answer
   llm_artifact.py         487  Artifact, extract_files
@@ -545,7 +545,7 @@ no tokenizer to ask, and the estimate is deliberately conservative
   * [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common
     failure modes.
   * [CHANGELOG.md](../CHANGELOG.md) — release notes
-    (`v0.15.1-stable` is the current release; see the
+    (the current release is named in the README's header; see the
     [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases)
     for the full stable-tag history).
   * [docs/README.md](README.md) — the map of the documentation tree.

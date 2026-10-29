@@ -31,13 +31,21 @@ disagreement again without a test going red.
 | 5 | `print()` instead of `logging` | **closed** `83c5092` | `test_logging_stdout_parity.py` | — |
 | 6 | `created_at` from the Python clock | **closed** — decision, see file | `test_t6_db_clock.py` | — |
 | 7 | `commit()` per INSERT, no migration txn | **closed** — decision, see file | `test_t7_migration_atomic.py` | — |
-| 8 | Decompose `call_llama`'s tool loop | **closed** — `call_llama` 1616→478, iteration is `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | 15 leaf modules, 45 mutations, 45 caught |
-| 9 | `selftest._selftest` — was 1940 lines | **closed** — `_selftest` 1940→111, 7 leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `scripts/mutation_harness_selftest.py` | Runtime harness landed first; 4 defects the extraction found are in the item doc |
-| 10 | `dispatch.py` — 1672 → 364 | **closed** — blocks A–G, 40 mutations; ticket target ≤400 met by block G | `test_dispatch_routing.py` | The edit-replace feature it carried was removed on 2026-10-24 |
+| 8 | Decompose `call_llama`'s tool loop | **closed** — the iteration lives in `ToolLoop.run_one` | `test_llm_iteration.py`, `test_drift_call_llama_names.py`, `test_loop_flag_order.py` | Sizes, leaf modules and the mutation count: the item file. The size debt that remains is `ToolLoop.run_one`, registered in `tests/test_size_budget.py` |
+| 9 | `selftest._selftest` monolith | **closed** — the extraction into leaf modules | `test_selftest_runtime.py`, `test_selftest_blocks.py`, `scripts/mutation_harness_selftest.py` | Runtime harness landed first; the defects the extraction found are in the item doc |
+| 10 | `dispatch.py` monolith | **closed** — blocks A–G; the ticket target was met by block G | `test_dispatch_routing.py` | The edit-replace feature it carried was removed on 2026-10-24 |
 | 11 | `config.py` — env inventory | **closed** `fb70469` | `test_env_inventory.py` | — |
-| 12 | `prompts.py` — 422 lines of module constants | **closed** — prose in `prompt_text/`, facade 75 lines, 9 mutations | `test_prompts.py` | Dockerfile `COPY` for the package |
-| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F, 1464→1381, 48 mutations | `test_handler_middle.py` | ~9 duplicated calls per handler |
+| 12 | `prompts.py` module constants | **closed** — the prose moved into `prompt_text/` | `test_prompts.py` | Dockerfile `COPY` for the package |
+| 13 | `handlers.py` shared wrapper | **closed** — blocks A–F | `test_handler_middle.py` | The shared `call_llama` call sites stay duplicated on purpose; the item file says why |
 | 14 | Duplicate top-level definitions in `tests/` | **closed** | `test_no_duplicate_definitions.py` | — |
+
+The sizes, the leaf-module counts and the mutation counts live in the item
+files, not in this table. This table is navigation, and a number copied
+into an index is a number nobody recomputes -- the ones that were here had
+already drifted: the item 8 row named a `call_llama` size the function no
+longer had, and the item 13 row said "closed" next to a cost that was no
+longer being paid. `tests/test_tech_debt_index.py` now fails if a size
+claim comes back into this table.
 
 Four tripwires were found to be measuring something other than their
 property while this was being fixed, and all four are recorded in the

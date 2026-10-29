@@ -92,7 +92,7 @@ only thing anyone could write was a test that read the source text and hoped.
 > not lines — it is a monolith regardless of length.**
 
 `run_one` at 345 lines, nine concerns. `handle_photo` at 255 lines, one concern
-plus a media path. `call_llama` at 324 lines, four concerns and a documented
+plus a media path. `call_llama` at 222 lines, four concerns and a documented
 `DO NOT REFACTOR` with a trigger. Length is a proxy. Concern count is the
 signal. Where they disagree, count the concerns.
 
@@ -2036,7 +2036,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_late_import_policy.py` | 7 | `allowed_updates` in both transports |
 | `test_section_markers.py` | 7 | Markers not inside functions, not orphaned; the census of big modules is computed |
 | `test_module_imports_resolve.py` | 5 | Names + the `global`/`nonlocal` matrix |
-| `test_tech_debt_index.py` | 7 | Register links point at real files; the moving sizes are recomputed; the index restates no size |
+| `test_tech_debt_index.py` | 8 | Register links point at real files; the moving sizes are recomputed; the index restates no size |
 | `test_drift_call_llama_names.py` | 4 | Name drift in extracted modules |
 | `test_drift_t58_revert.py` | 4 | T58 regressions |
 | `test_tech_debt_doc_sizes.py` | 3 | `<!-- current: file=N -->` vs the tree |
@@ -2047,7 +2047,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_drift_handler_imports.py` | 2 | Application callbacks imported |
 | `test_drift_r8/r9/r10/r11` | 4 | Tools, profiles, env, handlers |
 | `test_polling_integration.py` | 11 | Cross-transport integration |
-| `test_size_budget.py` | 10 | S-1, S-6 — function and module size budgets |
+| `test_size_budget.py` | 11 | S-1, S-6 — function and module size budgets |
 | `test_changelog_structure.py` | 7 | One `[Unreleased]` section; sections and tags agree |
 | `test_no_duplicate_definitions.py` | 4 | T-4 — repeated top-level definitions |
 | `test_no_model_coauthor_trailers.py` | 4 | No false attribution in the history |

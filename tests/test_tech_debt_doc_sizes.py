@@ -27,7 +27,14 @@ So the documents carry the claim explicitly. A closed item ends with:
     <!-- current: handlers.py=1278 -->
 
 and this test requires two things: that the numbers in that comment
-match the files on disk, and that a closed item has one at all. Adding
+match the files on disk, and that a closed item has one at all.
+
+Every `current:` comment of an item is checked, not only the first
+one. Item 10 carries two -- the page of the item that is still open --
+and the second one was read by nobody: the file it names had grown in
+the very commit that added it, and the number stayed. A check that
+reads the first marker of a page is green exactly where it happens to
+be right. Adding
 a new closed item without declaring its current numbers is a failure,
 not a silent omission -- otherwise the next reader has exactly the
 problem this test exists to prevent.
@@ -84,23 +91,29 @@ def test_closed_item_declares_its_current_sizes(path, text):
 @pytest.mark.parametrize("path,text", _closed_docs(),
                          ids=[p.name for p, _ in _closed_docs()])
 def test_declared_sizes_match_the_tree(path, text):
-    match = DECLARATION.search(text)
-    if not match:
+    matches = list(DECLARATION.finditer(text))
+    if not matches:
         pytest.skip("covered by test_closed_item_declares_its_current_sizes")
 
-    entries = ENTRY.findall(match.group("body"))
-    assert entries, f"{path.name}: 'current:' comment names no file"
+    wrong = []
+    for number, match in enumerate(matches, 1):
+        entries = ENTRY.findall(match.group("body"))
+        assert entries, f"{path.name}: 'current:' comment names no file"
 
-    for rel, declared in entries:
-        declared_n = int(declared)
-        candidates = [ROOT / rel, BOT / rel, BOT / Path(rel).name]
-        target = next((c for c in candidates if c.is_file()), None)
-        assert target, (
-            f"{path.name} declares current:{rel} but no such file exists "
-            f"(looked in {', '.join(str(c) for c in candidates)})")
-        actual = len(target.read_text(encoding="utf-8").splitlines())
-        assert actual == declared_n, (
-            f"{path.name} declares {rel} = {declared_n}, but it is "
-            f"{actual} lines. Either the code moved and the claim did "
-            f"not, or the claim was never about this file -- fix the "
-            f"number, not the test.")
+        for rel, declared in entries:
+            declared_n = int(declared)
+            candidates = [ROOT / rel, BOT / rel, BOT / Path(rel).name]
+            target = next((c for c in candidates if c.is_file()), None)
+            assert target, (
+                f"{path.name} declares current:{rel} but no such file exists "
+                f"(looked in {', '.join(str(c) for c in candidates)})")
+            actual = len(target.read_text(encoding="utf-8").splitlines())
+            if actual != declared_n:
+                wrong.append(
+                    f"{path.name} (current-comment {number}) declares "
+                    f"{rel} = {declared_n}, but it is {actual} lines")
+
+    assert not wrong, (
+        "\n".join(wrong)
+        + "\n\nEither the code moved and the claim did not, or the claim "
+          "was never about this file -- fix the number, not the test.")

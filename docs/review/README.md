@@ -13,6 +13,7 @@ a reason, verdict recorded — its documents move to `../archive/` with
 | Wave 6 close-out | [../archive/2026-10/2026-10-21-wave6.md](../archive/2026-10/2026-10-21-wave6.md) |
 | Review brief for the `call_llama` decomposition | [../archive/2026-10/REVIEW-BRIEF-2026-10-22.md](../archive/2026-10/REVIEW-BRIEF-2026-10-22.md) |
 | Context-memory block review + verdict | [../archive/2026-10/REVIEW-context-memory-block.md](../archive/2026-10/REVIEW-context-memory-block.md) |
+| Qwen review of the 2026-10-29 tree, with the verdicts on every finding | [../archive/2026-10/REVIEW-2026-10-29-qwen.md](../archive/2026-10/REVIEW-2026-10-29-qwen.md) |
 
 ## What a reviewer needs, in the order they need it
 

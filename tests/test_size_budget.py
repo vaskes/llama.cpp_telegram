@@ -33,6 +33,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 BOT = ROOT / "telegram-bot"
 DEBT = ROOT / "docs" / "tech-debt"
+CODEBOOK = ROOT / "docs" / "CODEBOOK.md"
 
 FUNCTION_LIMIT = 200
 MODULE_LIMIT = 1000
@@ -193,6 +194,85 @@ def test_registered_lengths_match_the_tree():
         + "\n\nThe function grew or shrank. Update the number, and if it "
         "grew, ask whether the exception still says why it is allowed.")
 
+
+#: The table in CODEBOOK section 3.3: "| `call_llama` | 222 | ... |".
+#: Only a name in backticks with a number in the next column -- the
+#: other tables of the codebook name files (`context_budget.py`) or
+#: tests (`test_size_budget.py`), and those are not functions.
+TABLE_ROW = re.compile(r"^\|\s*`(?P<name>\w+)`\s*\|\s*(?P<lines>\d+)\s*\|",
+                       re.MULTILINE)
+
+#: A size stated in prose: "`handle_photo` at 255 lines".
+PROSE_SIZE = re.compile(r"`(?P<name>\w+)`\s+at\s+(?P<lines>\d+)\s+lines\b")
+
+#: A sentence that talks about the past. The numbers in it are history,
+#: and history is not recomputed.
+HISTORICAL = re.compile(r"\b(from|was|were|went|had)\b")
+
+
+def _sentence_around(text, start, end):
+    """The sentence a match sits in, so a past-tense claim can be left
+    alone: "it was 209 lines" is history, "it is 211 lines" is a
+    claim."""
+    before = text.rfind(". ", 0, start)
+    after = text.find(". ", end)
+    return text[before + 2 if before >= 0 else 0:
+                after if after >= 0 else len(text)]
+
+
+def test_the_codebook_states_the_registry_s_sizes():
+    """CODEBOOK states the size of the registered functions in two
+    places: the table of section 3.3 and the prose beside it. The
+    registry is the measurement; the codebook is a copy of it.
+
+    A copy nobody recomputes is a copy that rots, and both had rotted:
+    the table said 253 for a function the registry measured at 252, and
+    the prose said 324 for one that is 222 lines long. Neither was
+    wrong about anything that mattered, and a reviewer read both as
+    measurements.
+    """
+    text = CODEBOOK.read_text(encoding="utf-8")
+    rows = {m.group("name"): int(m.group("lines"))
+            for m in TABLE_ROW.finditer(text)}
+    assert rows, (
+        "the codebook's table of the registered functions is gone -- this "
+        "check would pass by finding nothing")
+
+    wrong = []
+    for name, (_, declared, _, _, _) in EXCEPTIONS.items():
+        if name not in rows:
+            wrong.append(f"{name}: registered, but the codebook's table "
+                         f"does not state its size")
+        elif rows[name] != declared:
+            wrong.append(f"{name}: the codebook's table says {rows[name]}, "
+                         f"the registry says {declared}")
+    for name in sorted(set(rows) - set(EXCEPTIONS)):
+        wrong.append(f"{name}: the codebook's table states a size for a "
+                     f"function that is not registered")
+
+    checked = 0
+    for m in PROSE_SIZE.finditer(text):
+        name = m.group("name")
+        if name not in EXCEPTIONS:
+            continue
+        if HISTORICAL.search(_sentence_around(text, m.start(), m.end())):
+            continue          # a number that talks about the past
+        checked += 1
+        said = int(m.group("lines"))
+        declared = EXCEPTIONS[name][1]
+        if said != declared:
+            wrong.append(f"{name}: the prose says {said} lines, the "
+                         f"registry says {declared}")
+
+    assert checked, (
+        "no prose size claim for a registered function was found -- the "
+        "pattern moved, and this half of the check would pass by finding "
+        "nothing")
+
+    assert not wrong, (
+        "\n".join(wrong)
+        + "\n\nThe registry is the measurement; the codebook is a copy of "
+          "it. Re-measure and correct the copy -- or drop the number.")
 
 def test_the_registry_has_not_rotted():
     """An exception for something that is now under the limit has

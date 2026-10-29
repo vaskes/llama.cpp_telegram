@@ -39,11 +39,11 @@ ARCH = DOCS / "ARCHITECTURE.md"
 
 # [ \t] not \s -- \s matches newlines, so a greedy match can skip
 # whole lines and report modules as absent from their own table.
-TABLE = re.compile(r"^[ \t]*(llm_\w+\.py)[ \t]+(\d+)[ \t]", re.MULTILINE)
+TABLE = re.compile(r"^[ \t]*([\w.]+\.py)[ \t]+(\d+)[ \t]", re.MULTILINE)
 
 # module -> the public names the map claims it exports. A size is
 # satisfiable by comments; a name is not.
-SURFACE = re.compile(r"^[ \t]*(llm_\w+\.py)[ \t]+\d+[ \t]+(.+)$", re.MULTILINE)
+SURFACE = re.compile(r"^[ \t]*([\w.]+\.py)[ \t]+\d+[ \t]+(.+)$", re.MULTILINE)
 
 
 def _call_llama():
@@ -228,6 +228,101 @@ def test_the_summary_line_matches_the_tree():
         f"{actual_modules}")
     assert said_tests == actual_tests, (
         f"the map says {said_tests} test files, the tree has {actual_tests}")
+
+
+#: The tree diagram: one line per module, its size in brackets. The
+#: numbers are typed by hand, so a module that grows leaves the map
+#: describing a file that no longer exists.
+DIAGRAM = re.compile(r"^[^\w]*(?P<name>[\w*]+\.py)\b(?P<rest>.*)$", re.MULTILINE)
+
+#: The size in a diagram line: "(124 lines)" or "(382)".
+SIZE_IN_LINE = re.compile(r"\((?P<lines>\d+)(?:\s+lines)?\)")
+
+#: The two counts of files the diagram states in prose.
+LEAF_MODULES = re.compile(r"(\d+)\s+leaf modules")
+SELFTEST_LEAVES = re.compile(r"(\d+)\s+selftest_\*\.py\s+leaves")
+
+
+def _map_block():
+    """The fenced block that draws `telegram-bot/` as a tree."""
+    text = ARCH.read_text(encoding="utf-8")
+    m = re.search(r"## What's inside\s*\n+```[a-z]*\n(?P<block>.*?)\n```",
+                  text, re.S)
+    assert m, (
+        "the architecture map no longer has the tree block -- this check "
+        "would pass by finding nothing")
+    return m.group("block")
+
+
+def _module(name):
+    """The file a name in the map refers to, or None if there is none."""
+    direct = BOT / name
+    if direct.is_file():
+        return direct
+    hits = list(BOT.rglob(name))
+    return hits[0] if len(hits) == 1 else None
+
+
+def test_the_map_quotes_the_tree_it_describes():
+    """The diagram of `telegram-bot/` quotes a size per module and two
+    counts of files. Nothing recomputed them.
+
+    The sizes were typed by hand, and six of them were already wrong
+    before this wave -- one of them by a line, because the file has no
+    trailing newline and `wc -l` counts one less than the line count
+    every tripwire in this repo measures.
+
+    The leaf table below the diagram was checked, but only for the
+    `llm_*` modules: the two rows that name a module outside that
+    family -- `call_llama.py` and `user_notice.py` -- were never
+    checked at all, and `user_notice.py` was quoted at 128 lines when it
+    is 187.
+
+    So the diagram is measured against the tree, the table is measured
+    for every module it names, and the two counts are measured against
+    the files they count.
+    """
+    block = _map_block()
+    wrong = []
+    checked = 0
+
+    for line in block.splitlines():
+        m = DIAGRAM.match(line)
+        if not m:
+            continue
+        name = m.group("name")
+        size = SIZE_IN_LINE.search(m.group("rest"))
+        if not size or "*" in name:
+            continue          # a glob, not a module: the counts below
+        path = _module(name)
+        if path is None:
+            wrong.append(f"{name}: quoted in the map, does not exist")
+            continue
+        checked += 1
+        actual = len(path.read_text(encoding="utf-8").splitlines())
+        said = int(size.group("lines"))
+        if actual != said:
+            wrong.append(f"{name}: map says {said}, file is {actual}")
+
+    assert checked >= 20, (
+        f"only {checked} sizes parsed out of the diagram -- the shape of "
+        f"the map moved and this check would pass by finding nothing")
+
+    for pattern, files in ((LEAF_MODULES, "llm_*.py"),
+                           (SELFTEST_LEAVES, "selftest_*.py")):
+        m = pattern.search(block)
+        assert m, f"the diagram no longer states the number of {files}"
+        said = int(m.group(1))
+        actual = len(list(BOT.glob(files)))
+        if said != actual:
+            wrong.append(f"the map says {said} {files}, the tree has {actual}")
+
+    assert not wrong, (
+        "docs/ARCHITECTURE.md quotes a tree it no longer has:\n  "
+        + "\n  ".join(wrong)
+        + "\n\nThe map is hand-written. A number in it is a copy of a "
+          "measurement, and a copy nobody recomputes is a copy that "
+          "rots -- re-measure it, or drop the number.")
 
 
 def test_the_check_can_see_a_stale_number():
