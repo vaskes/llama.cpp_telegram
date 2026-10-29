@@ -34,7 +34,7 @@
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | the top-level modules of `telegram-bot/` -- the map and the count are in `docs/ARCHITECTURE.md`, recomputed from the tree by `tests/test_docs_current.py` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count does not move for that |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
-| Open review cycle | none — the cycle of the TODO's code items (6 to 10) closed on 2026-10-27, the operator answered the four open questions on 2026-10-28, and the refusal list is in production since 2026-10-28 (`v0.15.1-stable`). What is left is the measurement backlog and the CI job that would run the harnesses. **The measurement backlog is closed** (2026-10-29): the "five harnesses that still measure nothing" is corrected here -- a scanner that reads every shape the harnesses use finds **487 anchors, 0 dead** (it found 39 dead anchors and 17 unreadable ones before), and a refused or invalid mutation now **fails the run** in all thirty harnesses instead of being counted, printed and ignored. What is left is the CI job that would run the harnesses |
+| Open review cycle | none — the cycle of the TODO's code items (6 to 10) closed on 2026-10-27, the operator answered the four open questions on 2026-10-28, and the refusal list is in production since 2026-10-28 (`v0.15.1-stable`). What is left is the measurement backlog and the CI job that would run the harnesses. **The measurement backlog is closed** (2026-10-29): the "five harnesses that still measure nothing" is corrected here -- a scanner that reads every shape the harnesses use finds **487 anchors, 0 dead** (it found 39 dead anchors and 17 unreadable ones before), and a refused or invalid mutation now **fails the run** in all thirty harnesses instead of being counted, printed and ignored. **The CI job now exists** (2026-10-29, `.github/workflows/mutation-nightly.yml`): it builds the test image and runs one harness per night, rotating, so a full cycle takes about a month -- the cheap freshness half was already in the pytest job. The one harness that needs the production host carries a `REQUIRES_HOST` marker and stays a manual run |
 
 The numbers in `TECH-DEBT.md` are `splitlines()`-based and are recomputed by
 `tests/test_tech_debt_index.py`, which fails if they go stale.
@@ -458,6 +458,21 @@ dispatch-split harness runs the suite on the production host, once per
 mutation, at 152 seconds a run. A CI job that runs every harness is
 therefore hours, not minutes: it is a nightly job, not a gate on a
 push.
+
+**That job exists now** (2026-10-29,
+`.github/workflows/mutation-nightly.yml`). It builds the bot image plus
+pytest, and runs **one harness per night, rotating by the day of the
+month** -- a full cycle is about a month, and the umbrella harness (the
+slow one, about 48 minutes on its own) gets its own night. The
+harness that needs the production host cannot run in CI at all: it
+shells out over SSH to run the suite there. It carries the marker
+`REQUIRES_HOST = True`, and `tests/test_mutation_harness_hosts.py`
+checks that the marker and the harness's own behaviour agree **in both
+directions** -- a harness that reaches the host but does not say so
+would make the job red every night, and a harness that says so but
+does not would be skipped silently, which is the exact failure this
+repository keeps paying for. The job can also be started by hand with
+a named harness.
 
 **And the last harness that could not run at all now runs**
 (`fc6bd71`): `dispatch_split` named the key it authenticates with as a

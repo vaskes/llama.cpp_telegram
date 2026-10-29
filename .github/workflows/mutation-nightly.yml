@@ -1,0 +1,105 @@
+name: mutation-nightly
+
+# The mutation harnesses are the only check that says the tripwires
+# actually catch something. They are too slow to be a gate on a push --
+# the umbrella harness runs the whole suite once per mutation, and one
+# harness alone is about 48 minutes -- so they run at night instead.
+#
+# One harness per night, rotating, so a full cycle takes about a month.
+# The cheap half is already in the ordinary pytest job: that the
+# harness's anchor still points at the tree it claims
+# (tests/test_mutation_anchor_freshness.py) and that a refused mutation
+# fails the harness's verdict (tests/test_mutation_harness_verdicts.py).
+# This job is the deep half: the mutation is actually applied and the
+# suite has to catch it.
+#
+# The rotation is by day of the month, so a harness runs once per month
+# and a skipped night shifts the rest rather than dropping one.
+
+on:
+  schedule:
+    # 03:17 UTC -- off the hour on purpose, the top of the hour is the
+    # busiest slot on the scheduler.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      harness:
+        description: "Harness to run (empty = the night's rotation slot)"
+        required: false
+        default: ""
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    # The umbrella harness is the slow one: it runs the whole suite once
+    # per mutation, about 48 minutes here and more on a two-core runner.
+    # The harness has its own per-test timeout and scores a hang as a
+    # hang, so this is a backstop, not the mechanism. A hung mutation
+    # must not sit in the queue until the platform kills the job.
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build the image the harnesses run in
+        run: |
+          set -euo pipefail
+          # The harnesses run their suite inside the bot image, because
+          # that is the environment the code ships into. The image needs
+          # pytest on top of the bot's own dependencies -- the same
+          # recipe the production host uses for its test image.
+          docker build -t mutation-bot-base telegram-bot/
+          mkdir -p /tmp/test-image
+          cat > /tmp/test-image/Dockerfile <<'EOF'
+          FROM mutation-bot-base
+          RUN pip install --no-cache-dir pytest pytest-asyncio
+          EOF
+          docker build -t bot-testimg311 /tmp/test-image
+          # Twenty-seven harnesses take the image from the environment;
+          # three name it themselves. Both get the same image, so the
+          # name is the one the harness expects.
+          echo "MUTATION_HARNESS_IMAGE=bot-testimg311" >> "$GITHUB_ENV"
+
+      - name: Pick the harness of the night
+        run: |
+          set -euo pipefail
+          # A harness that needs the production host cannot run here: it
+          # has no key and no image over there. Those carry the marker
+          # REQUIRES_HOST = True, and
+          # tests/test_mutation_harness_hosts.py checks that the marker
+          # and the harness's own behaviour agree -- so the skip list
+          # cannot rot into a lie.
+          mapfile -t ALL < <(ls scripts/mutation_harness*.py | sort)
+          mapfile -t RUNNABLE < <(grep -L 'REQUIRES_HOST = True' "${ALL[@]}")
+          COUNT=${#RUNNABLE[@]}
+          if [ "$COUNT" -eq 0 ]; then
+            echo "no runnable harness found" >&2
+            exit 1
+          fi
+          if [ -n "${{ inputs.harness }}" ]; then
+            HARNESS="${{ inputs.harness }}"
+            echo "running $HARNESS on request"
+          else
+            DAY=$(date -u +%d)
+            INDEX=$(( (10#$DAY - 1) % COUNT ))
+            HARNESS="${RUNNABLE[$INDEX]}"
+            echo "rotation slot $INDEX of $COUNT -> $HARNESS"
+          fi
+          if [ ! -f "$HARNESS" ]; then
+            echo "no such harness: $HARNESS" >&2
+            exit 1
+          fi
+          echo "HARNESS=$HARNESS" >> "$GITHUB_ENV"
+
+      - name: Run the harness
+        env:
+          MUTATION_HARNESS_IMAGE: bot-testimg311
+        run: |
+          set -euo pipefail
+          # The harness gets the repository root as its argument, and it
+          # mounts that same path into the container -- so the mutation
+          # is applied to the tree the runner checked out.
+          python3 "scripts/$(basename "$HARNESS")" "$GITHUB_WORKSPACE"

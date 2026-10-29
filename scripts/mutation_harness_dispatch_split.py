@@ -24,6 +24,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 HOST = sys.argv[1] if len(sys.argv) > 1 else "root@85.136.112.144"
 PORT = os.environ.get("MUTATION_HARNESS_SSH_PORT", "12007")
+#: This harness runs the suite on the PRODUCTION HOST over SSH, so it
+#: needs a key and an image that exist there. A CI job has neither, and
+#: a harness that cannot run must fail loudly rather than report a clean
+#: run -- but it also must not turn the nightly job red every night for
+#: a known reason. The marker is what the nightly job reads to skip it,
+#: and tests/test_mutation_harness_hosts.py checks that the marker and
+#: the harness's own behaviour agree.
+REQUIRES_HOST = True
 # The key and the test image are the two things this harness cannot
 # invent: the key to reach the host, and an image that carries the
 # suite's dependencies. Both used to be written down, and the key was

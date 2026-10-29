@@ -2036,7 +2036,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_late_import_policy.py` | 7 | `allowed_updates` in both transports |
 | `test_section_markers.py` | 7 | Markers not inside functions, not orphaned; the census of big modules is computed |
 | `test_module_imports_resolve.py` | 5 | Names + the `global`/`nonlocal` matrix |
-| `test_tech_debt_index.py` | 7 | Register links point at real files; the moving sizes are recomputed |
+| `test_tech_debt_index.py` | 7 | Register links point at real files; the moving sizes are recomputed; the index restates no size |
 | `test_drift_call_llama_names.py` | 4 | Name drift in extracted modules |
 | `test_drift_t58_revert.py` | 4 | T58 regressions |
 | `test_tech_debt_doc_sizes.py` | 3 | `<!-- current: file=N -->` vs the tree |
@@ -2102,7 +2102,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-183 test files in total; the table above is the ones that guard a rule in
+184 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
