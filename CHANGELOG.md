@@ -17,6 +17,45 @@ this file is the human-readable summary.
 
 **After `v0.23.0-stable`.** The next cycle starts here.
 
+### The inline code is native code too
+
+The operator's words (2026-10-30): "хочу вот такое же форматирование в
+телеге" -- the answer should look the way his own client renders it,
+where a word or a path in single backticks is monospace. His example
+was his own review of a harness:
+
+    Харнес `evals` у него написан: P@K, R@K, MRR, nDCG@K, 79 размеченных
+    запросов в фикстурах. А `evals/baselines/` -- **пусто**, один `.gitkeep`.
+
+So a span of single backticks in the answer becomes a `<code>` element,
+and Telegram draws it monospace. The answer already went out as HTML --
+the console output was a `<pre>` -- so this is the same formatter
+answering the same question about the other shape of code.
+
+Three rules, each for a shape that really happens:
+
+* a delimiter is a run of **exactly one** backtick. A run of two or more
+  is a fence, or the way to write a backtick inside a span, and it stays
+  literal;
+* the pair sits on **one line** -- a span that runs over a line break is
+  a model that lost track of its own markup, and converting it would
+  hide the mistake instead of showing it;
+* an **unmatched** backtick is not a delimiter. The text stays the way
+  it was written, because a `<code>` without its closing tag is a
+  message Telegram rejects, and a rejected message means the user gets
+  no answer at all.
+
+The splitter learned the new element too: a cut that would land inside a
+`<code>` moves **before** it, the same way it moves before a `<pre>`.
+
+**The reasoning message is not formatted.** The operator was categorical:
+the thinking bubble is the model's scratchpad, not the answer. It carries
+no parse mode, its backticks stay backticks, and the module that owns it
+does not import the formatter at all.
+
+`telegram-bot/telegram_format.py`, `tests/test_telegram_inline_code.py`,
+`scripts/mutation_harness_formatting.py`.
+
 ## [v0.23.0-stable] — 2026-10-30 — A name that is taken gets a number, the way a browser does it
 
 **After `v0.22.0-stable`.** The next cycle starts here.

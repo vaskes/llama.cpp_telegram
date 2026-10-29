@@ -369,14 +369,24 @@ async def test_the_document_carries_the_topic_id():
     assert tr.documents[0][3].get("message_thread_id") == 42
 
 
-async def test_a_plain_answer_is_untouched():
+async def test_a_plain_answer_is_not_turned_into_a_file():
     """A user who asked a question must not get a different answer
-    because a feature was switched on next to it."""
+    because a feature was switched on next to it.
+
+    The fixture names a code span on purpose: the answer-files feature
+    looks for something that looks like a file, and a backticked name
+    is exactly the shape it has to leave alone.
+
+    The one thing that did touch the text is the formatter: the span
+    became a ``<code>`` element, because that is what Telegram draws
+    monospace (the operator's rule of 2026-10-30). The prose is the
+    model's own, and the answer is still a message, not a document.
+    """
     tr = await _replay({"text": "Просто текст. И `code.span` тоже не файл."},
                        user_id=9108)
 
     assert tr.documents == []
-    assert tr.texts == ["Просто текст. И `code.span` тоже не файл."]
+    assert tr.texts == ["Просто текст. И <code>code.span</code> тоже не файл."]
 
 
 # --- the demo --------------------------------------------------------------

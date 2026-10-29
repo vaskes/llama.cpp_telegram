@@ -1381,6 +1381,39 @@ message stays literal, a `<pre>` is never cut in half, every piece
 fits Telegram's limit, and the answer goes out with the parse mode
 while the plain messages do not.
 
+**The inline code gets the same treatment.** A word or a path the model
+wrapped in single backticks -- ``evals/baselines/`` -- becomes a
+`<code>` element, and Telegram draws it monospace. The operator asked
+for it on 2026-10-30, with the answer he wanted to look the way his own
+client renders it. Three rules, each for a shape that really happens:
+
+* a delimiter is a run of **exactly one** backtick. A run of two or
+  more is a fence, or the way to write a backtick inside a span, and it
+  stays literal;
+* the pair sits on **one line**. A span that runs over a line break is
+  a model that lost track of its own markup, and converting it would
+  hide the mistake instead of showing it;
+* an **unmatched** backtick is not a delimiter. The text stays the way
+  it was written, because a `<code>` without its closing tag is a
+  message Telegram rejects -- the same failure the fence rules above
+  are about.
+
+**Only the answer carries the parse mode.** There are three artifacts
+here, and they are not the same thing. The **answer** is the model's
+prose and the code it quoted: it is formatted. The **reasoning** is the
+model's scratchpad, edited in place while the model thinks, and the
+operator's rule for it is categorical -- it is *not* formatted. The
+**notices and the errors** are text written for a person, with no
+markup to render, and they carry no parse mode at all.
+
+Checked by `tests/test_telegram_inline_code.py`: a span becomes a
+`<code>`, the prose around it survives, a run of two or more backticks
+is not a delimiter, an unmatched backtick and a pair over a line break
+stay literal, the code inside a fenced block is not converted twice, a
+`<code>` is never cut in half, and -- the rule the operator was
+categorical about -- the reasoning bubble carries no parse mode and
+keeps the model's own backticks.
+
 ---
 
 ### 3.9 A claim about another service
@@ -2073,6 +2106,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
+| `test_telegram_inline_code.py` | 15 | The inline code is native code too -- and the reasoning message is not formatted at all |
 | `test_delete_messages_tool.py` | 52 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 | `test_message_search.py` | 11 | The store keeps the Telegram id of every message, and can be searched by text and by sender |
 | `test_telegram_id_recorded.py` | 5 | Every message the bot stores carries the Telegram id it came from |
@@ -2105,7 +2139,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-185 test files in total; the table above is the ones that guard a rule in
+186 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

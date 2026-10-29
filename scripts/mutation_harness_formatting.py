@@ -67,6 +67,8 @@ IMAGE = os.environ.get("MUTATION_HARNESS_IMAGE", "")
 #: that no target can notice is a mutation that proves nothing.
 TARGETS = [
     "tests/test_telegram_code_formatting.py",
+    # The inline code: the same formatter, one more shape of it.
+    "tests/test_telegram_inline_code.py",
     # The answer path, in case the split moves the answer somewhere else.
     "tests/test_answer_chunking.py",
     # The structural tripwire: every handler sends its answer through
@@ -83,6 +85,7 @@ SUITE_TIMEOUT = 300
 HANDLERS = ROOT / "telegram-bot" / "handlers.py"
 FORMAT = ROOT / "telegram-bot" / "telegram_format.py"
 TEST_FORMAT = ROOT / "tests" / "test_telegram_code_formatting.py"
+TEST_INLINE = ROOT / "tests" / "test_telegram_inline_code.py"
 
 # (name, expectation, [(path, pattern, replacement, expected_sites)])
 #
@@ -119,13 +122,38 @@ MUTATIONS = [
         (FORMAT, r"        if len\(body\) \+ _TAG_OVERHEAD > limit:\n",
          "        if False:\n", 1),
     ]),
-    ("the splitter cuts a pre in half", "CAUGHT", [
-        (FORMAT, r"(?m)^        if opened > closed:\n",
-         "        if False:\n", 1),
+    ("the splitter cuts an element in half", "CAUGHT", [
+        (FORMAT, r"(?m)^            if opened > closed:\n",
+         "            if False:\n", 1),
     ]),
     ("the language hint stays in the code", "CAUGHT", [
         (FORMAT, r"(?m)^        if newline >= 0:\n",
          "        if False:\n", 1),
+    ]),
+    ("the inline code is not converted", "CAUGHT", [
+        (FORMAT,
+         r'            out\.append\("<code>" \+ body \+ "</code>"\)',
+         '            out.append(escape_html(text[start:end]))', 1),
+    ]),
+    ("a run of two backticks is a delimiter", "CAUGHT", [
+        (FORMAT, r"(?m)^        if run_end - start != 1:\n",
+         "        if run_end - start > 2:\n", 1),
+        (FORMAT, r"(?m)^        if close_end - close != 1:\n",
+         "        if close_end - close > 2:\n", 1),
+    ]),
+    ("a code span may run over a line break", "CAUGHT", [
+        (FORMAT, r'(?m)^        if "\\n" in text\[run_end:close\]:\n',
+         "        if False:\n", 1),
+    ]),
+    ("the code inside a fenced block is converted again", "CAUGHT", [
+        (FORMAT,
+         r'out\.append\("<pre>" \+ escape_html\(body\) \+ "</pre>"\)',
+         'out.append("<pre>" + _render_prose(body, limit) + "</pre>")', 1),
+    ]),
+    ("the splitter does not protect the inline code", "CAUGHT", [
+        (FORMAT,
+         r'_ELEMENTS = \(\("<pre>", "</pre>"\), \("<code>", "</code>"\)\)',
+         '_ELEMENTS = (("<pre>", "</pre>"),)', 1),
     ]),
 
     # --- group B: the tripwires ------------------------------------
@@ -157,6 +185,13 @@ MUTATIONS = [
         (TEST_FORMAT,
          r"(?m)^def test_a_cut_inside_a_pre_keeps_the_block_whole\(\):\n",
          "def test_a_cut_inside_a_pre_keeps_the_block_whole():\n    return\n", 1),
+        # The inline-code file guards the fenced block too: it asserts
+        # that the block IS a <pre> before it asserts that the code
+        # inside it is not converted again. A group-B mutation has to
+        # silence every tripwire that guards the behaviour it removes.
+        (TEST_INLINE,
+         r"(?m)^def test_the_code_inside_a_fenced_block_is_not_converted_again\(\):\n",
+         "def test_the_code_inside_a_fenced_block_is_not_converted_again():\n    return\n", 1),
         (FORMAT, r"    spans = _fenced_blocks\(text\)\n",
          "    spans = []\n", 1),
     ]),
@@ -165,9 +200,38 @@ MUTATIONS = [
         (TEST_FORMAT,
          r"(?m)^async def test_the_answer_goes_out_with_the_parse_mode\(update\):\n",
          "async def test_the_answer_goes_out_with_the_parse_mode(update):\n    return\n", 1),
+        # The inline-code file checks the parse mode too: the answer
+        # carries the <code> elements *because* it goes out as HTML.
+        (TEST_INLINE,
+         r"(?m)^async def test_the_answer_goes_out_with_the_code_element\(update\):\n",
+         "async def test_the_answer_goes_out_with_the_code_element(update):\n    return\n", 1),
         (HANDLERS,
          r'await send_reply\(update, chunk, strip=False, parse_mode="HTML"\)',
          'await send_reply(update, chunk, strip=False, parse_mode=None)', 1),
+    ]),
+    # The inline code: every tripwire that guards it is silenced, and
+    # the conversion is broken. The suite has to go green -- that is
+    # the proof that the tripwire was the thing doing the work.
+    ("the tripwires are gone, and the inline code is not converted",
+     "SURVIVED", [
+        (TEST_INLINE,
+         r"(?m)^def test_an_inline_code_span_becomes_a_code_element\(\):\n",
+         "def test_an_inline_code_span_becomes_a_code_element():\n    return\n", 1),
+        (TEST_INLINE,
+         r"(?m)^def test_the_operator_own_sentence_keeps_its_prose_and_marks_its_spans\(\):\n",
+         "def test_the_operator_own_sentence_keeps_its_prose_and_marks_its_spans():\n    return\n", 1),
+        (TEST_INLINE,
+         r"(?m)^def test_the_code_inside_the_span_is_escaped\(\):\n",
+         "def test_the_code_inside_the_span_is_escaped():\n    return\n", 1),
+        (TEST_INLINE,
+         r"(?m)^def test_the_split_never_cuts_a_code_in_half\(\):\n",
+         "def test_the_split_never_cuts_a_code_in_half():\n    return\n", 1),
+        (TEST_INLINE,
+         r"(?m)^async def test_the_answer_goes_out_with_the_code_element\(update\):\n",
+         "async def test_the_answer_goes_out_with_the_code_element(update):\n    return\n", 1),
+        (FORMAT,
+         r'            out\.append\("<code>" \+ body \+ "</code>"\)',
+         '            out.append(escape_html(text[start:end]))', 1),
     ]),
 ]
 

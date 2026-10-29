@@ -43,7 +43,7 @@ telegram-bot/
 ├── turn.py # one turn's persist/rollback ledger (166)
 ├── access.py              # authorisation and group policy (304)
 ├── chat_utils.py          # chat-shape and command-argument helpers (191)
-├── telegram_format.py     # the answer as HTML: a code block becomes <pre> (169)
+├── telegram_format.py     # the answer as HTML: a code block becomes <pre>, an inline span <code> (286)
 ├── donsetch.py            # the MCP client for the web tools (200)
 ├── http_clients.py        # the shared httpx helpers (87)
 ├── logconf.py # logging configuration (142)
@@ -56,7 +56,7 @@ telegram-bot/
     └── file_upload.py    # the file door: push bytes in, never overwrite
 ```
 
-65 top-level modules, 185 test files. The size of the suite is the
+65 top-level modules, 186 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.
