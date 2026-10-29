@@ -1432,6 +1432,59 @@ the operator's, and the bot is a guest in it.
 
 ---
 
+### The external review's numbers — closed 2026-10-29
+
+**Status:** ✅ **closed 2026-10-29.** Six findings of one class, each one
+closed with a tripwire that was measured red *before* the fix.
+
+**What was wrong.** The review (Квен/Qwen) arrived in the chat, and the
+chat was compacted before the findings were written down somewhere
+durable. Two of them were recovered from memory; the rest were found by
+sweeping the class they belong to — **a document stating a number that
+nobody recomputes**. The class was worth more than the lost list: every
+finding below is that one defect wearing a different hat.
+
+**What was closed.**
+
+  * **The measured sizes were not recomputed.** `TECH-DEBT.md` says its
+    block is recomputed by `tests/test_tech_debt_index.py`. The test
+    named three files, and all three happened to be right. Nine rows
+    rotted: `handlers.py` said 1504 while the file had 1502,
+    `storage.py` said 886 while the file had 938. The rows are read from
+    the block itself now — a new row is covered the day it is written.
+  * **The rulebook quoted sizes of its own.** `llm_iteration.py` was
+    quoted at 571 lines while the file had 575.
+  * **"200+ forks" was never true.** The repository has 0 forks and 0
+    stars (GitHub API, not memory). The number was load-bearing: the
+    rulebook argued from it, an ADR argued from it, three tickets
+    argued from it, and four module docstrings argued from it.
+  * **The wall-clock budget was wrong by twelve.** `CALL_LLAMA.md` said
+    600 s, `limits.py` said 7200 — and that same document's own limits
+    table said 7200. The document contradicted itself, and the code
+    comment on the guard carried a third copy of the wrong number.
+  * **The census next to rule S-2 had rotted.** It said six production
+    modules were over 500 lines (there are eight: `limits.py` and
+    `llm_delete.py` crossed the line since) and that `handlers.py` had
+    19 section markers (it has 28). The census is computed now.
+  * **The measured block's other numbers had rotted too.** 17 `llm_*`
+    leaf modules (24), 24 environment names in `config.py` (28), 12 more
+    elsewhere in the package (20).
+
+**The rule that came out of it.** A number in a document is a claim
+about the tree, and a claim about the tree is either recomputed or
+removed. Where the counting rule lives is part of the claim: the rules
+now live in the tests that recompute them, and the tripwires are
+proven — each one was seen red on the old number before the fix.
+
+**What is still open.** The review text itself. It was lost to the
+compaction of the chat, and the findings that the sweep above did not
+reproduce have to be checked by name — which needs the text back.
+
+**Where to look:** `TECH-DEBT.md` § "Measured"; `docs/CODEBOOK.md`
+§ 3.3 Size; `docs/CODEBOOK.md` § X-1; `docs/CALL_LLAMA.md` § 3.3.
+
+---
+
 
 ## House rules for this file
 
