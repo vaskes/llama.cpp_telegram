@@ -680,6 +680,43 @@ operator has priced it.
 **What would change the answer:** a destructive command class the code
 does not refuse. Same tripwire as T-FREEZE-DEV-1.
 
+### A document over 20 MiB cannot come in through the chat — the channel's ceiling
+
+**Status:** accepted 2026-10-30 — the operator's ruling after the live
+check: the refusal is the expected behaviour, and the task is closed.
+**Where:** `docs/BASH-SANDBOX.md` § "Moving a file into the sandbox" (the
+table of ceilings), `telegram-bot/config.py`
+(`TELEGRAM_PUBLIC_DOWNLOAD_LIMIT_BYTES`, `document_limit_bytes`),
+`telegram-bot/user_notice.py` (`oversized_document_message`),
+`telegram-bot/handlers.py` (`handle_document`).
+
+**What it is:** the ceiling that binds is Telegram's, not the bot's. On the
+public API `getFile` hands a bot no file of 20 MiB or more. The bot's own
+cap is 50 MiB (`MAX_DOC_BYTES`), the side-car's file policy is 50 MiB
+(`AGENT_BINARY_LIMIT=50m`), the transport takes 64 MiB — the pipe is above
+the rule and the channel is what is short. The size arrives with the
+update, so the refusal is decided before a byte is pulled: `handle_document`
+checks `document_limit_bytes()` above `get_file`.
+
+**Measured in the operator's own chat on 2026-10-30:** a 20,000,000-byte
+document landed in the sandbox as `/workspace/rand_20000001.bin`; the same
+document sent three times landed as `rand_20000001.bin`,
+`rand_20000001 (1).bin` and `rand_20000001 (2).bin` — the numbering,
+through the chat, and not only through the courier check; a document of
+about 50 MB was refused with the notice that names Telegram's 20 MB
+ceiling, says the bot's own limit is 50 MB, and gives the way out (a file
+that is already in the sandbox can be sent to this chat).
+
+**The way past the channel's ceiling exists and was not taken:** a local
+`telegram-bot-api` server has no download ceiling, and it needs the
+operator's own `api_id`/`api_hash`. None were obtainable (`my.telegram.org`
+refused new sessions: "Too many attempts"), and a third party's published
+credentials were not used. Nothing in the repository depends on that
+server, and nothing breaks if it never comes. The bot already reads its
+ceiling from the API it is pointed at: `telegram_download_limit_bytes()`
+returns `None` for a local server, so the bot's own 50 MiB cap would
+apply there.
+
 ## Closed in the current cycle — where to read it
 
 Not repeated here; each line points at the record.
