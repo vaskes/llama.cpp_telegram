@@ -443,8 +443,35 @@ true here and are not true any more:
   CI was green and empty. That is fixed in all thirty now (`26fe585`),
   and the tripwire that keeps it fixed is in the tree (`71bb04e`).
 
-The CI job itself is still open, and the section-pointer convention
-above is still open. `dispatch_split` is still not a CI candidate -- it
+**The cheap half of the CI job is in the tree** (`19044a2`): the
+freshness tripwire the TODO named as the alternative -- a check that
+goes red when a harness's pattern stops matching its tree -- runs on
+every pytest now, in a second, and covers 487 anchors. What is left
+is the expensive half: a job that actually *runs* the harnesses and
+sees the mutations caught.
+
+**That half has a measured price** (2026-10-29, the full sweep of all
+thirty harnesses on this tree): the umbrella harness runs the **whole**
+suite once per mutation, 13 times, and the suite is about 3 minutes 45
+seconds -- so that one harness alone is about 48 minutes. The
+dispatch-split harness runs the suite on the production host, once per
+mutation, at 152 seconds a run. A CI job that runs every harness is
+therefore hours, not minutes: it is a nightly job, not a gate on a
+push.
+
+**And the last harness that could not run at all now runs**
+(`fc6bd71`): `dispatch_split` named the key it authenticates with as a
+path that exists nowhere, and the image it runs the suite in as one
+that was never built. It reported eight INVALID rows, a summary of
+zero and an exit code of zero. Both are named by the environment now,
+and measured on the production host: **8 of 8 caught**. The selftest
+harness had the same shape of problem -- it needed docker to run its
+suite -- and now runs the suite with the current interpreter
+(`940ea66`).
+
+What is left in that section is named as what is left: the CI job that
+would run the harnesses end to end, and the section-pointer convention
+that is not covered. `dispatch_split` is still not a CI candidate -- it
 mutates the production host over ssh on purpose.
 
 ## Accepted as documented risk — not a bug, not a task
