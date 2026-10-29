@@ -31,6 +31,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 ITEMS = ROOT / "docs" / "tech-debt"
 INDEX = ROOT / "TECH-DEBT.md"
+CODEBOOK = ROOT / "docs" / "CODEBOOK.md"
 SRC = ROOT / "telegram-bot"
 
 
@@ -123,13 +124,77 @@ def test_named_tripwires_exist():
 
 
 def test_measured_sizes_in_the_index_are_current():
-    """The measured block must not go stale the way the prose did."""
+    """Every row of the measured block must match the tree.
+
+    The check used to name three files: `dispatch.py`, `selftest.py` and
+    `bot.py`. All three happened to be right, and the nine rows it did
+    not look at rotted: `handlers.py` said 1504 while the file had 1502,
+    `storage.py` said 886 while the file had 938. A tripwire that covers
+    three of twelve rows is green precisely where it happens to be
+    correct -- and the next reviewer builds a conclusion on a number
+    that "is checked by a test".
+
+    So the rows are read from the block itself. A new row is covered the
+    day it is written, and a row cannot be forgotten by the check that
+    is supposed to guard it.
+    """
     index = INDEX.read_text(encoding="utf-8")
-    for name, pat in [("dispatch.py", r"dispatch\.py\s+(\d+) lines"),
-                      ("selftest.py", r"selftest\.py\s+(\d+) lines"),
-                      ("bot.py", r"bot\.py\s+(\d+) lines")]:
-        m = re.search(pat, index)
-        assert m, f"no measured line for {name} in the index"
-        actual = len((SRC / name).read_text(encoding="utf-8").splitlines())
-        assert int(m.group(1)) == actual, (
-            f"{name}: index says {m.group(1)} lines, file has {actual}")
+    block = index.split("## Measured, 2026-10-22", 1)[1].split("```", 2)[1]
+    rows = re.findall(r"^(\S+\.py)\s+(\d+) lines", block, re.MULTILINE)
+    assert rows, (
+        "the measured block has no rows -- the check would compare "
+        "nothing and pass")
+    for name, declared in rows:
+        path = SRC / name
+        assert path.exists(), (
+            f"the measured block names {name}, which is not in the tree")
+        actual = len(path.read_text(encoding="utf-8").splitlines())
+        assert int(declared) == actual, (
+            f"{name}: the block says {declared} lines, the file has {actual}")
+
+
+def test_the_codebook_s_size_claims_are_current():
+    """The rulebook quotes module sizes; the quotes must be true.
+
+    The measured block above is checked, so it is the place that says
+    how big a module is. The rulebook quotes the same numbers in its
+    prose -- and those quotes were not checked, so they rotted on their
+    own: `llm_iteration.py` was quoted at 571 lines while the file had
+    575. A number that the rulebook quotes and nobody recomputes is the
+    same trap as the block was, one document over.
+
+    Only CURRENT-state claims are read. A sentence that says a file
+    "went from 1672 lines to ~900" is history, and history is not
+    recomputed -- it is what the sentence is for.
+    """
+    codebook = CODEBOOK.read_text(encoding="utf-8")
+    name_re = re.compile(r"`(?P<name>[\w./]+\.py)`")
+    number_re = re.compile(r"(?<![\d.])(?P<n>\d{3,5})(?![\d.])")
+    historical = re.compile(r"\b(from|was|were|went|had)\b")
+    claims = []
+    for line_no, line in enumerate(codebook.splitlines(), 1):
+        for match in name_re.finditer(line):
+            clause = line[match.end():].split(". ")[0]
+            if historical.search(clause):
+                continue
+            if clause.lstrip().startswith("|"):
+                # A row of the tripwire table: the number after the
+                # name is a test count, not a line count.
+                continue
+            number = number_re.search(clause)
+            if number:
+                claims.append((line_no, match.group("name"),
+                               int(number.group("n"))))
+    assert claims, (
+        "no module size claim was found in the codebook -- the check "
+        "would compare nothing and pass")
+    wrong = []
+    for line_no, name, claimed in claims:
+        path = SRC / name
+        assert path.exists(), (
+            f"the codebook quotes {name}, which is not in the tree")
+        actual = len(path.read_text(encoding="utf-8").splitlines())
+        if actual != claimed:
+            wrong.append(f"line {line_no}: {name} says {claimed}, "
+                         f"the file has {actual}")
+    assert not wrong, "\n".join(wrong)
