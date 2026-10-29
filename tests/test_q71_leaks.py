@@ -33,20 +33,26 @@ async def test_idle_chats_do_not_stay_in_the_rate_window(monkeypatch):
     A bot invited to 5000 groups held 5000 deque keys forever, including
     after it left. Timestamps aged out; the keys did not. Nothing printed an
     error, because nothing was wrong from the code's point of view.
+
+    The state below is the shape production produces: a chat that sent at
+    least once keeps its last timestamp until its next send. An earlier
+    version of this test filled the dict with EMPTY deques -- a state the
+    code can never produce, because every key is created by a send and every
+    send appends a timestamp. Against the emptiness-based eviction that test
+    was green while the leak was still there.
     """
     import chat_utils
+    from collections import deque
     chat_utils._send_window.clear()
 
     # Far past the cap, so the eviction branch is guaranteed to run.
     monkeypatch.setattr(chat_utils, "_SEND_WINDOW_MAX_KEYS", 16)
+    stale = chat_utils._time.monotonic() - (chat_utils._RATE_WINDOW_SEC + 30)
     for i in range(64):
-        chat_utils._send_window[i] = __import__("collections").deque()
+        chat_utils._send_window[i] = deque([stale])
 
-    async def _one_send():
-        await chat_utils._rate_limit_send(0)
-
-    await _one_send()
-    assert len(chat_utils._send_window) <= 17, (
+    await chat_utils._rate_limit_send(0)
+    assert len(chat_utils._send_window) == 1, (
         f"idle chat_ids must be evicted, still holding "
         f"{len(chat_utils._send_window)} keys"
     )
@@ -57,15 +63,18 @@ async def test_idle_chats_do_not_stay_in_the_rate_window(monkeypatch):
 async def test_eviction_never_drops_a_live_chat(monkeypatch):
     """The cap must not cost correctness.
 
-    An ACTIVE chat has non-empty timestamps. Evicting it would silently reset
-    its rate-limit budget, which is a security hole, not a memory win.
+    An ACTIVE chat has timestamps inside the window. Evicting it would
+    silently reset its rate-limit budget, which is a security hole, not a
+    memory win. The idle fillers here are stale, so they are the ones that
+    must go -- the live one must stay.
     """
     import chat_utils
     from collections import deque
     chat_utils._send_window.clear()
     monkeypatch.setattr(chat_utils, "_SEND_WINDOW_MAX_KEYS", 4)
+    stale = chat_utils._time.monotonic() - (chat_utils._RATE_WINDOW_SEC + 30)
     for i in range(32):
-        chat_utils._send_window[i] = deque()
+        chat_utils._send_window[i] = deque([stale])
     chat_utils._send_window[999] = deque([chat_utils._time.monotonic()])
 
     await chat_utils._rate_limit_send(0)
@@ -98,12 +107,25 @@ async def test_rate_limiting_still_actually_limits(monkeypatch):
     chat_utils._send_window.clear()
 
 
-def test_rate_window_source_has_eviction():
-    """Pinned in the source as well as the behaviour, so deleting the runtime
-    guard without deleting this test is visible in review."""
-    src = (BOT_DIR / "chat_utils.py").read_text()
-    assert "_SEND_WINDOW_MAX_KEYS" in src
-    assert "stale_chat" in src
+def test_the_eviction_is_keyed_on_the_window_not_on_emptiness():
+    """The criterion stays "expired", not "empty container".
+
+    Pinned in the source as well as the behaviour, so deleting the runtime
+    guard without deleting this test is visible in review. The behavioural
+    test above is the real guard; this one says which notion of stale the
+    implementation is allowed to use.
+    """
+    tree = ast.parse((BOT_DIR / "chat_utils.py").read_text())
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "_evict_expired_windows"
+    )
+    body = ast.dump(fn)
+    assert "_RATE_WINDOW_SEC" in body, (
+        "the eviction must compare the newest timestamp against the window, "
+        "not ask whether the container is empty"
+    )
+    assert "_send_window" in body
 
 
 # ===========================================================================

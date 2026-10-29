@@ -125,14 +125,42 @@ def split_text(text: str, limit: int = TELEGRAM_TEXT_CHUNK) -> list[str]:
 #
 # Now bounded by _SEND_WINDOW_MAX_KEYS and evicted here, where the leak would
 # otherwise grow, rather than in a sweeper task.
+#
+# Correction (2026-10-29, external review): the first fix evicted only chats
+# whose deque was EMPTY, and a deque here is never empty — every key is
+# created by a send and every send appends a timestamp. So the eviction never
+# fired, the cap was decoration, and the leak it was written for was still
+# there. An idle chat keeps its last timestamp until its next send, which is
+# exactly the case the eviction was supposed to catch. The eviction now drops
+# windows that have EXPIRED, where "expired" is a property of the timestamps
+# rather than of the container.
 
 _send_window: dict = {}  # chat_id -> deque[float]
 _RATE_WINDOW_SEC = 60.0
 _RATE_MAX_PER_WINDOW = 15  # conservative: 15 sends per 60s, leaves 5 for user-originated overhead
-#: How many chat_ids we track at once. Above this, idle entries are dropped;
-#: an active chat re-creates its deque on the next send, so the cap costs a
+#: How many chat_ids we track at once. Above this, expired windows are dropped;
+#: a chat re-creates its deque on the next send, so the cap costs a
 #: re-allocation and never correctness.
 _SEND_WINDOW_MAX_KEYS = 1024
+
+
+def _evict_expired_windows(now: float) -> int:
+    """Drop the windows whose budget has aged out. Returns how many went.
+
+    A window is expired when its NEWEST timestamp is older than the window:
+    nothing it holds can throttle anything any more, so dropping it resets no
+    budget. A chat still inside its window is never touched — evicting it
+    would silently hand it a fresh budget, which is a security hole rather
+    than a memory win.
+    """
+    cutoff = now - _RATE_WINDOW_SEC
+    expired = [
+        chat_id for chat_id, window in _send_window.items()
+        if not window or window[-1] <= cutoff
+    ]
+    for chat_id in expired:
+        _send_window.pop(chat_id, None)
+    return len(expired)
 
 
 async def _rate_limit_send(chat_id: int) -> None:
@@ -153,11 +181,11 @@ async def _rate_limit_send(chat_id: int) -> None:
             await asyncio.sleep(sleep_for)
     window.append(_time.monotonic())
 
-    # Evict idle chats. An ACTIVE chat is never dropped: resetting its
-    # rate-limit budget would be a security hole rather than a memory win.
+    # Evict windows that have aged out. An ACTIVE chat is never dropped:
+    # resetting its rate-limit budget would be a security hole rather than
+    # a memory win.
     if len(_send_window) > _SEND_WINDOW_MAX_KEYS:
-        for stale_chat in [c for c, d in _send_window.items() if not d]:
-            _send_window.pop(stale_chat, None)
+        _evict_expired_windows(now)
 
 
 # --- moved verbatim from dispatch.py (TECH-DEBT #2) ---
