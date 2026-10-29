@@ -70,6 +70,10 @@ class FakeSandbox:
         # raises, which is what an unreachable host looks like to the
         # client -- a different failure from a refusal.
         self.unreachable = False
+        # True: every upload is answered with a 409, whatever the name
+        # is. A client that renames on a conflict must not be able to
+        # loop forever, and this is how that is tested.
+        self.always_conflict = False
 
     # -- what the tests look at ---------------------------------------
 
@@ -110,7 +114,7 @@ class FakeSandbox:
                 return httpx.Response(413, json={"detail": (
                     f"file is {len(body)} bytes, over the binary limit of "
                     f"{self.limit} bytes")})
-            if target in self.files:
+            if self.always_conflict or target in self.files:
                 # The door does not overwrite: a delivery that removes
                 # what it was not told to remove is a surprise.
                 return httpx.Response(409, json={"detail": (

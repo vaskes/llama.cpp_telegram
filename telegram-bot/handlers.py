@@ -985,12 +985,24 @@ async def _put_document_in_sandbox(update, doc, doc_bytes, caption) -> str | Non
         return None
     log.info(f"[handle_document] stored {uploaded.path} "
              f"({uploaded.size} bytes, sha256 {uploaded.sha256})")
+    # The name the user gave may have been taken: the courier stores
+    # the file under a numbered name then, and the user has to be told
+    # that the name they asked for is not the name the file has. The
+    # name in the note is the safe one -- it comes from a stranger, and
+    # the context it goes into is the model's.
+    requested = _fu.safe_file_name(name)
+    renamed = ""
+    if uploaded.name != requested:
+        renamed = (f" (The name `{requested}` was taken, so this one was "
+                   f"stored as `{uploaded.name}` -- the file that was "
+                   f"already there was not touched.)")
     return (
         f"{caption}\n\n--- Document ---\n"
         f"The file `{uploaded.name}` is a binary file, so it cannot be "
         f"read as text. It is now in the sandbox at `{uploaded.path}` "
         f"({uploaded.size} bytes, sha256 {uploaded.sha256}). Work with it "
         f"there -- the sandbox's own tools are the way to look at it."
+        f"{renamed}"
     )
 
 

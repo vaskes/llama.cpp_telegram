@@ -24,6 +24,16 @@ Nothing here deletes. The door refuses to overwrite a file that is
 already there (409), because a delivery that removes what it was not
 told to remove is a surprise, and the surprise is what the user has to
 undo.
+
+But a refusal the user cannot act on is a bad answer to "put this file
+in the sandbox". The operator's own round trip on 2026-10-29 hit it:
+the chat already held a file with that name, and the upload stopped
+there. So a name that is taken gets a NUMBERED name -- ``report.pdf``,
+``report (1).pdf``, ``report (2).pdf``, the way a browser stores the
+second copy of a download. The door still refuses to overwrite (that
+refusal is what makes the numbering safe), and the client picks the
+name: a server that invents a name is a server that decides what a
+file is called.
 """
 from __future__ import annotations
 
@@ -44,6 +54,8 @@ from personal_tools.file_transport import _detail
 __all__ = [
     "FileUploadError",
     "UploadedFile",
+    "MAX_NAME_ATTEMPTS",
+    "numbered_name",
     "safe_file_name",
     "upload_to_sandbox",
 ]
@@ -51,6 +63,11 @@ __all__ = [
 #: Where the sandbox keeps its files -- the same root the model is told
 #: to use when it writes something the bot should send out.
 SANDBOX_WORKSPACE = "/workspace"
+
+#: How many names the courier tries before it gives up. A file whose
+#: name is taken gets a numbered name; a hundred files with the same
+#: name is not a collision, it is a loop, and a loop must end.
+MAX_NAME_ATTEMPTS = 100
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -91,6 +108,38 @@ def safe_file_name(name: str) -> str:
     return base or "file"
 
 
+def numbered_name(name: str, attempt: int) -> str:
+    """``"report.pdf"`` -> ``"report (1).pdf"`` -- the way a browser does it.
+
+    The number goes before the extension and the extension stays last:
+    ``"archive.tar.gz"`` -> ``"archive.tar (1).gz"``. A name with no
+    extension gets the number at the end.
+
+    The number is ours, not the caller's: the caller's name is made
+    safe first (`safe_file_name`), and only then is the number added.
+    A stranger cannot smuggle a space or a parenthesis into a file
+    name through this function.
+    """
+    stem, dot, ext = name.rpartition(".")
+    if not dot or not stem:
+        return f"{name} ({attempt})"
+    return f"{stem} ({attempt}){dot}{ext}"
+
+
+def _is_name_conflict(error: FileUploadError) -> bool:
+    """Is this the door saying that the name is taken?
+
+    The status says so (409). The message is checked as well, because
+    the proxy answers a refused path with 200 and an error body
+    sometimes, and a name conflict must be recognised in either shape.
+    """
+    if error.status == 409:
+        return True
+    message = (error.message or "").lower()
+    return "already" in message and ("exists" in message or "there" in message)
+
+
+
 def _error_for_status(status: int, body: str) -> str:
     """A sentence about a refusal, for the model and for the user.
 
@@ -128,8 +177,48 @@ async def upload_to_sandbox(
     The body is the file's bytes -- no base64, no envelope: the door
     takes the same stream the download gives, so a file crosses the
     proxy without paying a third of its size for the encoding.
+
+    **A name that is taken is not a dead end.** The door refuses to
+    overwrite -- that refusal is the whole point of it, and it is what
+    makes the numbering safe -- but a refusal the user cannot do
+    anything about is a bad answer to "put this file in the sandbox".
+    So the file is stored under a numbered name, the way a browser
+    stores the second download of the same file: ``report.pdf``,
+    ``report (1).pdf``, ``report (2).pdf``. The name it landed under
+    is in the answer, and the user is told that the original name was
+    taken.
+
+    The door itself is not asked to do this: it would have to invent a
+    name, and a server that invents a name is a server that decides
+    what a file is called. The client picks the name; the server keeps
+    the rule.
     """
-    file_name = safe_file_name(name)
+    base = safe_file_name(name)
+    file_name = base
+    for attempt in range(1, MAX_NAME_ATTEMPTS + 1):
+        try:
+            return await _upload_once(
+                content, file_name, directory=directory, timeout=timeout)
+        except FileUploadError as e:
+            if not _is_name_conflict(e) or attempt == MAX_NAME_ATTEMPTS:
+                raise
+            file_name = numbered_name(base, attempt)
+    # The loop always returns or raises inside it; this is here so
+    # that a change to the loop cannot leave the function without a
+    # return.
+    raise FileUploadError(
+        "the sandbox would not take the file under any of its names",
+        status=409)
+
+
+async def _upload_once(
+    content: bytes,
+    file_name: str,
+    *,
+    directory: str = SANDBOX_WORKSPACE,
+    timeout: float = 300.0,
+) -> UploadedFile:
+    """One attempt at one name."""
     path = f"{directory.rstrip('/')}/{file_name}"
     headers = {
         "Authorization": f"Bearer {AGENT_STACK_TOKEN}",

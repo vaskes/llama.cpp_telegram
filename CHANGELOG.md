@@ -17,6 +17,38 @@ this file is the human-readable summary.
 
 **After `v0.22.0-stable`.** The next cycle starts here.
 
+### A name that is taken gets a number, the way a browser does it
+
+The operator's own round trip on 2026-10-29 hit the one thing the
+upload half of the door still got wrong. The chat already held a file
+with that name -- the model's own file, made earlier in the same
+session -- and the upload stopped there:
+
+    ❌ I could not put the file in the sandbox -- the sandbox already
+       has a file with that name: file already exists: rand_20000000.bin.
+
+The refusal was correct and useless. The door is right not to
+overwrite: a delivery that removes what it was not told to remove is a
+surprise. But a refusal the user cannot do anything about is a bad
+answer to "put this file in the sandbox" -- the file was right there in
+the chat, and the way out was to rename it by hand.
+
+So the file is stored under a numbered name, the way a browser stores
+the second copy of a download: `report.pdf`, `report (1).pdf`,
+`report (2).pdf`. The number goes before the extension and the
+extension stays last (`archive.tar.gz` -> `archive.tar (1).gz`).
+
+Two things about who does this. The **client** picks the name and the
+**door** keeps the rule: the client is the one that retries, the door
+still answers 409 for a name that is taken, and the file that was
+already there is not touched. A server that invents a name is a server
+that decides what a file is called. And the number is added *after* the
+caller's name has been made safe, so a stranger cannot smuggle a space
+or a parenthesis into a file name through the numbering.
+
+The user is told what happened: the model's turn names the file's
+real name and says that the name they asked for was taken.
+
 ## [v0.22.0-stable] — 2026-10-30 — The door takes files in, and the pin names the tree that runs
 
 **After `v0.21.1-stable`.** The next cycle starts here.

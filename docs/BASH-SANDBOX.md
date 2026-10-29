@@ -524,6 +524,20 @@ what it was not told to remove is a surprise), and the size limit is
 enforced while the bytes arrive, so an oversized body never becomes
 fifty megabytes of garbage on the disk.
 
+**A name that is taken is not a dead end.** The door refuses to
+overwrite, and the bot answers that refusal with a numbered name, the
+way a browser stores the second copy of a download: `report.pdf`,
+`report (1).pdf`, `report (2).pdf`. The number goes before the
+extension, the extension stays last, and the number is added *after*
+the caller's name has been made safe -- a stranger cannot smuggle a
+space or a parenthesis into a file name through the numbering.
+
+The client picks the name, not the server. A server that invents a
+name is a server that decides what a file is called; and the refusal
+itself is what makes the numbering safe, because the door still will
+not overwrite. The file that was already there is not touched, and the
+user is told which name the new file actually has.
+
 The bot's courier is `telegram-bot/personal_tools/file_upload.py`: it
 posts the raw bytes, hashes them on the way through, and refuses to
 overwrite. A document that is not text now goes straight into the

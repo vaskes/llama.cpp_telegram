@@ -72,6 +72,10 @@ TARGETS = [
     "tests/test_truncation_markers.py",
     "tests/test_console_output_in_chat.py",
     "tests/test_d4_dispatch.py",
+    # The upload half (2026-10-30): the door that takes files IN, and
+    # the numbering a taken name gets.
+    "tests/test_file_upload.py",
+    "tests/test_handlers.py",
 ]
 
 #: A mutation that hangs the suite is still a catch, but it has to be
@@ -89,12 +93,15 @@ TRANSPORT = ROOT / "telegram-bot" / "personal_tools" / "file_transport.py"
 ITERATION = ROOT / "telegram-bot" / "llm_iteration.py"
 RESULT = ROOT / "telegram-bot" / "llm_result.py"
 BASH = ROOT / "telegram-bot" / "personal_tools" / "bash_command.py"
+UPLOAD = ROOT / "telegram-bot" / "personal_tools" / "file_upload.py"
 
 TEST_SEND = ROOT / "tests" / "test_send_file_tool.py"
 TEST_TRANSPORT = ROOT / "tests" / "test_file_transport.py"
 TEST_MARKERS = ROOT / "tests" / "test_truncation_markers.py"
 TEST_CONSOLE = ROOT / "tests" / "test_console_output_in_chat.py"
 TEST_D4 = ROOT / "tests" / "test_d4_dispatch.py"
+TEST_UPLOAD = ROOT / "tests" / "test_file_upload.py"
+TEST_HANDLERS = ROOT / "tests" / "test_handlers.py"
 
 # (name, expectation, [(path, pattern, replacement, expected_sites)])
 #
@@ -168,7 +175,49 @@ MUTATIONS = [
          "        parts.append(f\"stdout:\\n{out[-8000:]}\")\n", 1),
     ]),
 
+    ("a name that is taken is not renumbered", "CAUGHT", [
+        # The door refuses to overwrite (409), and the client answers
+        # that refusal with a numbered name. Take the numbering away
+        # and the upload stops at the refusal again -- which is what
+        # the operator saw on 2026-10-29.
+        (UPLOAD,
+         r"    if error\.status == 409:\n        return True\n",
+         "    if error.status == 409:\n        return False\n", 1),
+    ]),
+    ("the number is put in front of the extension", "CAUGHT", [
+        (UPLOAD,
+         r"    return f\"\{stem\} \(\{attempt\}\)\{dot\}\{ext\}\"\n",
+         "    return f\"{stem}{dot}{ext} ({attempt})\"\n", 1),
+    ]),
+
     # --- group B: the tripwires ------------------------------------
+    ("the tripwires for the numbering are gone, and so is the numbering",
+     "SURVIVED", [
+        # Every test that holds the numbering goes, and the numbering
+        # goes with it. The suite has to stay green: that is the proof
+        # that the tests were the thing doing the work.
+        (TEST_UPLOAD,
+         r"async def test_the_door_does_not_overwrite\(door\):",
+         "async def _disabled_test_the_door_does_not_overwrite(door):", 1),
+        (TEST_UPLOAD,
+         r"async def test_the_numbering_keeps_counting\(door\):",
+         "async def _disabled_test_the_numbering_keeps_counting(door):", 1),
+        (TEST_UPLOAD,
+         r"async def test_the_numbering_ends_rather_than_loops\(door, monkeypatch\):",
+         "async def _disabled_test_the_numbering_ends_rather_than_loops(door, monkeypatch):", 1),
+        (TEST_UPLOAD,
+         r"def test_the_number_goes_before_the_extension\(\):",
+         "def _disabled_test_the_number_goes_before_the_extension():", 1),
+        (TEST_UPLOAD,
+         r"def test_the_number_is_ours_and_the_callers_name_is_not\(\):",
+         "def _disabled_test_the_number_is_ours_and_the_callers_name_is_not():", 1),
+        (TEST_HANDLERS,
+         r"async def test_a_document_whose_name_is_taken_gets_a_numbered_one\(",
+         "async def _disabled_test_a_document_whose_name_is_taken_gets_a_numbered_one(", 1),
+        (UPLOAD,
+         r"    if error\.status == 409:\n        return True\n",
+         "    if error.status == 409:\n        return False\n", 1),
+    ]),
     ("the tripwires for the door are gone, and so is the door", "SURVIVED", [
         # The whole file goes: the door is guarded by several tests, and
         # a group-B mutation that disables one of them and leaves the

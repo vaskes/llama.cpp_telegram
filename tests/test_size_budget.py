@@ -8,7 +8,7 @@ CODEBOOK S-1 and S-6. Two claims, each falsifiable:
     register, with its current size declared.
 
 Why 200 and not "smaller is better": the number is not the point, the
-*registration* is. `handlers.py` is 1575 lines and healthy -- four
+*registration* is. `handlers.py` is 1587 lines and healthy -- four
 handlers of one shape, where a fix to the skeleton breaks four call
 sites identically. `handle_photo` at 253 and `handle_text` at 211 are
 that shape. `call_llama` at 222 and `run_one` at 345 are not, and they
