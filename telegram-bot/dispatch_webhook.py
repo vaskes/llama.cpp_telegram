@@ -42,7 +42,12 @@ from commands import (
     start,
     stats,
 )
-from config import ALLOWED_UPDATES_LIST, BOT_TOKEN, TELEGRAM_API
+from config import (
+    ALLOWED_UPDATES_LIST,
+    BOT_TOKEN,
+    TELEGRAM_API,
+    telegram_file_base_url,
+)
 from handlers import (
     _safe_sender_label,
     handle_document,
@@ -181,10 +186,19 @@ def _build_application() -> Application:
     talks to api.telegram.org no matter what the env override says, so
     a smoke test against a mock server sends half its traffic to the
     real Telegram. One builder means the override cannot be forgotten.
+
+    The file base rides along for the same reason and one step further:
+    PTB downloads files from `base_file_url`, which is a DIFFERENT
+    constant from `base_url` and defaults to the public API. A bot
+    pointed at a local Bot API server that still downloads its files
+    from api.telegram.org takes the public API's 20 MB ceiling back
+    at the last step -- so both bases are derived from TELEGRAM_API in
+    config.py and both are passed here.
     """
     app = Application.builder() \
            .token(BOT_TOKEN) \
            .base_url(TELEGRAM_API) \
+           .base_file_url(telegram_file_base_url()) \
            .build()
     _attach_handlers(app)
 

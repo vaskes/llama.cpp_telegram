@@ -21,7 +21,7 @@ telegram-bot/
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py # human-to-human reply absorb (165)
 ├── dispatch_polling.py    # startup + getUpdates loop (352)
-├── dispatch_webhook.py    # PTB assembly + handler registration (429)
+├── dispatch_webhook.py    # PTB assembly + handler registration (443)
 ├── webhook.py             # aiohttp server + secret check (267)
 ├── commands/              # the slash-command handlers, as a package
 ├── context_budget.py # which persisted messages reach the engine (659)
@@ -35,7 +35,7 @@ telegram-bot/
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
 ├── limits.py              # profile-based token/timeout limits (566)
-├── config.py # env-var read at import time (542)
+├── config.py # env-var read at import time (577)
 ├── state.py               # per-chat runtime state (231)
 ├── storage.py             # SQLite: messages, threads, topics (938)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (200)

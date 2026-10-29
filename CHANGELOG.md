@@ -51,6 +51,30 @@ user-facing copy (one module, one rule: the chat gets a sentence, the log
 gets the detail), and the size dump the photo, voice and video-note paths
 still use now comes from the same place.
 
+### The file bytes come from the same server the methods come from
+
+Pointing the bot at a local Bot API server is the only way past the public
+API's 20 MB download ceiling ("The file must be less than 20 MB in size";
+a local server has no download limit at all). And pointing it there is not
+enough, because PTB 21 keeps two bases apart and only one of them follows
+`TELEGRAM_API`:
+
+    base_url       "<host>/bot"     + token + "/getFile"
+    base_file_url  "<host>/file/bot" + token + "/<file_path>"
+
+`Bot.get_file` rewrites the file path the server answered with into
+`base_file_url + token + path` — so a file is downloaded from the PUBLIC
+api.telegram.org unless that second constant is set too, no matter where
+every other call goes. The ceiling would come back at the last step of the
+journey, with nothing in the logs to say so.
+
+So the file base is derived from `TELEGRAM_API` in `config.py`
+(`telegram_file_base_url()`) and the builder passes both. Three
+tripwires hold it there: every `Application.builder()` must carry
+`base_file_url`, the argument must be the derived URL and not a literal,
+and the mapping itself is asserted for the public API, for a local server
+and for a prefix without the `/bot` suffix.
+
 ## [v0.21.1-stable] — 2026-10-29 — The engine moved to 8081, and a recorded error stopped being a live failure
 
 **After `v0.21.0-stable`.** Two things: the production engine moved to a

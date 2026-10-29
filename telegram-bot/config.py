@@ -46,6 +46,41 @@ TELEGRAM_API = os.environ.get(
     "https://api.telegram.org/bot" if BOT_TOKEN else "",
 )
 
+
+def telegram_file_base_url() -> str:
+    """Where the FILE BYTES come from -- not where the methods go.
+
+    PTB 21 keeps two bases apart, and only one of them follows
+    ``TELEGRAM_API``:
+
+      base_url       "<host>/bot"     + token + "/getFile"
+      base_file_url  "<host>/file/bot" + token + "/<file_path>"
+
+    ``Bot.get_file`` takes the ``file_path`` the server answered with
+    and rewrites it into ``base_file_url + token + path`` -- so a file
+    is downloaded from the PUBLIC api.telegram.org unless the file
+    base says otherwise, no matter where every other call goes.
+
+    That is the 20 MB ceiling coming back through the back door. The
+    public API refuses to hand a bot a file of 20 MB or more
+    ("The file must be less than 20 MB in size"), while a local Bot
+    API server has no download limit at all ("Download files without
+    a size limit"). Point the bot at a local server and leave the file
+    base alone, and the file door would take the ceiling back at a
+    different place -- with nothing in the logs to say so.
+
+    So the file base is derived from the same constant as the method
+    base, in one place, and the builder passes both.
+    """
+    base = (TELEGRAM_API or "").rstrip("/")
+    if not base:
+        # No token, no bot -- but the builder still wants a URL, and
+        # PTB's own default is the honest answer here.
+        return "https://api.telegram.org/file/bot"
+    if base.endswith("/bot"):
+        base = base[: -len("/bot")]
+    return f"{base}/file/bot"
+
 # Which update types this bot subscribes to. ONE declaration, read by
 # both transports.
 #

@@ -19,6 +19,15 @@ The previous tripwire in test_telegram_api_source.py forbids *rebuilding*
 the constant. That is a different hole from failing to *pass* it, and it
 passed the mutation while the bug was live. This one checks the thing that
 was actually broken.
+
+There is a second base, and the same hole is in it. PTB downloads files
+from `base_file_url`, not from `base_url`: `Bot.get_file` rewrites the
+file path the server answered with into `base_file_url + token + path`.
+So a bot pointed at a local Bot API server still pulls its files from
+api.telegram.org unless that constant is set too -- and the public API
+refuses to hand a bot a file of 20 MB or more, which is the ceiling the
+local server exists to lift. Measured 2026-10-29 on the way to a local
+Bot API server.
 """
 import ast
 from pathlib import Path
@@ -49,7 +58,7 @@ def _chain_attrs(call):
 
 
 def _builders(path):
-    """Yield (lineno, has_base_url, has_token) for each builder chain."""
+    """Yield (lineno, has_base_url, has_base_file_url, has_token) per chain."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -62,19 +71,91 @@ def _builders(path):
         # for not carrying base_url themselves.
         if not names or names[0] != "build" or "builder" not in names:
             continue
-        yield node.lineno, "base_url" in names, "token" in names
+        yield (node.lineno, "base_url" in names, "base_file_url" in names,
+               "token" in names)
+
+
+def _base_file_url_calls(path):
+    """Every `.base_file_url(...)` call in the file, as AST nodes."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "base_file_url"):
+            yield node
 
 
 @pytest.mark.parametrize("path", sorted(BOT_DIR.glob("*.py")),
                          ids=lambda p: p.name)
 def test_every_application_builder_sets_base_url(path):
-    offenders = [ln for ln, base_url, _ in _builders(path) if not base_url]
+    offenders = [ln for ln, base_url, _file_url, _token
+                 in _builders(path) if not base_url]
     assert not offenders, (
         f"{path.name}: Application.builder() at lines {offenders} has no "
         f".base_url(TELEGRAM_API). Without it every PTB call -- sendMessage, "
         f"getMe, setMyCommands, reactions, file downloads -- bypasses "
         f"TELEGRAM_API and reaches the real api.telegram.org."
     )
+
+
+@pytest.mark.parametrize("path", sorted(BOT_DIR.glob("*.py")),
+                         ids=lambda p: p.name)
+def test_every_application_builder_sets_base_file_url(path):
+    """The file base is a SECOND constant, and it defaults to the public API.
+
+    PTB 21 downloads files from `base_file_url` -- a different setting
+    from `base_url`, and one that `Bot.get_file` rewrites the file path
+    into. Left at its default, a bot pointed at a local Bot API server
+    still pulls its files from api.telegram.org, and the public API's
+    20 MB ceiling comes back at the last step of the journey.
+    """
+    offenders = [ln for ln, _base_url, file_url, token
+                 in _builders(path) if token and not file_url]
+    assert not offenders, (
+        f"{path.name}: Application.builder() at lines {offenders} has no "
+        f".base_file_url(...). PTB downloads files from that constant, not "
+        f"from base_url, so the bot would pull every file from the public "
+        f"api.telegram.org -- and the public API refuses files of 20 MB or "
+        f"more, even when the bot talks to a local Bot API server."
+    )
+
+
+@pytest.mark.parametrize("path", sorted(BOT_DIR.glob("*.py")),
+                         ids=lambda p: p.name)
+def test_the_file_base_is_derived_not_written_out(path):
+    """The argument must be the derived URL, not a literal.
+
+    A literal is a second copy of the fact: it would go stale the
+    moment the API host changes, and it would be right exactly once.
+    """
+    for node in _base_file_url_calls(path):
+        assert len(node.args) == 1, (
+            f"{path.name}:{node.lineno} .base_file_url() takes one argument"
+        )
+        arg = node.args[0]
+        assert (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name)
+                and arg.func.id == "telegram_file_base_url"), (
+            f"{path.name}:{node.lineno} .base_file_url() is given "
+            f"{ast.dump(arg)}, not config.telegram_file_base_url(). The URL "
+            f"has to be derived from TELEGRAM_API in one place."
+        )
+
+
+def test_the_file_base_follows_the_api_base(monkeypatch):
+    """The mapping itself: same host, the file half of the path."""
+    import config
+    monkeypatch.setattr(config, "TELEGRAM_API", "https://api.telegram.org/bot")
+    assert config.telegram_file_base_url() == \
+        "https://api.telegram.org/file/bot"
+    # A local Bot API server -- the case the whole thing exists for.
+    monkeypatch.setattr(config, "TELEGRAM_API", "http://127.0.0.1:8091/bot")
+    assert config.telegram_file_base_url() == "http://127.0.0.1:8091/file/bot"
+    # A prefix without the /bot suffix still yields a file base.
+    monkeypatch.setattr(config, "TELEGRAM_API", "http://127.0.0.1:8091")
+    assert config.telegram_file_base_url() == "http://127.0.0.1:8091/file/bot"
+    # A trailing slash is not a different host.
+    monkeypatch.setattr(config, "TELEGRAM_API", "http://127.0.0.1:8091/bot/")
+    assert config.telegram_file_base_url() == "http://127.0.0.1:8091/file/bot"
 
 
 def test_every_production_builder_is_counted():
@@ -90,19 +171,25 @@ def test_every_production_builder_is_counted():
     rather than an unexamined line. So this asserts there is at least
     one, and that every one of them carries the override.
     """
-    found = [ln for ln, base_url, token
+    found = [ln for ln, _base_url, _file_url, token
              in _builders(BOT_DIR / "dispatch_webhook.py") if token]
     assert found, (
         "no Application.builder().token() in dispatch_webhook.py; the bot is not "
         "built here any more, so the base_url sweep is passing on an empty "
         "set")
-    missing = [ln for ln, base_url, token
+    missing = [ln for ln, base_url, _file_url, token
                in _builders(BOT_DIR / "dispatch_webhook.py")
                if token and not base_url]
     assert not missing, (
         f"Application.builder().token() at {missing} has no base_url; "
         f"TELEGRAM_API is bypassed and traffic reaches the real "
         f"api.telegram.org")
+    missing_files = [ln for ln, _base_url, file_url, token
+                     in _builders(BOT_DIR / "dispatch_webhook.py")
+                     if token and not file_url]
+    assert not missing_files, (
+        f"Application.builder().token() at {missing_files} has no "
+        f"base_file_url; files would be pulled from the public API")
 
 
 def test_config_still_honours_the_env_override():
