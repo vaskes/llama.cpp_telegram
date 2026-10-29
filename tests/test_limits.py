@@ -12,11 +12,17 @@ _ORIGINAL_ENV = dict(os.environ)
 
 
 def _reload_with(env):
-    """Set env, reload limits, return module."""
+    """Set env, reload limits, return module.
+
+    The module is reloaded IN PLACE. An earlier version deleted it from
+    sys.modules and imported it again, which leaves the process holding
+    TWO `limits` objects: the bot modules keep the older one (they
+    captured it at import), while `import limits` hands out the newer
+    one. A test that patches a limit in one of them measures nothing --
+    and the bot code reads the other. Reloading in place keeps one
+    object, so the patch and the code always talk about the same thing.
+    """
     os.environ.update(env)
-    for mod_name in list(sys.modules):
-        if mod_name == 'limits':
-            del sys.modules[mod_name]
     import limits
     importlib.reload(limits)
     return limits

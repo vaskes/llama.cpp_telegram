@@ -60,9 +60,9 @@ bot.py          124 lines, __all__ present (the fork surface itself is
                pinned by tests/test_facade_ownership.py)
 dispatch.py    355 lines, 3 top-level defs  <- was 1612
 dispatch_group.py 165 lines, human-to-human reply absorb
-dispatch_polling.py   326 lines, startup + getUpdates loop
+dispatch_polling.py   352 lines, startup + getUpdates loop
 dispatch_webhook.py   429 lines, PTB assembly + handlers
-webhook.py             266 lines, aiohttp server + secret check
+webhook.py             267 lines, aiohttp server + secret check
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
 call_llama.py   377 lines, ToolLoop owns the iteration, 24 llm_* leaf modules
 handlers.py    1502 lines
@@ -79,11 +79,13 @@ modules calling get_logger(__name__): 35
 env names read in telegram-bot/*.py: 36
 ```
 
-The three sizes the ledger makes promises about (`dispatch.py`,
-`selftest.py`, `bot.py`) are recomputed by
-`tests/test_tech_debt_index.py`, which fails when they drift. The rest
-are transcribed; when a number moves, it moves in the same commit that
-moved the code.
+Every size in this block is recomputed by
+`tests/test_tech_debt_index.py`, which reads the rows out of this block
+and fails when a number drifts from the tree. (Until 2026-10-29 the test
+pinned only three of the twelve rows -- `dispatch.py`, `selftest.py`,
+`bot.py` -- and the other nine were transcribed prose that nobody
+recomputed. A test that covers part of a table is green exactly where it
+happens to be right.)
 
 The largest unit of untested code in the repository is not `call_llama`
 — item 3, the one that was flagged for months. It was `_selftest`, at

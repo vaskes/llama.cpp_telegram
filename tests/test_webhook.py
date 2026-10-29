@@ -16,6 +16,7 @@ import json as _json
 import urllib.error
 from unittest.mock import MagicMock, AsyncMock, patch
 
+import limits
 import pytest
 
 # conftest.py should set up sys.path and env
@@ -511,9 +512,9 @@ async def test_backpressure_returns_503_when_queue_full(monkeypatch):
     import asyncio
     
     # Simulate queue full
-    saved_max = webhook._MAX_PENDING_DISPATCH
+    saved_max = limits.MAX_PENDING_DISPATCH
     saved_tasks = set(webhook._pending_dispatch_tasks)
-    webhook._MAX_PENDING_DISPATCH = 2
+    limits.MAX_PENDING_DISPATCH = 2
     # Create 2 fake pending tasks
     fake1 = asyncio.create_task(asyncio.sleep(10))
     fake2 = asyncio.create_task(asyncio.sleep(10))
@@ -530,7 +531,7 @@ async def test_backpressure_returns_503_when_queue_full(monkeypatch):
         assert resp.status == 503, f"expected 503 when queue full, got {resp.status}"
         assert b"busy" in resp.body.lower() or b"retry" in resp.body.lower()
     finally:
-        webhook._MAX_PENDING_DISPATCH = saved_max
+        limits.MAX_PENDING_DISPATCH = saved_max
         webhook._pending_dispatch_tasks.clear()
         fake1.cancel()
         fake2.cancel()

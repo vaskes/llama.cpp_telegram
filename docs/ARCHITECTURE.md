@@ -20,9 +20,9 @@ telegram-bot/
 ├── mcp_registry.py # the tools imported from the MCP servers (318)
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py # human-to-human reply absorb (164)
-├── dispatch_polling.py    # startup + getUpdates loop (326)
+├── dispatch_polling.py    # startup + getUpdates loop (352)
 ├── dispatch_webhook.py    # PTB assembly + handler registration (429)
-├── webhook.py             # aiohttp server + secret check (266)
+├── webhook.py             # aiohttp server + secret check (267)
 ├── commands/              # the slash-command handlers, as a package
 ├── context_budget.py # which persisted messages reach the engine (659)
 ├── summarize.py           # summarise out-of-window history, in chunks (319)
@@ -34,7 +34,7 @@ telegram-bot/
 ├── prompt_text/           # the prompt prose, split by topic
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
-├── limits.py              # profile-based token/timeout limits (513)
+├── limits.py              # profile-based token/timeout limits (566)
 ├── config.py # env-var read at import time (496)
 ├── state.py               # per-chat runtime state (231)
 ├── storage.py             # SQLite: messages, threads, topics (938)

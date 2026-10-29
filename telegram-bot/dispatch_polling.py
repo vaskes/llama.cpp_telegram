@@ -35,6 +35,7 @@ import httpx
 
 from config import ALLOWED_UPDATES_JSON, TELEGRAM_API
 from logconf import get_logger
+import limits
 
 log = get_logger(__name__)
 
@@ -55,6 +56,13 @@ def set_dispatcher(app) -> None:
 
 
 _dispatch_tasks: set[asyncio.Task] = set()
+
+#: How long the polling loop pauses when the pending-dispatch cap is
+#: reached. The webhook path can hand the retry back to Telegram (503);
+#: polling has no client to retry, so the bot waits for itself. Without
+#: the pause the loop would re-fetch the same unconfirmed batch in a tight
+#: spin while the queue drains.
+_BACKPRESSURE_SLEEP_SEC = 2.0
 
 
 def _spawn_dispatch(upd_dict: dict, *, dispatch_update) -> asyncio.Task:
@@ -288,6 +296,24 @@ async def _poll_loop(shutdown_event: asyncio.Event, *, register_bot_menu,
                             # the original handler's between-chunk
                             # check picks it up.
                             try:
+                                if len(_dispatch_tasks) >= limits.MAX_PENDING_DISPATCH:
+                                    # Backpressure: the polling twin of the
+                                    # webhook's 503. The update is NOT
+                                    # confirmed -- `offset` stays where it is,
+                                    # so Telegram redelivers it and nothing is
+                                    # lost. `break`, not `continue`: continuing
+                                    # would let a later update confirm an
+                                    # offset past this one and drop it.
+                                    log.warning(
+                                        "[poll] backpressure: %d pending dispatch "
+                                        "tasks >= %d cap; update_id=%s not "
+                                        "confirmed, Telegram will redeliver",
+                                        len(_dispatch_tasks),
+                                        limits.MAX_PENDING_DISPATCH,
+                                        upd_id,
+                                    )
+                                    await asyncio.sleep(_BACKPRESSURE_SLEEP_SEC)
+                                    break
                                 _spawn_dispatch(
                                     upd_dict, dispatch_update=dispatch_update)
                             except Exception:

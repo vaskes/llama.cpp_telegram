@@ -582,3 +582,85 @@ def test_backoff_resets_after_a_recovery_even_when_the_chat_is_quiet():
         "successful getUpdates -- not only on one that returns updates. "
         "Otherwise a quiet chat pins the backoff at the 30s cap for the "
         "life of the process.")
+
+
+# ===========================================================================
+# Backpressure: the polling twin of the webhook's 503
+# ===========================================================================
+#
+# The webhook path capped the pending dispatch queue at 50 and answered 503
+# past it, so Telegram retried. The polling path had no cap at all: it
+# pulled a batch of updates every cycle and spawned a task per update, so a
+# slow engine meant an unbounded pile of pending tasks and a growing wait
+# for every user. The two delivery paths answered the same question with
+# different numbers.
+#
+# The fix keeps the update UNCONFIRMED: `offset` is advanced only after a
+# successful hand-off, so an update we refuse to spawn is simply not
+# confirmed, and Telegram redelivers it. Nothing is lost -- the queue is
+# bounded instead.
+
+def test_the_polling_loop_stops_taking_work_when_the_pending_cap_is_reached(
+        monkeypatch):
+    """Over the cap: no hand-off, no confirmation, no tight spin."""
+    import limits
+    dispatch, polling, _ = load_modules()
+
+    # Patch the module object the CODE reads, not the one `import limits`
+    # hands out: tests/test_limits.py deletes sys.modules['limits'] and
+    # re-imports it, so the process can hold two `limits` objects, and the
+    # bot modules keep the older one. Patching the newer object would leave
+    # the cap at 50 and this test would pass for the wrong reason.
+    monkeypatch.setattr(polling.limits, "MAX_PENDING_DISPATCH", 2)
+    # Three tasks already outstanding: the cap of 2 is reached.
+    monkeypatch.setattr(polling, "_dispatch_tasks", {"a", "b", "c"})
+    # The pause is not the subject of this test; keep the test fast.
+    monkeypatch.setattr(polling, "_BACKPRESSURE_SLEEP_SEC", 0.01)
+
+    client, seen, _collect = _run_loop(
+        [[_msg(1), _msg(2), _msg(3)]], dispatch_update=None, monkeypatch=monkeypatch)
+
+    assert seen == [], (
+        f"the loop handed off updates while over the cap: {seen}"
+    )
+    assert client.offsets and all(off == 0 for off in client.offsets), (
+        f"the offset advanced past a refused update: {client.offsets}. An "
+        "unconfirmed update is redelivered by Telegram; a confirmed one is "
+        "gone."
+    )
+    assert len(client.offsets) <= 3, (
+        f"the loop re-fetched the same unconfirmed batch in a tight spin: "
+        f"{len(client.offsets)} getUpdates calls"
+    )
+
+
+def test_the_pending_cap_is_one_number_for_both_delivery_paths():
+    """One fact, one place.
+
+    The cap answers the same question on both paths -- how much work may be
+    outstanding before the bot stops taking more -- so it must not be two
+    numbers in two modules. The check is on the AST, not on the text: a
+    comment mentioning the name is not a definition.
+    """
+    import limits
+    assert "MAX_PENDING_DISPATCH" in limits.__dict__, (
+        "limits.py is where the cap lives"
+    )
+
+    def _assigned(path):
+        tree = ast.parse(path.read_text())
+        return {
+            target.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+
+    for name in ("webhook.py", "dispatch_polling.py"):
+        names = _assigned(BOT / name)
+        assert not [n for n in names if "MAX_PENDING_DISPATCH" in n], (
+            f"{name} defines its own pending-dispatch cap: "
+            f"{[n for n in names if 'MAX_PENDING_DISPATCH' in n]}. Two "
+            "modules, two numbers -- the drift this wave is about."
+        )

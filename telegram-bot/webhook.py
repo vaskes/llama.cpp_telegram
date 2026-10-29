@@ -28,6 +28,7 @@ from aiohttp import web
 from telegram import Update
 
 import config
+import limits
 
 
 log = logging.getLogger(__name__)
@@ -48,12 +49,12 @@ _MAX_BODY_BYTES = 1 * 1024 * 1024
 # would still cap in-flight LLM calls to 4-6, but the other ~994
 # tasks would sit in memory waiting their turn.
 #
-# MAX_PENDING_DISPATCH caps the queue. 50 is generous (≈10s of
-# burst at Telegram's normal rate) but bounded. Beyond that we
-# reject with 503 and let Telegram retry the update (it will, with
-# backoff). 503 is the right status — it tells Telegram the bot is
-# alive but busy, so Telegram doesn't mark the webhook as broken.
-_MAX_PENDING_DISPATCH = 50
+# The cap itself lives in limits.py (MAX_PENDING_DISPATCH), because the
+# polling path answers the same question with the same number -- and one
+# fact in two modules is one fact that drifts. Beyond the cap we reject
+# with 503 and let Telegram retry the update (it will, with backoff).
+# 503 is the right status — it tells Telegram the bot is alive but busy,
+# so Telegram doesn't mark the webhook as broken.
 _pending_dispatch_tasks: "set[asyncio.Task]" = set()
 
 
@@ -133,10 +134,10 @@ async def _handle(request: web.Request) -> web.Response:
     # v0.10.1: cap pending tasks. If the queue is full, reject
     # with 503 — Telegram will retry with backoff. This is the
     # right HTTP status for "alive but overloaded".
-    if len(_pending_dispatch_tasks) >= _MAX_PENDING_DISPATCH:
+    if len(_pending_dispatch_tasks) >= limits.MAX_PENDING_DISPATCH:
         log.warning(
             "[webhook] rejected: %d pending tasks >= %d cap",
-            len(_pending_dispatch_tasks), _MAX_PENDING_DISPATCH,
+            len(_pending_dispatch_tasks), limits.MAX_PENDING_DISPATCH,
         )
         return web.Response(status=503, text="bot busy, retry later")
     task = asyncio.create_task(_safe_dispatch())

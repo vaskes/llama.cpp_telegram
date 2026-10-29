@@ -447,7 +447,7 @@ rule down as `AUTO` would have been a claim with no check behind it
 |---|---|
 | `context_budget.py` | 4 |
 | `handlers.py` | 28 |
-| `limits.py` | 21 |
+| `limits.py` | 22 |
 | `llm_delete.py` | 4 |
 | `llm_iteration.py` | 0 |
 | `personal_tools/bash_command.py` | 2 |
@@ -2046,7 +2046,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_drift_s16_session_id.py` | 2 | One `sid`, no `args.get("session_id")` |
 | `test_drift_handler_imports.py` | 2 | Application callbacks imported |
 | `test_drift_r8/r9/r10/r11` | 4 | Tools, profiles, env, handlers |
-| `test_polling_integration.py` | 9 | Cross-transport integration |
+| `test_polling_integration.py` | 11 | Cross-transport integration |
 | `test_size_budget.py` | 10 | S-1, S-6 — function and module size budgets |
 | `test_changelog_structure.py` | 7 | One `[Unreleased]` section; sections and tags agree |
 | `test_no_duplicate_definitions.py` | 4 | T-4 — repeated top-level definitions |

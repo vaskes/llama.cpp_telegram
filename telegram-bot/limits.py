@@ -503,6 +503,23 @@ SELFTEST_MAX_TOKENS = 1024
 SELFTEST_LOOP_BUDGET_SEC = 60
 
 
+# === Delivery backpressure ===
+#
+# How many updates may be in flight at once, on EITHER delivery path.
+#
+# The webhook path has always had this cap: past it, the request is
+# answered with 503 and Telegram retries with its own backoff. The polling
+# path had none -- it pulled a batch of updates every cycle and spawned a
+# task per update, so a slow engine meant an unbounded pile of pending
+# tasks and a growing wait for every user. One number for both paths,
+# because the number answers the same question on both: how much work may
+# be outstanding before the bot stops taking more.
+#
+# A deployment knob, not a constant in code: how many users may be in
+# flight at once is the deployment's call, the same way MAX_ITER is.
+MAX_PENDING_DISPATCH = _env_or("LLAMABOT_MAX_PENDING_DISPATCH", 50)
+
+
 # === Self-check at import time ===
 # Catch misconfiguration early instead of at first call.
 if MAX_TOKENS_DEFAULT <= 0:
@@ -511,6 +528,8 @@ if MAX_TOKENS_CAPTION <= 0:
     raise ValueError("MAX_TOKENS_CAPTION must be positive")
 if LOOP_BUDGET_SEC <= 0:
     raise ValueError("LOOP_BUDGET_SEC must be positive")
+if MAX_PENDING_DISPATCH <= 0:
+    raise ValueError("MAX_PENDING_DISPATCH must be positive")
 if GLOBAL_LLM_SEM_LIMIT <= 0:
     raise ValueError(
         f"GLOBAL_LLM_SEM_LIMIT must be positive (got {GLOBAL_LLM_SEM_LIMIT})."
