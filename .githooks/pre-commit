@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 # Pre-commit hook: run the unit tests that don't need a live sandbox.
 # Catches wave-3 / wave-4 class regressions before they reach CI.
-# Cheap: ~3s on the operator's workstation.
+#
+# The two ignores that used to sit here -- tests/test_limits.py and
+# tests/test_selftest.py -- were added in wave 4 because those files
+# could not import the bot modules when pytest ran from the repo root
+# ("pre-existing PYTHONPATH issues in test_limits/test_selftest").
+# The cause is gone: pytest.ini carries `pythonpath = telegram-bot tests`
+# since the same wave removed the identical ignore from the CI job.
+# Leaving them out meant 59 test definitions never ran before a commit,
+# and the reason was a fact about the tree that nobody rechecked.
+#
+# tests/test_shell_integration.py stays ignored: it needs a live
+# side-car, and the hook is the "no live sandbox" run.
 set -e
 cd "$(git rev-parse --show-toplevel)"
 mkdir -p /tmp/pytest-precommit
@@ -9,8 +20,6 @@ echo '>>> pre-commit: pytest (unit tests, no live sandbox)'
 CONVERSATIONS_DB=/tmp/pytest-precommit/db_$$.db python3 -m pytest \
     tests/ \
     --ignore=tests/test_shell_integration.py \
-    --ignore=tests/test_limits.py \
-    --ignore=tests/test_selftest.py \
     -q --tb=line 2>&1 | tail -20 || {
     echo '>>> pre-commit: pytest FAILED. Fix before commit.'
     exit 1
