@@ -427,20 +427,33 @@ check the tree before writing the rule at all.
 
 **S-2 — A module over 500 lines carries a section map.** `JUDGEMENT`
 *Not mechanically checked, and the original claim that it was is what §8
-is about.* `test_section_markers.py` exists and is real, but it looks at
-**`handlers.py` only**, and what it enforces is narrower than "a module
-carries a map": that between a marker and the function it names there is
+is about.* `test_section_markers.py` exists and is real, but for the
+marker property it looks at **`handlers.py` only**, and what it enforces
+is narrower than "a module carries a map": that between a marker and the
+function it names there is
 no *other* definition, that every top-level function in that one file is
 either marked or on an allowlist with a stated reason, and that a marker
 naming a renamed function goes red.
 
-The 500-line threshold itself is enforced by nothing. Six production
-modules are over 500 lines; four carry section markers
-(`handlers.py` with 19, `context_budget.py` with 4, `bash_command.py`
-with 2, `storage.py` with 1 for 938 lines), and two carry none
-(`llm_iteration.py`, 575 lines, and `selftest_llm.py`, 784). Writing
-this rule down as `AUTO` would have been a claim with no check behind it
+The 500-line threshold itself is enforced by nothing. Which modules
+cross it is computed from the tree by `tests/test_section_markers.py`,
+and the census below is checked against that computation; the sizes
+themselves live in the measured block of `TECH-DEBT.md`. Writing this
+rule down as `AUTO` would have been a claim with no check behind it
 — see D-1.
+
+<!-- census: start -->
+| module | section markers |
+|---|---|
+| `context_budget.py` | 4 |
+| `handlers.py` | 28 |
+| `limits.py` | 21 |
+| `llm_delete.py` | 4 |
+| `llm_iteration.py` | 0 |
+| `personal_tools/bash_command.py` | 2 |
+| `selftest_llm.py` | 7 |
+| `storage.py` | 1 |
+<!-- census: end -->
 
 **S-3 — One concept, one owning module.** `AUTO`
 `call_llama` talks to the engine and nothing else. Transport lives in
@@ -2021,9 +2034,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_refactor_graph.py` | 12 | Graph after the split, late imports |
 | `test_tech_debt_ledger.py` | 11 | The debt register |
 | `test_late_import_policy.py` | 7 | `allowed_updates` in both transports |
-| `test_section_markers.py` | 6 | Markers not inside functions, not orphaned |
+| `test_section_markers.py` | 7 | Markers not inside functions, not orphaned; the census of big modules is computed |
 | `test_module_imports_resolve.py` | 5 | Names + the `global`/`nonlocal` matrix |
-| `test_tech_debt_index.py` | 6 | Register links point at real files; the moving sizes are recomputed |
+| `test_tech_debt_index.py` | 7 | Register links point at real files; the moving sizes are recomputed |
 | `test_drift_call_llama_names.py` | 4 | Name drift in extracted modules |
 | `test_drift_t58_revert.py` | 4 | T58 regressions |
 | `test_tech_debt_doc_sizes.py` | 3 | `<!-- current: file=N -->` vs the tree |

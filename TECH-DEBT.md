@@ -56,18 +56,19 @@ before they shipped.
 Numbers here are from an AST pass over `telegram-bot/*.py`, not from prose:
 
 ```
-bot.py          124 lines, 4 import blocks, __all__ present
+bot.py          124 lines, __all__ present (the fork surface itself is
+               pinned by tests/test_facade_ownership.py)
 dispatch.py    355 lines, 3 top-level defs  <- was 1612
 dispatch_group.py 165 lines, human-to-human reply absorb
 dispatch_polling.py   326 lines, startup + getUpdates loop
 dispatch_webhook.py   429 lines, PTB assembly + handlers
 webhook.py             266 lines, aiohttp server + secret check
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
-call_llama.py   377 lines, ToolLoop owns the iteration, 17 llm_* leaf modules
+call_llama.py   377 lines, ToolLoop owns the iteration, 24 llm_* leaf modules
 handlers.py    1502 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      938 lines, class Storage encapsulated, get_store() sole entry
-config.py       496 lines, 24 env names, plus 12 elsewhere in the package
+config.py       496 lines, 28 env names, plus 20 elsewhere in the package
 
 Line counts are splitlines(); the trailing newline is not a line. The
 earlier figures in this file came from split("\n") and were each one

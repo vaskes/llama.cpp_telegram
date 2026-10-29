@@ -27,6 +27,7 @@ Handlers get a second check, inherited from wave 3: a marker naming a
 handler must not appear inside any function at all.
 """
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -143,3 +144,72 @@ def test_markers_name_something_real():
                     dangling.append(f"line {i}: {name!r} looks like a "
                                     f"function name but no such function exists")
     assert not dangling, "\n".join(dangling)
+
+
+# --- the census the codebook quotes --------------------------------------
+
+OVERSIZE_LIMIT = 500
+CENSUS_START = "<!-- census: start -->"
+CENSUS_END = "<!-- census: end -->"
+
+
+def _tree_census():
+    """(module, markers) for every production module over the limit.
+
+    The marker is the same shape the check above uses: a comment line
+    that starts with "# ===" and ends with "===". The count is what a
+    reader sees, so it is what the census must say.
+    """
+    rows = []
+    for path in sorted((ROOT / "telegram-bot").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if len(text.splitlines()) <= OVERSIZE_LIMIT:
+            continue
+        markers = sum(1 for line in text.splitlines()
+                      if line.strip().startswith("# ===")
+                      and line.strip().endswith("==="))
+        rows.append((path.relative_to(ROOT / "telegram-bot").as_posix(),
+                     markers))
+    return rows
+
+
+def _codebook_census():
+    """(module, markers) as the codebook's census block states them."""
+    text = (ROOT / "docs" / "CODEBOOK.md").read_text(encoding="utf-8")
+    assert CENSUS_START in text and CENSUS_END in text, (
+        "the codebook has no census block -- the check would compare "
+        "nothing and pass")
+    block = text.split(CENSUS_START, 1)[1].split(CENSUS_END, 1)[0]
+    rows = []
+    for line in block.splitlines():
+        m = re.match(r"\|\s*`([^`]+)`\s*\|\s*(\d+)\s*\|", line)
+        if m:
+            rows.append((m.group(1), int(m.group(2))))
+    return rows
+
+
+def test_the_census_of_big_modules_matches_the_codebook():
+    """The codebook's census was remembered, and it had rotted.
+
+    It said six production modules were over 500 lines; the tree has
+    eight, because `limits.py` and `llm_delete.py` crossed the line
+    since. It said `handlers.py` carried 19 section markers; it carries
+    28. It named `bash_command.py` where the file now lives under
+    `personal_tools/`.
+
+    A rule whose own evidence has rotted teaches the reader to trust
+    it less than they already should -- and this rule is the one that
+    says big modules must carry a map, so the evidence is the rule.
+    The census is computed now, and the block is compared against the
+    tree.
+    """
+    codebook = _codebook_census()
+    tree = _tree_census()
+    assert codebook, "the census block has no rows"
+    assert tree, (
+        "no production module is over the limit any more -- if that is "
+        "true, the rule and its census have to go with it")
+    assert codebook == tree, (
+        "the codebook's census does not match the tree:\n"
+        f"  codebook: {codebook}\n"
+        f"  tree:     {tree}")

@@ -153,6 +153,89 @@ def test_measured_sizes_in_the_index_are_current():
             f"{name}: the block says {declared} lines, the file has {actual}")
 
 
+def _measured_rows():
+    """The measured block's rows, as (name, the rest of the row)."""
+    index = INDEX.read_text(encoding="utf-8")
+    block = index.split("## Measured, 2026-10-22", 1)[1].split("```", 2)[1]
+    rows = {}
+    for line in block.splitlines():
+        m = re.match(r"^(\S+\.py)\s+(.*)$", line)
+        if m:
+            rows[m.group(1)] = m.group(2)
+    return rows
+
+
+def _env_names(text):
+    """The environment variable names a module reads.
+
+    One definition, stated here so the number in the block has a
+    meaning: `os.environ["X"]` and `os.environ.get("X")`.
+    """
+    return set(re.findall(r"os\.environ(?:\.get)?\(?\s*[\"']([A-Z0-9_]+)[\"']",
+                          text))
+
+
+def test_the_measured_block_s_other_claims_are_current():
+    """The block says more than line counts, and the rest rotted too.
+
+    Line counts are checked above. The other numbers in the same block
+    were prose nobody recomputed, and they had gone stale in three
+    places: the leaf modules were 17 and are 24, config.py read 24
+    environment names and reads 28, and 12 more names live elsewhere
+    in the package and there are 20.
+
+    The block claims to be an AST pass over the tree, so each of those
+    claims is recomputed here. The counting rules live in this file --
+    that is where a number that moves is supposed to live.
+    """
+    rows = _measured_rows()
+    wrong = []
+
+    def check(name, pattern, measured, groups=1):
+        text = rows.get(name, "")
+        m = re.search(pattern, text)
+        if not m:
+            wrong.append(f"{name}: the row no longer states {pattern!r}")
+            return
+        for index in range(groups):
+            claimed = int(m.group(index + 1))
+            if claimed != measured[index]:
+                wrong.append(
+                    f"{name}: the block says {claimed}, the tree says "
+                    f"{measured[index]}")
+
+    dispatch = ast.parse((SRC / "dispatch.py").read_text(encoding="utf-8"))
+    check("dispatch.py", r"(\d+) top-level defs",
+          [sum(1 for n in dispatch.body
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))])
+
+    selftest = ast.parse((SRC / "selftest.py").read_text(encoding="utf-8"))
+    _selftest = next((n for n in ast.walk(selftest)
+                      if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                      and n.name == "_selftest"), None)
+    assert _selftest is not None, "_selftest is gone from selftest.py"
+    check("selftest.py", r"_selftest = (\d+) lines",
+          [_selftest.end_lineno - _selftest.lineno + 1])
+
+    check("call_llama.py", r"(\d+) llm_\* leaf modules",
+          [len(list(SRC.glob("llm_*.py")))])
+
+    prompts = ast.parse((SRC / "prompts.py").read_text(encoding="utf-8"))
+    check("prompts.py", r"(\d+) functions",
+          [sum(1 for n in ast.walk(prompts)
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))])
+
+    config_text = (SRC / "config.py").read_text(encoding="utf-8")
+    elsewhere = set()
+    for path in SRC.rglob("*.py"):
+        if path.name != "config.py":
+            elsewhere |= _env_names(path.read_text(encoding="utf-8"))
+    check("config.py", r"(\d+) env names, plus (\d+) elsewhere in the package",
+          [len(_env_names(config_text)), len(elsewhere)], groups=2)
+
+    assert not wrong, "\n".join(wrong)
+
+
 def test_the_codebook_s_size_claims_are_current():
     """The rulebook quotes module sizes; the quotes must be true.
 
