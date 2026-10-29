@@ -46,8 +46,10 @@ from personal_tools.sandbox_contract import (  # noqa: E402
     PRIVILEGE_MODE,
     PRIVILEGE_MODE_SUPPORTED,
     PROXY_WAIT_GRACE_SECONDS,
+    SANDBOX_FILE_POLICY_BYTES,
     SANDBOX_PINNED_VERSION,
     SANDBOX_POSTURE_LINES,
+    SANDBOX_UPLOAD_MAX_BYTES,
     SUDO_POLICY,
     WRITABLE_ROOTFS,
 )
@@ -364,6 +366,112 @@ def test_the_read_budget_is_the_side_cars_own_number():
     assert default == MCP_MAX_READ_BYTES, (
         f"the side-car's own default is {default} bytes and the bot "
         f"believes in {MCP_MAX_READ_BYTES}")
+
+
+def test_the_upload_ceiling_is_the_side_cars_own_number():
+    """The transport ceiling the bot believes in is the one the side-car carries.
+
+    A file coming IN has two ceilings and they are different kinds of
+    thing: the file policy (what the side-car is willing to keep) and
+    the transport ceiling (how many bytes the path will carry). The
+    proxy's global body guard is 2 MB for every other door, so the
+    upload door got its own ceiling on both services -- otherwise a
+    large file would be cut off on the wire before it ever reached the
+    route.
+
+    The number is read out of the pinned side-car's compose file, the
+    same way the MCP read budget is: a ceiling the bot does not know
+    about is a ceiling the bot cannot stay under.
+    """
+    compose = _compose_text()
+    for knob_name in ("AGENT_UPLOAD_MAX_BYTES",
+                      "OPENAPI_PROXY_UPLOAD_MAX_BYTES"):
+        knob = re.search(
+            rf"{knob_name}=\$\{{{knob_name}:-([^}}]+)\}}", compose)
+        assert knob, (
+            f"the pinned side-car does not carry {knob_name} -- the "
+            "upload door's transport ceiling is not a knob the side-car "
+            "has, so the bot's claim about it cannot be checked at all")
+        assert _size_in_bytes(knob.group(1)) == SANDBOX_UPLOAD_MAX_BYTES, (
+            f"the side-car's compose gives {knob_name} a ceiling of "
+            f"{knob.group(1)} and the bot believes in "
+            f"{SANDBOX_UPLOAD_MAX_BYTES} bytes. One of them was moved "
+            "and the other was not.")
+
+
+def test_the_transport_ceiling_is_not_below_the_file_policy():
+    """A pipe narrower than the rule quietly lowers the rule.
+
+    The policy is the rule (what the side-car keeps), the transport is
+    the pipe (how many bytes the path carries). When the pipe is
+    narrower than the rule, the file policy is lowered without anybody
+    moving it: the upload is refused by the transport, with a status
+    that talks about bytes on the wire rather than about the file.
+    """
+    assert SANDBOX_UPLOAD_MAX_BYTES >= SANDBOX_FILE_POLICY_BYTES, (
+        f"the transport ceiling ({SANDBOX_UPLOAD_MAX_BYTES} bytes) is "
+        f"below the file policy ({SANDBOX_FILE_POLICY_BYTES} bytes): "
+        "the transport would refuse what the policy accepts")
+
+
+def test_the_bots_own_ceiling_is_not_above_the_file_policy():
+    """The bot must not accept more than the side-car keeps.
+
+    The bot's cap is the last door before the courier. A document
+    bigger than the side-car's policy is accepted by the bot and then
+    refused by the side-car -- with a 413 about a service the user
+    never named. The two are one chain, and each link has to sit
+    under the one before it.
+    """
+    import config
+
+    assert config.MAX_DOC_BYTES <= SANDBOX_FILE_POLICY_BYTES, (
+        f"the bot accepts documents up to {config.MAX_DOC_BYTES} bytes "
+        f"and the side-car keeps files up to {SANDBOX_FILE_POLICY_BYTES} "
+        "bytes: the bot would accept what the side-car refuses")
+
+
+def test_the_pinned_side_car_has_the_door_the_courier_calls():
+    """The route the courier posts to exists in the pin.
+
+    The courier (personal_tools/file_upload.py) posts raw bytes to
+    ``POST /files`` on the side-car, through the proxy. If the pin did
+    not carry that route, the courier would be posting into a 404 and
+    the failure would look like a refusal from a service that does not
+    have the feature at all.
+    """
+    agent = (SANDBOX / "agent_api.py").read_text(encoding="utf-8")
+    assert '@app.post("/files"' in agent, (
+        "the pinned side-car does not have the upload route the courier "
+        "calls -- the pin has to carry the door the bot uses")
+    proxy = (SANDBOX / "openapi_proxy.py").read_text(encoding="utf-8")
+    assert '@app.post("/files"' in proxy, (
+        "the pinned side-car's proxy does not relay the upload route")
+
+
+def test_the_compatibility_table_names_the_pinned_commit():
+    """The table quotes the pin, so it has to quote the pin.
+
+    `docs/BASH-SANDBOX.md` carries a row per side-car version, and the
+    row for the pinned one names the commit. A row that keeps an older
+    commit after the pin moved is a table that says the deployment runs
+    a tree the repository does not pin -- which is the claim this whole
+    file exists to keep honest.
+    """
+    entry = _git("ls-tree", "HEAD", "sandbox")
+    sha = entry.split()[2]
+    text = (ROOT / "docs" / "BASH-SANDBOX.md").read_text(encoding="utf-8")
+    rows = [line for line in text.splitlines()
+            if f"(v{SANDBOX_PINNED_VERSION})" in line]
+    assert rows, (
+        f"the compatibility table does not name v{SANDBOX_PINNED_VERSION} "
+        "at all -- the row that says which commit the repository pins is "
+        "missing")
+    for row in rows:
+        assert sha[:7] in row, (
+            f"the compatibility table quotes {row.strip()[:80]}... for "
+            f"v{SANDBOX_PINNED_VERSION}, and the tree pins {sha[:7]}. One "
+            "of them was moved and the other was not.")
 
 
 def _size_in_bytes(value: str) -> int:

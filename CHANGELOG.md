@@ -30,7 +30,7 @@ The way out is the other direction of the same door. The file door used to
 open outwards only — `GET /files` handed bytes out, `DELETE /files` threw
 them away, and nothing ever came in — so a file that arrived in the chat
 could not reach the sandbox at all. The door now takes files in as well
-(`POST /files`, sandbox v2.15.0, `39fb071`): the body is the file's raw
+(`POST /files`, sandbox v2.15.0, `9d93734`): the body is the file's raw
 bytes, streamed to disk, the write is atomic, and the upload never
 overwrites a file that is already there (409 — a delivery that removes
 what it was not told to remove is a surprise). A document that is not text
@@ -74,6 +74,33 @@ tripwires hold it there: every `Application.builder()` must carry
 `base_file_url`, the argument must be the derived URL and not a literal,
 and the mapping itself is asserted for the public API, for a local server
 and for a prefix without the `/bot` suffix.
+
+### The pin names the tree that runs
+
+The repository's pin moved to v2.15.0 (`9d93734`) on 2026-10-29, and
+the deployment caught up the same day: the production side-car runs
+that very commit and its proxy relays the upload. The pin used to move
+ahead of the deployment — the bot's own code needs the new route, and
+the deploy is a separate step with the operator's light — so for a day
+the pin and the deployment named two different trees.
+
+Two ceilings came with the door, and they are different kinds of thing.
+The file policy is the rule (what the side-car is willing to keep:
+`AGENT_BINARY_LIMIT`, 50 MiB in the deployment); the transport ceiling
+is the pipe (how many bytes the path carries: 64 MiB on the agent and
+on the proxy, whose global body guard is 2 MB for every other door).
+The pipe sits above the rule on purpose: a ceiling below the policy
+lowers the policy without anybody moving it — the upload is refused by
+the transport, with a status that talks about bytes on the wire rather
+than about the file.
+
+The bot believes both numbers now, and `tests/test_sandbox_contract.py`
+reads them out of the pinned side-car's own compose file, the same way
+it reads the MCP read budget. A ceiling the bot does not know about is
+a ceiling the bot cannot stay under; and the bot's own cap
+(`MAX_DOC_BYTES`, 50 MB) is checked against the policy, one layer up,
+because a bot that accepts more than the sandbox keeps hands the user a
+413 about a service they never named.
 
 ## [v0.21.1-stable] — 2026-10-29 — The engine moved to 8081, and a recorded error stopped being a live failure
 

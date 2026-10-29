@@ -2065,7 +2065,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
 | `test_send_file_tool.py` | 22 | A file from the sandbox reaches the chat as a document, with the answer -- and the delivery removes nothing |
 | `test_file_transport.py` | 16 | The file door: the bytes, the digest, the version -- and no way to delete |
-| `test_sandbox_contract.py` | 16 | The bot's claims about the sandbox match the sandbox we run |
+| `test_sandbox_contract.py` | 21 | The bot's claims about the sandbox match the sandbox we run |
 | `test_donsetch_contract.py` | 10 | The bot's claims about donsetch match the donsetch we pin -- and the model is told the handle |
 | `test_engine_failure_message.py` | 9 | What the user reads when the engine could not be reached |
 | `test_no_exception_in_user_copy.py` | 5 | No user-facing message may carry a Python exception |

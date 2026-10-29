@@ -34,8 +34,22 @@ bytes land in a file there.
 
 The bot's claim about the side-car moves with the side-car, and the
 tripwire checks it against the pinned source -- which is why the pin
-and this number cannot drift apart: the pin is v2.14.9, and v2.13.0
+and this number cannot drift apart: the pin is v2.15.0, and v2.13.0
 is where the budget exists.
+
+THE DOOR TAKES FILES IN AS WELL AS OUT (v2.15.0, 2026-10-29)
+The door used to open outwards only. A file that arrived in the chat
+could not reach the sandbox at all: the chat had no way in, and the
+refusal the operator got was the whole answer. v2.15.0 gave the door
+its other half (`POST /files`), and the bot got a courier
+(`personal_tools/file_upload.py`).
+
+A file coming IN has two ceilings, and they are different kinds of
+thing: the file policy (what the side-car is willing to keep) and the
+transport ceiling (how many bytes the path will carry). The bot
+believes both numbers, and the tripwire reads them out of the pinned
+side-car's own source, because a ceiling the bot does not know about
+is a ceiling the bot cannot stay under.
 
 So the posture lives here, once:
 
@@ -87,6 +101,8 @@ from __future__ import annotations
 __all__ = [
     "SANDBOX_REPO",
     "SANDBOX_PINNED_VERSION",
+    "SANDBOX_FILE_POLICY_BYTES",
+    "SANDBOX_UPLOAD_MAX_BYTES",
     "PRIVILEGE_MODE_SUPPORTED",
     "PRIVILEGE_MODE",
     "WRITABLE_ROOTFS",
@@ -113,12 +129,57 @@ SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
 # token rule and the branch protection -- and every claim below was
 # re-read against this source.
 #
-# The pin moves ahead of the deployment: the production side-car still
-# runs v2.14.9 until the next release is deployed, and the upload half
-# of the door does not exist there yet. The bot's own code is what
-# needs the new route, so the pin and the code move together and the
-# deployment follows them.
+# The deployment caught up on 2026-10-29: the production side-car runs
+# v2.15.0 (commit 9d93734) and its proxy relays the upload half of the
+# door. The pin names the tag, the tree's gitlink names the commit
+# behind it, and the tripwire checks the pin against the source the
+# submodule is checked out from -- so the claim cannot drift away from
+# the tree it describes.
 SANDBOX_PINNED_VERSION = "2.15.0"
+
+
+# === the upload door's two ceilings ===
+#
+# A file coming IN has two ceilings, and they are different kinds of
+# thing. Getting them mixed up is how a limit becomes a lie.
+#
+# * The FILE POLICY is what the side-car is willing to keep. It is the
+#   binary limit (`AGENT_BINARY_LIMIT`), and the agent's upload door
+#   enforces it while the bytes arrive: a body past the policy is
+#   refused with 413 and the file never lands.
+#
+# * The TRANSPORT CEILING is how many bytes the path itself will carry.
+#   It is a separate knob per service (`AGENT_UPLOAD_MAX_BYTES` in the
+#   agent, `OPENAPI_PROXY_UPLOAD_MAX_BYTES` in the proxy), because the
+#   proxy's global body guard is 2 MB for every other door -- the upload
+#   door got its own, or a large file would be cut off before it ever
+#   reached the route.
+#
+# The transport ceiling has to sit ABOVE the file policy. A ceiling
+# below the policy is a transport that refuses what the door would have
+# accepted: the policy is the rule, the transport is the pipe, and a
+# pipe narrower than the rule quietly lowers the rule.
+#
+# The bot's own ceiling (MAX_DOC_BYTES) has to sit under the policy for
+# the same reason, one layer up: a bot that accepts more than the
+# sandbox keeps hands the user a 413 from a service they never named.
+#
+# Measured on the production deployment, 2026-10-29:
+#   agent:  AGENT_BINARY_LIMIT=50m        -> 52 428 800
+#   agent:  AGENT_UPLOAD_MAX_BYTES=64m    -> 67 108 864
+#   proxy:  OPENAPI_PROXY_UPLOAD_MAX_BYTES=67108864 -> 67 108 864
+
+#: The file policy of the deployment this bot talks to: what the
+#: side-car is willing to keep. A deployment fact -- the side-car ships
+#: it at 2 MiB (`AGENT_BINARY_LIMIT=2048k`) and the production
+#: deployment raises it to 50 MiB. It is also the ceiling the upload
+#: door enforces (413 above it).
+SANDBOX_FILE_POLICY_BYTES = 50 * 1024 * 1024
+
+#: The transport ceiling of one upload, on both services. This one is
+#: the side-car's own default, so it is the same in the deployment and
+#: in the pinned source the tripwire reads.
+SANDBOX_UPLOAD_MAX_BYTES = 64 * 1024 * 1024
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:

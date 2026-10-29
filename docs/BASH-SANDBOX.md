@@ -502,6 +502,62 @@ The bot's claim about this number lives in
 number out of the pinned side-car's own source — so the bot's belief
 and the side-car's behaviour cannot drift apart.
 
+## Moving a file into the sandbox
+
+The other half of the same door. Until v2.15.0 the door opened outwards
+only -- `GET /files` handed bytes out, `DELETE /files` threw them away,
+and nothing ever came in -- so a file that arrived in the chat could
+not reach the sandbox at all. The chat was a one-way street that ended
+at a refusal.
+
+The side-car's own route (v2.15.0, `9d93734`):
+
+| Method | Path | What it does |
+|---|---|---|
+| POST | `/files?path=P` | the file's **raw bytes** into the sandbox at `P` |
+
+The body is the file's bytes: not base64, not multipart -- the same
+binary transport the other direction uses, so there is one way to speak
+bytes and not two. The write is atomic (`os.replace`), the upload never
+overwrites a file that is already there (409 -- a delivery that removes
+what it was not told to remove is a surprise), and the size limit is
+enforced while the bytes arrive, so an oversized body never becomes
+fifty megabytes of garbage on the disk.
+
+The bot's courier is `telegram-bot/personal_tools/file_upload.py`: it
+posts the raw bytes, hashes them on the way through, and refuses to
+overwrite. A document that is not text now goes straight into the
+sandbox workspace, and the model's turn is told the path, the size and
+the sha256 -- a file the model cannot see is a file the model cannot
+work with.
+
+**Two ceilings, and they are different kinds of thing.** The file
+policy is the rule (what the side-car is willing to keep), and the
+transport ceiling is the pipe (how many bytes the path carries). The
+proxy's global body guard is 2 MB for every *other* door -- the upload
+door got its own, or a large file would be cut off on the wire before
+it reached the route.
+
+| Ceiling | Value | Who sets it |
+|---|---|---|
+| File policy | `AGENT_BINARY_LIMIT` -- 2 MiB by default, **50 MiB** in the deployment | the sandbox's env |
+| Transport | `AGENT_UPLOAD_MAX_BYTES` (agent) and `OPENAPI_PROXY_UPLOAD_MAX_BYTES` (proxy) -- **64 MiB** | the sandbox's env |
+| The bot's cap | `MAX_DOC_BYTES` -- 50 MB | the bot's env |
+| The channel | `getFile` hands a bot no file of **20 MiB** or more on the public API; a local `telegram-bot-api` server has no download ceiling | Telegram |
+
+The pipe has to sit above the rule. A ceiling below the policy lowers
+the policy without anybody moving it: the upload is refused by the
+transport, with a status that talks about bytes on the wire rather than
+about the file. The bot's own cap sits under the policy for the same
+reason, one layer up -- a bot that accepts more than the sandbox keeps
+hands the user a 413 about a service they never named.
+
+The channel's ceiling is the binding one for a file that arrives in the
+chat: Telegram will not hand the bot a 47 MiB file to carry, whatever
+the bot is willing to take. The bot's refusal says which ceiling
+refused, because "my own limit is 50 MB" sends the operator to change a
+limit that was never in question.
+
 ## Compatibility
 
 | Sandbox tag | Bot tag | Notes |
@@ -515,7 +571,7 @@ and the side-car's behaviour cannot drift apart.
 | `a396101` (v2.12.1) | this branch | The MCP door (v2.12.0) — the one the bot's import uses. The side-car dropped the search engine's read-only mount, so the posture above changed with it. |
 | `b2174e8` (v2.13.0) | this branch | The model's read budget on the MCP door (`AGENT_MCP_MAX_READ_BYTES`, 1 MiB by default): a file over the budget is refused with a sentence that names the size and the limit, and the HTTP file door keeps its own limit. |
 | `72b0e3a` (v2.14.8) | this branch | The pin the production side-car runs: the fourth review of v2.14.7, whose findings were all about a check that looked like it was checking something. Every knob this bot quotes -- the exec range 5..3600, the MCP read budget, the memory limit, the process limit -- reads the same in v2.14.8 as in v2.14.0, so no claim moved with the pin; what moved is that the pin names the side-car that is actually deployed. |
-| `39fb071` (v2.15.0) | this branch | The pin this repository carries: the door takes files IN as well as out (`POST /files`), so a file that arrives in the chat can reach the sandbox instead of stopping at a refusal. It sits on top of the peer's v2.14.11 (the token rule and the branch protection). The deployment still runs v2.14.9 until the next release is deployed -- the pin moves ahead of the deployment, because the bot's own code is what needs the new route -- so nothing the bot quotes moved with the pin: the exec range is 5..3600 in both, the MCP read budget is 1 MiB in both, and the memory and process limits are the same in both. What moved is that the claim is checked against the pinned source. |
+| `9d93734` (v2.15.0) | this branch | The pin this repository carries: the door takes files IN as well as out (`POST /files`), so a file that arrives in the chat can reach the sandbox instead of stopping at a refusal. It sits on top of the peer's v2.14.11 (the token rule and the branch protection). **The deployment caught up on 2026-10-29**: the production side-car runs this very commit (`9d93734`, runtime version 2.15.0) and its proxy relays the upload, so the pin and the deployment name one tree. Nothing the bot quotes moved with the pin: the exec range is 5..3600 in both, the MCP read budget is 1 MiB in both, and the memory and process limits are the same in both. What moved is that the claim is checked against the pinned source. |
 
 The bot treats the sandbox as a black box: it sends JSON over
 HTTP and gets JSON back. As long as the wire format is
