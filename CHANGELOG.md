@@ -8,14 +8,77 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.21.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.21.1-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
 ## [Unreleased]
 
-**After `v0.21.0-stable`.** The next cycle starts here.
+**After `v0.21.1-stable`.** The next cycle starts here.
+
+## [v0.21.1-stable] — 2026-10-29 — The engine moved to 8081, and a recorded error stopped being a live failure
+
+**After `v0.21.0-stable`.** Two things: the production engine moved to a
+port of its own, and the smoke test learned the difference between an
+error that is on record and an error that is happening now.
+
+### The engine moved to 8081, and the bot followed it
+
+The operator's ruling: the engine gets port **8081**, so it can never
+collide with llama. Measured on the production host after the move:
+
+- the Strata NVFP4 service was started from its own unit
+  (`strata-nvfp4.service` → container `strata-nvfp4`, image
+  `strata-nvfp4:sm120-v020`, GPU 1 = the RTX 5090), published as host
+  `8081` → container `8080`;
+- the engine answers `/health` with 200 and `/v1/models` with
+  `qwen3.8-flash-next-mix-nvfp4` at 262 144 tokens;
+- **its own MCP client is off** — `{"servers": [], "tools": 0}`, and no
+  `strata_mcp` process inside the container. The bot owns the tools; the
+  engine is a plain LLM server;
+- the bot's `LLAMA_URL` now names `http://127.0.0.1:8081/v1`, and the
+  container was **recreated**: an env file is read when the container is
+  created, so a restart would have kept the old value and looked like
+  "nothing changed";
+- **the bot's own client** got a real answer through the new port
+  (`finish=stop`, content, `req_tools=yes`) — not a curl to the engine,
+  the bot's own path.
+
+Nothing in the repository moves with the port: `LLAMA_URL` is the
+operator's value in `.env`, and the repository documents the default for a
+llama-server.
+
+### The recorded webhook error is history until the path breaks again
+
+`getWebhookInfo.last_error_message` is the **last recorded** delivery
+failure. It survives a restart and stays until the next successful
+delivery — so a bot that was broken thirteen hours ago and works now
+still carries the old sentence.
+
+The smoke test reported that sentence as a live failure. Measured on the
+production host on 2026-10-29: the recorded error is dated
+**2026-10-28T11:19:16Z**, the bot was started at **2026-10-29T00:57:51Z**,
+and the path answers now — the bot refuses an unauthenticated probe with
+`403 forbidden`, locally and through the proxy, while Telegram reports 0
+pending updates. The red line was history. And a permanently red check is
+exactly where a real regression hides: the deploy takes a baseline before
+and after, so every deploy has been carrying that old failure as if it
+were the news.
+
+The check now measures the **current** state instead of quoting the past.
+When an error is on record, the path is probed: a refusal that came from
+the bot (401, 403, 405) means the request reached the bot, so the recorded
+error is history and the row is a warning that names the age of the
+error. Anything else — 502, 504, no answer at all — is a failure. The
+probe carries no secret token, so the bot refuses it before it does any
+work: no update is created and nothing is delivered.
+
+Eight new tests cover it, and the one that matters most is the seam:
+urllib raises `HTTPError` for **every** status above 399, so 403 — the
+very answer we are looking for — arrives as an exception. A probe that
+treated that as "no answer" would report a live bot as dead, and a mocked
+probe would have hidden it.
 
 ## [v0.21.0-stable] — 2026-10-29 — The pin names the side-car that runs, again
 

@@ -108,10 +108,10 @@ def test_a_network_error_fails(monkeypatch):
 
 # --- the webhook -----------------------------------------------------------
 
-def _webhook_report(monkeypatch, info, expect_url=None):
+def _webhook_report(monkeypatch, info, expect_url=None, probe=None):
     _api_returns(monkeypatch, [_ok(info)])
     report = smoke.Report()
-    smoke.check_webhook(report, "token", expect_url)
+    smoke.check_webhook(report, "token", expect_url, probe=probe)
     return {name: (status, detail) for name, status, detail in report.rows}
 
 
@@ -127,14 +127,119 @@ def test_a_webhook_that_points_somewhere_else_fails(monkeypatch):
 
 
 def test_a_webhook_error_fails_even_when_the_url_is_right(monkeypatch):
+    """A recorded error, and the path is broken NOW: that is a failure."""
     rows = _webhook_report(monkeypatch, {
         "url": "https://bot.example/tg-webhook/",
         "last_error_message": "502 Bad Gateway",
+        "last_error_date": 1793186356,
         "pending_update_count": 0,
         "allowed_updates": ["message"],
-    }, expect_url="https://bot.example/tg-webhook/")
+    }, expect_url="https://bot.example/tg-webhook/", probe=lambda url: 502)
     assert rows["webhook"][0] == smoke.PASS
     assert rows["webhook errors"][0] == smoke.FAIL
+
+
+def test_a_recorded_error_is_history_when_the_webhook_answers(monkeypatch):
+    """The record survives a restart; the path does not.
+
+    `last_error_message` is the last RECORDED failure. A bot that
+    refuses the probe (403) is alive, so an error from hours ago is
+    history -- and reporting it as a live failure is how a smoke test
+    stays red forever and hides the next real regression behind it.
+    """
+    rows = _webhook_report(monkeypatch, {
+        "url": "https://bot.example/tg-webhook/",
+        "last_error_message": "502 Bad Gateway",
+        "last_error_date": 1793186356,
+        "pending_update_count": 0,
+        "allowed_updates": ["message"],
+    }, expect_url="https://bot.example/tg-webhook/", probe=lambda url: 403)
+    assert rows["webhook errors"][0] == smoke.WARN
+    assert "history" in rows["webhook errors"][1]
+
+
+def test_a_recorded_error_is_probed_at_the_registered_url(monkeypatch):
+    """The probe asks the URL Telegram itself would call."""
+    asked = []
+
+    def probe(url):
+        asked.append(url)
+        return 403
+
+    _webhook_report(monkeypatch, {
+        "url": "https://bot.example/tg-webhook/",
+        "last_error_message": "502 Bad Gateway",
+        "last_error_date": 1793186356,
+        "pending_update_count": 0,
+        "allowed_updates": ["message"],
+    }, probe=probe)
+    assert asked == ["https://bot.example/tg-webhook/"]
+
+
+def test_no_probe_when_nothing_was_recorded(monkeypatch):
+    """No error on record means no question to ask the path."""
+    asked = []
+
+    def probe(url):
+        asked.append(url)
+        return 403
+
+    rows = _webhook_report(monkeypatch, {
+        "url": "https://bot.example/tg-webhook/",
+        "last_error_message": "",
+        "pending_update_count": 0,
+        "allowed_updates": ["message"],
+    }, probe=probe)
+    assert rows["webhook errors"][0] == smoke.PASS
+    assert asked == []
+
+
+def test_a_recorded_error_without_a_webhook_is_a_warning(monkeypatch):
+    """A polling bot has no webhook, so the error is not about one."""
+    rows = _webhook_report(monkeypatch, {
+        "url": "",
+        "last_error_message": "502 Bad Gateway",
+        "last_error_date": 1793186356,
+        "pending_update_count": 0,
+        "allowed_updates": ["message"],
+    }, probe=lambda url: 403)
+    assert rows["webhook errors"][0] == smoke.WARN
+
+
+def test_the_probe_reads_a_refusal_as_alive(monkeypatch):
+    """403 is an HTTPError in urllib -- the refusal IS the answer.
+
+    Mocking the probe away would hide exactly this: a probe that treats
+    the bot's refusal as "no answer" reports a live bot as dead.
+    """
+    def refuse(request, timeout=None):
+        raise smoke.urllib.error.HTTPError(
+            request.full_url, 403, "forbidden", {}, None)
+
+    monkeypatch.setattr(smoke.urllib.request, "urlopen", refuse)
+    assert smoke.probe_webhook("https://bot.example/tg-webhook/") == 403
+
+
+def test_the_probe_reports_a_dead_path(monkeypatch):
+    def refuse(request, timeout=None):
+        raise smoke.urllib.error.HTTPError(
+            request.full_url, 502, "Bad Gateway", {}, None)
+
+    monkeypatch.setattr(smoke.urllib.request, "urlopen", refuse)
+    assert smoke.probe_webhook("https://bot.example/tg-webhook/") == 502
+
+
+def test_the_probe_reports_a_host_that_does_not_answer(monkeypatch):
+    def refuse(request, timeout=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(smoke.urllib.request, "urlopen", refuse)
+    assert smoke.probe_webhook("https://bot.example/tg-webhook/") is None
+
+
+def test_the_age_of_a_recorded_error_is_readable():
+    assert "ago" in smoke.describe_age(1793186356)
+    assert "unknown" in smoke.describe_age(0)
 
 
 def test_a_pending_queue_is_a_warning_not_a_failure(monkeypatch):

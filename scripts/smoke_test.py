@@ -133,6 +133,54 @@ def api(token: str, method: str, payload: dict | None = None,
     return True, body.get("result")
 
 
+#: The statuses that mean "the request reached the bot". The webhook
+#: endpoint refuses a request that carries no secret token with 403
+#: (telegram-bot/webhook.py), and refuses a GET with 405. A proxy in front
+#: of it answers 502/504 and never gets that far -- and so does a bot
+#: that is not running. The status is the difference between "the path is
+#: broken now" and "the path works, and the recorded error is history".
+WEBHOOK_ALIVE = (401, 403, 405)
+
+
+def probe_webhook(url: str, timeout: float = 10.0) -> int | None:
+    """Ask the registered webhook what it says to a request with no secret.
+
+    The probe carries no secret token, so the bot refuses it (403) before
+    it does any work: no update is created, nothing is delivered. The only
+    thing measured is whether the request reached the bot. Returns the
+    status code, or None when the host did not answer at all.
+
+    urllib raises HTTPError for every status above 399, and 403 is the
+    answer we are looking for -- so the error branch is the normal one
+    here, not the exception.
+    """
+    request = urllib.request.Request(
+        url, data=b"{}", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return int(response.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+    except Exception:
+        return None
+
+
+def describe_age(timestamp: int) -> str:
+    """How long ago a Unix timestamp was, in words a human reads."""
+    if not timestamp:
+        return "at an unknown time"
+    seconds = max(0, int(time.time()) - int(timestamp))
+    if seconds < 90:
+        return f"{seconds} s ago"
+    minutes = seconds // 60
+    if minutes < 90:
+        return f"{minutes} min ago"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours} h ago"
+    return f"{hours // 24} days ago"
+
+
 def check_token(report: Report, token: str) -> int | None:
     """getMe. The bot's own id, which the round trip needs later."""
     ok, result = api(token, "getMe")
@@ -144,8 +192,20 @@ def check_token(report: Report, token: str) -> int | None:
     return result.get("id")
 
 
-def check_webhook(report: Report, token: str, expect_url: str | None) -> None:
-    """getWebhookInfo: the transport, the queue, and the subscription."""
+def check_webhook(report: Report, token: str, expect_url: str | None,
+                  probe=None) -> None:
+    """getWebhookInfo: the transport, the queue, and the subscription.
+
+    `last_error_message` is the LAST RECORDED delivery failure, not the
+    current state: it survives a restart and stays until the next
+    successful delivery. Reporting it as a live failure is how a smoke
+    test goes permanently red over an incident that was fixed hours ago
+    -- and then a real regression hides behind the old red. So when an
+    error is on record, the path is probed: a bot that refuses the probe
+    (403) is alive, and the recorded error is history.
+    """
+    if probe is None:
+        probe = probe_webhook
     ok, info = api(token, "getWebhookInfo")
     if not ok:
         report.add("webhook", FAIL, str(info))
@@ -161,10 +221,24 @@ def check_webhook(report: Report, token: str, expect_url: str | None) -> None:
         report.add("webhook", PASS, url)
 
     last_error = info.get("last_error_message")
-    if last_error:
-        report.add("webhook errors", FAIL, last_error)
-    else:
+    if not last_error:
         report.add("webhook errors", PASS, "none")
+    elif not url:
+        report.add("webhook errors", WARN,
+                   f"no webhook is registered, so the recorded error is not "
+                   f"about the webhook: {last_error}")
+    else:
+        status = probe(url)
+        age = describe_age(info.get("last_error_date") or 0)
+        if status in WEBHOOK_ALIVE:
+            report.add("webhook errors", WARN,
+                       f"a delivery error recorded {age} ({last_error}), but "
+                       f"the webhook answers {status} now -- history, not "
+                       f"the current state")
+        else:
+            report.add("webhook errors", FAIL,
+                       f"the delivery error recorded {age} ({last_error}) and "
+                       f"the webhook does not answer now (status {status})")
 
     pending = info.get("pending_update_count", 0)
     if pending:
