@@ -52,10 +52,12 @@ __all__ = [
     "GENERIC_FAILURE_MESSAGE",
     "TELEGRAM_UNREACHABLE_MESSAGE",
     "DOWNLOAD_FAILURE_MESSAGE",
+    "OVERSIZED_DOCUMENT_MESSAGE",
     "TOPIC_CREATE_FAILURE_MESSAGE",
     "TOPIC_DELETE_FAILURE_MESSAGE",
     "engine_failure_message",
     "failure_message",
+    "too_large_message",
 ]
 
 #: The engine did not answer the connection. It is down, restarting, or
@@ -108,6 +110,31 @@ DOWNLOAD_FAILURE_MESSAGE = (
     "❌ Could not download the file. Try again — and if the file is "
     "large, send a smaller one."
 )
+
+#: The document is bigger than the bot will pull from Telegram.
+#:
+#: Measured 2026-10-29: the operator uploaded a 47.6 MiB binary and asked
+#: for it to be put in the sandbox. The refusal was "Document too large
+#: (50.0 MB > 5 MB)" -- a limit dump, in a unit that disagreed with the
+#: size Telegram had just shown (47.6 MB), and with no way out. The
+#: number is the bot's business; the route is the user's.
+#:
+#: The file door is one-way: `GET /files` pulls bytes OUT of the sandbox,
+#: and the door has no upload endpoint. So the honest answer to "put it
+#: in the sandbox" is that files travel the other way -- and the bot can
+#: deliver a file from there.
+OVERSIZED_DOCUMENT_MESSAGE = (
+    "❌ That document is too large for me to take — I read "
+    "documents as text (the first 16 000 characters), so a large binary "
+    "cannot be used this way.\n\n"
+    "A file that is already in the sandbox can be sent to this chat: put "
+    "the artifact there and ask me to send it."
+)
+
+#: Per-kind wording for the size refusal. A document has its own: it is
+#: the kind a user is most likely trying to MOVE rather than read.
+_TOO_LARGE_WORDING = {"Document": OVERSIZED_DOCUMENT_MESSAGE}
+
 
 #: The sub-talk topic could not be created.
 TOPIC_CREATE_FAILURE_MESSAGE = (
@@ -163,6 +190,28 @@ def failure_message(exc: BaseException) -> str:
                         httpx.TimeoutException)):
         return engine_failure_message(exc)
     return GENERIC_FAILURE_MESSAGE
+
+
+def too_large_message(kind: str, size: int, limit: int) -> str:
+    """The sentence the user reads when a file is over the cap.
+
+    The size dump used to be the whole message: "Photo too large (12.3
+    MB > 10 MB)". It says what the bot's limit is and nothing about
+    what the user can do, and it counts in decimal megabytes, so the
+    same file shows two different sizes on one screen (Telegram divides
+    by 1024 and calls it MB).
+
+    The size is the bot's business; the route is the user's. A document
+    is the case with its own wording: the
+    bot reads documents as text, and the file door only carries files
+    OUT of the sandbox -- so "put it in the sandbox" is the way out,
+    not a smaller file.
+    """
+    wording = _TOO_LARGE_WORDING.get(kind)
+    if wording is not None:
+        return wording
+    return (f"❌ {kind} too large ({size/1e6:.1f} MB > "
+            f"{limit/1e6:.0f} MB).")
 
 
 def _is_telegram_transport_error(exc: BaseException) -> bool:

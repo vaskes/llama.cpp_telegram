@@ -13,7 +13,7 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1505 lines)
+├── handlers.py            # handle_text/photo/voice/document (1497 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   377 lines file, 222 in the function, 345 in the loop
 ├── mcp_client.py # MCP protocol for ONE server (382)
@@ -81,7 +81,7 @@ tests, none of which build a full `call_llama`.
   llm_nonstream.py      442  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         310  StreamOutcome, stream_iteration, _fallback_to_nonstream
-  user_notice.py         187  engine_failure_message
+  user_notice.py         236  engine_failure_message
   llm_abort.py             64  finalize_aborted_turn
   llm_result.py           346  Answer, unwrap_answer
   llm_artifact.py         487  Artifact, extract_files

@@ -37,7 +37,7 @@ import tempfile
 # the prose, so that they can arrive as documents. `llm_files` sends
 # them.
 from llm_result import _format_executed_tools, unwrap_answer
-from user_notice import DOWNLOAD_FAILURE_MESSAGE, failure_message
+from user_notice import DOWNLOAD_FAILURE_MESSAGE, failure_message, too_large_message
 from llm_files import send_files
 from llm_thinking import close_thinking
 from llm_abort import finalize_aborted_turn
@@ -675,10 +675,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # helper _download_with_limit re-checks (and falls back to a
         # post-check on the actual byte count) when it isn't.
         if photo.file_size and photo.file_size > MAX_PHOTO_BYTES:
-            await _reply(update,
-                f'❌ Photo too large ({photo.file_size/1e6:.1f} MB > '
-                f'{MAX_PHOTO_BYTES/1e6:.0f} MB).'
-            )
+            await _reply(update, too_large_message(
+                "Photo", photo.file_size, MAX_PHOTO_BYTES))
             return
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await _download_with_limit(file, MAX_PHOTO_BYTES, 'Photo', update)
@@ -915,10 +913,8 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
     50 MB video_note) - well within the bot's memory budget.
     """
     if file.file_size and file.file_size > max_bytes:
-        await _reply(update,
-            f'❌ {kind} too large ({file.file_size/1e6:.1f} MB > '
-            f'{max_bytes/1e6:.0f} MB).'
-        )
+        await _reply(update, too_large_message(
+            kind, file.file_size, max_bytes))
         return None
     try:
         buf = await file.download_as_bytearray()
@@ -928,10 +924,8 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
         await _reply(update, DOWNLOAD_FAILURE_MESSAGE)
         return None
     if len(buf) > max_bytes:
-        await _reply(update,
-            f'❌ {kind} too large ({len(buf)/1e6:.1f} MB > '
-            f'{max_bytes/1e6:.0f} MB).'
-        )
+        await _reply(update, too_large_message(
+            kind, len(buf), max_bytes))
         return None
     return bytes(buf)
 
@@ -1125,10 +1119,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # read the first 16 KB of text from the file, so anything bigger is
             # almost certainly a mistake or an attempt to OOM the bot.
             if doc.file_size and doc.file_size > MAX_DOC_BYTES:
-                await _reply(update, 
-                    f'❌ Document too large ({doc.file_size/1e6:.1f} MB > '
-                    f'{MAX_DOC_BYTES/1e6:.0f} MB).'
-                )
+                await _reply(update, too_large_message(
+                    "Document", doc.file_size, MAX_DOC_BYTES))
                 return
             file = await context.bot.get_file(doc.file_id)
             doc_bytes = await _download_with_limit(file, MAX_DOC_BYTES, 'Document', update)

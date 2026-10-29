@@ -8,9 +8,9 @@ CODEBOOK S-1 and S-6. Two claims, each falsifiable:
     register, with its current size declared.
 
 Why 200 and not "smaller is better": the number is not the point, the
-*registration* is. `handlers.py` is 1505 lines and healthy -- four
+*registration* is. `handlers.py` is 1497 lines and healthy -- four
 handlers of one shape, where a fix to the skeleton breaks four call
-sites identically. `handle_photo` at 255 and `handle_text` at 211 are
+sites identically. `handle_photo` at 253 and `handle_text` at 211 are
 that shape. `call_llama` at 222 and `run_one` at 345 are not, and they
 are registered as open debt, which is where the difference has to show
 up.
@@ -79,7 +79,7 @@ EXCEPTIONS = {
     ),
     "handle_photo": (
         "handlers.py",
-        255,
+        253,
         "2026-10-23",
         "One concern (a photo) plus a media path. Same shape as the other "
         "three handlers, so the repetition is the point -- a fix to the "
@@ -91,7 +91,10 @@ EXCEPTIONS = {
         "2026-10-29, by three lines: the photo path stopped swallowing "
         "the failure of its own failure notice and logs it instead, "
         "so the handler is three lines longer and one silent failure "
-        "shorter.",
+        "shorter. It shrank by two lines on 2026-10-29, when the "
+        "size refusal stopped being written out in the handler and "
+        "moved into user_notice.py, with the rest of the user-facing "
+        "wording.",
         "Split only together with the other three handlers, never alone: "
         "one handler on its own is four shapes, not one.",
     ),
@@ -202,7 +205,7 @@ def test_registered_lengths_match_the_tree():
 TABLE_ROW = re.compile(r"^\|\s*`(?P<name>\w+)`\s*\|\s*(?P<lines>\d+)\s*\|",
                        re.MULTILINE)
 
-#: A size stated in prose: "`handle_photo` at 255 lines".
+#: A size stated in prose: "`handle_photo` at 253 lines".
 PROSE_SIZE = re.compile(r"`(?P<name>\w+)`\s+at\s+(?P<lines>\d+)\s+lines\b")
 
 #: A sentence that talks about the past. The numbers in it are history,

@@ -746,3 +746,77 @@ def test_the_failure_notice_path_never_swallows_silently():
         f"logging it: {silent}. The user gets nothing, and the operator "
         "sees nothing."
     )
+
+
+# === an oversized document is refused with a way out ===
+
+
+class _OversizedDocument:
+    """A 47.6 MiB binary, as the operator uploaded it on 2026-10-29."""
+    file_name = "big_50m.bin"
+    file_size = 49_913_000
+    mime_type = "application/octet-stream"
+
+
+class _OversizedMessage:
+    document = _OversizedDocument()
+    caption = "этот файл бинарный артефакт, положи его в песочницу."
+    message_thread_id = None
+    message_id = 7
+    chat = None
+
+
+class _OversizedChat:
+    id = 42
+    type = "private"
+
+
+class _OversizedUpdate:
+    message = _OversizedMessage()
+    effective_chat = _OversizedChat()
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_document_is_refused_with_a_way_out(monkeypatch):
+    """The refusal must name the route, not dump a limit.
+
+    Measured 2026-10-29: the operator uploaded a 47.6 MiB binary and
+    asked for it to be put in the sandbox. The bot answered "Document
+    too large (50.0 MB > 5 MB)" -- the bot's own limit, in a unit that
+    disagreed with the size Telegram had just shown (47.6 MB), and with
+    no way out. The way out exists: the file door carries files OUT of
+    the sandbox, and the bot can deliver from there.
+
+    Three things have to hold: it is a refusal (the document is too
+    large), it names the way out, and it does not print a size
+    comparison the user cannot act on.
+
+    The mutation that must fail this test: putting the size dump back.
+    """
+    import handlers
+
+    replies = []
+
+    async def fake_reply(update, text, **kwargs):
+        replies.append(text)
+
+    async def fake_slot(update, context, *, label):
+        return asyncio.Semaphore(), 42, None, 7
+
+    async def no_typing(chat, *, label):
+        return None
+
+    monkeypatch.setattr(handlers, "_reply", fake_reply)
+    monkeypatch.setattr(handlers, "_acquire_turn_slot", fake_slot)
+    monkeypatch.setattr(handlers, "_typing_indicator", no_typing)
+
+    await handlers.handle_document(_OversizedUpdate(), None)
+
+    assert len(replies) == 1, f"expected one refusal, got {replies!r}"
+    reply = replies[0]
+    assert "too large" in reply, (
+        f"the refusal does not say the document is too large: {reply!r}")
+    assert "sandbox" in reply, (
+        f"the refusal does not name the way out: {reply!r}")
+    assert "MB >" not in reply, (
+        f"the refusal is a size dump the user cannot act on: {reply!r}")

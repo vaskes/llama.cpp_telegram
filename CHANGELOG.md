@@ -17,6 +17,27 @@ this file is the human-readable summary.
 
 **After `v0.21.1-stable`.** The next cycle starts here.
 
+### An oversized document is refused with a way out, not a size dump
+
+Measured on 2026-10-29: a 47.6 MiB binary was uploaded to the bot with
+"put it in the sandbox", and the answer was `❌ Document too large (50.0
+MB > 5 MB)`. Three things were wrong with it: the number was the bot's own
+limit, it disagreed with the size Telegram had just shown (47.6 MB — the
+bot counted decimal megabytes, Telegram binary ones), and it left the user
+with no way out.
+
+There is a way out, and it is the opposite of what the question asked: the
+file door carries files **out of** the sandbox (`GET /files`, `DELETE
+/files`, and no upload endpoint), and the bot can deliver a file from
+there. So the refusal now says what the bot does with a document — it
+reads it as text, the first 16 000 characters — and names the route that
+works.
+
+The wording lives in `telegram-bot/user_notice.py` with the rest of the
+user-facing copy (one module, one rule: the chat gets a sentence, the log
+gets the detail), and the size dump the photo, voice and video-note paths
+still use now comes from the same place.
+
 ## [v0.21.1-stable] — 2026-10-29 — The engine moved to 8081, and a recorded error stopped being a live failure
 
 **After `v0.21.0-stable`.** Two things: the production engine moved to a
