@@ -338,7 +338,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
         req_tools = None
     loop_start = time.monotonic()
     LOOP_BUDGET_SEC = limits.LOOP_BUDGET_SEC
-    guard = LoopGuard(LOOP_BUDGET_SEC)  # configurable via LLAMABOT_LOOP_BUDGET_SEC; default 600 (10 min)
+    guard = LoopGuard(LOOP_BUDGET_SEC)  # configurable via LLAMABOT_LOOP_BUDGET_SEC; the default lives in limits.py
 
     # Per-turn throttle. Was two one-element lists closed over by
     # push_thinking; now explicit, and testable without call_llama.

@@ -213,3 +213,69 @@ def test_config_default_for_webhook_mode_is_still_zero():
         "default and production overrides it; if that inverted, the doc "
         "is now wrong in a way a reader cannot detect."
     )
+
+
+# --- §3.3 the wall-clock budget -----------------------------------------
+
+def _loop_budget_values():
+    """Every profile's LOOP_BUDGET_SEC, read from the AST of limits.py."""
+    tree = ast.parse((BOT / "limits.py").read_text(encoding="utf-8"))
+    found = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            if (isinstance(key, ast.Constant)
+                    and key.value == "LOOP_BUDGET_SEC"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, (int, float))):
+                found[f"limits.py:{node.lineno}"] = value.value
+    return found
+
+
+def test_the_wall_clock_budget_in_the_doc_is_the_one_in_the_code():
+    """The budget is one number in the code; the doc quotes it three times.
+
+    It had rotted to the wrong value: the doc said 600 s while
+    limits.py said 7200 -- a twelve-fold difference, and the document
+    contradicted ITSELF, because the limits table in the same file
+    already carried the right number. A reader who took the prose got
+    a turn that is aborted after ten minutes; a reader who took the
+    table got the two hours the code actually allows.
+
+    So the number is checked against the code, in all three places the
+    doc states it. The comment in call_llama.py used to carry a fourth
+    copy ("default 600 (10 min)"); it carries no number now, because a
+    number in a comment is a copy nobody recomputes.
+    """
+    budgets = _loop_budget_values()
+    assert budgets, (
+        "no LOOP_BUDGET_SEC found in limits.py -- the check would compare "
+        "nothing and pass")
+    values = set(budgets.values())
+    assert len(values) == 1, (
+        "the profiles disagree about the wall-clock budget: "
+        + ", ".join(f"{where}={value}" for where, value in budgets.items())
+        + ". The doc states one number, so it now has to state them all "
+          "-- or the profiles have to agree again."
+    )
+    budget = values.pop()
+    doc = _doc()
+    quoted = {}
+    heading = re.search(r"### 3\.3 Wall-clock budget: (\d+) s", doc)
+    assert heading, (
+        "the §3.3 heading is gone -- the check would compare nothing")
+    quoted["§3.3 heading"] = int(heading.group(1))
+    guard_line = re.search(r"wall_clock_budget=(\d+)s", doc)
+    assert guard_line, (
+        "§1.1 no longer states the wall-clock budget -- the check would "
+        "compare nothing")
+    quoted["§1.1 guard line"] = int(guard_line.group(1))
+    table = re.search(r"\|\s*`LOOP_BUDGET_SEC`\s*\|\s*(\d+)\s*\|", doc)
+    assert table, (
+        "the limits table no longer has a LOOP_BUDGET_SEC row -- the "
+        "check would compare nothing")
+    quoted["the limits table"] = int(table.group(1))
+    wrong = [f"{where} says {said}, limits.py says {budget}"
+             for where, said in quoted.items() if said != budget]
+    assert not wrong, "\n".join(wrong)

@@ -91,7 +91,7 @@ What it does, per iteration:
      (see §3.4).
    - if no `tool_calls` → return `content_buf` (or reasoning tail if
      content is empty).
-6. Outer guard: `max_iter=15`, `wall_clock_budget=600s`,
+6. Outer guard: `max_iter=15`, `wall_clock_budget=7200s`,
    `identical_call_detector`, `last_empty>=3` hard-abort.
 
 ### 1.2 `use_stream=False` (vision — `handle_photo`)
@@ -244,19 +244,23 @@ The "signature" is `name + json(arguments, sort_keys=True)`. If the
 model calls the same tool with the same args twice in a row, it is
 looping, not thinking. Bail.
 
-### 3.3 Wall-clock budget: 600 s
+### 3.3 Wall-clock budget: 7200 s
 
 ```python
 t0 = time.monotonic()
 ...
-if time.monotonic() - t0 > 600:
+guard = LoopGuard(limits.LOOP_BUDGET_SEC)   # 7200 by default
+...
+if elapsed > guard.budget_sec:
     abort()
 ```
 
-A 10-minute wall-clock cap. Some math problems genuinely need 5-7
-minutes of reasoning on Ornith 35B, so this is not a small number.
-But past 10 minutes, even a "correct" answer is unusable, and the
-GPU is burning for nothing.
+A two-hour wall-clock cap. It was raised to two hours on 2026-10-27,
+and the reason is in `limits.py`: the sandbox command limit is an hour
+(`AGENT_EXEC_TIMEOUT=3600` in the production deployment), and a turn
+whose budget is not longer than the command it runs loses the answer --
+the guard aborts the turn the moment the command returns, and the user
+gets "time budget exceeded" instead of the answer.
 
 ### 3.4 Hallucination abort
 
@@ -488,7 +492,7 @@ here went stale the first time the retry moved.
 For a future reviewer / contributor:
 
 - **No backpressure on the polling loop.** If a single update takes
-  10 minutes to process, all subsequent updates queue up.
+  two hours to process, all subsequent updates queue up.
   Acceptable for our 2-user whitelist; would be a problem for
   higher traffic.
 - ~~**No conversation persistence across restarts.**~~ **Wrong since
