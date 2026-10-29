@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1497 lines, and it is
+Our largest file right now is `handlers.py` at 1575 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -92,7 +92,8 @@ only thing anyone could write was a test that read the source text and hoped.
 > not lines — it is a monolith regardless of length.**
 
 `run_one` at 345 lines, nine concerns. `handle_photo` at 253 lines, one concern
-plus a media path. `call_llama` at 222 lines, four concerns and a documented
+plus a media path. `handle_document` at 209 lines, the same shape with the
+binary path under it. `call_llama` at 222 lines, four concerns and a documented
 `DO NOT REFACTOR` with a trigger. Length is a proxy. Concern count is the
 signal. Where they disagree, count the concerns.
 
@@ -412,6 +413,7 @@ There are four, and it is worth reading what they are:
 | `run_one` | 345 | One tool-loop iteration, nine concerns. Debt item 08. |
 | `handle_photo` | 253 | One concern plus a media path. Debt item 13. |
 | `handle_text` | 211 | Not debt. Same shape as `handle_photo`. |
+| `handle_document` | 209 | Not debt. Same shape, plus the binary path into the sandbox. |
 
 The fourth one is the reason this rule exists. `handle_text` crossed 200
 lines at some point during nine days of refactoring, and nobody noticed,
@@ -445,8 +447,9 @@ rule down as `AUTO` would have been a claim with no check behind it
 <!-- census: start -->
 | module | section markers |
 |---|---|
+| `config.py` | 14 |
 | `context_budget.py` | 4 |
-| `handlers.py` | 28 |
+| `handlers.py` | 30 |
 | `limits.py` | 22 |
 | `llm_delete.py` | 4 |
 | `llm_iteration.py` | 0 |
@@ -475,7 +478,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1497 and is registered. The threshold is 1000 because
+`handlers.py` is 1575 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -2102,7 +2105,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-184 test files in total; the table above is the ones that guard a rule in
+185 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
@@ -2129,7 +2132,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1497 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1575 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -2286,6 +2289,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1497 lines and healthy — it only decides when somebody
+> `handlers.py` is 1575 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.

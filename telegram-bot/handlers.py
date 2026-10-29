@@ -38,6 +38,7 @@ import tempfile
 # them.
 from llm_result import _format_executed_tools, unwrap_answer
 from user_notice import DOWNLOAD_FAILURE_MESSAGE, failure_message, too_large_message
+from user_notice import SANDBOX_UNAVAILABLE_MESSAGE, sandbox_upload_failed_message
 from llm_files import send_files
 from llm_thinking import close_thinking
 from llm_abort import finalize_aborted_turn
@@ -110,6 +111,7 @@ from config import (
     BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, EMPTY_RESPONSE_PREFIX,
     EMPTY_RESPONSE_USER_FALLBACK,
     MAX_DOC_BYTES, MAX_PHOTO_BYTES,
+    document_limit_bytes,
     # MAX_VIDEO_NOTE_BYTES is used by handle_voice, and that is not a typo:
     # handlers.AUDIO catches both voice messages and round video notes, so one
     # handler branches on update.message.voice vs .video_note and picks the
@@ -929,6 +931,69 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
         return None
     return bytes(buf)
 
+# === _reads_as_text ===
+def _reads_as_text(data: bytes) -> bool:
+    """True when the bytes can be read as text.
+
+    The bot reads a document as text -- the first 16 000 characters of
+    it. A file that is not text at all is not a document the bot can
+    read, and handing its first 16 000 bytes to the model as mojibake
+    turns a binary artifact into a puzzle instead of a file.
+
+    Measured 2026-10-29: the operator uploaded a 47.6 MiB binary and
+    asked for it to be put in the sandbox. The bot read its first 16 000
+    bytes as text and would have handed them to the model as noise.
+    """
+    head = data[:4096]
+    if b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError as e:
+        # The 4096-byte boundary may have cut a multi-byte character in
+        # half; that is not a sign of a binary file.
+        return e.start >= len(head) - 3
+    return True
+
+
+# === _put_document_in_sandbox ===
+async def _put_document_in_sandbox(update, doc, doc_bytes, caption) -> str | None:
+    """Put a binary document in the sandbox and say where it landed.
+
+    A document the bot cannot read as text is not a document the bot
+    cannot use: the sandbox is where files live, and the model has
+    tools there. So the bytes go in through the door's upload half
+    (sandbox v2.15.0) and the model's context gets the path.
+
+    Returns the text for the model's turn, or None after the user has
+    already been answered.
+    """
+    from personal_tools import bash_command as _bc
+    from personal_tools import file_upload as _fu
+
+    name = getattr(doc, "file_name", None) or "document"
+    if not _bc.is_enabled_for_active_profile():
+        log.info("[handle_document] the sandbox is not enabled in this "
+                 "profile; the document cannot be stored")
+        await _reply(update, SANDBOX_UNAVAILABLE_MESSAGE)
+        return None
+    try:
+        uploaded = await _fu.upload_to_sandbox(doc_bytes, name)
+    except _fu.FileUploadError as e:
+        log.info(f"[handle_document] the sandbox refused the upload: {e}")
+        await _reply(update, sandbox_upload_failed_message(e.message))
+        return None
+    log.info(f"[handle_document] stored {uploaded.path} "
+             f"({uploaded.size} bytes, sha256 {uploaded.sha256})")
+    return (
+        f"{caption}\n\n--- Document ---\n"
+        f"The file `{uploaded.name}` is a binary file, so it cannot be "
+        f"read as text. It is now in the sandbox at `{uploaded.path}` "
+        f"({uploaded.size} bytes, sha256 {uploaded.sha256}). Work with it "
+        f"there -- the sandbox's own tools are the way to look at it."
+    )
+
+
 # === handle_voice ===
 
 
@@ -1115,29 +1180,42 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await _typing_indicator(update.message.chat, label='handle_document')
             doc = update.message.document
-            # Reject oversized documents before downloading. We will only ever
-            # read the first 16 KB of text from the file, so anything bigger is
-            # almost certainly a mistake or an attempt to OOM the bot.
-            if doc.file_size and doc.file_size > MAX_DOC_BYTES:
+            # Two ceilings can refuse this document and they are not the
+            # same one. The bot's own is MAX_DOC_BYTES; on Telegram's
+            # public API there is a smaller one -- getFile will not hand
+            # a bot a file of 20 MB or more. The smaller of the two cuts
+            # the download off, and the refusal names which one it was.
+            limit = document_limit_bytes()
+            if doc.file_size and doc.file_size > limit:
                 await _reply(update, too_large_message(
-                    "Document", doc.file_size, MAX_DOC_BYTES))
+                    "Document", doc.file_size, limit))
                 return
             file = await context.bot.get_file(doc.file_id)
-            doc_bytes = await _download_with_limit(file, MAX_DOC_BYTES, 'Document', update)
+            doc_bytes = await _download_with_limit(file, limit, 'Document', update)
             if doc_bytes is None:
                 return
         except BaseException:
             raise
 
         try:
-            ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
-                tmp.write(doc_bytes)
-                tmp_path = tmp.name
-            with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
-                doc_text = f.read()[:16000]
             caption = update.message.caption or 'Read the document and answer questions.'
-            user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
+            if _reads_as_text(doc_bytes):
+                ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
+                    tmp.write(doc_bytes)
+                    tmp_path = tmp.name
+                with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    doc_text = f.read()[:16000]
+                user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
+            else:
+                # A binary is not a document the bot can read -- but it
+                # is a file the sandbox can work on. So it goes in
+                # through the door's upload half, and the model is told
+                # where it landed.
+                user_content = await _put_document_in_sandbox(
+                    update, doc, doc_bytes, caption)
+                if user_content is None:
+                    return
             # v0.9.2: persist AFTER thinking+abort_event are wired so a
             # Stop click during the LLM call can roll the document back.
             opened = await _open_thinking(update, label='handle_document')

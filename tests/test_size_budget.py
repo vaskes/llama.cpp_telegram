@@ -8,7 +8,7 @@ CODEBOOK S-1 and S-6. Two claims, each falsifiable:
     register, with its current size declared.
 
 Why 200 and not "smaller is better": the number is not the point, the
-*registration* is. `handlers.py` is 1497 lines and healthy -- four
+*registration* is. `handlers.py` is 1575 lines and healthy -- four
 handlers of one shape, where a fix to the skeleton breaks four call
 sites identically. `handle_photo` at 253 and `handle_text` at 211 are
 that shape. `call_llama` at 222 and `run_one` at 345 are not, and they
@@ -97,6 +97,20 @@ EXCEPTIONS = {
         "wording.",
         "Split only together with the other three handlers, never alone: "
         "one handler on its own is four shapes, not one.",
+    ),
+    "handle_document": (
+        "handlers.py",
+        209,
+        "2026-10-29",
+        "Not a debt item -- same shape as handle_photo and handle_text, and "
+        "registered only because it crossed 200 lines while nobody was "
+        "looking, which is what this file exists to catch. It crossed on "
+        "2026-10-29: a document that is not text now goes into the "
+        "sandbox instead of into the model's context as mojibake, and "
+        "the branch that decides it, and the branch that puts it there, "
+        "are in this body. Open debt item 13 -- the item about the four "
+        "handlers sharing one shape.",
+        "Split only together with the other three handlers, never alone.",
     ),
     "handle_text": (
         "handlers.py",
@@ -309,7 +323,7 @@ def test_every_exception_carries_a_date_a_reason_and_a_trigger():
 
 
 def test_the_registry_itself_is_not_the_place_a_new_exemption_goes():
-    """A sanity check on this file: the four entries above were all
+    """A sanity check on this file: the entries above were all
     written against the tree, with reasons that name the debt item they
     belong to -- or say plainly that they are not debt. If someone adds
     a fifth, the entry has to say which, or it is a preference and not

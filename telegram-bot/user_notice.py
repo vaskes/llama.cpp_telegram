@@ -43,6 +43,8 @@ operator's call was one language for everything the user reads.
 """
 from __future__ import annotations
 
+from config import MAX_DOC_BYTES, telegram_download_limit_bytes
+
 import httpx
 
 __all__ = [
@@ -52,12 +54,13 @@ __all__ = [
     "GENERIC_FAILURE_MESSAGE",
     "TELEGRAM_UNREACHABLE_MESSAGE",
     "DOWNLOAD_FAILURE_MESSAGE",
-    "OVERSIZED_DOCUMENT_MESSAGE",
     "TOPIC_CREATE_FAILURE_MESSAGE",
     "TOPIC_DELETE_FAILURE_MESSAGE",
     "engine_failure_message",
     "failure_message",
     "too_large_message",
+    "sandbox_upload_failed_message",
+    "SANDBOX_UNAVAILABLE_MESSAGE",
 ]
 
 #: The engine did not answer the connection. It is down, restarting, or
@@ -110,31 +113,6 @@ DOWNLOAD_FAILURE_MESSAGE = (
     "❌ Could not download the file. Try again — and if the file is "
     "large, send a smaller one."
 )
-
-#: The document is bigger than the bot will pull from Telegram.
-#:
-#: Measured 2026-10-29: the operator uploaded a 47.6 MiB binary and asked
-#: for it to be put in the sandbox. The refusal was "Document too large
-#: (50.0 MB > 5 MB)" -- a limit dump, in a unit that disagreed with the
-#: size Telegram had just shown (47.6 MB), and with no way out. The
-#: number is the bot's business; the route is the user's.
-#:
-#: The file door is one-way: `GET /files` pulls bytes OUT of the sandbox,
-#: and the door has no upload endpoint. So the honest answer to "put it
-#: in the sandbox" is that files travel the other way -- and the bot can
-#: deliver a file from there.
-OVERSIZED_DOCUMENT_MESSAGE = (
-    "❌ That document is too large for me to take — I read "
-    "documents as text (the first 16 000 characters), so a large binary "
-    "cannot be used this way.\n\n"
-    "A file that is already in the sandbox can be sent to this chat: put "
-    "the artifact there and ask me to send it."
-)
-
-#: Per-kind wording for the size refusal. A document has its own: it is
-#: the kind a user is most likely trying to MOVE rather than read.
-_TOO_LARGE_WORDING = {"Document": OVERSIZED_DOCUMENT_MESSAGE}
-
 
 #: The sub-talk topic could not be created.
 TOPIC_CREATE_FAILURE_MESSAGE = (
@@ -192,6 +170,67 @@ def failure_message(exc: BaseException) -> str:
     return GENERIC_FAILURE_MESSAGE
 
 
+def oversized_document_message() -> str:
+    """The refusal for a document the bot cannot take.
+
+    Two ceilings can refuse a document, and they are not the same one.
+    The bot's own is MAX_DOC_BYTES. On Telegram's public API there is a
+    second and smaller one: getFile will not hand a bot a file of 20 MB
+    or more ("The file must be less than 20 MB in size"), while a local
+    Bot API server has no such limit ("Download files without a size
+    limit").
+
+    When the platform's ceiling is the one that bit, saying so is the
+    whole answer -- the bot's own limit was never in question. And the
+    size of the file is left out of both: the user can see it in
+    Telegram, and two numbers for one file on one screen is how the old
+    message lost the reader.
+
+    The route that works is in both: a file that is already in the
+    sandbox can be sent to this chat.
+    """
+    limit_mb = MAX_DOC_BYTES / (1024 * 1024)
+    platform = telegram_download_limit_bytes()
+    if platform is not None and platform < MAX_DOC_BYTES:
+        platform_mb = platform / (1024 * 1024)
+        return (
+            f"❌ Telegram's public API will not give a bot more than "
+            f"{platform_mb:.0f} MB to download, so I cannot take this "
+            f"document — my own limit is {limit_mb:.0f} MB.\n\n"
+            f"A file that is already in the sandbox can be sent to this "
+            f"chat: put the artifact there and ask me to send it."
+        )
+    return (
+        f"❌ That document is too large for me to take — I can "
+        f"take up to {limit_mb:.0f} MB.\n\n"
+        f"A file that is already in the sandbox can be sent to this chat: "
+        f"put the artifact there and ask me to send it."
+    )
+
+
+#: The sandbox is not there to take the file.
+SANDBOX_UNAVAILABLE_MESSAGE = (
+    "\u274c I could not put the file in the sandbox -- the sandbox is "
+    "not available in this deployment."
+)
+
+
+def sandbox_upload_failed_message(reason: str) -> str:
+    """The sandbox refused the upload, and the user has to know why.
+
+    The reason is the sandbox's own sentence -- "the sandbox already has
+    a file with that name" is a choice the user can make, and "the
+    sandbox rejected AGENT_STACK_TOKEN" is a thing to fix. It is
+    truncated, because the chat is not a log.
+    """
+    return (
+        f"\u274c I could not put the file in the sandbox -- "
+        f"{reason[:200]}.\n\n"
+        f"A file that is already in the sandbox can be sent to this chat: "
+        f"put the artifact there and ask me to send it."
+    )
+
+
 def too_large_message(kind: str, size: int, limit: int) -> str:
     """The sentence the user reads when a file is over the cap.
 
@@ -201,15 +240,16 @@ def too_large_message(kind: str, size: int, limit: int) -> str:
     same file shows two different sizes on one screen (Telegram divides
     by 1024 and calls it MB).
 
-    The size is the bot's business; the route is the user's. A document
-    is the case with its own wording: the
-    bot reads documents as text, and the file door only carries files
-    OUT of the sandbox -- so "put it in the sandbox" is the way out,
-    not a smaller file.
+    A document has its own refusal, because a document has two
+    ceilings and the other kinds have one -- and because a document
+    can go into the sandbox, where the other kinds cannot.
+
+    The other kinds keep the size dump: there is nothing the user can
+    do with a photo that is too large except send a smaller one, and
+    the number is the whole answer.
     """
-    wording = _TOO_LARGE_WORDING.get(kind)
-    if wording is not None:
-        return wording
+    if kind == "Document":
+        return oversized_document_message()
     return (f"❌ {kind} too large ({size/1e6:.1f} MB > "
             f"{limit/1e6:.0f} MB).")
 

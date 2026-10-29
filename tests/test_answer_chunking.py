@@ -230,7 +230,14 @@ async def _replay(handler, *, user_id, answer, photo=None, document=None,
                            document=document)
     update = SimpleNamespace(message=message, effective_chat=chat,
                              effective_user=user)
-    context = SimpleNamespace(bot=_FakeBot(b"\x89PNG\r\n\x1a\n" + b"x" * 64))
+    # The bytes have to match the file the test says it is: a document
+    # named notes.txt and typed text/plain carries text, and a binary is
+    # read as a binary (the bot puts those in the sandbox).
+    if document is not None and (document.mime_type or "").startswith("text/"):
+        payload = b"the text of the notes: " + b"x" * 64
+    else:
+        payload = b"\x89PNG\r\n\x1a\n" + b"x" * 64
+    context = SimpleNamespace(bot=_FakeBot(payload))
     with patch.object(handlers, "call_llama", fake_call_llama), \
             patch.object(access, "ALLOWED_USER_IDS", {user_id}):
         await handler(update, context)

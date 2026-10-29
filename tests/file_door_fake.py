@@ -66,6 +66,10 @@ class FakeSandbox:
         # can be read as a permission and not as an authentication
         # problem.
         self.reject_token = False
+        # True: the side-car is not there at all. The transport
+        # raises, which is what an unreachable host looks like to the
+        # client -- a different failure from a refusal.
+        self.unreachable = False
 
     # -- what the tests look at ---------------------------------------
 
@@ -84,8 +88,40 @@ class FakeSandbox:
         self.requests.append((method, route, target))
         self.tokens.append(request.headers.get("authorization"))
 
+        if self.unreachable:
+            raise httpx.ConnectError("no route to host")
+
         if self.reject_token:
             return httpx.Response(401, json={"detail": "invalid token"})
+
+        if method == "POST" and route.endswith("/files"):
+            # The door's other half (sandbox v2.15.0): a file goes IN.
+            if not self.has_door:
+                return httpx.Response(404, json={"detail": "Not Found"})
+            body = request.content
+            if not body:
+                return httpx.Response(400,
+                                      json={"detail": "the body is empty"})
+            parent = os.path.dirname(target)
+            if parent and parent != "/workspace":
+                return httpx.Response(
+                    404, json={"detail": f"no such directory: {parent}"})
+            if self.limit and len(body) > self.limit:
+                return httpx.Response(413, json={"detail": (
+                    f"file is {len(body)} bytes, over the binary limit of "
+                    f"{self.limit} bytes")})
+            if target in self.files:
+                # The door does not overwrite: a delivery that removes
+                # what it was not told to remove is a surprise.
+                return httpx.Response(409, json={"detail": (
+                    f"a file named {os.path.basename(target)} is already "
+                    f"there")})
+            self.files[target] = body
+            return httpx.Response(200, json={
+                "name": os.path.basename(target),
+                "path": target,
+                "size": len(body),
+            })
 
         if method == "DELETE":
             if self.delete_status != 204:
@@ -165,6 +201,7 @@ def install(monkeypatch, sandbox: FakeSandbox, tmp_path) -> FakeSandbox:
     prove it was removed afterwards.
     """
     import personal_tools.file_transport as ft
+    import personal_tools.file_upload as fu
 
     real_client = httpx.AsyncClient
 
@@ -175,6 +212,10 @@ def install(monkeypatch, sandbox: FakeSandbox, tmp_path) -> FakeSandbox:
     monkeypatch.setattr(httpx, "AsyncClient", factory)
     monkeypatch.setattr(ft, "AGENT_STACK_URL", "http://sandbox.test")
     monkeypatch.setattr(ft, "AGENT_STACK_TOKEN", "test-token")
+    # The upload half has its own copy of the door's address and token:
+    # both modules read them at import time.
+    monkeypatch.setattr(fu, "AGENT_STACK_URL", "http://sandbox.test")
+    monkeypatch.setattr(fu, "AGENT_STACK_TOKEN", "test-token")
     monkeypatch.setattr(ft.tempfile, "mkstemp",
                         partial(tempfile.mkstemp, dir=str(tmp_path)))
     return sandbox

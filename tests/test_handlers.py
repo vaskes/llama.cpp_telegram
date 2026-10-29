@@ -784,11 +784,17 @@ async def test_an_oversized_document_is_refused_with_a_way_out(monkeypatch):
     asked for it to be put in the sandbox. The bot answered "Document
     too large (50.0 MB > 5 MB)" -- the bot's own limit, in a unit that
     disagreed with the size Telegram had just shown (47.6 MB), and with
-    no way out. The way out exists: the file door carries files OUT of
-    the sandbox, and the bot can deliver from there.
+    no way out.
 
-    Three things have to hold: it is a refusal (the document is too
-    large), it names the way out, and it does not print a size
+    Two ceilings can refuse that document, and the one that refused it
+    was not the bot's: Telegram's public API will not hand a bot a file
+    of 20 MB or more ("The file must be less than 20 MB in size"), so
+    the file could not be pulled off Telegram at all. The refusal has
+    to say THAT -- "my own limit is 50 MB" would send the operator to
+    change a limit that was never in question.
+
+    Four things have to hold: it is a refusal, it names the ceiling
+    that refused, it names the way out, and it does not print a size
     comparison the user cannot act on.
 
     The mutation that must fail this test: putting the size dump back.
@@ -814,9 +820,144 @@ async def test_an_oversized_document_is_refused_with_a_way_out(monkeypatch):
 
     assert len(replies) == 1, f"expected one refusal, got {replies!r}"
     reply = replies[0]
-    assert "too large" in reply, (
-        f"the refusal does not say the document is too large: {reply!r}")
+    assert "cannot take this document" in reply, (
+        f"the refusal does not say the document was refused: {reply!r}")
+    assert "Telegram's public API" in reply, (
+        f"the refusal does not name the ceiling that refused it: {reply!r}")
     assert "sandbox" in reply, (
         f"the refusal does not name the way out: {reply!r}")
     assert "MB >" not in reply, (
         f"the refusal is a size dump the user cannot act on: {reply!r}")
+
+
+@pytest.mark.asyncio
+async def test_a_binary_document_lands_in_the_sandbox(monkeypatch, tmp_path):
+    """A document the bot cannot read as text goes into the sandbox.
+
+    The operator's case (2026-10-29): a 47.6 MiB binary uploaded to
+    the chat with the instruction to put it in the sandbox. The bot
+    read the first 16 000 bytes of it as text and would have handed
+    the model mojibake; now the bytes go in through the door's upload
+    half, and the model's turn is told where they landed.
+
+    Two things have to hold: the bytes are in the sandbox, and the
+    model was told the path -- a file the model cannot see is a file
+    the model cannot work with.
+
+    The mutation that must fail this test: reading the binary as text
+    again.
+    """
+    import handlers
+    from file_door_fake import FakeSandbox, install
+
+    door = FakeSandbox()
+    install(monkeypatch, door, tmp_path)
+
+    # The upload only happens where the sandbox is switched on. The
+    # token is read at import time, so the module's own name has to be
+    # patched -- the environment alone would not do it.
+    monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
+    monkeypatch.setattr("personal_tools.bash_command.AGENT_STACK_TOKEN",
+                        "test-token")
+
+    db = str(tmp_path / "test.db")
+    from storage import Storage
+    import config as _cfg
+    monkeypatch.setattr(_cfg, "DB_PATH", db)
+    import storage as _st
+    monkeypatch.setattr(_st, "_store_instance", None)
+    store = Storage(db)
+    store.create_thread(1, "main")
+
+    async def fake_route(update, context):
+        return (1, "main", False)
+    monkeypatch.setattr("handlers._route_to_thread", fake_route)
+    sem = asyncio.Semaphore()
+
+    async def fake_slot(chat_id, user_id, update):
+        return sem
+    monkeypatch.setattr("dispatch._check_user_slot", fake_slot)
+    monkeypatch.setattr("dispatch._is_rating_active", lambda u: False)
+    monkeypatch.setattr("dispatch._stop_button_markup", lambda: None)
+
+    fake_file = MagicMock()
+    context = MagicMock()
+    context.bot.get_file = AsyncMock(return_value=fake_file)
+
+    binary = b"\x7fELF\x02\x01\x01\x00" + bytes(range(256)) * 40
+
+    async def fake_download(file, max_bytes, kind, update):
+        return binary
+    monkeypatch.setattr("handlers._download_with_limit", fake_download)
+
+    thinking = MagicMock()
+    thinking.message_id = 999
+    thinking.delete = AsyncMock()
+    thinking.edit_text = AsyncMock()
+
+    async def fake_reply(*a, **kw):
+        return thinking
+    monkeypatch.setattr("handlers._reply", fake_reply)
+
+    class FakeSem:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            pass
+    monkeypatch.setattr("handlers._get_global_llm_sem", lambda: FakeSem())
+
+    async def fake_open_thinking(update, *, label):
+        return thinking, "tester"
+    monkeypatch.setattr("handlers._open_thinking", fake_open_thinking)
+    monkeypatch.setattr("handlers._register_abort_event",
+                        lambda cid, mid, ev: None)
+    monkeypatch.setattr("handlers._send_answer_text", AsyncMock())
+
+    async def fake_call(*a, **kw):
+        return {"text": "ok", "executed_tools": []}
+    monkeypatch.setattr("handlers.call_llama", fake_call)
+
+    doc = MagicMock()
+    doc.file_size = len(binary)
+    doc.file_name = "big_50m.bin"
+    chat = MagicMock()
+    chat.send_action = AsyncMock()
+    msg = MagicMock()
+    msg.document = doc
+    msg.caption = "Put it in the sandbox"
+    msg.message_id = 4242
+    update = MagicMock()
+    update.effective_user.id = 1
+    update.message = msg
+    update.message.chat = chat
+    update.message.from_user = _FakeUser()
+    update.message.message_thread_id = None
+
+    from handlers import handle_document
+    try:
+        await asyncio.wait_for(handle_document(update, context), timeout=10.0)
+    except asyncio.TimeoutError:
+        pytest.fail("handle_document timed out")
+
+    assert door.files.get("/workspace/big_50m.bin") == binary, (
+        f"the document did not land in the sandbox: {list(door.files)!r}")
+    rows = store.get_messages(1, "main", limit=10)
+    user_rows = [r for r in rows if r["role"] == "user"]
+    assert user_rows, "the document was not persisted"
+    content = str(user_rows[0].get("content", ""))
+    assert "/workspace/big_50m.bin" in content, (
+        f"the model was not told where the file landed: {content!r}")
+
+
+def test_a_file_with_a_nul_byte_is_not_text():
+    """A NUL byte means binary, even when the rest decodes as UTF-8.
+
+    Plenty of binaries are mostly ASCII -- an ELF header is text for a
+    few bytes -- and the NUL is what tells them apart from a document.
+    Without this check a binary with a readable head would be handed to
+    the model as text.
+    """
+    from handlers import _reads_as_text
+    assert not _reads_as_text(b"hello\x00world")
+    assert _reads_as_text(b"hello world")
+    assert not _reads_as_text(b"\x7fELF\x02\x01\x01\x00rest")

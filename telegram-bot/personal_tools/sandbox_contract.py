@@ -106,15 +106,19 @@ SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
 # tree and to the version the submodule's own source declares: a bump of
 # one without the others is a red test, not a quiet drift.
 #
-# v2.14.9 (2026-10-29) is the version the production side-car runs: a
-# command may run for an hour (the operator's ruling -- see
-# EXEC_TIMEOUT_SECONDS below), on top of the MCP read budget of v2.13.0
-# (see MCP_MAX_READ_BYTES below). The side-car moved on its own after
-# the fourth review; the pin follows it, and every claim below was
-# re-read against this source. What v2.14.9 adds is a rule about the
-# token: a published placeholder is not a secret, and the rule lives in
-# the code, so the agent and the proxy cannot disagree about it.
-SANDBOX_PINNED_VERSION = "2.14.9"
+# v2.15.0 (2026-10-29) is the version this repository pins: the door
+# takes files IN as well as out (POST /files), so a file that arrives
+# in the chat can reach the sandbox instead of stopping at a refusal.
+# It sits on top of v2.14.11 -- the peer's releases, which closed the
+# token rule and the branch protection -- and every claim below was
+# re-read against this source.
+#
+# The pin moves ahead of the deployment: the production side-car still
+# runs v2.14.9 until the next release is deployed, and the upload half
+# of the door does not exist there yet. The bot's own code is what
+# needs the new route, so the pin and the code move together and the
+# deployment follows them.
+SANDBOX_PINNED_VERSION = "2.15.0"
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:

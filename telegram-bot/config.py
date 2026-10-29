@@ -177,9 +177,55 @@ EMPTY_RESPONSE_USER_FALLBACK = (
     "\u2022 Add more detail to the question"
 )
 
-MAX_DOC_BYTES = int(os.environ.get("MAX_DOC_BYTES", "5000000"))         # 5 MB
+MAX_DOC_BYTES = int(os.environ.get("MAX_DOC_BYTES", "52428800"))        # 50 MB
 MAX_VOICE_BYTES = int(os.environ.get("MAX_VOICE_BYTES", "20000000"))    # 20 MB
 MAX_VIDEO_NOTE_BYTES = int(os.environ.get("MAX_VIDEO_NOTE_BYTES", "50000000"))  # 50 MB
+
+# === What Telegram itself will hand the bot ===
+#
+# The bot's own limits are the ones above; the platform has one of its
+# own, and it is smaller. getFile on Telegram's public API answers
+# "The file must be less than 20 MB in size" -- a bot cannot pull a
+# bigger file, whatever its own cap says. A local Bot API server has no
+# such ceiling ("Download files without a size limit"), so the limit
+# belongs to the endpoint the bot talks to and not to the bot.
+#
+# The number is counted the way Telegram counts the sizes it shows
+# in a chat (it divides by 1024 and calls it MB), so the limit the bot
+# names and the size the user can see are the same unit and cannot
+# disagree on one screen.
+#
+# Measured 2026-10-29: the operator uploaded a 47.6 MiB binary and
+# asked for it to be put in the sandbox, and the bot refused it with a
+# size dump. The size dump was the smaller of the two problems -- the
+# file could not be pulled off Telegram at all, and the refusal never
+# said so.
+TELEGRAM_PUBLIC_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024
+
+
+def telegram_download_limit_bytes() -> int | None:
+    """The platform's own ceiling on a downloaded file, or None.
+
+    None means the endpoint has no ceiling of its own -- which is the
+    case for a local Bot API server.
+    """
+    if TELEGRAM_API.startswith("https://api.telegram.org"):
+        return TELEGRAM_PUBLIC_DOWNLOAD_LIMIT_BYTES
+    return None
+
+
+def document_limit_bytes() -> int:
+    """The largest document the bot will pull: our cap under the platform's.
+
+    The effective limit is the smaller of the two, and it is the number
+    the download is cut off at. The two caps stay separate, because the
+    refusal has to say WHICH one refused: "Telegram will not give me
+    that file" and "I will not take that file" are different answers.
+    """
+    platform = telegram_download_limit_bytes()
+    if platform is None:
+        return MAX_DOC_BYTES
+    return min(MAX_DOC_BYTES, platform)
 
 # === Tool gating ===
 DISABLED_TOOLS = {

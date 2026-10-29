@@ -17,7 +17,7 @@ this file is the human-readable summary.
 
 **After `v0.21.1-stable`.** The next cycle starts here.
 
-### An oversized document is refused with a way out, not a size dump
+### A binary in the chat goes into the sandbox
 
 Measured on 2026-10-29: a 47.6 MiB binary was uploaded to the bot with
 "put it in the sandbox", and the answer was `❌ Document too large (50.0
@@ -26,12 +26,25 @@ limit, it disagreed with the size Telegram had just shown (47.6 MB — the
 bot counted decimal megabytes, Telegram binary ones), and it left the user
 with no way out.
 
-There is a way out, and it is the opposite of what the question asked: the
-file door carries files **out of** the sandbox (`GET /files`, `DELETE
-/files`, and no upload endpoint), and the bot can deliver a file from
-there. So the refusal now says what the bot does with a document — it
-reads it as text, the first 16 000 characters — and names the route that
-works.
+The way out is the other direction of the same door. The file door used to
+open outwards only — `GET /files` handed bytes out, `DELETE /files` threw
+them away, and nothing ever came in — so a file that arrived in the chat
+could not reach the sandbox at all. The door now takes files in as well
+(`POST /files`, sandbox v2.15.0, `39fb071`): the body is the file's raw
+bytes, streamed to disk, the write is atomic, and the upload never
+overwrites a file that is already there (409 — a delivery that removes
+what it was not told to remove is a surprise). A document that is not text
+now goes straight into the sandbox workspace, and the model's turn is told
+the path, the size and the sha256 — a file the model cannot see is a file
+the model cannot work with.
+
+Two ceilings can refuse a document, and the bot's own was not the one that
+bit: on Telegram's public API `getFile` will not hand a bot a file of 20
+MB or more ("The file must be less than 20 MB in size"), so a 47.6 MiB
+file cannot be pulled off Telegram at all. The bot's own limit is now 50
+MB — the same ceiling the other direction has — and the refusal says which
+ceiling refused, because "my own limit is 50 MB" would send the operator
+to change a limit that was never in question.
 
 The wording lives in `telegram-bot/user_notice.py` with the rest of the
 user-facing copy (one module, one rule: the chat gets a sentence, the log

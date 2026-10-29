@@ -13,7 +13,7 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1497 lines)
+├── handlers.py            # handle_text/photo/voice/document (1575 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   377 lines file, 222 in the function, 345 in the loop
 ├── mcp_client.py # MCP protocol for ONE server (382)
@@ -35,7 +35,7 @@ telegram-bot/
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
 ├── limits.py              # profile-based token/timeout limits (566)
-├── config.py # env-var read at import time (496)
+├── config.py # env-var read at import time (542)
 ├── state.py               # per-chat runtime state (231)
 ├── storage.py             # SQLite: messages, threads, topics (938)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (200)
@@ -52,10 +52,11 @@ telegram-bot/
 └── personal_tools/
     ├── bash_command.py    # T38: bash execution via sandbox side-car
     ├── bash_policy.py     # the command classes the bot refuses, in code
-    └── file_transport.py  # the file door: pull bytes out, leave the copy
+    ├── file_transport.py  # the file door: pull bytes out, leave the copy
+    └── file_upload.py    # the file door: push bytes in, never overwrite
 ```
 
-65 top-level modules, 184 test files. The size of the suite is the
+65 top-level modules, 185 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.
@@ -81,7 +82,7 @@ tests, none of which build a full `call_llama`.
   llm_nonstream.py      442  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         310  StreamOutcome, stream_iteration, _fallback_to_nonstream
-  user_notice.py         236  engine_failure_message
+  user_notice.py         276  engine_failure_message
   llm_abort.py             64  finalize_aborted_turn
   llm_result.py           346  Answer, unwrap_answer
   llm_artifact.py         487  Artifact, extract_files
