@@ -41,7 +41,7 @@ from pathlib import Path
 
 DEFAULT_ROOT = "/opt/telegrambot/bot/repo"
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT)
-IMAGE = "bot-testimg311"
+IMAGE = os.environ.get("MUTATION_HARNESS_IMAGE", "")
 # The runtime golden plus the direct block tests: the golden watches the
 # blocks run in order, the block tests watch each one being addressable
 # and self-contained. Neither alone catches a block that still runs and
@@ -308,15 +308,30 @@ MUTATIONS = [
 def run_tests():
     """Run the target tests in the image. Returns (verdict, summary)."""
     try:
-        r = subprocess.run(
-            ["docker", "run", "--rm",
-             "-v", f"{ROOT}:/repo", "-w", "/repo",
-             "-e", "BOT_TOKEN=1:fake",
-             "-e", f"CONVERSATIONS_DB=/tmp/mh_selftest_{os.getpid()}.db",
-             IMAGE,
-             "python", "-m", "pytest", *TARGETS.split(),
-             "-q", "--tb=line", "-p", "no:cacheprovider"],
-            capture_output=True, text=True, timeout=PER_TEST_TIMEOUT)
+        if IMAGE:
+            r = subprocess.run(
+                ["docker", "run", "--rm",
+                 "-v", f"{ROOT}:/repo", "-w", "/repo",
+                 "-e", "BOT_TOKEN=1:fake",
+                 "-e", f"CONVERSATIONS_DB=/tmp/mh_selftest_{os.getpid()}.db",
+                 IMAGE,
+                 "python", "-m", "pytest", *TARGETS.split(),
+                 "-q", "--tb=line", "-p", "no:cacheprovider"],
+                capture_output=True, text=True, timeout=PER_TEST_TIMEOUT)
+        else:
+            # The checkout is enough: the suite runs with the current
+            # interpreter. The harness used to require the docker image
+            # unconditionally, so it could only run on the production
+            # host -- and a proof that can only run on one machine is
+            # not a proof, it is a ritual. The same fallback the error
+            # and stream harnesses carry.
+            env = dict(os.environ, BOT_TOKEN="1:fake",
+                       CONVERSATIONS_DB=f"/tmp/mh_selftest_{os.getpid()}.db")
+            r = subprocess.run(
+                [sys.executable, "-m", "pytest", *TARGETS.split(),
+                 "-q", "--tb=line", "-p", "no:cacheprovider"],
+                cwd=str(ROOT), capture_output=True, text=True,
+                timeout=PER_TEST_TIMEOUT, env=env)
     except subprocess.TimeoutExpired:
         return "hang", f"(timeout after {PER_TEST_TIMEOUT}s)"
     tail = [ln for ln in (r.stdout + r.stderr).splitlines() if ln.strip()]
