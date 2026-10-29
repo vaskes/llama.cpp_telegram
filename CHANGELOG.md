@@ -8,14 +8,43 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.20.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.21.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
 ## [Unreleased]
 
-**After `v0.20.0-stable`.** The next cycle starts here.
+**After `v0.21.0-stable`.** The next cycle starts here.
+
+## [v0.21.0-stable] — 2026-10-29 — The pin names the side-car that runs, again
+
+**After `v0.20.0-stable`.** The side-car moved again, and the pin
+followed it.
+
+### The pin follows the side-car that runs, again
+
+The side-car on the production host answers **v2.14.9** (`28797ff`), and
+the repository's pin still said v2.14.8 (`72b0e3a`). The rule this
+repository has been keeping is that the pin follows the side-car that
+runs, so the pin moved (`3725865`).
+
+What v2.14.9 brings is a finding about the token: the published
+placeholder was not a secret, because the guard that was promised ran on
+some of the paths and not on others, and the README's own quick start
+was one of them. The rule now lives in the code, so the agent and the
+proxy cannot disagree about what a usable token is, and a deployment
+carrying the placeholder answers "503 proxy not configured" instead of
+serving a shell.
+
+Measured on the deployed stack before the pin moved: the bot's own MCP
+door answers `initialize` with the side-car's version and lists the same
+four tools (`bash`, `read_file`, `file_info`, `delete_file`), and the
+token in use is a real one -- 64 hex characters, not the placeholder.
+Every knob this bot quotes was re-read against the v2.14.9 source and
+none of them moved: the exec range is still 5..3600, the MCP read
+budget is still 1 MiB by default, and the production compose still says
+`mem_limit: 4g` and `pids_limit: 256`.
 
 ### The last harness could not run at all
 
