@@ -109,7 +109,7 @@ include the sandbox source. Operators must:
      pinned version is the side-car the bot was tested against, so a
      clone of `main` can carry a side-car the bot does not expect:
      ```bash
-     git clone --recurse-submodules --branch v0.22.0-stable \
+     git clone --recurse-submodules --branch v0.23.0-stable \
          https://github.com/vaskes/llama.cpp_telegram.git
      ```
      Or, if already cloned:
