@@ -331,7 +331,8 @@ def test_seconds_until_next_survives_dst(monkeypatch, tzname):
     already past and push it out another 86400 — skipping a full day.
 
     The docstring said "the loop must survive ... a DST shift". It did not.
-    This repo has 200+ forks; a third of them are in DST zones.
+    This repo is published for others to run; a deployment in a DST zone
+    would have seen it.
     """
     import datetime
     import time as _t

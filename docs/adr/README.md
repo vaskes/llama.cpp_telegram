@@ -14,7 +14,7 @@ silently. Start here when touching it.
 
 ## Why an ADR here at all
 
-This repo has 200+ forks. Most of the decisions that matter are invisible in
+This repo is public. Most of the decisions that matter are invisible in
 the code, because the code cannot enforce them: a window that slides instead of
 anchoring produces correct-looking output forever. An ADR is where the *reason*
 lives, so the next person does not have to rediscover it from a bug report.

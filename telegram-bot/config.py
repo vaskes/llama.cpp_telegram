@@ -390,9 +390,9 @@ WEBHOOK_SECRET_TOKEN = os.environ.get("WEBHOOK_SECRET_TOKEN", "")
 # of why. That is a silent failure: the only symptom is the bot behaving as
 # though the operator never configured anything.
 #
-# Warned, not fatal. This repository is a fork base with 200+ forks and a
-# public container image, and refusing to boot on an unrelated exported
-# variable would take every one of them down over a typo in one .env. The
+# Warned, not fatal. This repository is published with a public container
+# image, and refusing to boot on an unrelated exported variable would take
+# every deployment down over a typo in one .env. The
 # contract that IS enforced -- documented vars are read, read vars are
 # documented -- lives in tests/test_env_contract.py and fails CI.
 

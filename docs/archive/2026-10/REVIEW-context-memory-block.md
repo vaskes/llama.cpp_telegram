@@ -37,6 +37,11 @@ The docstring already claimed "the loop must survive a DST shift". It did not.
 Nobody noticed because Moscow has had no DST since 2014; a third of this repo's
 200+ forks do.
 
+> **Correction (2026-10-29).** The "200+ forks" figure in this archived
+> review was never true -- the repository has 0 forks and 0 stars. The claim
+> it carried (other deployments live in DST zones) is the reason the bug
+> survived: nobody saw what they could not see.
+
 ---
 
 ## The class of bug to hunt
@@ -94,6 +99,10 @@ Verify the ordering is real and that the AST test asserting it is sound.
 `personality.json.example` ships with `enabled=false`; the loader reads only
 `persona.local.json`. If someone flips the example to `true`, 200+ deployments
 silently acquire an identity. Is there a test that fails?
+
+> **Correction (2026-10-29).** The "200+ deployments" figure in this
+> archived review was never true -- the repository has 0 forks and 0 stars.
+> The blast radius it described was the right shape; the number was not.
 
 ### 7. `update.sh` cannot deploy a partial build
 

@@ -3,8 +3,8 @@
 #
 # T70. Why this exists
 # -------------------
-# The bot is published to a public repo with 200+ forks. The engine is not
-# ours — it may be llama.cpp, Strata, vLLM, or anything else that speaks
+# The bot is published to a public repo, so a deployment may run an engine
+# that is not ours — llama.cpp, Strata, vLLM, or anything else that speaks
 # OpenAI-compatible /v1/chat/completions. The engine must stay stateless and
 # swapping it must not require changing bot code.
 #
@@ -192,7 +192,7 @@ def estimate_message_tokens(message: dict) -> int:
 
 # === T68: how the window gets re-anchored ===
 #
-# Three modes, because the 200+ forks of this repo have wildly different
+# Three modes, because deployments of this repo have wildly different
 # privileges. See docs/adr/ADR-0003-context-reanchoring.md for the reasoning.
 #
 #   soft            re-anchor inside this process on a timer. No systemd,

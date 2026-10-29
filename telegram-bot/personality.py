@@ -1,6 +1,6 @@
 """T69 — configurable bot persona, injected into the system prompt.
 
-Why a file rather than a constant: this repo has 200+ forks and every operator
+Why a file rather than a constant: this repo is public and every operator
 has a different idea of what their bot should be. A persona baked into
 prompts.py means every fork either edits shared code or ships with somebody
 else's character. So the identity lives in `personality.json` next to the bot,

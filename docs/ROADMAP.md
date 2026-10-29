@@ -131,7 +131,7 @@ a feature ticket — expect it to produce a document, not a release.
 - **Multi-tenant operator accounts.** One operator, many bot instances.
   Deferred until there is a commercial reason.
 - **Engine-side state.** Rejected on the record: the engine is not ours,
-  and 200+ forks run whatever their operator runs. See
+  and every deployment runs whatever its operator runs. See
   [`docs/tickets/README.md`](tickets/README.md).
 - **A second summarising model.** The bot summarises with the same model it
   talks with. Resolved 2026-10-21; no change.

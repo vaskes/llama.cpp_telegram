@@ -28,6 +28,12 @@ The operator, 2026-10-20:
 > у меня на соседней машине как раз есть и две видеокарты и vllm. И это только я,
 > а у нас есть ещё 200+ клонеров. В общем нам нужен универсальный путь»
 
+**Поправка (2026-10-29).** «200+ клонеров» в цитате выше не было правдой
+никогда: в репозитории 0 форков и 0 звёзд (сверено с GitHub API). Премисса,
+которую цитата держит — бота ставят и другие люди, значит путь должен быть
+универсальным — это и есть то, на чём дальше стоит документ. Число было
+украшением.
+
 So: the bot must survive an engine swap by changing nothing but a URL. That
 rules out anything engine-side — including the engine holding sessions.
 
@@ -47,7 +53,7 @@ vLLM, Strata, or anything else that speaks OpenAI-compatible chat completions.
 `vllm-project/agentic-api` was evaluated as the "use the existing solution"
 option and rejected — it is a Rust gateway with the Responses API, multi-agent
 steering, OIDC and checkpoint limits. Correct principle, wrong weight class for
-200+ forks of a small bot. See the T70 ticket for the comparison.
+a small bot that anyone may clone. See the T70 ticket for the comparison.
 
 ## The dependency problem
 
@@ -147,8 +153,8 @@ engine.
 
 The operator has measured first-hand that llama's KV slot reuse is poor —
 change one byte and it prefills from scratch. And the engine will not be llama:
-it may be Strata, it may be vLLM, and in 200+ forks it is whatever each fork's
-operator runs. An architecture whose speed depends on a particular engine
+it may be Strata, it may be vLLM, and in a public repo it is whatever each
+deployment's operator runs. An architecture whose speed depends on a particular engine
 deduplicating prefixes degrades **silently** on engine swap.
 
 This is why T70 exists. Not because prefill is slow today.
@@ -174,8 +180,8 @@ no --slot-save-path
 
 No persistent slots on the current llama; slots live in process memory. Even
 where an engine does offer them, that is one engine's API — vLLM exposes a
-different one (Responses API), and there is no common denominator across 200+
-forks.
+different one (Responses API), and there is no common denominator across
+deployments.
 
 Which leaves the principle that survives every engine swap:
 

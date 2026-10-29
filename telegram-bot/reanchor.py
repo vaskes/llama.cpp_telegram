@@ -8,8 +8,8 @@ to be correct — the window is a timestamp the bot computes locally. Restarting
 the engine is VRAM hygiene. This module therefore supports three modes, and
 the only one that needs any privilege at all is `soft`.
 
-`soft` mode re-anchors in-process. It exists because of the 200+ forks of
-this repo: an operator whose engine runs on a machine they do not control must
+`soft` mode re-anchors in-process. It exists because deployments of this
+repo differ: an operator whose engine runs on a machine they do not control must
 still be able to re-anchor, and `process`/`process+engine` would fail for them
 at exactly the moment they need it.
 """

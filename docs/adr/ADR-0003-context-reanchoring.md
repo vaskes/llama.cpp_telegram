@@ -91,7 +91,7 @@ that additionally resets everything *else* in the process (leaked memory,
 stale in-process caches).
 
 `soft` mode exists because the process restart is the *only* mode that needs
-privileges, and this repo has 200+ forks.
+privileges, and a bot published for anyone to run must start without them.
 
 ---
 
@@ -234,7 +234,7 @@ another `86400`, skipping a full day.
 
 The docstring already promised "the loop must survive a DST shift". It did not
 survive it. Moscow has had no DST since 2014, so the operator never saw it;
-roughly a third of this repo's 200+ forks live in zones that do.
+a deployment in a DST zone would have.
 
 ### What the two have in common
 

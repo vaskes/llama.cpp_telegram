@@ -53,7 +53,7 @@ root first, then this file, then the document your question points at.
 
 ## The three documents that were allowed to drift, and how they stopped
 
-This repo has 200+ forks and a history of documents that described a tree
+This repo is public and has a history of documents that described a tree
 that no longer existed. Three arrangements now prevent that:
 
 - **`TECH-DEBT.md` is an index, not a copy.** The detail lives in

@@ -32,9 +32,9 @@ def test_config_warns_about_unrecognised_env_vars():
     This is the check that earns its keep: it runs against the operator's
     actual environment, which no CI check can see.
 
-    Warning, not abort. This is a fork base with 200+ forks and a public
-    image, and refusing to boot over an unrelated exported variable would
-    take every fork down.
+    Warning, not abort. This is a public repo with a public image, and
+    refusing to boot over an unrelated exported variable would take every
+    deployment down.
     """
     from config import warn_unrecognised_env
 

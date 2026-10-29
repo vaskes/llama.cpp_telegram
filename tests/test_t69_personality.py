@@ -1,8 +1,8 @@
 """T69 — configurable persona injected into the system prompt.
 
 The operator's requirement: the persona lives in a file, because every one of
-200+ forks wants a different bot and a constant in prompts.py would give every
-unconfigured fork somebody else's aunt.
+deployment wants a different bot and a constant in prompts.py would give every
+unconfigured deployment somebody else's aunt.
 
 The tests below are mostly about NOT having a persona. The happy path is one
 assertion; the ways to ship a stranger's personality into someone else's bot
@@ -224,9 +224,9 @@ def test_example_file_ships_and_is_valid_json():
 
 
 def test_example_file_ships_disabled():
-    """The one rule that protects 200+ forks.
+    """The one rule that protects every deployment.
 
-    The operator's own persona must not become every fork's persona. The repo
+    The operator's own persona must not become everybody else's persona. The repo
     ships personality.json.example with enabled=false and the loader reads
     ONLY persona.local.json. If someone flips the example to true, the
     template itself becomes the default for every deployment that never
