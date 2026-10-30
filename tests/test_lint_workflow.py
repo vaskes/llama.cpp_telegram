@@ -26,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github" / "workflows" / "lint.yml"
+TODO = ROOT / "docs" / "TODO.md"
 
 GATE_RULES = "E9,F63,F7,F82"
 
@@ -33,6 +34,15 @@ GATE_RULES = "E9,F63,F7,F82"
 def _text() -> str:
     assert WORKFLOW.is_file(), f"{WORKFLOW} does not exist"
     return WORKFLOW.read_text(encoding="utf-8")
+
+
+def _todo_row(label: str) -> str:
+    """One row of the TODO's table, as text."""
+    text = TODO.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if line.startswith(f"| {label} |"):
+            return line
+    raise AssertionError(f"the TODO has no '{label}' row")
 
 
 def _job(name: str) -> str:
@@ -43,6 +53,14 @@ def _job(name: str) -> str:
     rest = text[text.index(marker) + len(marker):]
     nxt = re.search(r"\n  [A-Za-z_-]+:\n", rest)
     return rest[: nxt.start()] if nxt else rest
+
+
+def _matrix_versions() -> set[str]:
+    """The Python versions the pytest job runs."""
+    body = _job("pytest")
+    matrix = re.search(r"python:\s*\[(.*?)\]", body, re.S)
+    assert matrix, "the pytest job has no python matrix"
+    return set(re.findall(r"3\.\d+", matrix.group(1)))
 
 
 def _steps(job_body: str) -> list:
@@ -97,15 +115,52 @@ def test_the_stylistic_tail_is_reported_and_does_not_gate():
 
 def test_the_suite_runs_on_the_versions_that_matter():
     """3.11 is what the image runs; 3.14 is what broke silently."""
-    body = _job("pytest")
-    matrix = re.search(r"python:\s*\[(.*?)\]", body, re.S)
-    assert matrix, "the pytest job has no python matrix"
-    versions = set(re.findall(r"3\.\d+", matrix.group(1)))
+    versions = _matrix_versions()
     assert "3.11" in versions, f"the matrix does not run the version the image runs: {versions}"
     assert "3.14" in versions, (
         f"the matrix does not run 3.14: {versions}. The tree broke there "
         f"and nothing said so -- a docstring with a surrogate escape cost "
         f"a whole test file, silently")
+
+
+def _todo_ci_versions() -> set[str]:
+    """The versions the TODO's CI row says the pytest job runs.
+
+    Only the clause that says so: the row also names versions
+    elsewhere (a red job on one of them), and a claim about what CI
+    runs has to be read where it is made, not anywhere the number
+    happens to appear.
+    """
+    row = _todo_row("CI")
+    marker = "pytest on Python"
+    assert marker in row, (
+        "the TODO's CI row no longer says which versions the pytest job "
+        "runs")
+    tail = row[row.index(marker):]
+    cut = tail.find("--")
+    segment = tail[:cut] if cut != -1 else tail
+    return set(re.findall(r"3\.\d+", segment))
+
+
+def test_the_todo_names_every_python_the_matrix_runs():
+    """The row that says what CI runs has to name every version.
+
+    It said "3.11 and 3.12" for a week after the matrix grew a third
+    version (3.14, on 2026-10-28). The row was wrong the way this
+    project keeps catching itself being wrong: a claim about a
+    workflow that nobody recomputes -- the same failure the badge
+    count had, one file over.
+    """
+    versions = _matrix_versions()
+    named = _todo_ci_versions()
+    missing = sorted(versions - named)
+    assert not missing, (
+        f"the TODO's CI row does not name {missing} for the pytest job; "
+        f"the matrix runs {sorted(versions)} (see .github/workflows/lint.yml)")
+    extra = sorted(named - versions)
+    assert not extra, (
+        f"the TODO's CI row names {extra} for the pytest job; the matrix "
+        f"runs {sorted(versions)} (see .github/workflows/lint.yml)")
 
 
 def test_ci_installs_the_lock():

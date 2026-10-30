@@ -2135,7 +2135,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_submodule_pins.py` | 3 | The submodule pins are commits, not branches that move under the tree |
 | `test_whisper_compose.py` | 3 | The transcription API listens on loopback, on a pinned image, and names the model the server reads |
 | `test_requirements_lock.py` | 3 | The lock and the direct requirements agree, and the image installs the lock |
-| `test_lint_workflow.py` | 5 | The lint job gates on the rules that catch code that would not run; the stylistic tail only reports |
+| `test_lint_workflow.py` | 6 | The lint job gates on the rules that catch code that would not run; the stylistic tail only reports; and the row that says what CI runs names every version the matrix runs |
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 

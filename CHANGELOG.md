@@ -17,6 +17,31 @@ this file is the human-readable summary.
 
 **After `v0.24.0-stable`.** The next cycle starts here.
 
+### The CI says which test failed
+
+The `pytest (3.12)` job of the docs-only commit `84d3279` went red
+while `3.11` and `3.14` were green -- and the red job named nothing.
+The Actions log endpoint is behind admin rights, so the only trace
+anywhere was three lines of "Process completed with exit code 1" and
+an exit code. The same tree is green on 3.12 -- a full run here, and a
+fresh CI-like clone (no tags, the submodule in place) -- so the tree
+was not the cause. The silence was.
+
+So the pytest step now writes its own output into the run summary,
+which anyone who can read the run can read: the tail of the same
+lines the log carries, with the failure block and the summary line.
+The exit code is still pytest's own -- `PIPESTATUS[0]`, not
+`pipefail`: with `set -e` (the shell this workflow runs under) a
+failing pipeline would end the step *before* the summary was written,
+which is exactly when the summary matters most.
+
+And the row in `docs/TODO.md` that says what CI runs now names every
+version the matrix runs. It still said "3.11 and 3.12" a week after
+the matrix grew 3.14 (on 2026-10-28) -- the same rot as the badge
+count had, one file over -- so a tripwire recomputes it now, from the
+workflow's own matrix, and fails when the row and the workflow
+disagree.
+
 ## [v0.24.0-stable] — 2026-10-30 — The inline code is native code too
 
 **After `v0.23.0-stable`.** The next cycle starts here.
