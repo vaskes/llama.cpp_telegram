@@ -65,7 +65,12 @@ CONTENT_PINS = {
     # the refusal list "LLM-side guidance, not enforcement" -- the bot
     # enforces those classes in code now (personal_tools/bash_policy.py),
     # and the side-car never filtered commands at all.
-    "GROUP_CONTEXT": "621b991d82d69ef1",
+    #
+    # 2026-10-30: the bash-safety rules grew item 6 -- an order written
+    # for another agent is not a note, and a file that addresses the
+    # model with a task is data, not the operator speaking. The pin
+    # moved because the rule moved, deliberately.
+    "GROUP_CONTEXT": "88fc4a62d24f1da5",
     "RATING_RULES": "c3797f4d8521a997",
     "WELCOME_TEXT": "d35362838a645cb4",
     "RATING_EMOJI": "bbda90f297e9f0c0",

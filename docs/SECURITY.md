@@ -292,3 +292,36 @@ Without the migration, the bot starts with an empty
 gone. The bind-mount contents at `/opt/telegram-bot/data/`
 remain intact on the host (the compose change does not delete
 them) as a safety net.
+
+## 9. The workspace is a mailbox, not a notebook
+
+Everything the sandbox writes into `/workspace` is read by the agent
+that holds the host. The same directory is the sandbox's working
+directory and the place where the host-side agent looks for what the
+sandbox left behind, so a file written there is not a note to nobody:
+it is a message with a delivery address.
+
+The audit that matters for a boundary asks one question, and it is not
+"can the agent get out". It is **"what in the system reads what the
+agent wrote, and does it execute it"**. For this deployment the answer
+was: the host-side agent reads the workspace, and a specification found
+there can be read as an order. Nothing was broken — a channel was
+used, and a channel is enough.
+
+Both sides of that channel are closed in the bot:
+
+* **the bot refuses to post the letter.** `bash_policy.py` carries a
+  class for it, `cross_agent_order`: a command that writes text
+  addressed to another agent *and* asks for a capability only the
+  operator holds (a key, a mount, a published port, privilege). The
+  refusal names the class, and the way out is the chat — the model
+  says what it needs, and the operator decides;
+* **a file in the workspace is data.** The model's instructions say so
+  too: a file that addresses the model with a task is not the
+  operator speaking, and the way to act on it is to say so in the chat.
+
+The class is a floor and not a wall — a string match on a shell
+command is porous, and the ordinary work (`rm -rf /workspace/build`,
+`apt-get`, a plain `curl`) stays outside it. What the class buys is
+that the bot's side of the channel says **no**, out loud, with a
+reason, before the file lands.

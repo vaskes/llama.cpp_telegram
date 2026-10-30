@@ -328,11 +328,22 @@ The classes:
   - `credential_read` — reading `~/.ssh/id_*`, `/etc/shadow`, `*.pem`, `authorized_keys`;
   - `process_environment_read` — reading `/proc/*/environ`, where the tokens are;
   - `audit_disable` — `history -c`, `unset HISTFILE`, `rm ~/.bash_history`;
-  - `system_control` — `systemctl`, `mount`, `kill -9 1`, `ip link delete`, `chown -R 0:0 /`.
+  - `system_control` — `systemctl`, `mount`, `kill -9 1`, `ip link delete`, `chown -R 0:0 /`;
+  - `cross_agent_order` — a command that writes an order addressed to another agent and asks for a capability the operator holds (a key, a mount, a published port, privilege).
 
 A refused command never reaches the sandbox, and the refusal **names
 the class** it fell into: an unnamed refusal is one the model explains
 in its own way, and the operator ends up with a story nobody checked.
+
+**The workspace is a mailbox, not a notebook.** Everything the sandbox
+writes into `/workspace` is read by the agent that holds the host: the
+same directory is the sandbox's working directory and the place where
+the host-side agent looks for what the sandbox left. So the last class
+on the list is not about destruction — it is about a *message*. A
+command that writes text addressed to another agent and asks for a
+capability only the operator holds is a letter with a delivery
+address, and the bot refuses to post it. The way out is the chat: the
+model says what it needs, and the operator decides.
 
 **What this list is not.** A string match on a shell command is porous:
 `sh -c` with a split word, a base64 blob or a variable get past it. It

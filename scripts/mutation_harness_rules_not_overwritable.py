@@ -154,7 +154,8 @@ MUTATIONS = [
          r"(?s)    for cls in POLICY_CLASSES:\n"
          r"        match = cls\.pattern\.search\(command\)\n"
          r"        if match:\n"
-         r"            return PolicyVerdict\(cls=cls, matched=match\.group\(0\)\)\n",
+         r"            matched = match\.groupdict\(\)\.get\(\"cap\"\) or match\.group\(0\)\n"
+         r"            return PolicyVerdict\(cls=cls, matched=matched\)\n",
          "    return None\n", 1),
     ]),
     ("the check is gone: the command is never inspected", "CAUGHT", [

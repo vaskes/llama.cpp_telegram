@@ -4,7 +4,7 @@
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Release](https://img.shields.io/github/v/release/vaskes/llama.cpp_telegram?label=release)](../../releases)
-[![Tests: 3220](https://img.shields.io/badge/tests-3220-brightgreen)](tests/)
+[![Tests: 3232](https://img.shields.io/badge/tests-3232-brightgreen)](tests/)
 
 > **Current stable: `v0.28.0-stable`** (2026-10-30, commit `43b3dbf`).
 > Pin to a tag — see the clone command below.
@@ -29,7 +29,8 @@ or that `rm -rf` in a sandbox is not a thing to try.
 
 > **What the current release gives you:** the rules that protect the
 > host live in code, not in a prompt. Eight destructive command classes
-> are refused *before* the command leaves the process, and the refusal
+> are refused *before* the command leaves the process — plus a ninth
+> that refuses an order written for another agent — and the refusal
 > names the class it fell into; a chat message cannot rewrite them. The
 > full release history is in [CHANGELOG.md](CHANGELOG.md).
 

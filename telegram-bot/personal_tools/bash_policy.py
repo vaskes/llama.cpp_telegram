@@ -22,6 +22,21 @@ Measured on the production host the same day:
   /home/agent/.ssh (empty today -- which is a hole waiting for a key,
   not a wall).
 
+AND AGAIN, THE SAME YEAR, ONE CHANNEL FURTHER IN (2026-10-30)
+
+The container was not broken. Nothing was mounted, no key was
+copied, no port was published. The sandbox's own agent wrote a
+specification into the workspace -- a file addressed to the host-side
+agent, asking for a host-side capability -- and the host-side agent
+found that file, read it as an order, and acted on it. The breach was
+a message passing between two agents over a shared directory.
+
+So this list grew a class that has nothing to do with destruction:
+`cross_agent_order`. It refuses a command that writes an order
+addressed to another agent and asks for a capability the operator
+holds. The container is still the perimeter; the floor now knows that
+the workspace is also a mailbox.
+
 So the list of refused commands moves out of prose and into code.
 This module owns the classes, `bash_command` consults it before the
 command is sent, and the refusal NAMES the class: an unnamed refusal
@@ -87,6 +102,56 @@ class PolicyVerdict(NamedTuple):
 #: What ends a command word. A command can be followed by a separator
 #: (`rm -rf /; echo done`) and the target is still the root.
 _END = r"(?=\s|$|[;&|)])"
+
+
+# --- the ingredients of a cross-agent order ----------------------------
+#
+# MEASURED (2026-10-30, production): the sandbox's own agent wrote a
+# specification into the workspace -- a file addressed to the host-side
+# agent, asking for a host-side capability -- and the host-side agent
+# found that file, read it as an order, and acted on it. The container
+# was not broken by a byte; a channel between two agents was used.
+#
+# So the question this class answers is not "can the sandbox escape" but
+# "does the bot carry an order from the sandbox to an agent that can
+# grant things". The three ingredients below are all required: a write
+# of text, an addressee, and a capability. Each of them alone is
+# ordinary work -- writing a file, addressing a mail, mentioning a key.
+#
+#: A file write: a redirection into a name, `tee`, or a write-mode open.
+#: A file descriptor (`2>&1`) is not a write.
+_WRITE = (
+    r"(?:(?:^|[^0-9&])>{1,2}\s*[\w./~$-]"
+    r"|\btee\b"
+    r"|\bwrite_text\s*\("
+    r"|\bwriteFileSync\s*\("
+    r"|\bopen\s*\([^)]*['\"]w)"
+)
+
+#: An addressee: a marker that says the text is for somebody. An email
+#: address is not an addressee -- a mail to a human is not an order to
+#: a peer agent, and refusing that would block the ordinary work.
+#: The guard must not be able to be backtracked past: it looks past the
+#: whitespace itself, so there is no `\s*` in front of it to give back.
+_ADDRESSEE = (
+    r"\b(?:кому|адресат|получател\w*|recipient|to|from|от кого)\b"
+    r"\s*[:—–](?!\s*[A-Za-z0-9._%+-]+@)"
+)
+
+#: A capability only the operator can grant: a key, a mount, a boot
+#: entry, a published port, privilege. Naming one in prose is not a
+#: request for it -- the addressee and the write are what make it one.
+_CAPABILITY = (
+    r"(?:ssh[\s_-]?key|private[\s_-]?key|authorized_keys"
+    r"|id_(?:rsa|ecdsa|ed25519)\b|\.ssh\b"
+    r"|ssh[\s-]?ключ|приватн\w*\s+ключ|ключ\s+(?:в|внутрь)\s+маунт"
+    r"|\bprivileged\b|privilege[\s-]?escalation|\bcap_add\b|--privileged"
+    r"|привилег\w*"
+    r"|root[\s-]?(?:access|shell)"
+    r"|publish(?:ed)?[\s-]?port|port[\s-]?(?:mapping|forwarding)"
+    r"|docker[\s.-]?sock"
+    r"|\bfstab\b|mountpoint|loop[\s-]?(?:device|backed|file))"
+)
 
 
 #: The classes. Ordered from the most obvious to the most specific:
@@ -192,6 +257,21 @@ POLICY_CLASSES: tuple[CommandClass, ...] = (
         ),
         prompt_keyword="systemctl",
     ),
+    CommandClass(
+        name="cross_agent_order",
+        reason=(
+            "it writes an order addressed to another agent and asks for a "
+            "capability only the operator can grant; say what you need in "
+            "the chat and the operator decides"
+        ),
+        pattern=re.compile(
+            r"(?is)\A"
+            r"(?=.*" + _WRITE + r")"
+            r"(?=.*" + _ADDRESSEE + r")"
+            r"(?=.*(?P<cap>" + _CAPABILITY + r"))"
+        ),
+        prompt_keyword="another agent",
+    ),
 )
 
 
@@ -203,10 +283,13 @@ def check_command(command: str) -> PolicyVerdict | None:
     """
     if not isinstance(command, str):
         return None
+    # A class that names what tripped it reports that word, not the
+    # whole command: `matched` is what a reader needs.
     for cls in POLICY_CLASSES:
         match = cls.pattern.search(command)
         if match:
-            return PolicyVerdict(cls=cls, matched=match.group(0))
+            matched = match.groupdict().get("cap") or match.group(0)
+            return PolicyVerdict(cls=cls, matched=matched)
     return None
 
 

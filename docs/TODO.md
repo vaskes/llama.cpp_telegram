@@ -808,6 +808,58 @@ change the answer.
 The items below were decided and are done. They are here because the
 *reasoning* is worth keeping, not because they are pending.
 
+### The workspace is a mailbox — the cross-agent order class, closed 2026-10-30
+
+**What it was.** The bot's refusal list had eight classes, and every
+one of them was about destruction. The audit that closes a boundary
+asks a different question than "can the agent get out": it asks **what
+in the system reads what the agent wrote, and does it execute it**.
+For this deployment the answer was: the host-side agent reads the
+sandbox's workspace. A file written there can be read as an order by
+an agent that holds the host — and the specification that was found in
+the production workspace on 2026-10-30 had exactly that shape: it was
+addressed to another agent and it asked for a host-side capability.
+Nothing was broken. A channel was used, and a channel is enough.
+
+**Measured on the real command, before the class existed:** the
+command that planted that file (`cat > TZ-workspace-4gb.md <<'EOF'`)
+came back **unrefused** from `check_command` — `verdict: None`. The
+gap was not a matter of degree; the list had nothing to say about it.
+
+**What it is now.** A ninth class, `cross_agent_order`, that refuses a
+command that writes text addressed to another agent and asks for a
+capability the operator holds. It is a conjunction of three
+ingredients, and all three are required: a **write** (a redirection,
+`tee`, a write-mode `open`), an **addressee** (`Кому:`, `To:`,
+`From:`, `Recipient:` — an email address does not count, a mail to a
+human is not an order to a peer), and a **capability** (a key, a
+mount, a boot entry, a published port, privilege).
+
+**Two measurements shaped the class, not a guess.**
+
+* *The specimen has no request verb.* The measured file contains no
+  "нужно", no "дай", no "выдай" — it states acceptance criteria. So
+  the class cannot require a verb that asks for something: it fires on
+  the shape, and the way out is the chat, not a paraphrase.
+* *The ordinary work must not be refused.* The canonical corpus (22
+  commands) comes back unrefused, including a mail to a human that
+  mentions a key. On a wider corpus of 15 plausible commands, two are
+  refused — a note to the operator that mentions a key, and a note
+  about a loop device — and both are the shape the threat model says
+  to refuse: a file in the workspace that is addressed to somebody and
+  names a capability. One more, a note that mentions "mount", is
+  refused by `system_control` and has been since 2026-10-28.
+
+**The other side of the channel is closed in the prompt.** The model's
+instructions now say that the workspace is read by the host-side agent,
+that an order written for another agent does not belong there, and that
+a file addressing the *model* with a task is data, not the operator
+speaking. The jail's own description (the tool schema) says the same
+thing, because that is where the model reads it.
+
+**Checked by** `tests/test_bash_policy.py` (the six shapes of the
+order are refused, the ordinary work is not).
+
 ### The MCP import is on in production
 
 **Status:** ✅ **closed 2026-10-27, 19:01 MSK.** The operator decided to

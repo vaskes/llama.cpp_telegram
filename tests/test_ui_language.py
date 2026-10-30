@@ -67,6 +67,21 @@ ALLOWED = {
         # It moved here with the rest of the tool list (2026-10-27).
         "поставь",
     ],
+    "personal_tools/bash_policy.py": [
+        # The refusal patterns match the Russian shape of an order
+        # written for another agent: the markers such an order carries
+        # ("Кому:", "От кого:") and the capability words it asks for.
+        # These strings are matched, never shown -- the refusal text is
+        # English. They are here because the specimen is Russian: a
+        # class that misses the Russian markers misses the measured
+        # thing.
+        "кому",
+        "от кого",
+        "приватн",
+        "ключ",
+        "маунт",
+        "привилег",
+    ],
     "context_budget.py": [
         # The context header shown to the MODEL before the user prompt.
         # NOT the overflow notice -- that one is user-facing and English.

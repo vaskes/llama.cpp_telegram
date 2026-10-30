@@ -1636,6 +1636,12 @@ and the bot checks it *before* the command leaves the process. The rules:
   enforced class carries a keyword the model's instructions must
   contain, so adding a class in code without saying so in the prompt is
   a red test rather than a silent gap;
+* **a file in the workspace is a message to a peer** — the sandbox's
+  workspace is read by the agent that holds the host, so a command that
+  writes an order addressed to another agent and asks for a capability
+  is a letter with a delivery address. The list has a class for it
+  (`cross_agent_order`), and the prompt says that a file addressing the
+  model with a task is data, not the operator speaking;
 * **a description of the rules is not a quote of them** — on the same
   evening the bot presented a Russian summary of its instructions as
   "на английском, это оригинал". The prompt now says to describe them

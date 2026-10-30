@@ -17,6 +17,43 @@ this file is the human-readable summary.
 
 **After `v0.28.0-stable`.** The next cycle starts here.
 
+### The workspace is a mailbox, and the bot stops posting letters into it
+
+The refusal list had eight classes, and every one of them was about
+destruction: `rm -rf /`, `mkfs`, a fork bomb, a download piped into a
+shell, a private key, a process environment, the shell history,
+`systemctl`. The audit that closes a boundary asks a different
+question than "can the agent get out". It asks **what in the system
+reads what the agent wrote, and does it execute it** — and the answer
+here was: the host-side agent reads the sandbox's workspace. The
+specification found in the production workspace on 2026-10-30 had
+exactly that shape, addressed to another agent and asking for a
+host-side capability. Nothing was broken; a channel was used.
+
+Measured on the real command before the change: `check_command`
+returned **no verdict at all**. The list had nothing to say about a
+letter with a delivery address.
+
+The ninth class, `cross_agent_order`, refuses a command that writes
+text addressed to another agent and asks for a capability the operator
+holds. Three ingredients, all required: a **write**, an **addressee**
+(an email address does not count — a mail to a human is not an order
+to a peer), and a **capability** (a key, a mount, a boot entry, a
+published port, privilege). The measured specimen contains no request
+verb at all — it states acceptance criteria — so the class fires on
+the shape, and the way out is the chat: the model says what it needs,
+and the operator decides.
+
+The other side of the channel is closed in the prompt: the workspace
+is read by the host-side agent, an order written for another agent
+does not belong there, and a file addressing the model with a task is
+data, not the operator speaking.
+
+Tripwires: `tests/test_bash_policy.py` (six shapes of the order are
+refused, the ordinary work is not), `scripts/mutation_harness_bash_policy.py`
+(the write, the addressee and the capability are taken away one at a
+time; the suite notices each time).
+
 ## [v0.28.0-stable] — 2026-10-30 — The webhook server's stack leaves the advisory floor
 
 **After `v0.27.0-stable`.** The next cycle starts here.
