@@ -104,10 +104,9 @@ def test_the_harnesses_are_there():
     assert len(HARNESSES) >= 30, f"only {len(HARNESSES)} harnesses found"
 
 
-def test_every_anchor_still_points_at_the_tree():
-    """The freshness tripwire: a pattern that no longer finds what it
-    claims would make the harness refuse the mutation and report a
-    clean run."""
+def _measure_anchors():
+    """(checked, dead) over every harness, measured the way the
+    harnesses themselves measure."""
     dead = []
     checked = 0
     for path in HARNESSES:
@@ -147,9 +146,50 @@ def test_every_anchor_still_points_at_the_tree():
                     mutated[target] = text.replace(pattern, repl, 1)
                 else:
                     mutated[target] = re.sub(pattern, repl, text, flags=re.M)
+    return checked, dead
+
+
+def test_every_anchor_still_points_at_the_tree():
+    """The freshness tripwire: a pattern that no longer finds what it
+    claims would make the harness refuse the mutation and report a
+    clean run."""
+    checked, dead = _measure_anchors()
     assert not dead, (
         "these anchors no longer point at the tree:\n" + "\n".join(dead))
     assert checked >= 400, f"only {checked} anchors were checked"
+
+
+def test_the_census_in_the_todo_is_the_measured_one():
+    """The number in the doc is recomputed, not remembered.
+
+    A census that lives only in prose rots the moment a harness joins
+    the collection: the doc keeps the old number, the number is still
+    true of the day it was written, and nothing goes red. That is the
+    same rule the README's badge follows -- the number belongs to the
+    thing that measures it.
+
+    The claims this checks are the present-tense ones. The historical
+    ones ("it found 39 dead anchors before") are history and stay.
+    """
+    todo = (ROOT / "docs" / "TODO.md").read_text(encoding="utf-8")
+    checked, _dead = _measure_anchors()
+
+    claimed = [int(m) for m in re.findall(r"(\d+) anchors, 0 dead", todo)]
+    claimed += [int(m) for m in re.findall(r"covers (\d+) anchors", todo)]
+    assert claimed, (
+        "the TODO states no anchor count at all -- the census is a "
+        "number, and a number that can vanish is not one")
+    wrong = [c for c in claimed if c != checked]
+    assert not wrong, (
+        f"the TODO claims {wrong} anchors, the tree measures {checked}. "
+        "The count is recomputed when a harness joins the collection.")
+
+    harnesses = [int(m) for m in
+                 re.findall(r"in all (\d+) harnesses", todo)]
+    for count in harnesses:
+        assert count == len(HARNESSES), (
+            f"the TODO says a refused mutation fails the run in all {count} "
+            f"harnesses; the collection holds {len(HARNESSES)}")
 
 
 def test_the_dynamic_harness_builds_its_mutations_from_the_tree():

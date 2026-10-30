@@ -2154,7 +2154,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_mcp_registry.py` | 22 | What the servers offer, and who may call it |
 | `test_mcp_import_wiring.py` | 6 | The imported tools reach the model and the dispatcher |
 | `test_mutation_harness_verdicts.py` | 4 | A refused mutation fails the run, in every harness |
-| `test_mutation_anchor_freshness.py` | 3 | Every mutation anchor still points at the tree it claims |
+| `test_mutation_anchor_freshness.py` | 4 | Every mutation anchor still points at the tree it claims, and the census the TODO states is the measured one |
 | `test_drift_m5_dedup.py` | 3 | A tool's name is defined once, and nowhere else |
 | `test_one_name_per_person.py` | 6 | One person, one name in the record |
 | `test_empty_answer_fallback.py` | 6 | The empty-answer fallback reaches the user |
