@@ -34,7 +34,7 @@
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | the top-level modules of `telegram-bot/` -- the map and the count are in `docs/ARCHITECTURE.md`, recomputed from the tree by `tests/test_docs_current.py` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count does not move for that |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
-| Open review cycle | none — the cycle of the TODO's code items (6 to 10) closed on 2026-10-27, the operator answered the four open questions on 2026-10-28, and the refusal list is in production since 2026-10-28 (`v0.15.1-stable`). What is left is the measurement backlog and the CI job that would run the harnesses. **The measurement backlog is closed** (2026-10-29): the "five harnesses that still measure nothing" is corrected here -- a scanner that reads every shape the harnesses use finds **548 anchors, 0 dead** (it found 39 dead anchors and 17 unreadable ones before), and a refused or invalid mutation now **fails the run** in all 31 harnesses instead of being counted, printed and ignored. **The CI job now exists** (2026-10-29, `.github/workflows/mutation-nightly.yml`): it builds the test image and runs one harness per night, rotating, so a full cycle takes about a month -- the cheap freshness half was already in the pytest job. The one harness that needs the production host carries a `REQUIRES_HOST` marker and stays a manual run |
+| Open review cycle | none — the cycle of the TODO's code items (6 to 10) closed on 2026-10-27, the operator answered the four open questions on 2026-10-28, and the refusal list is in production since 2026-10-28 (`v0.15.1-stable`). What is left is the measurement backlog and the CI job that would run the harnesses. **The measurement backlog is closed** (2026-10-29): the "five harnesses that still measure nothing" is corrected here -- a scanner that reads every shape the harnesses use finds **555 anchors, 0 dead** (it found 39 dead anchors and 17 unreadable ones before), and a refused or invalid mutation now **fails the run** in all 32 harnesses instead of being counted, printed and ignored. **The CI job now exists** (2026-10-29, `.github/workflows/mutation-nightly.yml`): it builds the test image and runs one harness per night, rotating, so a full cycle takes about a month -- the cheap freshness half was already in the pytest job. The one harness that needs the production host carries a `REQUIRES_HOST` marker and stays a manual run |
 
 The numbers in `TECH-DEBT.md` are `splitlines()`-based and are recomputed by
 `tests/test_tech_debt_index.py`, which fails if they go stale.
@@ -433,7 +433,7 @@ true here and are not true any more:
   the umbrella form, the per-feature form with and without an expected
   count, the dispatch-split form with its literal patterns, and the
   readme-claims harness that builds its mutations from the tree -- finds
-  **548 anchors, 0 dead**. The first pass of the scanner read two shapes
+  **555 anchors, 0 dead**. The first pass of the scanner read two shapes
   of six and called the rest "unknown", which is "not measured", not "in
   order"; the count is the second pass, and it is recomputed whenever a
   harness joins the collection.
@@ -447,7 +447,7 @@ true here and are not true any more:
 **The cheap half of the CI job is in the tree** (`19044a2`): the
 freshness tripwire the TODO named as the alternative -- a check that
 goes red when a harness's pattern stops matching its tree -- runs on
-every pytest now, in a second, and covers 548 anchors. What is left
+every pytest now, in a second, and covers 555 anchors. What is left
 is the expensive half: a job that actually *runs* the harnesses and
 sees the mutations caught.
 
@@ -858,7 +858,11 @@ speaking. The jail's own description (the tool schema) says the same
 thing, because that is where the model reads it.
 
 **Checked by** `tests/test_bash_policy.py` (the six shapes of the
-order are refused, the ordinary work is not).
+order are refused, the ordinary work is not) and
+`scripts/mutation_harness_bash_policy.py` — the harness takes the
+write, the addressee and the capability away one at a time, and the
+suite has to notice each time (3 caught, 1 survived-as-intended, 0
+refused, 0 invalid).
 
 ### The MCP import is on in production
 

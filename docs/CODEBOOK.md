@@ -1663,6 +1663,9 @@ rule change, that the bot cannot change its own instructions, that the
 identity is covered too, that a description is not a quote, and that
 the section stands above the tool rules — the model reads the top
 first). The harness
+`scripts/mutation_harness_bash_policy.py` takes the three ingredients
+of the cross-agent class away one at a time — the write, the addressee,
+the capability — and the suite has to notice each time.
 `scripts/mutation_harness_rules_not_overwritable.py` puts the defect
 back nine ways, and its three group-B mutations prove that the
 tripwires are the ones doing the work.
