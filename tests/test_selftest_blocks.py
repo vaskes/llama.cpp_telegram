@@ -142,7 +142,17 @@ def test_run_all_reports_its_own_name(module_name):
     mod = __import__(module_name)
     lines, _trace, rc, raw, _n = H.run_selftest()
     tail = [ln for ln in lines if "all pass" in ln or "FAILED" in ln]
-    assert tail, "the selftest emitted no section summaries at all"
+    assert tail, (
+        "the selftest emitted no section summaries at all.\n"
+        f"return code: {rc!r}\n"
+        "The subprocess's own words are below -- they are the only place the "
+        "reason can be, and swallowing them is what made this red "
+        "undiagnosable: the CI's 3.12 job failed this way twice (the "
+        "commits 84d3279 and 8723020) and named the test and nothing "
+        "else.\n"
+        "----\n"
+        + str(raw)[-4000:]
+        + "\n----")
     want = mod.SUMMARY_NAME
     assert any(f"[selftest] {want} tests:" in ln for ln in tail), (
         f"no summary line names {module_name}.{want}. The label is a "
