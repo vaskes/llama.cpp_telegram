@@ -9,6 +9,7 @@ import json as _json
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 from logconf import get_logger
 from mcp_client import GATE_PROFILE, McpServerConfig
@@ -237,6 +238,37 @@ MAX_VIDEO_NOTE_BYTES = int(os.environ.get("MAX_VIDEO_NOTE_BYTES", "50000000"))  
 # said so.
 TELEGRAM_PUBLIC_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024
 
+#: The host of Telegram's public Bot API. The platform's own file
+#: ceiling belongs to that host and to nothing else.
+TELEGRAM_PUBLIC_API_HOST = "api.telegram.org"
+
+
+def telegram_api_host() -> str:
+    """The host the bot talks to -- parsed, lowercased, "" if there is none.
+
+    The host is PARSED, not read out of the string. A check like
+    ``TELEGRAM_API.startswith("https://api.telegram.org")`` cannot tell
+    Telegram from a host that merely starts with the same characters:
+    "https://api.telegram.org.evil.example/bot" passes it. That was a
+    CodeQL finding on 2026-10-29
+    (``py/incomplete-url-substring-sanitization``), and it was a real
+    hole in the rule below -- the endpoint the bot actually talks to
+    has no platform ceiling of its own, and a lookalike host was being
+    handed Telegram's 20 MB one.
+
+    So the question "is this the public API?" is answered by the host
+    the URL parses to, and by nothing else.
+    """
+    raw = (TELEGRAM_API or "").strip()
+    if not raw:
+        return ""
+    try:
+        host = urlsplit(raw).hostname
+    except ValueError:
+        # A URL that cannot be parsed has no host to speak of.
+        return ""
+    return (host or "").lower()
+
 
 def telegram_download_limit_bytes() -> int | None:
     """The platform's own ceiling on a downloaded file, or None.
@@ -244,7 +276,7 @@ def telegram_download_limit_bytes() -> int | None:
     None means the endpoint has no ceiling of its own -- which is the
     case for a local Bot API server.
     """
-    if TELEGRAM_API.startswith("https://api.telegram.org"):
+    if telegram_api_host() == TELEGRAM_PUBLIC_API_HOST:
         return TELEGRAM_PUBLIC_DOWNLOAD_LIMIT_BYTES
     return None
 

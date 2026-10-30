@@ -707,6 +707,17 @@ about 50 MB was refused with the notice that names Telegram's 20 MB
 ceiling, says the bot's own limit is 50 MB, and gives the way out (a file
 that is already in the sandbox can be sent to this chat).
 
+**The ceiling is chosen by the PARSED host.** GitHub's code scanning filed
+alert #5 on 2026-10-29: CodeQL's `py/incomplete-url-substring-sanitization`
+on `telegram-bot/config.py`. The check that decided "is this the public
+API?" was `TELEGRAM_API.startswith("https://api.telegram.org")` -- a
+substring check on an unparsed URL, and it could not tell Telegram from a
+host that merely starts with the same characters
+(`https://api.telegram.org.evil.example/bot` passes it). The host is
+parsed now (`telegram_api_host()`), and the platform ceiling belongs to
+`api.telegram.org` and to nothing else. Checked by
+`tests/test_telegram_api_host.py` (8).
+
 **The way past the channel's ceiling exists and was not taken:** a local
 `telegram-bot-api` server has no download ceiling, and it needs the
 operator's own `api_id`/`api_hash`. None were obtainable (`my.telegram.org`

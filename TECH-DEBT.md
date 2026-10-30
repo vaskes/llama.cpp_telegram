@@ -76,7 +76,7 @@ call_llama.py   377 lines, ToolLoop owns the iteration, 24 llm_* leaf modules
 handlers.py    1587 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      938 lines, class Storage encapsulated, get_store() sole entry
-config.py       577 lines, 28 env names, plus 20 elsewhere in the package
+config.py       609 lines, 28 env names, plus 20 elsewhere in the package
 
 Line counts are splitlines(); the trailing newline is not a line. The
 earlier figures in this file came from split("\n") and were each one

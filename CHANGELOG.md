@@ -17,6 +17,35 @@ this file is the human-readable summary.
 
 **After `v0.26.0-stable`.** The next cycle starts here.
 
+### The platform's ceiling is chosen by the parsed host
+
+GitHub's code scanning filed alert #5 on 2026-10-29: CodeQL's
+`py/incomplete-url-substring-sanitization` on `telegram-bot/config.py`.
+
+The check that decided "is the bot talking to Telegram's public API?" was
+
+    if TELEGRAM_API.startswith("https://api.telegram.org"):
+
+-- a substring check on an unparsed URL. It could not tell Telegram from
+a host that merely starts with the same characters:
+`https://api.telegram.org.evil.example/bot` passes it. And the answer
+that check gives is the DOCUMENT CEILING: Telegram's public API refuses
+to hand a bot a file of 20 MiB or more, while a local Bot API server has
+no limit of its own. A lookalike host was being handed a ceiling that
+belongs to somebody else's server.
+
+The host is parsed now (`telegram_api_host()`), and the platform ceiling
+belongs to `api.telegram.org` and to nothing else. The bot's own cap
+(50 MiB) and the platform's (20 MiB) stay two separate numbers, because
+the refusal has to say WHICH one refused.
+
+Pinned by `tests/test_telegram_api_host.py` (8): the public API carries
+the 20 MiB platform ceiling, a lookalike host and a host that merely
+mentions Telegram in its path carry none, a local Bot API server and the
+smoke test's mock carry none, and a URL that cannot be parsed does not
+take the bot down asking for the ceiling. Two of those tests are red on
+the old check.
+
 ## [v0.26.0-stable] — 2026-10-30 — A quote of the console output is not a file
 
 **After `v0.25.0-stable`.** The next cycle starts here.

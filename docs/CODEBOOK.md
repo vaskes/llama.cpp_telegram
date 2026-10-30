@@ -2143,6 +2143,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
 | `test_telegram_bold.py` | 18 | The bold the model wrote is bold in the chat: the asterisks are markup, and a code span inside a bold span keeps both |
 | `test_telegram_inline_code.py` | 15 | The inline code is native code too -- and the reasoning message is not formatted at all |
+| `test_telegram_api_host.py` | 8 | The platform's file ceiling is chosen by the parsed host, not by a substring of the URL |
 | `test_delete_messages_tool.py` | 52 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 | `test_message_search.py` | 11 | The store keeps the Telegram id of every message, and can be searched by text and by sender |
 | `test_telegram_id_recorded.py` | 5 | Every message the bot stores carries the Telegram id it came from |
@@ -2175,7 +2176,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-187 test files in total; the table above is the ones that guard a rule in
+188 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
