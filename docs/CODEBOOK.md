@@ -1398,6 +1398,41 @@ client renders it. Three rules, each for a shape that really happens:
   message Telegram rejects -- the same failure the fence rules above
   are about.
 
+**The bold gets the same treatment.** A phrase the model wrapped in
+double asterisks -- `**the one path**` -- becomes a `<b>` element. The
+operator asked for it on 2026-10-30, with a screenshot of an answer
+that still carried its own asterisks -- "**python3-venv — 4 пакета**" --
+while the inline code in the same answer was already tinted by the
+client.
+
+Telegram has no colour for text. The coloured things are the code
+(monospace on a tinted background), a link, and a quote -- so the bold
+is the bold, and the phrase stops showing its own asterisks. The rules
+are the inline code's rules, one step up:
+
+* a delimiter is a run of **exactly two** asterisks. A run of three or
+  more is bold *and* italic in markdown, and this renderer knows one of
+  the two, so the run stays literal;
+* the pair may cross a **line break** -- a model writes a bold phrase
+  over two lines all the time -- but not an **empty line**: a
+  paragraph break means the asterisks belong to something else;
+* an **unmatched** `**` is not a delimiter, and a `**` inside a code
+  span is not one either: the code wins, the way it wins everywhere
+  else;
+* a bold span that holds a code span keeps both, and they do not nest:
+  `<b>before</b><code>x</code><b>after</b>`. Telegram accepts nested
+  tags as well, but the splitter has to keep every element whole, and
+  it can only do that if the elements do not nest.
+
+Checked by `tests/test_telegram_bold.py`: a phrase becomes a `<b>`, the
+prose around it survives, a run of three asterisks and an unmatched
+`**` stay literal, the pair crosses a line break but not an empty line,
+the code span inside a bold span keeps both and does not nest, the bold
+inside a fenced block and the `**` inside a code span are not
+converted, a `<b>` is never cut in half, and -- the rule the operator
+was categorical about -- the reasoning bubble keeps the model's own
+asterisks.
+
 **Only the answer carries the parse mode.** There are three artifacts
 here, and they are not the same thing. The **answer** is the model's
 prose and the code it quoted: it is formatted. The **reasoning** is the
@@ -2106,6 +2141,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_ui_language.py` | 4 | The user's copy is English; the model's voice is not |
 | `test_webhook_menu_registration.py` | 4 | The command menu is registered in the mode production runs in |
 | `test_telegram_code_formatting.py` | 20 | The console output is a native code block, and a broken one never loses the answer |
+| `test_telegram_bold.py` | 18 | The bold the model wrote is bold in the chat: the asterisks are markup, and a code span inside a bold span keeps both |
 | `test_telegram_inline_code.py` | 15 | The inline code is native code too -- and the reasoning message is not formatted at all |
 | `test_delete_messages_tool.py` | 52 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 | `test_message_search.py` | 11 | The store keeps the Telegram id of every message, and can be searched by text and by sender |
@@ -2139,7 +2175,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-186 test files in total; the table above is the ones that guard a rule in
+187 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

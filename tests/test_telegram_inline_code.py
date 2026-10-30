@@ -78,9 +78,9 @@ def test_the_operator_own_sentence_keeps_its_prose_and_marks_its_spans():
         assert f"<code>{span}</code>" in html
     assert "79 размеченных запросов в фикстурах" in html, (
         "the prose between the spans has to survive as it was written")
-    assert "**пусто**" in html, (
-        "the model's own markdown is not the bot's business -- HTML, not "
-        "MarkdownV2, is what keeps it readable")
+    assert "пусто" in html, (
+        "the words between the spans have to survive -- the model's own "
+        "markdown is rendered, not escaped into the text")
 
 
 def test_the_code_inside_the_span_is_escaped():

@@ -94,8 +94,12 @@ def test_the_language_hint_is_not_part_of_the_code():
 def test_the_prose_survives_as_it_was_written():
     """The reason for HTML: MarkdownV2 would eat the model's markdown."""
     html = telegram_format.render_html("The answer is **bold**, not *italic*.")
-    assert "**bold**" in html
-    assert "*italic*" in html
+    assert "<b>bold</b>" in html, (
+        "the bold the model marked is bold in the chat -- the asterisks "
+        "are markup, not text")
+    assert "*italic*" in html, (
+        "a single asterisk is not a delimiter this renderer knows, so "
+        "that text stays the way the model wrote it")
 
 
 def test_the_special_characters_are_escaped():

@@ -17,6 +17,35 @@ this file is the human-readable summary.
 
 **After `v0.24.0-stable`.** The next cycle starts here.
 
+### The bold is bold too
+
+The operator's words (2026-10-30): "надо еще с текстом в ** **
+сделать, можно как то цветом выделить другим? причем этот момент
+надо учесть если конструкция ** `` ** вот такая" -- with a screenshot
+of an answer that still carried its own asterisks:
+
+    Соседа проверила из любопытства: **python3-venv — 4 пакета**
+
+The inline code in the same answer was already tinted by the client.
+The bold phrase was not, and it showed its own asterisks.
+
+Telegram has no colour for text: the coloured things are the code
+(monospace on a tinted background), a link, and a quote. So the bold is
+the bold -- `**phrase**` becomes a `<b>` element, and the phrase stops
+showing its own asterisks.
+
+The rules are the inline code's rules, one step up. A delimiter is a
+run of exactly two asterisks (a run of three is bold *and* italic in
+markdown, and this renderer knows one of the two). The pair may cross a
+line break -- a model writes a bold phrase over two lines all the time
+-- but not an empty line. An unmatched `**` is not a delimiter, and a
+`**` inside a code span is not one either: the code wins.
+
+And the case the operator named, the construct ** `` **, keeps both
+without nesting: `<b>before</b><code>x</code><b>after</b>`. The
+splitter has to keep every element whole, and it can only do that if
+the elements do not nest.
+
 ### The CI says which test failed
 
 The `pytest (3.12)` job of the docs-only commit `84d3279` went red

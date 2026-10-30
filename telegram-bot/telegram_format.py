@@ -46,6 +46,29 @@ operator's own client draws it. Three rules keep that honest:
   message Telegram rejects, and a rejected message means the user gets
   no answer at all.
 
+And the same for the **bold** text. A phrase the model wrapped in
+double asterisks -- ``**the one path**`` -- becomes a ``<b>``
+element. Telegram has no colour for text: the coloured things are the
+code (monospace on a tinted background), a link, and a quote. So the
+bold is the bold, and the phrase stops showing its own asterisks.
+
+The rules are the inline code's rules, one step up:
+
+* a delimiter is a run of **exactly two** asterisks. A run of three or
+  more is left literal -- in markdown that is bold *and* italic, and
+  this renderer knows one of the two;
+* the pair may cross a **line break** (a model writes a bold phrase
+  over two lines all the time) but not an **empty line**: a paragraph
+  break means the asterisks belong to something else;
+* an **unmatched** ``**`` is not a delimiter;
+* a ``**`` inside a code span is not a delimiter either. The code
+  wins, the way the code wins everywhere else.
+
+A bold span that contains a code span keeps both, and they do not
+nest: ``<b>before</b><code>x</code><b>after</b>``. Telegram accepts
+nested tags as well, but the splitter has to keep every element whole,
+and it can only do that if the elements do not nest.
+
 Everything else is escaped, which is what makes the parse mode safe:
 the model writes whatever it writes, and the user sees it as it was
 written.
@@ -70,17 +93,24 @@ __all__ = [
 #: The fence that opens and closes a code block.
 _FENCE = "```"
 
+#: The delimiter that opens and closes a bold span.
+_BOLD_DELIM = "**"
+
 #: What a `<pre>` element costs around its body.
 _TAG_OVERHEAD = len("<pre>") + len("</pre>")
 
 #: What a `<code>` element costs around its body.
 _CODE_TAG_OVERHEAD = len("<code>") + len("</code>")
 
+#: What a `<b>` element costs around its body.
+_BOLD_TAG_OVERHEAD = len("<b>") + len("</b>")
+
 #: The elements the renderer produces, and the tag that closes each.
 #: The splitter has to keep both of them whole: a cut inside one of
 #: them is a message Telegram rejects. They never nest -- the body of
-#: a `<pre>` is escaped, so it cannot contain a `<code>`.
-_ELEMENTS = (("<pre>", "</pre>"), ("<code>", "</code>"))
+#: a `<pre>` is escaped, so it cannot contain a `<code>`, and a bold
+#: span that holds a code span is rendered flat.
+_ELEMENTS = (("<pre>", "</pre>"), ("<code>", "</code>"), ("<b>", "</b>"))
 
 
 def escape_html(text: str) -> str:
@@ -172,8 +202,129 @@ def _inline_code_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _inside(spans: list[tuple[int, int]], position: int) -> bool:
+    """Is `position` inside one of the spans?"""
+    return any(start <= position < end for start, end in spans)
+
+
+def _next_bold_delimiter(text: str, pos: int,
+                         code_spans: list[tuple[int, int]]) -> int:
+    """The next `**` that is a delimiter, or -1 if there is none.
+
+    A run of three or more asterisks is not a delimiter -- in markdown
+    that is bold *and* italic, and this renderer knows one of the two
+    -- and a `**` inside a code span is not one either: the code wins.
+    """
+    length = len(text)
+    while pos < length:
+        start = text.find(_BOLD_DELIM, pos)
+        if start < 0:
+            return -1
+        run_end = start
+        while run_end < length and text[run_end] == "*":
+            run_end += 1
+        if run_end - start != len(_BOLD_DELIM):
+            # A longer run: not a delimiter. Skip the whole run.
+            pos = run_end
+            continue
+        if _inside(code_spans, start):
+            pos = run_end
+            continue
+        return start
+    return -1
+
+
+def _bold_spans(text: str, code_spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The spans of the bold text in `text`.
+
+    A bold span is a pair of double asterisks. The rules are the
+    inline code's rules, one step up:
+
+    * a delimiter is a run of **exactly two** asterisks;
+    * the pair may cross a line break, but not an **empty line** -- a
+      paragraph break means the asterisks belong to something else;
+    * an **unmatched** ``**`` is not a delimiter;
+    * a ``**`` inside a code span is not a delimiter either.
+
+    The spans are `(start, end)` pairs over `text`, and `end` is one
+    past the closing asterisks.
+    """
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    while True:
+        start = _next_bold_delimiter(text, pos, code_spans)
+        if start < 0:
+            return spans
+        close = _next_bold_delimiter(text, start + len(_BOLD_DELIM),
+                                     code_spans)
+        if close < 0:
+            # No closing delimiter: the rest is literal text.
+            return spans
+        body = text[start + len(_BOLD_DELIM):close]
+        if "\n\n" in body:
+            # A paragraph break between the two: they are not a pair.
+            # The opener is skipped, and a later pair can still match.
+            pos = start + len(_BOLD_DELIM)
+            continue
+        spans.append((start, close + len(_BOLD_DELIM)))
+        pos = close + len(_BOLD_DELIM)
+
+
+def _code_element(raw: str, limit: int) -> str:
+    """One inline code span as HTML.
+
+    The raw text carries its own backticks. A span that does not fit
+    in a message stays literal, the same way a fenced block that does
+    not fit does: a ``<code>`` that Telegram cannot parse loses the
+    answer, and an answer written as plain text is still an answer.
+    """
+    body = escape_html(raw[1:-1])
+    if len(body) + _CODE_TAG_OVERHEAD > limit:
+        return escape_html(raw)
+    return "<code>" + body + "</code>"
+
+
+def _bold_element(text: str, start: int, end: int,
+                  code_spans: list[tuple[int, int]], limit: int) -> str:
+    """One bold span as HTML.
+
+    The prose inside becomes ``<b>``, the code spans inside stay
+    ``<code>``, and the two do not nest: ``<b>before</b><code>x</code>
+    <b>after</b>``. Telegram accepts nested tags as well, but the
+    splitter has to keep every element whole, and it can only do that
+    if the elements do not nest.
+
+    A span that does not fit in a message stays literal, the whole way
+    -- asterisks, prose and code alike.
+    """
+    inner_start = start + len(_BOLD_DELIM)
+    inner_end = end - len(_BOLD_DELIM)
+    pieces: list[str] = []
+    cursor = inner_start
+    for code_start, code_end in code_spans:
+        if code_start < inner_start or code_end > inner_end:
+            continue
+        if code_start > cursor:
+            pieces.append(_bold_piece(text[cursor:code_start]))
+        pieces.append(_code_element(text[code_start:code_end], limit))
+        cursor = code_end
+    if cursor < inner_end:
+        pieces.append(_bold_piece(text[cursor:inner_end]))
+    rendered = "".join(pieces)
+    if len(rendered) > limit:
+        return escape_html(text[start:end])
+    return rendered
+
+
+def _bold_piece(raw: str) -> str:
+    """One piece of prose inside a bold span."""
+    if not raw:
+        return ""
+    return "<b>" + escape_html(raw) + "</b>"
+
+
 def _render_prose(text: str, limit: int) -> str:
-    """The text as HTML: escaped, with the inline code marked.
+    """The text as HTML: escaped, with the inline code and the bold marked.
 
     A code span that does not fit in a message stays literal, the same
     way a fenced block that does not fit does. A ``<code>`` that
@@ -182,19 +333,25 @@ def _render_prose(text: str, limit: int) -> str:
     """
     if not text:
         return ""
-    spans = _inline_code_spans(text)
-    if not spans:
+    code_spans = _inline_code_spans(text)
+    bold_spans = _bold_spans(text, code_spans)
+    if not code_spans and not bold_spans:
         return escape_html(text)
+    events = [(start, end, "code") for start, end in code_spans]
+    events += [(start, end, "bold") for start, end in bold_spans]
+    events.sort()
     out: list[str] = []
     cursor = 0
-    for start, end in spans:
+    for start, end, kind in events:
+        if start < cursor:
+            # Inside a span that was already rendered: a code span
+            # inside a bold one is rendered by the bold.
+            continue
         out.append(escape_html(text[cursor:start]))
-        body = escape_html(text[start + 1:end - 1])
-        if len(body) + _CODE_TAG_OVERHEAD > limit:
-            # Too big for one message: leave it the way it came.
-            out.append(escape_html(text[start:end]))
+        if kind == "code":
+            out.append(_code_element(text[start:end], limit))
         else:
-            out.append("<code>" + body + "</code>")
+            out.append(_bold_element(text, start, end, code_spans, limit))
         cursor = end
     out.append(escape_html(text[cursor:]))
     return "".join(out)
