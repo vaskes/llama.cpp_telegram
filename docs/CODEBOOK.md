@@ -2129,7 +2129,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_edit_removal.py` | 6 | The edit-replace feature is gone, and stays gone |
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
 
-| `test_console_output_in_chat.py` | 9 | The console output goes into the chat; it is not a file |
+| `test_console_output_in_chat.py` | 10 | The console output goes into the chat; it is not a file; and the comparison that decides it runs against what the model saw |
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
 | `test_send_file_tool.py` | 22 | A file from the sandbox reaches the chat as a document, with the answer -- and the delivery removes nothing |
 | `test_file_transport.py` | 16 | The file door: the bytes, the digest, the version -- and no way to delete |

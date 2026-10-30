@@ -439,6 +439,40 @@ def _finish(result, ledger: dict, deps: DispatchDeps) -> ToolExecution:
     `str(result)` is applied here so every executor may return whatever
     it likes -- dict, list, None -- and the emptiness heuristic always
     sees the same thing the model will see.
+
+    The ledger also carries what the MODEL saw: the tool's own result
+    text, bounded. That is not bookkeeping -- it is the base the
+    file-extractor compares a code block against to tell a deliverable
+    from a quote of the console output. Measured on production,
+    2026-10-30: the model quoted the middle of a command's output, the
+    ledger kept a narrower piece of that output than the model had
+    seen, the quote looked like a file, and the user got `answer.txt`
+    with the execution artifacts in it -- a document nobody asked for,
+    made of output the model had already quoted. The comparison has to
+    run against what the model saw, or a quote from the middle of a
+    long output is invisible to it.
     """
     text = str(result)
+    ledger["output"] = _ledger_output(text)
     return ToolExecution(text=text, empty=result_is_empty(text), ledger=ledger)
+
+
+#: How much of a tool's result the ledger keeps for the comparison.
+#:
+#: The same bound the model's own view of a command's output uses
+#: (8000 characters, `personal_tools.bash_command`), so what the ledger
+#: keeps is what the model could quote back. The piece that reaches the
+#: database is bounded again by the transcript.
+MAX_LEDGER_OUTPUT_CHARS = 8000
+
+
+def _ledger_output(text: str) -> str:
+    """The tool's result, bounded, with the middle marked.
+
+    The marker is part of the budget: a cut that spends the whole limit
+    on the text and then adds a marker on top is a cut that did not
+    fit.
+    """
+    if not text:
+        return ""
+    return condense(text, MAX_LEDGER_OUTPUT_CHARS)

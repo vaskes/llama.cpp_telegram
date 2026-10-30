@@ -160,7 +160,12 @@ async def test_a_custom_tool_runs_and_is_recorded():
     got = await execute_tool("my_tool", {"a": 1},
                              deps(custom_tools={"my_tool": handler}))
     assert got.text == "custom ran"
-    assert got.ledger == {"name": "my_tool", "args": {"a": 1}, "iter": 3}
+    # The ledger carries what the MODEL saw as well as what was run.
+    # The comparison that tells a quote of the console output from a
+    # deliverable runs against that (measured on production,
+    # 2026-10-30), so it has to be here.
+    assert got.ledger == {"name": "my_tool", "args": {"a": 1}, "iter": 3,
+                          "output": "custom ran"}
     assert got.unavailable is False
 
 

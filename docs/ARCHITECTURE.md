@@ -71,7 +71,7 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       444  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
+  llm_dispatch.py       478  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      575  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
@@ -84,7 +84,7 @@ tests, none of which build a full `call_llama`.
   llm_stream.py         310  StreamOutcome, stream_iteration, _fallback_to_nonstream
   user_notice.py         276  engine_failure_message
   llm_abort.py             64  finalize_aborted_turn
-  llm_result.py           346  Answer, unwrap_answer
+  llm_result.py           355  Answer, unwrap_answer
   llm_artifact.py         487  Artifact, extract_files
   llm_files.py            219  send_files, deliver_staged
   llm_staged.py            119  StagedFile, stage, take, discard, staged_count, clear_all

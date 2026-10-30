@@ -318,8 +318,17 @@ def unwrap_answer(result) -> Answer:
     # What the tools printed. The extractor needs it: a code block that
     # repeats the console output is output, not a deliverable, and it
     # belongs in the chat.
-    tool_outputs = [t.get("stdout") or "" for t in executed
-                    if isinstance(t, dict)]
+    #
+    # The base is what the MODEL saw -- the tool's own result text
+    # (`output`), not the narrower piece the ledger keeps for the
+    # database (`stdout`). Measured on production, 2026-10-30: the model
+    # quoted the middle of a command's output, the ledger held a
+    # narrower window than the model had seen, the quote looked like a
+    # file, and the user got `answer.txt` with the execution artifacts
+    # in it. A comparison against the wrong window cannot see the
+    # quote it is supposed to see.
+    tool_outputs = [(t.get("output") or t.get("stdout") or "")
+                    for t in executed if isinstance(t, dict)]
     prose, files = extract_files(text, tool_outputs=tool_outputs)
     raw = text
     if executed:

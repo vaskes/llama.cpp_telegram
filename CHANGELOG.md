@@ -17,6 +17,38 @@ this file is the human-readable summary.
 
 **After `v0.25.0-stable`.** The next cycle starts here.
 
+### A quote of the console output is not a file
+
+The operator's report (2026-10-30, 13:43 and 13:50 MSK): after a long
+answer the bot sent `answer.txt` -- a document with the execution
+artifacts in it, with no meaning for the operator -- and the model said,
+truthfully, that it had not attached anything.
+
+The model had not. The bot's own file feature did: it took a code block
+out of the answer and delivered it as a document. The block was a QUOTE
+of what a command had printed, and the feature is not supposed to touch
+those -- the console output goes into the chat (the operator's rule of
+2026-10-24), and a `.txt` document full of output is neither a file the
+user asked for nor an answer.
+
+The comparison that tells a quote from a deliverable ran against the
+wrong window. The ledger keeps 2000 characters of a command's output
+for the database; the model had seen 8000. A quote from the middle --
+which is exactly what a model quotes, the interesting line out of a long
+listing -- was in the model's window and outside the ledger's, so the
+comparison could not see it, and the quote looked like a file.
+
+The ledger now carries what the MODEL saw (the tool's own result text,
+bounded the same way the model's view is), and that is what the
+comparison runs against. The piece that reaches the database is bounded
+again by the transcript, so the chat and the database are the same size
+as before.
+
+Pinned by `tests/test_console_output_in_chat.py`: a quote from the
+middle of a long output stays in the chat, and the ledger carries the
+window the model saw. The mutation harness breaks the comparison on
+purpose and the suite has to notice.
+
 ## [v0.25.0-stable] — 2026-10-30 — The bold is bold too
 
 **After `v0.24.0-stable`.** The next cycle starts here.

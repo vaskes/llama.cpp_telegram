@@ -233,5 +233,71 @@ def test_the_transcript_shows_both_ends_of_the_output():
     assert "characters were dropped from the middle" in answer.text
 
 
+async def test_a_quote_from_the_middle_of_a_long_output_stays_in_the_chat(monkeypatch):
+    """The production case, 2026-10-30.
+
+    The model's answer quoted the middle of a long command's output.
+    The file feature took the quote out of the chat and delivered it as
+    `answer.txt` -- the execution artifacts, in a document nobody asked
+    for. The model had called no file tool at all: the bot's own
+    feature did it, and the model said -- truthfully -- that it had
+    not.
+
+    The quote sat in the window the MODEL saw (8000 characters, head
+    and tail) and outside the window the ledger kept (2000 characters,
+    head and tail). The comparison that tells a quote from a
+    deliverable ran against the narrower window, so it could not see
+    the quote it was supposed to see.
+    """
+    filler = "filler line that says nothing in particular\n"
+    output = ("HEAD_MARKER the very first line of the output\n"
+              + filler * 50
+              + "MIDDLE_MARKER the line the model quoted back\n"
+              + filler * 50
+              + "TAIL_MARKER the command that just ran printed this\n")
+
+    async def fake_call(command, *, session_id=None, timeout=70.0,
+                        chat_type="private", chat_id=None):
+        return {"ok": True, "stdout": output, "stderr": "",
+                "exit_code": 0, "duration_ms": 1}
+
+    import personal_tools.bash_command as bc
+    monkeypatch.setattr(bc, "call_bash_command", fake_call)
+    monkeypatch.setattr(bc, "is_enabled_for_active_profile", lambda: True)
+
+    deps = DispatchDeps(
+        bot=None,
+        chat_id=-1004461679108,
+        current_message_id=1,
+        chat_type="supergroup",
+        iteration=0,
+        custom_tools={},
+        donsetch_tools={},
+    )
+    outcome = await execute_tool("bash_command", {"command": "echo hi"}, deps)
+
+    # The ledger keeps a bounded piece of the output for the database.
+    assert "MIDDLE_MARKER" not in outcome.ledger["stdout"], (
+        "this test is about the window the ledger keeps -- the quote has "
+        "to sit outside it, or it proves nothing")
+    # What the model saw is what the ledger carries for the comparison.
+    assert "MIDDLE_MARKER" in outcome.ledger["output"], (
+        "the ledger must carry what the model saw, or a quote from the "
+        "middle of a long output is invisible to the comparison")
+
+    answer_text = ("Проверила, вот строка из вывода:\n\n"
+                   "```\n"
+                   "MIDDLE_MARKER the line the model quoted back\n"
+                   "```\n")
+    answer = unwrap_answer({"text": answer_text,
+                             "executed_tools": [outcome.ledger]})
+    assert answer.files == [], (
+        "the quote is output, not a deliverable: it must stay in the chat "
+        "instead of arriving as a document nobody asked for")
+    assert "MIDDLE_MARKER" in answer.text, (
+        "and the quote stays where it was -- in the chat, with the "
+        "model's own words around it")
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
