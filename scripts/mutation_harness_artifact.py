@@ -18,6 +18,9 @@ notice. The rules it breaks:
   * a fence that does not start a line is still a fence;
   * an unterminated fence is a fragment, not a file;
   * the code leaves the prose, or it is in the chat twice;
+  * a block that quotes what a command printed is output, not a
+    deliverable -- and the comparison runs against what the model saw,
+    not against the narrower piece the ledger keeps for the database;
   * a diagnostic carries no files -- its reasoning tail is not a
     deliverable;
   * the executed-tool trace is still in front of the answer;
@@ -76,6 +79,11 @@ TARGETS = [
     # would never look at whether the handler wires the feature
     # together -- the part the unit tests cannot see.
     "tests/test_artifact_e2e.py",
+    # The console output is not a deliverable: a block that quotes what
+    # a command printed stays in the chat. The comparison that decides
+    # it runs against what the MODEL saw, and a harness that did not
+    # run this file would never look at it.
+    "tests/test_console_output_in_chat.py",
 ]
 
 #: A mutation that hangs the suite is still a catch, but it has to be
@@ -126,6 +134,15 @@ MUTATIONS = [
     ("the code stays in the prose as well as in the file", ART, [
         (r"        removed\.update\(range\(block\.start, block\.end \+ 1\)\)\n",
          "        pass\n", 1),
+    ]),
+    ("the comparison runs against the narrow window again", RES, [
+        # Measured on production, 2026-10-30: the ledger kept 2000
+        # characters of a command's output, the model had seen 8000,
+        # and a quote from the middle looked like a file. The user got
+        # `answer.txt` with the execution artifacts in it.
+        (r'    tool_outputs = \[\(t\.get\("output"\) or t\.get\("stdout"\) or ""\)'
+         r'\n',
+         '    tool_outputs = [(t.get("stdout") or "")\n', 1),
     ]),
     ("a diagnostic starts carrying files", RES, [
         (r"    if not isinstance\(result, dict\):\n"
