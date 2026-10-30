@@ -69,6 +69,9 @@ TARGETS = [
     "tests/test_telegram_code_formatting.py",
     # The inline code: the same formatter, one more shape of it.
     "tests/test_telegram_inline_code.py",
+    # The bold: the same formatter again, and the case the operator
+    # named -- a code span inside a bold span.
+    "tests/test_telegram_bold.py",
     # The answer path, in case the split moves the answer somewhere else.
     "tests/test_answer_chunking.py",
     # The structural tripwire: every handler sends its answer through
@@ -86,6 +89,7 @@ HANDLERS = ROOT / "telegram-bot" / "handlers.py"
 FORMAT = ROOT / "telegram-bot" / "telegram_format.py"
 TEST_FORMAT = ROOT / "tests" / "test_telegram_code_formatting.py"
 TEST_INLINE = ROOT / "tests" / "test_telegram_inline_code.py"
+TEST_BOLD = ROOT / "tests" / "test_telegram_bold.py"
 
 # (name, expectation, [(path, pattern, replacement, expected_sites)])
 #
@@ -132,8 +136,8 @@ MUTATIONS = [
     ]),
     ("the inline code is not converted", "CAUGHT", [
         (FORMAT,
-         r'            out\.append\("<code>" \+ body \+ "</code>"\)',
-         '            out.append(escape_html(text[start:end]))', 1),
+         r'    return "<code>" \+ body \+ "</code>"',
+         '    return escape_html(raw)', 1),
     ]),
     ("a run of two backticks is a delimiter", "CAUGHT", [
         (FORMAT, r"(?m)^        if run_end - start != 1:\n",
@@ -152,8 +156,44 @@ MUTATIONS = [
     ]),
     ("the splitter does not protect the inline code", "CAUGHT", [
         (FORMAT,
-         r'_ELEMENTS = \(\("<pre>", "</pre>"\), \("<code>", "</code>"\)\)',
-         '_ELEMENTS = (("<pre>", "</pre>"),)', 1),
+         r'_ELEMENTS = \(\("<pre>", "</pre>"\), \("<code>", "</code>"\), \("<b>", "</b>"\)\)',
+         '_ELEMENTS = (("<pre>", "</pre>"), ("<b>", "</b>"))', 1),
+    ]),
+
+    # --- the bold ---------------------------------------------------
+    ("the bold is not converted", "CAUGHT", [
+        (FORMAT,
+         r'    return "<b>" \+ escape_html\(raw\) \+ "</b>"',
+         '    return escape_html(raw)', 1),
+    ]),
+    ("a run of three asterisks is a delimiter", "CAUGHT", [
+        (FORMAT, r"(?m)^        if run_end - start != len\(_BOLD_DELIM\):\n",
+         "        if run_end - start > 3:\n", 1),
+    ]),
+    ("an unmatched bold pair is converted", "CAUGHT", [
+        (FORMAT,
+         r"(?m)^        if close < 0:\n"
+         r"            # No closing delimiter: the rest is literal text\.\n"
+         r"            return spans\n",
+         "        if close < 0:\n"
+         "            close = len(text) - len(_BOLD_DELIM)\n", 1),
+    ]),
+    ("the bold pair may cross an empty line", "CAUGHT", [
+        (FORMAT, r'(?m)^        if "\\n\\n" in body:\n',
+         "        if False:\n", 1),
+    ]),
+    ("the bold inside a code span is converted", "CAUGHT", [
+        (FORMAT, r"(?m)^        if _inside\(code_spans, start\):\n",
+         "        if False:\n", 1),
+    ]),
+    ("the bold and the code nest", "CAUGHT", [
+        (FORMAT, r"(?m)^    return rendered\n",
+         '    return "<b>" + rendered + "</b>"\n', 1),
+    ]),
+    ("the splitter does not protect the bold", "CAUGHT", [
+        (FORMAT,
+         r'_ELEMENTS = \(\("<pre>", "</pre>"\), \("<code>", "</code>"\), \("<b>", "</b>"\)\)',
+         '_ELEMENTS = (("<pre>", "</pre>"), ("<code>", "</code>"))', 1),
     ]),
 
     # --- group B: the tripwires ------------------------------------
@@ -192,6 +232,12 @@ MUTATIONS = [
         (TEST_INLINE,
          r"(?m)^def test_the_code_inside_a_fenced_block_is_not_converted_again\(\):\n",
          "def test_the_code_inside_a_fenced_block_is_not_converted_again():\n    return\n", 1),
+        # The bold file guards the fenced block too: it asserts that the
+        # block IS a <pre> before it asserts that the bold inside it is
+        # not converted again.
+        (TEST_BOLD,
+         r"(?m)^def test_the_bold_inside_a_fenced_block_is_not_converted_again\(\):\n",
+         "def test_the_bold_inside_a_fenced_block_is_not_converted_again():\n    return\n", 1),
         (FORMAT, r"    spans = _fenced_blocks\(text\)\n",
          "    spans = []\n", 1),
     ]),
@@ -205,6 +251,11 @@ MUTATIONS = [
         (TEST_INLINE,
          r"(?m)^async def test_the_answer_goes_out_with_the_code_element\(update\):\n",
          "async def test_the_answer_goes_out_with_the_code_element(update):\n    return\n", 1),
+        # The bold file checks the parse mode too: the answer carries the
+        # <b> elements *because* it goes out as HTML.
+        (TEST_BOLD,
+         r"(?m)^async def test_the_answer_goes_out_with_the_bold_element\(update\):\n",
+         "async def test_the_answer_goes_out_with_the_bold_element(update):\n    return\n", 1),
         (HANDLERS,
          r'await send_reply\(update, chunk, strip=False, parse_mode="HTML"\)',
          'await send_reply(update, chunk, strip=False, parse_mode=None)', 1),
@@ -229,9 +280,65 @@ MUTATIONS = [
         (TEST_INLINE,
          r"(?m)^async def test_the_answer_goes_out_with_the_code_element\(update\):\n",
          "async def test_the_answer_goes_out_with_the_code_element(update):\n    return\n", 1),
+        # The bold file holds code spans too: the case the operator named
+        # is a code span inside a bold span, and the code has to survive
+        # it -- both without the code element and without the nesting.
+        (TEST_BOLD,
+         r"(?m)^def test_a_code_span_inside_a_bold_span_keeps_both\(\):\n",
+         "def test_a_code_span_inside_a_bold_span_keeps_both():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_the_bold_inside_an_inline_code_span_is_not_converted\(\):\n",
+         "def test_the_bold_inside_an_inline_code_span_is_not_converted():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_a_delimiter_inside_a_code_span_does_not_open_a_bold_span\(\):\n",
+         "def test_a_delimiter_inside_a_code_span_does_not_open_a_bold_span():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_the_bold_and_the_code_do_not_nest\(\):\n",
+         "def test_the_bold_and_the_code_do_not_nest():\n    return\n", 1),
         (FORMAT,
-         r'            out\.append\("<code>" \+ body \+ "</code>"\)',
-         '            out.append(escape_html(text[start:end]))', 1),
+         r'    return "<code>" \+ body \+ "</code>"',
+         '    return escape_html(raw)', 1),
+    ]),
+    # The bold: every tripwire that guards it is silenced, and the
+    # conversion is broken. The suite has to go green -- that is the
+    # proof that the tripwire was the thing doing the work.
+    ("the tripwires are gone, and the bold is not converted",
+     "SURVIVED", [
+        (TEST_BOLD,
+         r"(?m)^def test_a_bold_span_becomes_a_bold_element\(\):\n",
+         "def test_a_bold_span_becomes_a_bold_element():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_the_operator_own_sentence_keeps_its_prose_and_marks_its_bold\(\):\n",
+         "def test_the_operator_own_sentence_keeps_its_prose_and_marks_its_bold():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_the_bold_inside_the_phrase_is_escaped\(\):\n",
+         "def test_the_bold_inside_the_phrase_is_escaped():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_a_pair_that_crosses_a_line_break_is_converted\(\):\n",
+         "def test_a_pair_that_crosses_a_line_break_is_converted():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_a_code_span_inside_a_bold_span_keeps_both\(\):\n",
+         "def test_a_code_span_inside_a_bold_span_keeps_both():\n    return\n", 1),
+        # The code-formatting file guards the bold as well: it asserts
+        # that the phrase the model marked is bold in the chat.
+        (TEST_FORMAT,
+         r"(?m)^def test_the_prose_survives_as_it_was_written\(\):\n",
+         "def test_the_prose_survives_as_it_was_written():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_a_delimiter_inside_a_code_span_does_not_open_a_bold_span\(\):\n",
+         "def test_a_delimiter_inside_a_code_span_does_not_open_a_bold_span():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_the_bold_and_the_code_do_not_nest\(\):\n",
+         "def test_the_bold_and_the_code_do_not_nest():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^def test_the_split_never_cuts_a_bold_in_half\(\):\n",
+         "def test_the_split_never_cuts_a_bold_in_half():\n    return\n", 1),
+        (TEST_BOLD,
+         r"(?m)^async def test_the_answer_goes_out_with_the_bold_element\(update\):\n",
+         "async def test_the_answer_goes_out_with_the_bold_element(update):\n    return\n", 1),
+        (FORMAT,
+         r'    return "<b>" \+ escape_html\(raw\) \+ "</b>"',
+         '    return escape_html(raw)', 1),
     ]),
 ]
 
