@@ -24,7 +24,7 @@ sudo apt-get install -y docker-compose-plugin
 ```bash
 sudo mkdir -p /opt
 sudo chown $USER:$USER /opt
-git clone --branch v0.25.0-stable https://github.com/vaskes/llama.cpp_telegram.git
+git clone --branch v0.26.0-stable https://github.com/vaskes/llama.cpp_telegram.git
 cd llama.cpp_telegram
 ```
 
