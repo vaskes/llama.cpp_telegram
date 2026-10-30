@@ -8,14 +8,67 @@ this file is the human-readable summary.
 > ⚠️ **`git clone <url>` without a `--branch` is NOT recommended.**
 > The default branch is bleeding-edge and may include
 > unreleased refactors. Pin to a stable tag:
-> `git clone --branch v0.27.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
+> `git clone --branch v0.28.0-stable https://github.com/vaskes/llama.cpp_telegram.git`
 > or pick from the [Releases page](https://github.com/vaskes/llama.cpp_telegram/releases).
 > Bleeding edge is for contributors only; the general public
 > should always use a stable tag.
 
 ## [Unreleased]
 
+**After `v0.28.0-stable`.** The next cycle starts here.
+
+## [v0.28.0-stable] — 2026-10-30 — The webhook server's stack leaves the advisory floor
+
 **After `v0.27.0-stable`.** The next cycle starts here.
+
+### The webhook server's stack leaves the advisory floor
+
+GitHub's Dependabot filed **42 advisories** against one line of
+`telegram-bot/requirements.txt` — `aiohttp==3.9.5` — and opened PR #6 to
+bump it. Five are high, twenty-one medium, sixteen low, and every one of
+them is about the HTTP stack under the bot's webhook server: request
+smuggling in the parser, unbounded memory in the WebSocket reader, a
+server with no initial request timeout, cookies that lose their
+host-only scope, a multipart handler that runs out of file descriptors.
+The newest of the forty-two is fixed in 3.14.4; the bot was five minor
+versions behind it.
+
+The bump is not one line, and Dependabot's diff showed why. The image
+does not install `requirements.txt` — it installs `requirements.lock`
+(the Dockerfile), and the lock is the set the container runs. A PR that
+moves the manifest and leaves the lock behind ships an image with the
+old library inside it. The tripwire `tests/test_requirements_lock.py`
+said exactly that on all three interpreters ("the lock does not carry
+the direct pins: `{'aiohttp': '3.14.4'}`"), which is why PR #6's CI was
+red before anybody merged it.
+
+So the pin and the lock moved together. `aiohttp==3.14.5` — the latest
+patch over the version that closes the newest advisory — and the lock
+re-resolved on Python 3.11, the version the image runs. Seventeen
+packages now: `aiohappyeyeballs` arrives with 3.14, `multidict` goes
+6.9.1 → 7.2.1, the rest are unchanged. aiohttp 3.14 requires Python
+≥ 3.10; the image runs 3.11, and the suite runs 3.11, 3.12 and 3.14.
+
+Measured, not assumed:
+
+* the CI's own pytest command green on 3.11, 3.12 and 3.14 against the
+  new lock — CI installs the lock, so the versions under test are the
+  versions that ship;
+* the **real** webhook server — `AppRunner`, `TCPSite`, the router, an
+  actual socket — answering on aiohttp 3.14.5: no secret → 403, wrong
+  secret → 403, right secret and a real update → 200 with the update
+  handed to the dispatch, a 2 MB body → 413, broken JSON → 400,
+  `/healthz` → 200. The suite only ever mocked the request, so it could
+  not have answered the question this bump actually asks;
+* the upstream changelog between 3.9.5 and 3.14.5 carries no
+  backwards-incompatible entry for the slice this bot uses:
+  `Application(client_max_size=…)`, `router.add_post`/`add_get`,
+  `Response(status=…, text=…)`, `AppRunner`/`TCPSite`, and
+  `Request.headers`/`remote`/`content_length`/`read`.
+
+The lock header's claim — "resolved on the version the image runs" — was
+a sentence nobody checked. It is checked now: the tripwire compares it
+with the Dockerfile's base image and goes red when the claim is false.
 
 ## [v0.27.0-stable] — 2026-10-30 — The platform's ceiling is chosen by the parsed host
 
