@@ -6,7 +6,7 @@
 [![Release](https://img.shields.io/github/v/release/vaskes/llama.cpp_telegram?label=release)](../../releases)
 [![Tests: 3208](https://img.shields.io/badge/tests-3208-brightgreen)](tests/)
 
-> **Current stable: `v0.25.0-stable`** (2026-10-30).
+> **Current stable: `v0.25.0-stable`** (2026-10-30, commit `aae99bb`).
 > Pin to a tag — see the clone command below.
 >
 > ⚠️ **Do NOT `git clone <url>` without `--branch`.** The default
