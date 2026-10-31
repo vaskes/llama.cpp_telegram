@@ -15,7 +15,7 @@ telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
 ├── handlers.py            # handle_text/photo/voice/document (1587 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   377 lines file, 222 in the function, 345 in the loop
+│                          #   383 lines file, 222 in the function, 349 in the loop
 ├── mcp_client.py # MCP protocol for ONE server (382)
 ├── mcp_registry.py # the tools imported from the MCP servers (318)
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
@@ -26,7 +26,7 @@ telegram-bot/
 ├── commands/              # the slash-command handlers, as a package
 ├── context_budget.py # which persisted messages reach the engine (659)
 ├── summarize.py           # summarise out-of-window history, in chunks (319)
-├── reanchor.py            # when the memory window re-anchors (272)
+├── reanchor.py            # when the memory window re-anchors (276)
 ├── personality.py # the optional persona block (214)
 ├── prompt_guard.py        # the sender-label prompt-injection filter (109)
 ├── sender_name.py         # the one policy for how a person is named (60)
@@ -35,7 +35,7 @@ telegram-bot/
 ├── rating.py              # rate-this-message reaction tool (235)
 ├── tool_isolation.py # KNOWN_TOOL_NAMES whitelist (216)
 ├── limits.py              # profile-based token/timeout limits (566)
-├── config.py # env-var read at import time (609)
+├── config.py # env-var read at import time (616)
 ├── state.py               # per-chat runtime state (231)
 ├── storage.py             # SQLite: messages, threads, topics (938)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (200)
@@ -48,7 +48,7 @@ telegram-bot/
 ├── http_clients.py        # the shared httpx helpers (87)
 ├── logconf.py # logging configuration (142)
 ├── selftest.py            # in-tree selftest entry (239) + 7 selftest_*.py leaves
-├── llm_*.py               # 24 leaf modules, one decision each
+├── llm_*.py               # 25 leaf modules, one decision each
 └── personal_tools/
     ├── bash_command.py    # T38: bash execution via sandbox side-car
     ├── bash_policy.py     # the command classes the bot refuses, in code
@@ -56,7 +56,7 @@ telegram-bot/
     └── file_upload.py    # the file door: push bytes in, never overwrite
 ```
 
-65 top-level modules, 190 test files. The size of the suite is the
+66 top-level modules, 191 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.
@@ -72,16 +72,17 @@ tests, none of which build a full `call_llama`.
 ```
   module                lines  public surface
   llm_dispatch.py       478  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
+  llm_endpoint.py       281  engine_post, engine_get, engine_stream, active_url, endpoints, set_endpoints, reset_endpoints
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
-  llm_iteration.py      575  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
+  llm_iteration.py      579  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
-  call_llama.py         377  call_llama
+  call_llama.py         383  call_llama
   llm_loop_guard.py     185  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
   llm_messages.py       119  _tag_sender
-  llm_nonstream.py      442  NonStreamResult, non_stream_iteration, tools_less_fallback
+  llm_nonstream.py      441  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
-  llm_stream.py         310  StreamOutcome, stream_iteration, _fallback_to_nonstream
+  llm_stream.py         317  StreamOutcome, stream_iteration, _fallback_to_nonstream
   user_notice.py         276  engine_failure_message
   llm_abort.py             64  finalize_aborted_turn
   llm_result.py           355  Answer, unwrap_answer
@@ -92,7 +93,7 @@ tests, none of which build a full `call_llama`.
   llm_thinking.py       147  ThinkingThrottle, push_thinking, close_thinking
   llm_toolargs.py       215  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
-  llm_tools.py          312  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
+  llm_tools.py          307  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
   llm_sendfile.py         85  send_file_tool_def
   llm_delete.py           855  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal, requested_ids
   llm_history.py          256  search_messages_tool_def, run_search, known_ids

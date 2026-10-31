@@ -38,9 +38,9 @@ from typing import Any, Dict, NamedTuple, Optional
 import httpx
 
 import limits
-from config import API_KEY, LLAMA_URL
+from config import API_KEY
 from context_budget import OVERFLOW_MESSAGE, is_context_overflow
-from http_clients import _abortable_post
+from llm_endpoint import engine_post
 from user_notice import engine_failure_message
 from logconf import get_logger
 from tool_isolation import (UnknownToolNameError, known_tool_names,
@@ -82,10 +82,11 @@ async def non_stream_iteration(req_body: dict, *, iteration: int,
         # The plain vclient.post() blocks until the
         # full response arrives (5-30s for vision).
         # The Stop button sets abort_event, but the
-        # post() doesn't see it. With _abortable_post,
-        # we detect abort as soon as the user clicks.
-        r = await _abortable_post(
-            vclient, f"{LLAMA_URL}/chat/completions",
+        # post() doesn't see it. engine_post() carries the
+        # race (and the failover to the other endpoint) --
+        # it returns None when the user clicks Stop.
+        r = await engine_post(
+            vclient, "/chat/completions",
             abort_event=abort_event,
             headers={"Authorization": f"Bearer {API_KEY}",
                      "Content-Type": "application/json"},
@@ -97,7 +98,6 @@ async def non_stream_iteration(req_body: dict, *, iteration: int,
             # doesn't send a partial response.
             log.info(f"[call_llama] abort_event fired during non-streaming iter={iteration}, aborting")
             return NonStreamResult("final", final_text=None)
-        r.raise_for_status()
         # A JSONDecodeError from .json() carries no response, so
         # classify_error's `body = response.text if response` reads "" and
         # the log line says the body was empty -- which is an assertion
@@ -221,8 +221,8 @@ async def tools_less_fallback(req_body: dict, *, iteration: int,
     try:
         async with httpx.AsyncClient(
                 timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as vclient:
-            r2 = await _abortable_post(
-                vclient, f"{LLAMA_URL}/chat/completions",
+            r2 = await engine_post(
+                vclient, "/chat/completions",
                 abort_event=abort_event,
                 headers={"Authorization": f"Bearer {API_KEY}",
                          "Content-Type": "application/json"},
@@ -230,7 +230,6 @@ async def tools_less_fallback(req_body: dict, *, iteration: int,
             )
             if r2 is None:
                 return None
-            r2.raise_for_status()
             data2 = r2.json()
 
         # T32 (2026-10-13): same empty-choices guard as the primary and

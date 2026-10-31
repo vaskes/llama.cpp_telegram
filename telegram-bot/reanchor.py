@@ -49,10 +49,14 @@ async def summarise_after_reanchor() -> dict:
         import config
         import storage
         import summarize
+        from llm_endpoint import active_url
         return await summarize.summarise_all(
             budget=get_budget(),
             store=storage.get_store(),
-            llama_url=config.LLAMA_URL,
+            # The endpoint the bot is using right now: the summariser
+            # must follow the engine the bot has moved to, not the one
+            # the environment names first.
+            llama_url=active_url(),
             model=config.MODEL,
         )
     except Exception as exc:

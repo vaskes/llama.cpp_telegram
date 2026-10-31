@@ -17,6 +17,44 @@ this file is the human-readable summary.
 
 **After `v0.29.0-stable`.** The next cycle starts here.
 
+### The engine moved, and the bot followed it without probing
+
+The operator runs one engine at a time -- the two instances share the
+GPUs -- and keeps the other standing by. On 2026-10-31 the engine fork
+changed, the engine moved to another port, and the bot was left pointing
+at a port nobody listened on: it could not reach the engine at all.
+
+So the bot can now move with the engine. `LLAMA_URL` is the first
+endpoint and `LLAMA_URL_FALLBACK` the second; the bot uses the active
+one, and **only a failure** makes it try the other. The endpoint that
+answers becomes the one it keeps using.
+
+What it does **not** do is probe. There is no "which port is up" request
+before a turn: a probe per request would double the traffic to the
+engine and make the answer depend on which port answered first, so one
+turn could be served by a different model than the turn before it.
+
+Three boundaries are deliberate:
+
+  * a **4xx is not an endpoint failure** -- the request is wrong, and
+    the other endpoint would refuse it the same way, so it is sent
+    once;
+  * a **stream that breaks half-way is not retried** -- the user has
+    already seen part of the answer;
+  * when **every endpoint is dead**, the user gets the usual "the engine
+    is unavailable" sentence, and the callers do not retry in another
+    mode either -- asking a dead engine again only makes the user wait
+    twice as long.
+
+`telegram-bot/llm_endpoint.py` is the new module; the transport of the
+streaming path, the non-streaming path, the tools, the model discovery
+and the summarizer all go through it. `tests/test_llm_endpoint_failover.py`
+(13) drives two real local servers and a real closed port, because a
+mock cannot show where the request went.
+`scripts/mutation_harness_engine_failover.py` holds both directions:
+breaking the failover turns the suite red, and removing the tripwire
+together with the behaviour turns it green again.
+
 ### The gate that could not see the history it was judging
 
 The tripwire that keeps a model out of this repository's contributors

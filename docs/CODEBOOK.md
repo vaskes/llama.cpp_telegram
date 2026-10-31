@@ -91,7 +91,7 @@ only thing anyone could write was a test that read the source text and hoped.
 > **If a function holds more than about four unrelated things — not branches,
 > not lines — it is a monolith regardless of length.**
 
-`run_one` at 345 lines, nine concerns. `handle_photo` at 253 lines, one concern
+`run_one` at 349 lines, nine concerns. `handle_photo` at 253 lines, one concern
 plus a media path. `handle_document` at 209 lines, the same shape with the
 binary path under it. `call_llama` at 222 lines, four concerns and a documented
 `DO NOT REFACTOR` with a trigger. Length is a proxy. Concern count is the
@@ -410,7 +410,7 @@ There are four, and it is worth reading what they are:
 | Function | Lines | What it is |
 |---|---|---|
 | `call_llama` | 222 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
-| `run_one` | 345 | One tool-loop iteration, nine concerns. Debt item 08. |
+| `run_one` | 349 | One tool-loop iteration, nine concerns. Debt item 08. |
 | `handle_photo` | 253 | One concern plus a media path. Debt item 13. |
 | `handle_text` | 211 | Not debt. Same shape as `handle_photo`. |
 | `handle_document` | 209 | Not debt. Same shape, plus the binary path into the sandbox. |
@@ -1939,6 +1939,57 @@ deploy. It was patched on 2026-10-28: the snapshot reads through the
 WAL, it is one self-contained file, and it is compared with the live
 database.
 
+### 3.16 The engine can move, and the bot follows it without probing
+
+Two engine instances, one GPU pair: only one of them is serving at a
+time, and the operator restarts the other when the fork changes. On
+2026-10-31 the engine moved to another port and the bot was left
+pointing at a port nobody listened on -- the bot could not reach the
+engine at all, and nothing in the configuration said so.
+
+The rules:
+
+  * **the bot uses the active endpoint** -- `LLAMA_URL` is the first one,
+    `LLAMA_URL_FALLBACK` the second. An empty fallback means one
+    endpoint, and then there is nothing to fail over to;
+  * **no probe.** The bot does NOT ask "which port is up" before every
+    request. A probe per turn would double the traffic to the engine,
+    and it would make the answer depend on which port happened to
+    answer first -- so one turn could be served by a different model
+    than the turn before it. The operator's words: "не надо делать все
+    время probe какой из портов доступен каждый запрос";
+  * **only a FAILURE makes it try the other one** -- a refused
+    connection, a timeout, a 5xx. The endpoint that answers becomes
+    the one the bot keeps using, and stays;
+  * **a request the engine refused is not an endpoint failure** -- a 4xx
+    means the request is wrong, and the other endpoint would refuse it
+    the same way. Sending it twice would double the damage and hide the
+    cause;
+  * **a stream that breaks half-way is not retried** -- the user has
+    already seen part of the answer, and a second attempt would put two
+    answers in the chat;
+  * **when every endpoint is dead, the user gets the usual sentence** --
+    the same one as before this rule existed, and the callers do not
+    retry in another mode either: asking a dead engine again only makes
+    the user wait twice as long.
+
+Checked by `tests/test_llm_endpoint_failover.py` (13). It runs two real
+local servers and a real closed port, because a mock cannot show where
+the request went or how many of them were made: the active endpoint
+answers and the other is not asked at all; a dead endpoint moves the bot
+to the other one; the move is sticky; the bot goes back when the new
+endpoint dies; a refused request is sent once; a 5xx and a timeout move
+the bot; one endpoint means no second try; the endpoints are the ones
+the environment names; the tools are asked of the endpoint that answers;
+a broken stream is not asked of the other one; and two 5xx answers are
+NOT the same thing as two dead endpoints -- an answer is an answer, and
+the caller's own retry has to survive the failover.
+
+The mutation harness `scripts/mutation_harness_engine_failover.py`
+holds both directions: breaking the failover has to turn the suite red,
+and removing the tripwire together with the behaviour has to turn it
+green again.
+
 ---
 
 ## 4. Rules for the reviewer and the harness
@@ -2186,8 +2237,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_lint_workflow.py` | 6 | The lint job gates on the rules that catch code that would not run; the stylistic tail only reports; and the row that says what CI runs names every version the matrix runs |
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
+| `test_llm_endpoint_failover.py` | 13 | The engine can move: the bot tries the other endpoint only when the active one fails, and the engine that answers is the one it keeps |
 
-190 test files in total; the table above is the ones that guard a rule in
+191 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

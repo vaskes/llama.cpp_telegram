@@ -49,7 +49,7 @@ pytestmark = pytest.mark.tech_debt(
 
 
 class _Resp:
-    """What `client.stream(...)` yields."""
+    """What the engine sends back."""
 
     def __init__(self, lines, fail=False):
         self._lines = lines
@@ -59,28 +59,30 @@ class _Resp:
         if self._fail:
             raise httpx.HTTPError("stream died mid-flight")
 
+    async def aclose(self):
+        # httpx.Response has close()/aclose(); the streaming path closes
+        # the response when it is done reading it.
+        return None
+
     async def aiter_lines(self):
         for line in self._lines:
             yield line
-
-
-class _Ctx:
-    def __init__(self, resp):
-        self._resp = resp
-
-    async def __aenter__(self):
-        return self._resp
-
-    async def __aexit__(self, *_exc):
-        return False
 
 
 class _Client:
     def __init__(self, lines, fail=False):
         self._resp = _Resp(lines, fail)
 
-    def stream(self, *_a, **_kw):
-        return _Ctx(self._resp)
+    # The bot sends a streamed request with build_request()/send(), not
+    # with client.stream(). The failover has to sit around the REQUEST,
+    # and a streamed response cannot be read after the context manager
+    # that owns it has closed -- so the request is built, sent, and the
+    # response is read by the caller.
+    def build_request(self, method, url, **kwargs):
+        return (method, url, kwargs)
+
+    async def send(self, request, stream=False):
+        return self._resp
 
 
 def _lines(*chunks, done=True):

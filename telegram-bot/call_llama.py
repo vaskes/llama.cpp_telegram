@@ -38,7 +38,7 @@ import limits
 
 from personality import system_message as personality_system_message
 from config import (
-    API_KEY, DONSETCH_SESSION_ID, DONSETCH_URL, LLAMA_URL, MODEL, SHUTDOWN_EVENT,
+    API_KEY, DONSETCH_SESSION_ID, DONSETCH_URL, MODEL, SHUTDOWN_EVENT,
 )
 # DISABLED_TOOLS went to llm_tools with fetch_tools_from_llama;
 # WHISPER_LANGUAGE / WHISPER_URL went to http_clients with
@@ -73,6 +73,7 @@ from llm_nonstream import tools_less_fallback
 from llm_toolcalls import normalize_tool_calls, reject_unknown_names
 from llm_dispatch import (DispatchDeps, MAX_TOOL_RESULT_CHARS,
                          execute_tool)
+from llm_endpoint import active_url, engine_get
 from llm_finish import (finish_fallback_empty,
                        finish_without_tool_calls, refuse_hallucinated_tools)
 from llm_toolargs import ArgsRejected, parse_tool_args
@@ -87,16 +88,21 @@ from llm_tools import (_bash_command_tool_enabled, build_tool_defs,
 
 
 # === Default model discovery ===
-async def _discover_default_model(base_url: str, api_key: str) -> str:
-    """Query /v1/models and return the first model id."""
+async def _discover_default_model(api_key: str) -> str:
+    """Query /v1/models and return the first model id.
+
+    The endpoint is the one the bot is using right now, and the
+    failover inside engine_get means a dead one is not the end of the
+    story: the other endpoint is asked before the bot gives up.
+    """
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     async with httpx.AsyncClient(timeout=limits.LLAMA_MODELS_TIMEOUT_SEC) as client:
-        r = await client.get(f"{base_url}/models", headers=headers)
-        r.raise_for_status()
+        r = await engine_get(client, "/models", headers=headers)
         data = r.json()
         models = data.get("data", [])
         if not models:
-            raise RuntimeError(f"No models available at {base_url}/models")
+            raise RuntimeError(
+                f"No models available at {active_url()}/models")
         return models[0]["id"]
 
 
@@ -133,7 +139,7 @@ async def _ensure_model() -> str:
     """
     global MODEL
     if not MODEL:
-        MODEL = await _discover_default_model(LLAMA_URL, API_KEY)
+        MODEL = await _discover_default_model(API_KEY)
         log.info(f"[config] MODEL auto-discovered: {MODEL}")
     return MODEL
 

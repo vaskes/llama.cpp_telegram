@@ -40,11 +40,12 @@ from typing import Any, Optional
 import httpx
 
 import limits
-from config import API_KEY, LLAMA_URL, MODEL, SHUTDOWN_EVENT
+from config import API_KEY, MODEL, SHUTDOWN_EVENT
 from context_budget import OVERFLOW_MESSAGE, is_context_overflow
 from donsetch import DONSETCH_TOOLS
 from llm_dispatch import (MAX_TOOL_RESULT_CHARS, DispatchDeps,
                           execute_tool)
+from llm_endpoint import endpoints_exhausted, engine_post
 from llm_finish import (finish_without_tool_calls,
                         refuse_hallucinated_tools)
 from llm_loop_guard import Abort, Nudge
@@ -307,7 +308,11 @@ class ToolLoop:
                     _err = classify_error(e, req_body)
                     log.info(f"[non-stream err iter={iteration}] "
                              f"{type(e).__name__}: {e}; body={_err.body!r}")
-                    if _err.retry_without_tools:
+                    # Every engine endpoint refused the request, so
+                    # there is nothing to retry against: a retry without
+                    # tools would ask the same dead engine and make the
+                    # user wait twice as long.
+                    if _err.retry_without_tools and not endpoints_exhausted(e):
                         return IterationResult.done(await tools_less_fallback(
                             req_body, iteration=iteration,
                             abort_event=self.abort_event, primary_error=e))
@@ -524,8 +529,8 @@ class ToolLoop:
         """Final non-streamed summarize call (no tools, plain answer)."""
         async with httpx.AsyncClient(
                 timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client3:
-            r3 = await client3.post(
-                f"{LLAMA_URL}/chat/completions",
+            r3 = await engine_post(
+                client3, "/chat/completions",
                 headers={"Authorization": f"Bearer {API_KEY}",
                          "Content-Type": "application/json"},
                 json={
@@ -536,7 +541,6 @@ class ToolLoop:
                     "stream": False,
                 }
             )
-            r3.raise_for_status()
             data3 = r3.json()
         # T32b (2026-10-13): guard. Without this, a 200 OK with choices:[]
         # (rate limit / content filter / context overflow) would produce

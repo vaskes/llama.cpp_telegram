@@ -46,8 +46,9 @@ from typing import Any, Dict, Optional
 import httpx
 
 import limits
-from config import API_KEY, LLAMA_URL
+from config import API_KEY
 from context_budget import OVERFLOW_MESSAGE, is_context_overflow
+from llm_endpoint import endpoints_exhausted, engine_post, engine_stream
 from user_notice import engine_failure_message
 from llm_finish import finish_fallback_empty
 from llm_sse import StreamAccumulator
@@ -117,13 +118,12 @@ async def _fallback_to_nonstream(
     try:
         async with httpx.AsyncClient(
                 timeout=limits.LLAMA_HTTP_TIMEOUT_SEC) as client2:
-            r2 = await client2.post(
-                f"{LLAMA_URL}/chat/completions",
+            r2 = await engine_post(
+                client2, "/chat/completions",
                 headers={"Authorization": f"Bearer {API_KEY}",
                          "Content-Type": "application/json"},
                 json={**req_body, "stream": False},
             )
-            r2.raise_for_status()
             data = r2.json()
         # T32 (2026-10-13): same guard as the primary non-streaming path
         # above -- 'choices' may be empty on rate-limit / context-overflow
@@ -222,11 +222,10 @@ async def stream_iteration(
     reasoning_buf = ""
     content_buf = ""
     try:
-        async with client.stream("POST", f"{LLAMA_URL}/chat/completions",
+        async with engine_stream(client, "/chat/completions",
                                  headers={"Authorization": f"Bearer {API_KEY}",
                                           "Content-Type": "application/json"},
                                  json=req_body) as r:
-            r.raise_for_status()
             # Pre-check for abort before entering the line iteration.
             # This catches the case where the user clicks Stop RIGHT
             # after the bot sends the thinking message but before the
@@ -286,6 +285,14 @@ async def stream_iteration(
                     thinking_msg=thinking_msg, silent=silent,
                     throttle=throttle, force=True)
     except httpx.HTTPError as e:
+        if endpoints_exhausted(e):
+            # Every endpoint refused the request. A non-streaming retry
+            # would ask a dead engine again, and the user would wait for
+            # the timeout twice for the same answer.
+            log.info(f"[stream err iter={iteration}] {type(e).__name__}: {e}; "
+                     f"no engine endpoint answered")
+            return StreamOutcome(
+                is_terminal=True, terminal=engine_failure_message(e))
         log.info(f"[stream err iter={iteration}] {type(e).__name__}: {e}; "
                  f"falling back to non-streaming")
         return await _fallback_to_nonstream(

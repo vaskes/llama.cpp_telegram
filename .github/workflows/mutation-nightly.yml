@@ -64,8 +64,8 @@ jobs:
           RUN pip install --no-cache-dir pytest pytest-asyncio
           EOF
           docker build -t bot-testimg311 /tmp/test-image
-          # Twenty-seven harnesses take the image from the environment;
-          # three name it themselves. Both get the same image, so the
+          # Thirty-one harnesses take the image from the environment;
+          # two name it themselves. Both get the same image, so the
           # name is the one the harness expects.
           echo "MUTATION_HARNESS_IMAGE=bot-testimg311" >> "$GITHUB_ENV"
 

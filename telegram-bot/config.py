@@ -116,6 +116,13 @@ ALLOWED_UPDATES_LIST = list(ALLOWED_UPDATES)
 
 # === LLM endpoints ===
 LLAMA_URL = os.environ.get("LLAMA_URL", "http://localhost:8080/v1")
+# The second engine endpoint. The operator runs one engine instance at a
+# time -- they share the GPUs -- and keeps the other standing by, so the
+# bot has to be able to move to the other one when the active one stops
+# answering. Empty (the default) means one endpoint and no failover.
+# The bot does NOT probe: it uses the active endpoint, and only a failure
+# makes it try the other. See telegram-bot/llm_endpoint.py.
+LLAMA_URL_FALLBACK = os.environ.get("LLAMA_URL_FALLBACK", "").strip()
 WHISPER_URL = os.environ.get("WHISPER_URL", "http://localhost:8000")
 # v0.10.2: Whisper language hint. Empty = autodetect (recommended for multilingual users).
 # Default "ru" for backwards compat with the Russian-speaking LlmChatPlace group.

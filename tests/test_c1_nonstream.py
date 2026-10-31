@@ -49,16 +49,16 @@ class _Resp:
 
 
 class _Transport:
-    """Stands in for httpx at the _abortable_post boundary only."""
+    """Stands in for httpx at the engine_post boundary only."""
 
     def __init__(self, response):
         self.response = response
         self.sent = []
 
-    async def post(self, _client, url, abort_event=None, **kwargs):
-        self.sent.append((url, kwargs))
+    async def post(self, _client, path, abort_event=None, **kwargs):
+        self.sent.append((path, kwargs))
         if abort_event is not None and abort_event.is_set():
-            return None                      # what _abortable_post does on Stop
+            return None                      # what the transport does on Stop
         return self.response
 
 
@@ -69,7 +69,7 @@ def patched(monkeypatch):
     def install(response):
         t = _Transport(response)
         holder["t"] = t
-        monkeypatch.setattr(ns, "_abortable_post", t.post)
+        monkeypatch.setattr(ns, "engine_post", t.post)
         return t
 
     return install

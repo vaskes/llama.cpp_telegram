@@ -64,7 +64,7 @@ EXCEPTIONS = {
     ),
     "run_one": (
         "llm_iteration.py",
-        345,
+        349,
         "2026-10-25",
         "One tool-loop iteration, but nine concerns in the body. Open "
         "debt item 08, which is the item about splitting exactly this. "
@@ -74,7 +74,7 @@ EXCEPTIONS = {
         "ending, which now carries the same tools the streaming one "
         "does. It grew again the same day by the marked cut: the tool "
         "result the model reads is now condensed with a marker, so the "
-        "model can tell a fragment from a whole.",
+        "model can tell a fragment from a whole. It grew again on 2026-10-31 by the engine failover: the tools-less retry is now skipped when every engine endpoint is dead, because asking a dead engine again in another mode only makes the user wait twice as long.",
         "Split when debt item 08 is picked up; it names this function.",
     ),
     "handle_photo": (

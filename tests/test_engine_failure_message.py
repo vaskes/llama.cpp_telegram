@@ -94,9 +94,17 @@ def test_an_unknown_failure_still_says_something_a_user_can_read():
 
 
 class _DeadStream:
-    """A client whose every attempt to reach the engine fails."""
+    """A client whose every attempt to reach the engine fails.
 
-    def stream(self, *_a, **_kw):
+    The streamed request is built and sent separately (the failover sits
+    around the request, and a streamed response has to stay readable
+    after it), so the failure has to happen in both places.
+    """
+
+    def build_request(self, *_a, **_kw):
+        raise httpx.ConnectError("All connection attempts failed")
+
+    async def send(self, *_a, **_kw):
         raise httpx.ConnectError("All connection attempts failed")
 
     async def post(self, *_a, **_kw):

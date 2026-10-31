@@ -13,12 +13,12 @@ fetch_tools_from_llama from there, and tests/test_t39_integration.py
 calls call_llama._bash_command_tool_enabled() directly.
 """
 import asyncio
-from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 import mcp_registry
-from config import DISABLED_TOOLS, LLAMA_URL
+from config import DISABLED_TOOLS
+from llm_endpoint import engine_get
 from logconf import get_logger
 
 log = get_logger(__name__)
@@ -92,16 +92,11 @@ async def fetch_tools_from_llama():
             async with httpx.AsyncClient(timeout=15.0) as client:
                 # v0.10.2 (Qwen wave-3): robust URL construction.
                 # Old LLAMA_URL.replace('/v1', '') broke on trailing
-                # slashes, multiple /v1, or non-/v1 paths. Use urlparse
-                # to strip the last path component if it's /v1.
-                from urllib.parse import urlparse, urlunparse
-                parsed = urlparse(LLAMA_URL)
-                path = parsed.path.rstrip("/")
-                if path.endswith("/v1"):
-                    path = path[:-3]
-                base = urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
-                r = await client.get(f"{base}/tools")
-                r.raise_for_status()
+                # slashes, multiple /v1, or non-/v1 paths. The endpoint
+                # is now the one the bot is using right now, and the
+                # failover inside engine_get means a dead engine is not
+                # the end of the story: the other endpoint is asked.
+                r = await engine_get(client, "/tools", at_server_root=True)
                 all_tools = r.json()
             openai_tools = []
             for t in all_tools:
