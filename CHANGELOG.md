@@ -49,6 +49,62 @@ The check was verified by mutation, in the same commit that wrote it:
 removing `fetch-depth: 0` from the pytest job turns the tripwire RED,
 and putting it back turns it green.
 
+### Two doors, not three
+
+The tripwire that keeps a model out of the contributors list was
+rewritten against measurements instead of against a guess about what
+GitHub counts. The old version checked one slot: the `Co-Authored-By:`
+trailer. The question was never "is the trailer forbidden" but **which
+slots can put a model account on that page**, and the answer turned out
+to be two of the three.
+
+Reading the panel itself -- `GET /{owner}/{repo}/_sidebar`, the endpoint
+that feeds the contributors tile -- on five repositories where a model
+account appears:
+
+* the **author** field is a door. `sebyx07/git-history` has 10 052
+  commits authored by `noreply@anthropic.com`, and `claude` is on the
+  panel;
+* the **last paragraph** of the message is a door. `vaskes/greenboost`
+  has exactly one commit with such a trailer, no model-authored commit
+  at all, and `claude` is on the panel;
+* the **committer** field is **not** a door. In
+  `hongik2023graduationproject/hongik-new-web` the model carried the
+  committer on 18 commits, and GitHub's own count for it is 37 -- the
+  number of trailers, exactly. Had the committer counted, it would have
+  been 38.
+
+The earlier claim that the committer was a third door was wrong, and it
+was wrong in the direction that costs: a rule that forbids more than
+GitHub counts is a rule about a word, and a rule about a word is
+disabled by whoever writes the next document that uses the word. The
+committer field is what a `git rebase` or a `git commit --amend` leaves
+behind; it is not a credit.
+
+The rule is not "the word Claude is forbidden". A credit reaches the
+panel only if GitHub can resolve the address to an account, and only
+three of the addresses in circulation resolve: `noreply@anthropic.com`
+to `claude` (uid 81847), `noreply@openai.com` to `codex` (uid
+267193182), `cursoragent@cursor.com` to `cursoragent` (uid 199161495).
+All three appear on real panels. `gemini@google.com` resolves to
+nothing and appears on no panel. That is why `Mavis` and `Qwen` are
+credited in the README and in this repository's own trailers without
+being a problem.
+
+The tripwire now checks the author field and the trailer, in the last
+paragraph only -- by git's own convention a trailer is a `Key: value`
+line there, and a quote of a trailer in a message body is not one. It
+was renamed `tests/test_no_model_coauthor_trailers.py` ->
+`tests/test_no_model_attribution.py`, because it no longer checks
+trailers alone.
+
+One thing deliberately left out: the arithmetic behind GitHub's
+`total` is not reproduced here, and the docstring does not claim it.
+On two of the five repositories the count is lower than the number of
+credited commits, and the reason was not pinned down. The rule does not
+need it: the rule is about **membership** -- is the account on the
+panel -- and that was measured directly.
+
 ## [v0.29.0-stable] — 2026-10-30 — The workspace is a mailbox, and the bot stops posting letters into it
 
 **After `v0.28.0-stable`.** The next cycle starts here.

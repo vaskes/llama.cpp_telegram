@@ -48,8 +48,9 @@ run rather than your build:
 
 - `tests/test_size_budget.py` — a function over 200 lines, or a module
   over 1000 lines that is not in the debt register, fails the suite.
-- `tests/test_no_model_coauthor_trailers.py` — a co-author trailer
-  naming a model fails the suite.
+- `tests/test_no_model_attribution.py` — a commit that credits a
+  model-owned account, in the author field or in a co-author
+  trailer, fails the suite.
 
 Section 5 of the codebook says what a new check has to prove before it
 counts as one.

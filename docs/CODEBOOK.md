@@ -2130,7 +2130,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_size_budget.py` | 11 | S-1, S-6 — function and module size budgets |
 | `test_changelog_structure.py` | 7 | One `[Unreleased]` section; sections and tags agree |
 | `test_no_duplicate_definitions.py` | 4 | T-4 — repeated top-level definitions |
-| `test_no_model_coauthor_trailers.py` | 4 | No false attribution in the history |
+| `test_no_model_attribution.py` | 6 | No false attribution in the history |
 | `test_dispatch_group_seam.py` | 4 | The seam a group-absorb extraction needs |
 | `test_signal_handler_ownership.py` | 3 | One signal policy, two modes |
 | `test_c3_initialize_failure.py` | 2 | The publish-after-initialize ordering |
@@ -2319,9 +2319,9 @@ shape CI has, and it is the one that matters.
 
 ### 8.1 The history is part of the deliverable
 
-**R-1 — A co-author trailer is a contribution, and GitHub counts it.**
+**R-1 — A credit is a contribution, and GitHub counts it.**
 `AUTO`
-`tests/test_no_model_coauthor_trailers.py`.
+`tests/test_no_model_attribution.py`.
 
 Twenty-one commits carried
 `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
@@ -2334,13 +2334,45 @@ by git and by GitHub — and a `Co-Authored-By:` trailer is parsed as
 written. Removing the trailers needed a history rewrite, which moved every
 SHA from `975ab03` onwards, including the release.
 
-The tripwire reads commit messages, but **only the last paragraph**: by
-git's own convention a trailer is a `Key: value` line there, and a quote
-of a trailer in the body of a message is not one. The first version of
-the check searched the whole message and fired on this repository's own
-CHANGELOG, which quotes the trailer while describing the incident — a
-check that fires on the document explaining the problem is a check the
-next person disables when they write the next document about it.
+**Two slots are doors, and the third is not.** Measured on 2026-10-31 by
+reading the contributors panel itself (`GET /{owner}/{repo}/_sidebar`):
+
+* the **author** field — `sebyx07/git-history` has 10 052 commits
+  authored by `noreply@anthropic.com`, and the model is on the panel;
+* the **last paragraph** of the message, where a `Co-Authored-By:`
+  trailer lives — `vaskes/greenboost` has exactly one such commit, no
+  model-authored commit at all, and the model is on the panel;
+* the **committer** field is **not** a door. In
+  `hongik2023graduationproject/hongik-new-web` the model carried the
+  committer on 18 commits, and GitHub's own count for it is 37 — the
+  number of trailers, exactly. Had the committer counted, it would have
+  been 38.
+
+So the tripwire checks the author field and the trailer, and it leaves
+the committer alone. A rule that forbids more than GitHub counts is a
+rule about a word; a rule about a word is disabled by whoever writes the
+next document that uses it.
+
+**What counts as a trailer.** By git's own convention a trailer is a
+`Key: value` line in the **last paragraph** of a commit message, and a
+quote of a trailer in the body of a message is not one. The first
+version of the check searched the whole message and fired on this
+repository's own CHANGELOG, which quotes the trailer while describing the
+incident — a check that fires on the document explaining the problem is
+a check the next person disables when they write the next document about
+it.
+
+**Which addresses.** A credit only reaches the panel if GitHub can
+resolve the address to an account. Measured 2026-10-31:
+`noreply@anthropic.com` resolves to `claude` (uid 81847),
+`noreply@openai.com` to `codex` (uid 267193182), and
+`cursoragent@cursor.com` to `cursoragent` (uid 199161495) — all three
+appear on real panels. `gemini@google.com` resolves to nothing and
+appears on no panel; `mavis@kuduza.ai` and `noreply@mavis.local` likewise.
+That is why `Mavis` and `Qwen` are credited in this repository's README
+and in its trailers without being a problem: the rule is not "the word
+Claude is forbidden", it is "no model-owned **account** is credited
+here".
 
 **R-2 — `git worktree` keeps the old history alive.** `JUDGEMENT`
 
