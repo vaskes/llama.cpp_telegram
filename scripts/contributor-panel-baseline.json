@@ -1,0 +1,24 @@
+{
+  "note": [
+    "Repositories whose contributors panel carries a model-owned account",
+    "that this project is not entitled to erase. Each entry is an",
+    "exemption on the record: it names the repository, the reason, and",
+    "the date. The audit reports these as KNOWN -- visibly, with the",
+    "account named -- and does not fail on them. Withdraw an entry and",
+    "the same repository turns red on the next run.",
+    "",
+    "Removing an exemption does not remove the credit: it only makes the",
+    "credit visible to the check. Erasing it means rewriting the history,",
+    "which is a separate decision with its own cost."
+  ],
+  "exemptions": {
+    "vaskes/greenboost": {
+      "reason": "Copy of an upstream project. The upstream author (Ferran Duarri) is credited by a Co-Authored-By trailer in one commit; the model wrote no line of this repository. No upstream sync workflow exists, so the credit is frozen and will not come back on its own. Rewriting the history would destroy attribution that the GPL v2 requires.",
+      "recorded": "2026-10-31"
+    },
+    "vaskes/rtx-5090-strata-nvfp4": {
+      "reason": "Copy of an upstream project (sergqwer/strata-nvfp4). Upstream contributors are credited. No upstream sync workflow exists, so the credit is frozen and will not come back on its own.",
+      "recorded": "2026-10-31"
+    }
+  }
+}

@@ -2138,6 +2138,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_edit_removal.py` | 6 | The edit-replace feature is gone, and stays gone |
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
 | `test_ci_history_depth.py` | 5 | The gate sees the history it judges |
+| `test_contributor_panel_audit.py` | 16 | The contributors panel holds no model account |
 
 | `test_console_output_in_chat.py` | 10 | The console output goes into the chat; it is not a file; and the comparison that decides it runs against what the model saw |
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
@@ -2186,7 +2187,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-189 test files in total; the table above is the ones that guard a rule in
+190 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
@@ -2373,6 +2374,46 @@ That is why `Mavis` and `Qwen` are credited in this repository's README
 and in its trailers without being a problem: the rule is not "the word
 Claude is forbidden", it is "no model-owned **account** is credited
 here".
+
+**R-3 — The panel is a separate surface, and it is audited separately.**
+`AUTO`
+`tests/test_contributor_panel_audit.py`,
+`scripts/audit_contributor_panels.py`.
+
+The tripwire above reads the history. The contributors panel is drawn by
+GitHub from that history, but it is a different surface, reached by a
+different request, and it can hold an account the history check never
+looked at -- a credit that arrived before the check existed, a panel
+GitHub recomputed on its own, a repository this project does not push
+to.
+
+So the panel is audited on its own: `GET /{owner}/{repo}/_sidebar`, the
+endpoint the tile is actually drawn from. **Not** the documented one.
+An earlier check in this repository read the contributors *graph* and
+declared the task done while the tile still showed the account, because
+the graph and the tile are different snapshots.
+
+Three properties make the audit hold:
+
+* it matches on the **uid** the avatar URL carries, not on the login.
+  A login can be renamed; a uid cannot. A check that matched on the
+  name would deny `devin` (uid 6137) and `mavis` (uid 1176898), who
+  are people and who are on real panels.
+* it denies only accounts that were **measured** to be reachable --
+  `claude` (81847), `codex` (267193182), `cursoragent` (199161495). An
+  address that resolves to nothing cannot reach a panel, so it is not
+  a risk, and a rule about it would be a rule about a word.
+* a panel that **cannot be read** is UNREADABLE, and the run fails.
+  An endpoint that answers, a JSON that parses, and the thing being
+  checked simply absent -- that is a clean bill of health for a panel
+  that was never looked at.
+
+Where a repository carries someone else's credit and cannot be erased
+-- a copy of another project's history, under a licence that requires
+the attribution -- the exemption is **recorded, not hidden**:
+`scripts/contributor-panel-baseline.json` names the repository, the
+reason and the date, and the audit prints the account's name next to
+the reason. Withdraw the record and the repository turns red.
 
 **R-2 — `git worktree` keeps the old history alive.** `JUDGEMENT`
 

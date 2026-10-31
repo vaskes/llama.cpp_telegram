@@ -38,6 +38,7 @@ disagreement again without a test going red.
 | 12 | `prompts.py` module constants | **closed** — the prose moved into `prompt_text/` | `test_prompts.py` | Dockerfile `COPY` for the package |
 | 13 | `handlers.py` shared wrapper | **closed** — blocks A–F | `test_handler_middle.py` | The shared `call_llama` call sites stay duplicated on purpose; the item file says why |
 | 14 | Duplicate top-level definitions in `tests/` | **closed** | `test_no_duplicate_definitions.py` | — |
+| 15 | Model account on the panel of two mirrored repositories | **open** — credit belongs to upstream; erasing it would destroy attribution | `scripts/audit_contributor_panels.py` | The credit stays visible on two panels; the exemptions are on the record with a trigger to revisit them |
 
 The sizes, the leaf-module counts and the mutation counts live in the item
 files, not in this table. This table is navigation, and a number copied

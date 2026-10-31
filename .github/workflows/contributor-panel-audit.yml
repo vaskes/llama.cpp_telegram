@@ -1,0 +1,86 @@
+# The contributors panel is the thing the operator sees on a repository's
+# front page, and the tripwire that guards the commit history does not
+# look at it: a credit can reach the panel by a route the history check
+# never walks (a credit that arrived before the check existed, a panel
+# GitHub recomputed on its own, a repository this project does not push
+# to).
+#
+# So the panel is audited on its own, on a schedule, and a model-owned
+# account on any panel is a failure that names itself.
+#
+# The repositories are listed in scripts/contributor-panel-audit.txt.
+# The exemptions -- repositories whose credit belongs to someone else
+# and cannot be erased without destroying their attribution -- are in
+# scripts/contributor-panel-baseline.json, and are reported as KNOWN,
+# with the account named, rather than hidden.
+
+name: contributor-panel-audit
+
+on:
+  schedule:
+    # 04:17 every day. Off the hour on purpose: every scheduled workflow
+    # that fires at :00 piles onto the same minute of the same hour, and
+    # GitHub queues them.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: "owner/name list to check instead of the default"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Audit the contributors panels
+        id: audit
+        run: |
+          set -o pipefail
+          args="--repos-file scripts/contributor-panel-audit.txt"
+          if [ -n "${{ inputs.repos }}" ]; then
+            args="--repos ${{ inputs.repos }}"
+          fi
+          python3 scripts/audit_contributor_panels.py $args \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          status=${PIPESTATUS[0]}
+          echo "exit_status=$status" >> "$GITHUB_OUTPUT"
+          exit $status
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          {
+            echo ""
+            echo "### Why this failed"
+            echo ""
+            echo "A model-owned account is on a contributors panel, or a panel"
+            echo "could not be read."
+            echo ""
+            echo "The panel is drawn from the history, so the credit is in a"
+            echo "commit: an \`author\` field, or a \`Co-Authored-By:\` trailer in"
+            echo "the last paragraph of the message. The committer field is not"
+            echo "a credit GitHub counts."
+            echo ""
+            echo "To see which account, and where:"
+            echo ""
+            echo '```'
+            echo "git log --all --format='%H %an <%ae> %s'"
+            echo "```"
+            echo ""
+            echo "A repository that carries someone else's credit cannot be"
+            echo "erased without rewriting its history -- see"
+            echo "scripts/contributor-panel-baseline.json."
+          } >> "$GITHUB_STEP_SUMMARY"

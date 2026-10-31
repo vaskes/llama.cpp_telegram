@@ -105,6 +105,48 @@ credited commits, and the reason was not pinned down. The rule does not
 need it: the rule is about **membership** -- is the account on the
 panel -- and that was measured directly.
 
+### The panel itself, audited
+
+The tripwire guards the history. It cannot see the panel -- and the
+panel is the thing the operator actually looks at: the avatar strip on
+a repository's front page.
+
+So the panel is audited on its own, on a schedule, by
+`scripts/audit_contributor_panels.py`. It reads the endpoint the panel
+is really drawn from (`GET /{owner}/{repo}/_sidebar`), not a proxy,
+because the documented one is not the one that feeds the tile -- an
+earlier check in this repository read the contributors *graph* and
+declared victory while the tile still showed the account.
+
+Two decisions make it hold:
+
+* it matches on the account's **uid**, not its login. A login can be
+  renamed; a uid cannot, and the uid is what the avatar URL carries.
+  A check that matched on the name would take down `devin` (uid 6137)
+  and `mavis` (uid 1176898), who are people and who are on real
+  panels;
+* it reads the accounts from a **measured** list -- `claude` (81847),
+  `codex` (267193182), `cursoragent` (199161495), each resolved from an
+  address and then found on a real panel. Addresses that resolve to
+  nothing (`gemini@google.com`, `mavis@kuduza.ai`) are not in the list,
+  because a credit that cannot reach an account cannot reach a panel.
+
+A panel that cannot be read is reported **UNREADABLE** and fails the
+run. That is the failure a check can hide: the endpoint answers, the
+JSON parses, and the thing being checked is simply absent.
+
+Two of the operator's repositories still carry `claude` on their panel:
+`vaskes/greenboost` and `vaskes/rtx-5090-strata-nvfp4`. Both are
+copies of other people's projects, and `greenboost` is under GPL v2 --
+rewriting its history to remove the name would destroy the attribution
+the licence requires. The credit is therefore **recorded, not erased**:
+`scripts/contributor-panel-baseline.json` names each repository, the
+reason and the date, and the audit reports those panels as KNOWN --
+with the account named in the output, not hidden behind the word
+"expected". Withdraw an entry and the same repository turns red on the
+next run. The debt, its trigger and the alternatives are in
+`docs/tech-debt/15-model-credit-in-mirrored-repositories.md`.
+
 ## [v0.29.0-stable] — 2026-10-30 — The workspace is a mailbox, and the bot stops posting letters into it
 
 **After `v0.28.0-stable`.** The next cycle starts here.

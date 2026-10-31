@@ -1,0 +1,25 @@
+# The repositories whose contributors panel is audited.
+#
+# Every repository this operator owns and publishes. The panel is the
+# avatar strip on the repository's front page; a model-owned account on
+# it is the thing the operator asked to be prevented.
+#
+# A repository that cannot be read (private, renamed, gone) is reported
+# as UNREADABLE and fails the run. Add the repository to
+# scripts/contributor-panel-baseline.json only if it is a copy of
+# someone else's project whose credit cannot be erased -- not to quiet
+# a failure.
+
+vaskes/llama.cpp_telegram
+vaskes/OpenWebUI-bash-sandbox
+vaskes/llama.cpp-rocm-780m
+vaskes/llama.cpp_search
+vaskes/comfyui-rocm-780m
+vaskes/comfyui-2080ti-turing
+vaskes/Kanban-persistent-llm-agent
+vaskes/Rhymer
+vaskes/nvidia_greenboost_mirror
+vaskes/strata-780m
+vaskes/tempera
+vaskes/greenboost
+vaskes/rtx-5090-strata-nvfp4
