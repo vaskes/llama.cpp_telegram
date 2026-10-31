@@ -65,7 +65,8 @@ class Turn:
 
     async def persist(self, content, *, role: str = "user",
                       sender_name: str | None = None,
-                      telegram_message_id: int | None = None) -> None:
+                      telegram_message_id: int | None = None,
+                      turn_context: str | None = None) -> None:
         """Write the user turn. Sets the flag BEFORE awaiting.
 
         The flag goes first on purpose: if persist raises halfway, `persisted`
@@ -77,12 +78,21 @@ class Turn:
         came from, when the handler knows it. It is stored with the row, so
         the bot can find that message again later and take it back out of
         the chat without the row going anywhere.
+
+        `turn_context` is the block of ids that belong to this turn (the
+        message the user just wrote, the one they replied to, the bot's own
+        last messages). It is stored with the row so that the next turn
+        re-renders this message byte-for-byte as the engine already holds
+        it -- the engine's prefix cache is all-or-nothing, and a message
+        that renders differently on the next turn costs the whole prefix.
+        See llm_delete.turn_context_block.
         """
         from persistence import persist as _persist
         self.persisted = True
         row_id = await _persist(self.chat_id, self.thread_id, role, content,
                                 sender_name=sender_name,
-                                telegram_message_id=telegram_message_id)
+                                telegram_message_id=telegram_message_id,
+                                turn_context=turn_context)
         self.rows += 1
         if row_id is not None:
             self._row_ids.append(int(row_id))

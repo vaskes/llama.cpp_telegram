@@ -143,9 +143,8 @@ MUTATIONS = [
     ]),
     ("the photo turn loses the id", "CAUGHT", [
         (HANDLERS,
-         r'                        "_sender_name": sender_name,\n'
-         r'                        "_telegram_message_id": update\.message\.message_id\}\n',
-         '                        "_sender_name": sender_name}\n', 1),
+         r'                        "_telegram_message_id": update\.message\.message_id,\n',
+         '', 1),
     ]),
     ("the tool description forgets the marker", "CAUGHT", [
         (DELETE,
@@ -155,13 +154,14 @@ MUTATIONS = [
     ("the tool description loses the fence around the bot's own ids",
      "CAUGHT", [
          (DELETE,
-           r'\+ "\. These are the BOT\'s messages, not the user\'s -- never "\n',
-           '+ ". These are the BOT\'s messages -- "\n', 1),
+           r'\+ " -- these are the BOT\'s messages, not the user\'s; never "\n',
+           '+ " -- these are the BOT\'s messages -- "\n', 1),
      ]),
     ("the prompt forgets the marker", "CAUGHT", [
         (PROMPT,
-         r"ids of the bot's own messages, and the ids marked `\[telegram id N\]`",
-         "ids of the bot's own messages", 1),
+         r"the ids of the bot's own messages -- and the ids\n"
+         r"marked `\[telegram id N\]` in the conversation",
+         "the ids of the bot's own messages", 1),
         (PROMPT,
          r"`\[telegram id N\]` marker above its text",
          "the marker above its text", 1),
@@ -218,11 +218,18 @@ MUTATIONS = [
           r"        vouched = await known_ids\(deps\.chat_id, requested_ids\(args\)\)\n",
           "        vouched = set(requested_ids(args))\n", 1),
      ]),
-    ("the description tripwire is gone, and the description loses the marker",
+    ("the description tripwires are gone, and the description loses the marker",
      "SURVIVED", [
          (TEST_NEW,
           r"(?m)^def test_the_tool_description_names_the_marker\(\):\n",
           "def test_the_tool_description_names_the_marker():\n    return\n", 1),
+         # The same marker is guarded from the other side: the delete
+         # tool's own test file says the description must name it. A
+         # group-B mutation caught by a test it did not remove is not a
+         # group-B mutation at all.
+         (TEST_DELETE,
+          r"(?m)^def test_the_tool_description_carries_the_ids_the_model_needs\(\):\n",
+          "def test_the_tool_description_carries_the_ids_the_model_needs():\n    return\n", 1),
          (DELETE,
           r"\[telegram id N\]",
           "the id marked in the conversation", 3),

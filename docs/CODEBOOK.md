@@ -50,7 +50,7 @@ changed, not the tree.
 
 **Not line count.**
 
-Our largest file right now is `handlers.py` at 1587 lines, and it is
+Our largest file right now is `handlers.py` at 1621 lines, and it is
 **healthy**. It is large because four handlers share one shape. That
 repetition is cheap: there is one proven skeleton, and a fix to the skeleton
 breaks four call sites *identically*. Nothing can drift.
@@ -91,9 +91,9 @@ only thing anyone could write was a test that read the source text and hoped.
 > **If a function holds more than about four unrelated things — not branches,
 > not lines — it is a monolith regardless of length.**
 
-`run_one` at 349 lines, nine concerns. `handle_photo` at 253 lines, one concern
-plus a media path. `handle_document` at 209 lines, the same shape with the
-binary path under it. `call_llama` at 222 lines, four concerns and a documented
+`run_one` at 349 lines, nine concerns. `handle_photo` at 258 lines, one concern
+plus a media path. `handle_document` at 210 lines, the same shape with the
+binary path under it. `call_llama` at 220 lines, four concerns and a documented
 `DO NOT REFACTOR` with a trigger. Length is a proxy. Concern count is the
 signal. Where they disagree, count the concerns.
 
@@ -409,11 +409,11 @@ There are four, and it is worth reading what they are:
 
 | Function | Lines | What it is |
 |---|---|---|
-| `call_llama` | 222 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
+| `call_llama` | 220 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
 | `run_one` | 349 | One tool-loop iteration, nine concerns. Debt item 08. |
-| `handle_photo` | 253 | One concern plus a media path. Debt item 13. |
-| `handle_text` | 211 | Not debt. Same shape as `handle_photo`. |
-| `handle_document` | 209 | Not debt. Same shape, plus the binary path into the sandbox. |
+| `handle_photo` | 258 | One concern plus a media path. Debt item 13. |
+| `handle_text` | 212 | Not debt. Same shape as `handle_photo`. |
+| `handle_document` | 210 | Not debt. Same shape, plus the binary path into the sandbox. |
 
 The fourth one is the reason this rule exists. `handle_text` crossed 200
 lines at some point during nine days of refactoring, and nobody noticed,
@@ -449,7 +449,7 @@ rule down as `AUTO` would have been a claim with no check behind it
 |---|---|
 | `config.py` | 14 |
 | `context_budget.py` | 4 |
-| `handlers.py` | 30 |
+| `handlers.py` | 31 |
 | `limits.py` | 22 |
 | `llm_delete.py` | 4 |
 | `llm_iteration.py` | 0 |
@@ -478,7 +478,7 @@ its current size declared.** `AUTO`
 `tests/test_size_budget.py`, against the `<!-- current: file=N -->`
 declarations that `test_tech_debt_doc_sizes.py` already keeps honest.
 
-`handlers.py` is 1587 and is registered. The threshold is 1000 because
+`handlers.py` is 1621 and is registered. The threshold is 1000 because
 that is above every module that is not in the register and below the one
 that is — a limit set by the tree, and the tree is allowed to be above it
 only through a written exception. The register is the place where "this
@@ -1990,6 +1990,53 @@ holds both directions: breaking the failover has to turn the suite red,
 and removing the tripwire together with the behaviour has to turn it
 green again.
 
+### 3.17 The beginning of the prompt does not move from turn to turn
+
+The engine keeps the KV cache of the last prompt and matches the next
+one against it, prefix by prefix, up to the last turn marker. The match
+is all-or-nothing: one changed digit and NOTHING is reused.
+
+Measured on the production engine on 2026-11-01, with the engine's own
+chat template and the operator's real chat:
+
+```
+the same body sent twice, unchanged   20 552 = 20 547 reused + 5 read   0.07 s
+the same body, one digit different     20 552 = 0 reused + 20 552 read  41.3 s
+a context that slides (newest 20)              13 077 = 0 reused + read  40.2 s
+a growing prefix of 37 165 tokens              37 165 reused            1.1 s
+```
+
+565 times faster for one digit. The bot was paying the 41.3 s on EVERY
+turn, and nothing said why: the bot answered, just slowly, forever.
+
+So there are two rules, and both of them are about bytes:
+
+  * **the tools block is the same on every turn.** The engine renders it
+    BEFORE the system message and the whole history, so a tool
+    description that names this turn's ids moves the very beginning of
+    the prompt. The ids of a turn travel in the TURN CONTEXT block at
+    the END of the user's message instead -- `llm_delete.turn_context_block`.
+    The engine's template refuses a system message after the first one
+    (`raise_exception('System message must be at the beginning.')`), so the
+    end of the user's message is the only place left;
+  * **the context grows, it does not slide.** The bound is a TOKEN BUDGET
+    (`CONTEXT_TOKEN_BUDGET`) and the oldest messages are folded out when it
+    is exceeded -- as few as possible, and never the newest one. The
+    message-count ceiling stays as a backstop, high enough that the token
+    budget is what decides.
+
+And one thing that follows from both: **the turn context is stored with
+the row.** The next turn re-renders that message from the database, and
+if the re-render differed by a byte the prefix would stop matching ONE
+TURN LATER, and the reuse would die with nothing in the logs to say why.
+
+Checked by `tests/test_context_reuse.py` (12). Each test is RED on the
+tree of 2026-10-31, which slid the context and put the turn's ids into
+the tool's description. The mutation harness
+`scripts/mutation_harness_context_reuse.py` holds both directions:
+breaking the property has to turn the suite red, and removing the
+tripwire together with the behaviour has to turn it green again.
+
 ---
 
 ## 4. Rules for the reviewer and the harness
@@ -2190,6 +2237,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
 | `test_ci_history_depth.py` | 5 | The gate sees the history it judges |
 | `test_contributor_panel_audit.py` | 19 | The contributors panel holds no model account |
+| `test_context_reuse.py` | 12 | The prompt's beginning does not move from turn to turn -- the engine's prefix cache is earned, not lost |
 
 | `test_console_output_in_chat.py` | 10 | The console output goes into the chat; it is not a file; and the comparison that decides it runs against what the model saw |
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
@@ -2206,7 +2254,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_telegram_bold.py` | 18 | The bold the model wrote is bold in the chat: the asterisks are markup, and a code span inside a bold span keeps both |
 | `test_telegram_inline_code.py` | 15 | The inline code is native code too -- and the reasoning message is not formatted at all |
 | `test_telegram_api_host.py` | 8 | The platform's file ceiling is chosen by the parsed host, not by a substring of the URL |
-| `test_delete_messages_tool.py` | 52 | A message can be taken back out of the chat -- and the bot's own history is not touched |
+| `test_delete_messages_tool.py` | 54 | A message can be taken back out of the chat -- and the bot's own history is not touched |
 | `test_message_search.py` | 11 | The store keeps the Telegram id of every message, and can be searched by text and by sender |
 | `test_telegram_id_recorded.py` | 5 | Every message the bot stores carries the Telegram id it came from |
 | `test_chat_history_search.py` | 12 | The bot's own record of the chat, and what it buys |
@@ -2239,7 +2287,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 | `test_llm_endpoint_failover.py` | 13 | The engine can move: the bot tries the other endpoint only when the active one fails, and the engine that answers is the one it keeps |
 
-191 test files in total; the table above is the ones that guard a rule in
+192 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
@@ -2266,7 +2314,7 @@ costs more than a `W605` — a decision already made and recorded.
 **Type hints.** The repository has almost none. Adding them now is cosmetics
 with no observed incident behind it.
 
-**"Files must be under N lines."** Data is against it: `handlers.py` is 1587 and
+**"Files must be under N lines."** Data is against it: `handlers.py` is 1621 and
 healthy, because it is repetition of one checked shape, not a mixture.
 
 **"Write tests for everything."** What works is §2 and T-8 — *extraction requires
@@ -2509,6 +2557,6 @@ mutation and an untracked test file.
 > The one thing that is a number is a budget, and it is a number for a
 > particular reason: it is the cheapest way to notice that something grew
 > while nobody was looking. A budget does not decide what a monolith is —
-> `handlers.py` is 1587 lines and healthy — it only decides when somebody
+> `handlers.py` is 1621 lines and healthy — it only decides when somebody
 > has to write down why. That is where the judgement lives: in the
 > exception, with a date, a reason and a trigger.

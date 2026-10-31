@@ -73,11 +73,11 @@ dispatch_polling.py   352 lines, startup + getUpdates loop
 dispatch_webhook.py   443 lines, PTB assembly + handlers
 webhook.py             267 lines, aiohttp server + secret check
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
-call_llama.py   383 lines, ToolLoop owns the iteration, 25 llm_* leaf modules
-handlers.py    1587 lines
+call_llama.py   381 lines, ToolLoop owns the iteration, 25 llm_* leaf modules
+handlers.py    1621 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      938 lines, class Storage encapsulated, get_store() sole entry
-config.py       616 lines, 29 env names, plus 20 elsewhere in the package
+config.py       616 lines, 29 env names, plus 21 elsewhere in the package
 
 Line counts are splitlines(); the trailing newline is not a line. The
 earlier figures in this file came from split("\n") and were each one

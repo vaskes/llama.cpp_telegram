@@ -138,32 +138,77 @@ def test_a_deleted_message_leaves_the_log(tmp_path):
 
 
 def test_the_tool_description_carries_the_ids_the_model_needs():
-    """A model with an id uses it. A model without one invents one."""
-    from llm_delete import (delete_messages_tool_def, new_answer_group,
-                             remember_answer)
+    """The ids are still reachable -- but not through the description.
+
+    They used to be IN the description, and that is what killed the
+    engine's prefix cache: the engine renders the tools block BEFORE the
+    system message and the whole history, so a description that changes
+    from turn to turn changes the very beginning of the prompt, and the
+    match is all-or-nothing. Measured on the production engine on
+    2026-11-01: `reused 0` and 41.3 s per turn with a changing
+    description, against `reused 19 826` and 1.1 s for the same body
+    sent twice -- 565 times faster for one digit.
+
+    So the description POINTS at the ids now, and the ids travel in the
+    turn context at the end of the user's message.
+    """
+    from llm_delete import delete_messages_tool_def
+    desc = delete_messages_tool_def()["function"]["description"]
+    assert "NEVER invent" in desc, desc
+    assert "[turn context]" in desc, desc
+    assert "[telegram id N]" in desc, desc
+
+
+def test_the_tool_description_cannot_depend_on_the_turn():
+    """The strongest form of the property: the function takes NOTHING.
+
+    A parameter is a door through which a per-turn fact can walk back
+    into the description, and the description is the one place in the
+    prompt that the engine reads first. So the door is not there at all.
+    """
+    import inspect
+    from llm_delete import delete_messages_tool_def
+    params = list(inspect.signature(delete_messages_tool_def).parameters)
+    assert params == [], (
+        f"the delete tool's description must not be a function of the "
+        f"turn, but it takes {params}: the engine renders the tools "
+        f"block first, so a changing description moves the beginning "
+        f"of the prompt and the prefix cache never matches")
+    assert delete_messages_tool_def() == delete_messages_tool_def()
+
+
+def test_the_turn_context_carries_the_ids_the_model_needs():
+    """A model with an id uses it. A model without one invents one.
+
+    The ids the description used to carry live in the turn context now:
+    the message the user just wrote, the message they replied to, and
+    the bot's own last messages.
+    """
+    from llm_delete import (new_answer_group, remember_answer,
+                             turn_context_block)
     group = new_answer_group()
     remember_answer(100, 701, group)
     remember_answer(100, 702, group)
-    desc = delete_messages_tool_def(
-        chat_id=100, reply_to_message_id=699)["function"]["description"]
-    assert "701" in desc and "702" in desc, desc
-    assert "699" in desc, desc
-    assert "NEVER invent" in desc, desc
+    block = turn_context_block(100, reply_to_message_id=699,
+                               current_message_id=703)
+    assert "703" in block, block
+    assert "699" in block, block
+    assert "701" in block and "702" in block, block
+    assert "NEVER invent" not in block, block
 
 
 def test_the_tool_description_says_what_the_reply_means():
     """The pointed-at id has to be unmistakable.
 
     On 2026-10-26 the description carried the reply-to id and the
-    model still answered with numbers it had made up. So the id comes
-    first, it is named as the message the user replied to, and the
-    sentence says what to do with it.
+    model still answered with numbers it had made up. So the id is named
+    as the message the user replied to, and the rule is stated as a
+    prohibition.
     """
-    from llm_delete import delete_messages_tool_def
-    desc = delete_messages_tool_def(
-        chat_id=100, reply_to_message_id=699)["function"]["description"]
-    assert "REPLIED TO has id 699" in desc, desc
-    assert "message_ids=[699]" in desc, desc
+    from llm_delete import turn_context_block
+    block = turn_context_block(100, reply_to_message_id=699)
+    assert "REPLIED TO" in block, block
+    assert "699" in block, block
 
 
 def test_the_description_names_the_message_the_user_just_wrote():
@@ -176,15 +221,13 @@ def test_the_description_names_the_message_the_user_just_wrote():
     bot knew the id of the message the user had just written and did
     not offer it, so the only id in reach was the wrong one.
     """
-    from llm_delete import delete_messages_tool_def
-    desc = delete_messages_tool_def(
-        chat_id=100, reply_to_message_id=25,
-        current_message_id=3264)["function"]["description"]
-    assert "JUST WROTE has id 3264" in desc, desc
-    assert "message_ids=[3264]" in desc, desc
+    from llm_delete import turn_context_block
+    block = turn_context_block(100, reply_to_message_id=25,
+                               current_message_id=3264)
+    assert "JUST WROTE" in block, block
+    assert "3264" in block, block
     # the current message comes FIRST: it is the one "I just wrote"
-    assert desc.index("3264") < desc.index("25"), desc
-    assert "NEVER invent" in desc, desc
+    assert block.index("3264") < block.index("25"), block
 
 
 def test_the_current_message_id_is_in_reach():
@@ -596,28 +639,27 @@ def test_the_description_leads_with_the_id_the_user_points_at():
     """The ids come first, and each says whose message it is.
 
     "YOUR last messages" was read from the user's side -- the model
-    took the bot's own ids for the user's messages. The wording now
-    says whose message each id is.
+    took the bot's own ids for the user's messages. The wording says
+    whose message each id is.
     """
-    from llm_delete import delete_messages_tool_def, new_answer_group, \
-        remember_answer
+    from llm_delete import (new_answer_group, remember_answer,
+                             turn_context_block)
     remember_answer(100, 3213, new_answer_group())
-    description = delete_messages_tool_def(
-        chat_id=100, reply_to_message_id=3220)["function"]["description"]
-    assert description.index("3220") < description.index("3213"), (
+    block = turn_context_block(100, reply_to_message_id=3220,
+                               current_message_id=3200)
+    assert block.index("3220") < block.index("3213"), (
         "the id the user points at comes first")
-    assert "BOT's messages" in description
-    assert "YOUR last messages" not in description
+    assert "BOT's messages" in block
+    assert "YOUR last messages" not in block
 
 
 def test_the_description_says_so_when_the_bot_knows_no_ids():
     """The deployment window of 2026-10-26: the id log was empty, so
     the description carried no ids at all, and the model made some up.
-    Now it says what it does not know."""
-    from llm_delete import delete_messages_tool_def
-    description = delete_messages_tool_def(
-        chat_id=100, reply_to_message_id=3220)["function"]["description"]
-    assert "does not know their ids" in description
+    Now it says what it does not know -- in the turn context."""
+    from llm_delete import turn_context_block
+    block = turn_context_block(100, reply_to_message_id=3220)
+    assert "does not know their ids" in block
 
 
 @pytest.mark.asyncio

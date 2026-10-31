@@ -185,7 +185,9 @@ def test_describe_exposes_the_policy():
                  # T70.5 budgets: /stats and the operator read them from here.
                  "summary_tail_tokens": cb.SUMMARY_TAIL_TOKENS,
                  "summary_context_tokens": cb.SUMMARY_CONTEXT_TOKENS,
-                 "summary_chunk_tokens": cb.SUMMARY_CHUNK_TOKENS}
+                 "summary_chunk_tokens": cb.SUMMARY_CHUNK_TOKENS,
+                 # The token budget: the working bound of the context.
+                 "token_budget": cb.TOKEN_BUDGET}
 
 
 def test_the_summary_budgets_are_read_from_the_environment():

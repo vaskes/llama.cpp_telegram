@@ -214,9 +214,7 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
 
     await _ensure_model()  # lazy first-call discovery
     all_tools = await build_tool_defs(
-        bot=bot, chat_id=chat_id, chat_type=chat_type,
-        reply_to_message_id=reply_to_message_id,
-        current_message_id=current_message_id)
+        bot=bot, chat_id=chat_id, chat_type=chat_type)
 
     # === Group context (always-injected system message) ===
     # The LlmChatPlace rules go into a system message that appears

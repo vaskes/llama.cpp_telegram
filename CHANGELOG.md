@@ -17,6 +17,42 @@ this file is the human-readable summary.
 
 **After `v0.30.0-stable`.** The next cycle starts here.
 
+### The engine's prefix cache, earned instead of lost
+
+Every turn used to cost the engine a full re-read of the prompt: 20 552
+tokens and 41.3 s, measured on the production engine on 2026-11-01. The
+same body sent twice, unchanged, took 0.07 s -- 565 times faster for one
+digit. The engine keeps the KV cache of the last prompt and matches the
+next one against it prefix by prefix, and the match is all-or-nothing:
+one changed digit and NOTHING is reused.
+
+Two things moved that prefix, and both were in the bot's code:
+
+  * **the tools block.** The `delete_messages` description named the ids
+    of the turn -- the message the user had just written, the one they
+    replied to, the bot's own last messages. The engine renders the tools
+    block BEFORE the system message and the whole history, so a
+    description that changes from turn to turn changes the very beginning
+    of the prompt. The description is now the same bytes on every turn,
+    and the ids travel in a **turn context** block at the end of the
+    user's message -- which is where a per-turn fact belongs, and the
+    only place the engine's template leaves (it refuses a system message
+    after the first one);
+  * **the context.** It was the newest 20 messages: a sliding window, so
+    the history moved every turn. The bound is a token budget now
+    (`CONTEXT_TOKEN_BUDGET`, default 32768) and the oldest messages are
+    folded out above it -- as few as possible, and never the newest one.
+    The message-count ceiling stays as a backstop (400).
+
+The turn context is stored with the row, in the envelope, under
+`_turn_context` -- beside the user's text, never inside it. That is what
+makes the next turn's re-render byte-for-byte the render the engine
+already holds; a re-render that differed by a byte would stop the reuse
+one turn later, with nothing in the logs to say why.
+
+Checked by `tests/test_context_reuse.py` (12) and the mutation harness
+`scripts/mutation_harness_context_reuse.py`.
+
 ## [v0.30.0-stable] — 2026-11-01 — The engine moves, and the bot follows it without probing
 
 **After `v0.29.0-stable`.** The next cycle starts here.

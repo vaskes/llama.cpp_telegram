@@ -245,11 +245,29 @@ The knobs (all described in `telegram-bot/.env.example`):
 | variable | default | meaning |
 |---|---|---|
 | `BOT_REMEMBER_DAYS` | `7` | how many days back the window reaches |
-| `CONTEXT_MAX_MESSAGES` | `400` | ceiling on the messages in the window |
+| `CONTEXT_TOKEN_BUDGET` | `32768` | how many tokens of messages go to the engine; the oldest are folded out above it |
+| `CONTEXT_MAX_MESSAGES` | `400` | ceiling on the messages in the window (a backstop; the token budget decides) |
 | `CONTEXT_STRATEGY` | `window` | `window` or `summarize` |
 | `SUMMARY_TAIL_TOKENS` | `65536` | how much never-summarised old history may still be loaded raw |
 | `SUMMARY_CHUNK_TOKENS` | `65536` | how much old history goes into ONE summarisation call |
 | `SUMMARY_CONTEXT_TOKENS` | `131072` | ceiling on the old part of the prompt as a whole |
+
+**"The bot got slow" is usually the prefix, not the prompt.** The engine
+keeps the KV cache of the last prompt and matches the next one against it
+prefix by prefix, and the match is all-or-nothing: one changed digit and
+nothing is reused, so the whole prompt is read again. Two things move that
+prefix, and both were measured on the production engine on 2026-11-01:
+
+  * a tool description that names the turn's ids (the ids of the turn live
+    in the turn context block at the end of the user's message now, and
+    the tool's description is the same bytes on every turn);
+  * a context that slides -- the newest N messages, so the history moves
+    every turn. The bound is a token budget now, and the oldest messages
+    are folded out above it.
+
+The tell is in the engine's own numbers: `Reused 0` on every request
+means the prefix moved, and a slow first request with a fast second one
+means it did not.
 
 **"The bot forgot" is usually the window, not a bug.** The anchor is
 computed once, when the bot starts, and it does **not** slide:

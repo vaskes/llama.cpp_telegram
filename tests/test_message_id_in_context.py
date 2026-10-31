@@ -306,29 +306,32 @@ def test_the_tool_description_names_the_marker():
     it, because the description says the only ids are the listed ones."""
     import llm_delete
 
-    desc = llm_delete.delete_messages_tool_def(
-        chat_id=CHAT, current_message_id=7)["function"]["description"]
+    desc = llm_delete.delete_messages_tool_def()["function"]["description"]
     assert "[telegram id N]" in desc, (
         f"the description does not mention the marker: {desc!r}")
     assert "search_messages" in desc, (
         f"the description does not mention the other source of ids: {desc!r}")
 
 
-def test_the_tool_description_says_the_own_ids_are_not_the_users():
+def test_the_turn_context_says_the_own_ids_are_not_the_users():
     """The measured failure: the model took 3354 and 3357 out of the
     list of the bot's own messages and offered them as the ids of the
-    user's messages."""
+    user's messages.
+
+    The fence moved with the ids: the list of the bot's own ids is in
+    the turn context now, so that is where the fence has to be.
+    """
     import llm_delete
 
     # The fence lives in the branch that lists the bot's own ids, so
-    # the registry has to hold one -- otherwise the description has
-    # nothing to fence off and the test would pass on an empty case.
+    # the registry has to hold one -- otherwise the block has nothing
+    # to fence off and the test would pass on an empty case.
     llm_delete._SENT[CHAT].append((4242, 1))
 
-    desc = llm_delete.delete_messages_tool_def(
-        chat_id=CHAT, current_message_id=7)["function"]["description"]
-    assert "not the user's" in desc, (
-        f"the description does not fence off the bot's own ids: {desc!r}")
+    block = llm_delete.turn_context_block(CHAT, current_message_id=7)
+    assert "not the user's" in block, (
+        f"the turn context does not fence off the bot's own ids: "
+        f"{block!r}")
 
 
 def test_the_prompt_says_where_an_id_may_come_from():

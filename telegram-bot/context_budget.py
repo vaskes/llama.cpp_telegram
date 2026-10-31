@@ -56,6 +56,34 @@
 #     of this at all. Without a re-anchor, context grows until the engine
 #     refuses it — which is why T70.4 makes overflow loud instead of silent.
 #
+# The size bound: a fold, not a slide
+# ----------------------------------
+# The age window says HOW FAR BACK. Something has to say HOW MUCH, and
+# until 2026-11-01 that something was the newest 20 messages -- which is
+# a SLIDING window: every turn pushed the oldest message out, so the
+# prompt moved every turn.
+#
+# That is fatal for the engine's KV cache. The engine keeps the cache of
+# the last prompt and matches the next one against it prefix by prefix,
+# and the match is all-or-nothing. A prompt that slides shares nothing
+# with the one before it, so nothing is reused and the whole prompt is
+# read again -- 20 552 tokens, 41.3 s, every turn. The same body sent
+# twice, unchanged: `reused 19 826`, 1.1 s. 565 times faster for one
+# digit.
+#
+# So the bound is now a TOKEN BUDGET (`CONTEXT_TOKEN_BUDGET`, default
+# 32768) and the oldest messages are folded out when it is exceeded --
+# as few as possible, and never the newest one. A fold costs one slow
+# turn (the whole prompt is read again) and buys a stable prefix for
+# every turn after it. The message-count ceiling stays as a backstop
+# (400), high enough that the token budget is what decides.
+#
+# The other half of the same problem is the TOOLS BLOCK, which the engine
+# renders before the system message and the history: a tool description
+# that changes from turn to turn moves the very beginning of the prompt.
+# That is why the ids of a turn travel in the turn context block at the
+# end of the user's message instead (llm_delete.turn_context_block).
+#
 # History is never destroyed
 # --------------------------
 # Nothing here deletes. SQLite is the source of truth; whatever this module
@@ -84,8 +112,42 @@ FETCH_LIMIT = 2000
 # importable without pulling in the whole bot config chain (tests import it
 # standalone). config.py imports these back for the bot's own use.
 
-DEFAULT_MAX_MESSAGES = 20
+#: The ceiling on the number of messages in the context. This is a BACKSTOP,
+#: not the working bound -- the working bound is the token budget below.
+#:
+#: It used to be 20, and 20 was a SLIDING window: the context was the
+#: newest 20 messages, so every turn pushed the oldest one out and the
+#: prompt moved. The engine's prefix cache is all-or-nothing -- the
+#: prompt either matches the prefix the engine holds, or nothing at all
+#: is reused. Measured on the production engine on 2026-11-01: a sliding
+#: window gives `reused 0` on EVERY turn and the whole 20 552-token
+#: prompt is re-read (41.3 s); the same body sent twice, unchanged,
+#: gives `reused 19 826` and 1.1 s -- 565 times faster for one digit.
+#:
+#: So the count ceiling has to sit ABOVE what the token budget holds, or
+#: it slides and the reuse dies with it.
+DEFAULT_MAX_MESSAGES = 400
 DEFAULT_REMEMBER_DAYS = 7
+
+#: The token budget for the MESSAGES that go to the engine. This is the
+#: working bound: the context holds the newest messages that fit in it,
+#: and the oldest ones are folded out when it is exceeded.
+#:
+#: The fold is the price of the reuse. A context that only grows keeps
+#: the engine's prefix byte-identical from turn to turn, so the engine
+#: reuses the KV cache instead of re-reading twenty thousand tokens. A
+#: fold costs one slow turn -- the whole prompt is read again -- and
+#: then the prefix is stable again.
+#:
+#: The default leaves room for the system message and the tools block
+#: (about 8 000 tokens, measured on the production engine on 2026-11-01)
+#: and stays well inside the engine's own context (524 288). A prefix
+#: larger than the engine's resident KV is not a problem: the same
+#: measurement reused a 37 165-token prefix in 1.1 s.
+DEFAULT_TOKEN_BUDGET = 32768
+TOKEN_BUDGET = int(
+    os.environ.get("CONTEXT_TOKEN_BUDGET", str(DEFAULT_TOKEN_BUDGET))
+)
 
 #: How far back the bot remembers, in days. 0 or a negative value disables
 #: the age filter entirely (send everything up to CONTEXT_MAX_MESSAGES).
@@ -337,6 +399,7 @@ class ContextBudget:
         summary_tail_tokens: int = SUMMARY_TAIL_TOKENS,
         summary_context_tokens: int = SUMMARY_CONTEXT_TOKENS,
         summary_chunk_tokens: int = SUMMARY_CHUNK_TOKENS,
+        token_budget: int = TOKEN_BUDGET,
     ):
         self.strategy = strategy if strategy in VALID_STRATEGIES else "window"
         self.max_messages = max(0, int(max_messages))
@@ -351,6 +414,10 @@ class ContextBudget:
         self.summary_tail_tokens = max(0, int(summary_tail_tokens))
         self.summary_context_tokens = max(0, int(summary_context_tokens))
         self.summary_chunk_tokens = max(0, int(summary_chunk_tokens))
+        #: The token budget for the messages. 0 disables the fold (the
+        #: context is then bounded by the age window and the count
+        #: ceiling only).
+        self.token_budget = max(0, int(token_budget))
 
     # -- introspection, used by /stats and tests --------------------------
     def describe(self) -> dict:
@@ -362,6 +429,7 @@ class ContextBudget:
             "summary_tail_tokens": self.summary_tail_tokens,
             "summary_context_tokens": self.summary_context_tokens,
             "summary_chunk_tokens": self.summary_chunk_tokens,
+            "token_budget": self.token_budget,
         }
 
     def age_cutoff_active(self) -> bool:
@@ -410,9 +478,44 @@ class ContextBudget:
             if not selected and not self._keep(items[-1]):
                 selected = items[-1:]
 
+        selected = self._fit_budget(selected)
         if self.max_messages and len(selected) > self.max_messages:
             selected = selected[-self.max_messages:]
         return selected
+
+    def _fit_budget(self, selected: list[dict]) -> list[dict]:
+        """Fold the oldest messages out until the context fits the budget.
+
+        THE FOLD IS THE PRICE OF THE REUSE. The engine keeps the KV
+        cache of the last prompt and matches the next one against it
+        prefix by prefix; the match is all-or-nothing, and it happens
+        up to the LAST turn marker of the previous prompt. So a context
+        that only grows keeps the prefix byte-identical and the engine
+        reuses it -- and a context that slides changes the prefix and
+        the engine re-reads everything. Measured on the production
+        engine on 2026-11-01: `reused 0` and 41.3 s per turn with a
+        sliding window, `reused 19 826` and 1.1 s with a growing one.
+
+        The oldest messages go first, and as FEW as possible: the newest
+        turn always survives (guarantee 1 in apply()), and the boundary
+        moves only when the budget says it must.
+
+        Pure, like apply(): it reads the messages and returns a list.
+        """
+        if not self.token_budget or not selected:
+            return selected
+        sizes = [estimate_message_tokens(m) for m in selected]
+        total = sum(sizes)
+        if total <= self.token_budget:
+            return selected
+        start = 0
+        # `start < len(selected) - 1`: the newest message is never folded
+        # out, not even when it alone is over the budget. A prompt with
+        # nothing to answer is worse than a slow one.
+        while start < len(selected) - 1 and total > self.token_budget:
+            total -= sizes[start]
+            start += 1
+        return selected[start:]
 
     def _keep(self, message: dict) -> bool:
         created = message.get("_created_at")

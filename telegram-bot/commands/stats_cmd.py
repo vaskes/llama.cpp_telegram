@@ -89,7 +89,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'{old_line}\n'
             f' • Memory window: {window_text}\n'
             f' • Oldest message in the database: {age_text}\n'
-            f' • Strategy: {policy["strategy"]}, cap {policy["max_messages"]}'
+            f' • Strategy: {policy["strategy"]}, cap '
+            f'{policy["max_messages"]} msgs / {policy["token_budget"]} tokens'
         )
 
     # === Group mode: show topic count + total stored messages ===

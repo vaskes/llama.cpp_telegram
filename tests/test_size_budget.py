@@ -47,7 +47,7 @@ MODULE_LIMIT = 1000
 EXCEPTIONS = {
     "call_llama": (
         "call_llama.py",
-        222,
+        220,
         "2026-10-22",
         "Carries a DO NOT REFACTOR notice with its own trigger; the "
         "transport, the four response buffers and the abort state across "
@@ -58,7 +58,11 @@ EXCEPTIONS = {
         "day, to 222, when the tool list moved out to llm_tools.py -- the "
         "list is now built in one place that can be tested without a "
         "model call, and this function asks for it instead of assembling "
-        "it.",
+        "it. It SHRANK again on 2026-11-01, to 220, when the delete tool's "
+        "definition stopped taking the turn's ids: the tools block has to "
+        "be the same bytes on every turn, or the engine's prefix cache "
+        "never matches and the whole prompt is read again (measured on the "
+        "production engine: 41.3 s a turn instead of 1.1 s).",
         "Split when the engine transport can be moved behind a seam "
         "without the abort state crossing the boundary with it.",
     ),
@@ -79,7 +83,7 @@ EXCEPTIONS = {
     ),
     "handle_photo": (
         "handlers.py",
-        253,
+        258,
         "2026-10-23",
         "One concern (a photo) plus a media path. Same shape as the other "
         "three handlers, so the repetition is the point -- a fix to the "
@@ -94,13 +98,16 @@ EXCEPTIONS = {
         "shorter. It shrank by two lines on 2026-10-29, when the "
         "size refusal stopped being written out in the handler and "
         "moved into user_notice.py, with the rest of the user-facing "
-        "wording.",
+        "wording. It grew again on 2026-11-01, by five lines: the ids of "
+        "the turn travel with the message, so the photo turn carries the "
+        "turn context block as well -- the photo is not persisted, so the "
+        "block lives only in this turn.",
         "Split only together with the other three handlers, never alone: "
         "one handler on its own is four shapes, not one.",
     ),
     "handle_document": (
         "handlers.py",
-        209,
+        210,
         "2026-10-29",
         "Not a debt item -- same shape as handle_photo and handle_text, and "
         "registered only because it crossed 200 lines while nobody was "
@@ -109,12 +116,14 @@ EXCEPTIONS = {
         "sandbox instead of into the model's context as mojibake, and "
         "the branch that decides it, and the branch that puts it there, "
         "are in this body. Open debt item 13 -- the item about the four "
-        "handlers sharing one shape.",
+        "handlers sharing one shape. It grew on 2026-11-01 by one line: "
+        "the ids of the turn are stored with the row, so the next turn "
+        "re-renders the message exactly as the engine holds it.",
         "Split only together with the other three handlers, never alone.",
     ),
     "handle_text": (
         "handlers.py",
-        211,
+        212,
         "2026-10-23",
         "Not a debt item -- same shape as handle_photo, and registered only "
         "because it crossed 200 lines while nobody was looking. The reason "
@@ -125,7 +134,9 @@ EXCEPTIONS = {
         "invisible. It SHRANK again the same day, to 211, when the "
         "typing indicator moved out to the shared `_typing_indicator` "
         "helper: the handler had carried its own copy of the guard, and "
-        "three of the four handlers carried none.",
+        "three of the four handlers carried none. It grew again on "
+        "2026-11-01 by one line, for the same reason as handle_document: "
+        "the ids of the turn are stored with the row.",
         "Split only together with the other three handlers, never alone.",
     ),
 }

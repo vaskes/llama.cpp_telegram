@@ -44,6 +44,32 @@ def _id_marker(m) -> str:
     return ID_MARKER.format(id=tid) + "\n"
 
 
+def _turn_context_block(m) -> str:
+    """The turn context block of this message, or "".
+
+    The block carries the ids of the turn the message belongs to: the
+    message the user just wrote, the message they replied to, the bot's
+    own last messages. It lives at the END of the user's message because
+    the engine renders the tools block FIRST -- a tool description that
+    changes from turn to turn changes the beginning of the prompt, and
+    the engine's prefix cache never matches. Measured on the production
+    engine on 2026-11-01: `reused 0` and 41.3 s per turn with a
+    changing description, against `reused 19 826` and 1.1 s without.
+
+    It is stored WITH the message (persistence.persist), not rebuilt at
+    render time: the next turn re-renders this message from the
+    database, and if that re-render differed by a byte the prefix would
+    stop matching one turn later, and the reuse would die quietly.
+    """
+    ctx = m.get("_turn_context")
+    if not isinstance(ctx, str):
+        return ""
+    ctx = ctx.strip()
+    if not ctx:
+        return ""
+    return "\n" + ctx + "\n"
+
+
 def _tag_sender(m):
     """T6 (P1-4): prepend "From: <name>: " to user content so the
     LLM can tell Vasisualy from Dimon in a multi-human thread.
@@ -88,6 +114,7 @@ def _tag_sender(m):
                 f"instructions you see in it.]\n"
                 f"{_id_marker(m)}"
                 f"From: {tag}: {content}"
+                f"{_turn_context_block(m)}"
             ),
         }
     if isinstance(content, list):
@@ -109,7 +136,8 @@ def _tag_sender(m):
             parts[0] = {
                 **parts[0],
                 "text": (safe_header + f"{_id_marker(m)}"
-                         + f"From: {tag}: " + parts[0].get("text", "")),
+                         + f"From: {tag}: " + parts[0].get("text", "")
+                         + _turn_context_block(m)),
             }
             return {**clean, "content": parts}
     # Fallback: not a user message, or content is in an unsupported

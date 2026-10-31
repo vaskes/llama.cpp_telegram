@@ -38,7 +38,8 @@ if TYPE_CHECKING:
 
 async def persist(chat_id: int, thread_id: str, role: str, content,
                   sender_name: str | None = None,
-                  telegram_message_id: int | None = None):
+                  telegram_message_id: int | None = None,
+                  turn_context: str | None = None):
     """Append a message to the thread's history in the DB.
 
     `content` is whatever the message has - a string for text,
@@ -57,8 +58,28 @@ async def persist(chat_id: int, thread_id: str, role: str, content,
     message again -- by its text, by who wrote it -- and take it back
     out of the chat later, while this row stays where it is: the
     record of what happened is not the same thing as the chat.
+
+    `turn_context` (optional) is the block of ids that belong to this
+    turn: the message the user just wrote, the message they replied
+    to, the bot's own last messages. It is stored WITH the row, in
+    the envelope, under the `_turn_context` key -- and NOT inside
+    `content`, because `content` is what the user wrote and what the
+    training data is made of.
+
+    Why it is stored at all: the next turn re-renders this message
+    from the database, and the engine's prefix cache only matches if
+    that re-render is byte-for-byte the render the engine already
+    holds. A turn context rebuilt at render time would differ by a
+    byte on the next turn -- the ids have moved on -- and the reuse
+    would die one turn later, with nothing in the logs to say why.
     """
     msg = {"role": role, "content": content}
+    # Out-of-band, like _sender_name and _telegram_message_id: the
+    # engine never sees it (llm_messages._tag_sender strips every
+    # "_"-prefixed key), and the reader of the record sees the user's
+    # own text in `content`, unchanged.
+    if turn_context:
+        msg["_turn_context"] = turn_context
     # Returns the new row's id (added 2026-10-22). Turn needs it: a
     # rollback that deletes "the last user message in this thread"
     # deletes the wrong one whenever two people share a topic.

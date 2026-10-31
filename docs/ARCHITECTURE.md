@@ -13,9 +13,9 @@
 ```
 telegram-bot/
 ├── bot.py                 # public facade: re-exports the module surface (124 lines)
-├── handlers.py            # handle_text/photo/voice/document (1587 lines)
+├── handlers.py            # handle_text/photo/voice/document (1621 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
-│                          #   383 lines file, 222 in the function, 349 in the loop
+│                          #   381 lines file, 220 in the function, 349 in the loop
 ├── mcp_client.py # MCP protocol for ONE server (382)
 ├── mcp_registry.py # the tools imported from the MCP servers (318)
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
@@ -24,7 +24,7 @@ telegram-bot/
 ├── dispatch_webhook.py    # PTB assembly + handler registration (443)
 ├── webhook.py             # aiohttp server + secret check (267)
 ├── commands/              # the slash-command handlers, as a package
-├── context_budget.py # which persisted messages reach the engine (659)
+├── context_budget.py # which persisted messages reach the engine (762)
 ├── summarize.py           # summarise out-of-window history, in chunks (319)
 ├── reanchor.py            # when the memory window re-anchors (276)
 ├── personality.py # the optional persona block (214)
@@ -39,8 +39,8 @@ telegram-bot/
 ├── state.py               # per-chat runtime state (231)
 ├── storage.py             # SQLite: messages, threads, topics (938)
 ├── storage_summaries.py   # the chunk summaries of T70.5 (200)
-├── persistence.py         # conversation-history assembly (214)
-├── turn.py # one turn's persist/rollback ledger (166)
+├── persistence.py         # conversation-history assembly (235)
+├── turn.py # one turn's persist/rollback ledger (176)
 ├── access.py              # authorisation and group policy (304)
 ├── chat_utils.py          # chat-shape and command-argument helpers (191)
 ├── telegram_format.py     # the answer as HTML: a code block becomes <pre>, an inline span <code>, a bold phrase <b> (443)
@@ -56,7 +56,7 @@ telegram-bot/
     └── file_upload.py    # the file door: push bytes in, never overwrite
 ```
 
-66 top-level modules, 191 test files. The size of the suite is the
+66 top-level modules, 192 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.
@@ -76,10 +76,10 @@ tests, none of which build a full `call_llama`.
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
   llm_iteration.py      579  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
-  call_llama.py         383  call_llama
+  call_llama.py         381  call_llama
   llm_loop_guard.py     185  Nudge, Abort, LoopGuard
   llm_markup.py           46  _stop_button_markup
-  llm_messages.py       119  _tag_sender
+  llm_messages.py       147  _tag_sender
   llm_nonstream.py      441  NonStreamResult, non_stream_iteration, tools_less_fallback
   llm_sse.py            143  Delta, StreamAccumulator
   llm_stream.py         317  StreamOutcome, stream_iteration, _fallback_to_nonstream
@@ -93,9 +93,9 @@ tests, none of which build a full `call_llama`.
   llm_thinking.py       147  ThinkingThrottle, push_thinking, close_thinking
   llm_toolargs.py       215  ArgsOk, ArgsRejected, _rejection, parse_tool_args
   llm_toolcalls.py      117  NormalizedToolCalls, normalize_tool_calls, reject_unknown_names
-  llm_tools.py          307  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
+  llm_tools.py          318  _bash_command_tool_enabled, fetch_tools_from_llama, merge_tools, build_tool_defs
   llm_sendfile.py         85  send_file_tool_def
-  llm_delete.py           855  delete_messages_tool_def, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal, requested_ids
+  llm_delete.py           911  delete_messages_tool_def, turn_context_block, execute_delete_messages, remember_answer, own_ids, authorized_ids, telegram_refusal, requested_ids
   llm_history.py          256  search_messages_tool_def, run_search, known_ids
   llm_truncation.py      119  condense
 ```

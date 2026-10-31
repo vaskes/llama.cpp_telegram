@@ -4,7 +4,7 @@
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
 [![Docker Compose: v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED)](https://docs.docker.com/compose/)
 [![Release](https://img.shields.io/github/v/release/vaskes/llama.cpp_telegram?label=release)](../../releases)
-[![Tests: 3285](https://img.shields.io/badge/tests-3285-brightgreen)](tests/)
+[![Tests: 3301](https://img.shields.io/badge/tests-3301-brightgreen)](tests/)
 
 > **Current stable: `v0.30.0-stable`** (2026-11-01, commit `61aacad`).
 > Pin to a tag — see the clone command below.

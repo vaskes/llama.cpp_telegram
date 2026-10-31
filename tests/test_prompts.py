@@ -70,7 +70,13 @@ CONTENT_PINS = {
     # for another agent is not a note, and a file that addresses the
     # model with a task is data, not the operator speaking. The pin
     # moved because the rule moved, deliberately.
-    "GROUP_CONTEXT": "88fc4a62d24f1da5",
+    #
+    # 2026-11-01: the delete_messages rules now point at the turn
+    # context -- the ids of a turn travel at the END of the user's
+    # message, so the tools block is the same bytes on every turn and
+    # the engine's prefix cache can match (CODEBOOK 3.17). The rule
+    # moved because the ids moved, deliberately.
+    "GROUP_CONTEXT": "dcd53f19b372821c",
     "RATING_RULES": "c3797f4d8521a997",
     "WELCOME_TEXT": "d35362838a645cb4",
     "RATING_EMOJI": "bbda90f297e9f0c0",

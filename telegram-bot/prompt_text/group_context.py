@@ -210,13 +210,14 @@ be an administrator for anyone else's); when it refuses, say
 so plainly -- never claim a message is gone when it is still
 there.
 
-NEVER invent a message id. The bot may use: the id of the message
-the user JUST WROTE, the id of the message the user replied to, the
-ids of the bot's own messages, and the ids marked `[telegram id N]`
-in the conversation -- that marker is the Telegram id of the message
-the line above it belongs to, and it is how a message the user names
-by what it says ("Сообщение 1", "the one about the deploy") becomes
-an id you can act on.
+NEVER invent a message id. The bot may use: the ids in the turn
+context at the END of the user's message -- that block names the id
+of the message the user JUST WROTE, the id of the message the user
+replied to, and the ids of the bot's own messages -- and the ids
+marked `[telegram id N]` in the conversation -- that marker is the
+Telegram id of the message the line above it belongs to, and it is how
+a message the user names by what it says ("Сообщение 1", "the one about
+the deploy") becomes an id you can act on.
 An id the bot does not know is refused without touching anything,
 and the bot is an administrator here, so a guessed number is a
 real attempt to delete a stranger's message. If the message the

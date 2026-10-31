@@ -197,9 +197,7 @@ DONSETCH_WEB_TOOL_DEFS: list = [
 ]
 
 
-async def build_tool_defs(*, bot, chat_id, chat_type,
-                          reply_to_message_id=None,
-                          current_message_id=None) -> list[dict]:
+async def build_tool_defs(*, bot, chat_id, chat_type) -> list[dict]:
     """The tools the model is shown this turn.
 
     Two classes of tools in one list. The NATIVE ones are the bot's
@@ -213,6 +211,16 @@ async def build_tool_defs(*, bot, chat_id, chat_type,
     place that decides what the model may call -- and because a list
     that is built inline cannot be tested without driving a whole
     model call.
+
+    NO PER-TURN ARGUMENTS, and that is deliberate. The engine renders
+    the tools block before the system message and the whole history, so
+    a tool definition that changes from turn to turn changes the
+    beginning of the prompt and the engine's prefix cache never matches:
+    measured on the production engine on 2026-11-01, `reused 0` on every
+    turn and the whole 20 552-token prompt re-read (41.3 s), against
+    `reused 19 826` and 1.1 s for an unchanged body. The ids of the
+    turn travel in the turn context block at the end of the user's
+    message instead (llm_delete.turn_context_block).
     """
     engine_tools = await fetch_tools_from_llama()
     # Add our bot-side tool implementations (donsetch_web_*).
@@ -286,10 +294,13 @@ async def build_tool_defs(*, bot, chat_id, chat_type,
         from llm_delete import bot_may_delete, delete_messages_tool_def
         rights = await bot_may_delete(bot, chat_id, chat_type)
         if rights.allowed:
-            bot_side_tool_defs.append(delete_messages_tool_def(
-                chat_id=chat_id,
-                reply_to_message_id=reply_to_message_id,
-                current_message_id=current_message_id))
+            # No arguments: the description of this tool is STATIC, so the
+            # tools block is the same bytes on every turn and the engine's
+            # prefix cache can match. The turn's ids travel in the turn
+            # context block at the end of the user's message instead
+            # (llm_delete.turn_context_block). Passing them here is what
+            # used to make every prompt different.
+            bot_side_tool_defs.append(delete_messages_tool_def())
     # search_messages reads the bot's own record of the chat, so it needs
     # neither the sandbox nor any Telegram rights: the record is there in
     # every chat, and it is the only place a message said hours ago

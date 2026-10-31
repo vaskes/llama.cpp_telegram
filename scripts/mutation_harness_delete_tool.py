@@ -198,24 +198,20 @@ MUTATIONS = [
          r"may_delete=rights\.others\)\n",
          "may_delete=True)\n", 1),
     ]),
-    ("the description does not say whose message an id is", "CAUGHT", [
-        (TOOL,
-         # The sentence is the second half of a concatenation now, and
-         # it ends in " -- never" rather than in a full stop: the old
-         # anchor matched nothing and the mutation was REFUSED.
-         r"            \+ \"\. These are the BOT's messages, not the user's -- never \"\n",
-         "            + \".\"\n", 1),
-    ]),
+    # The fence around the bot's own ids is not here any more: the ids
+    # of a turn moved into the turn context, and the fence moved with
+    # them. The mutation that takes the fence away lives in
+    # mutation_harness_message_id_context.py, where the fence is.
     ("the message the user just wrote is not in the description",
      "CAUGHT", [
         (TOOL,
-         r"\- The message the user JUST WROTE has id ",
-         "- The message the user wrote has id ", 1),
+         r"the message the user JUST WROTE: telegram id ",
+         "the message the user wrote: telegram id ", 1),
     ]),
     ("the pointed-at id is not in the description", "CAUGHT", [
         (TOOL,
-         r"message_ids=\[\{reply_to_message_id\}\]\.",
-         "nothing.", 1),
+         r"the message the user REPLIED TO: telegram id ",
+         "the message the user replied to: telegram id ", 1),
     ]),
 
     # --- group B: the tripwires ------------------------------------

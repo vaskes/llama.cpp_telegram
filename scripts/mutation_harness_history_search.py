@@ -130,9 +130,11 @@ MUTATIONS = [
         (HANDLERS,
          r"            await turn\.persist\(user_message, role='user',\n"
          r"                               sender_name=sender_name,\n"
-         r"                               telegram_message_id=update\.message\.message_id\)\n",
+         r"                               telegram_message_id=update\.message\.message_id,\n"
+         r"                               turn_context=_turn_ids\(update, chat_id\)\)\n",
          "            await turn.persist(user_message, role='user',\n"
-         "                               sender_name=sender_name)\n", 1),
+         "                               sender_name=sender_name,\n"
+         "                               turn_context=_turn_ids(update, chat_id))\n", 1),
     ]),
     ("the absorb path stops storing the message that was replied to",
      "CAUGHT", [
@@ -236,9 +238,11 @@ MUTATIONS = [
         (HANDLERS,
          r"            await turn\.persist\(user_message, role='user',\n"
          r"                               sender_name=sender_name,\n"
-         r"                               telegram_message_id=update\.message\.message_id\)\n",
+         r"                               telegram_message_id=update\.message\.message_id,\n"
+         r"                               turn_context=_turn_ids\(update, chat_id\)\)\n",
          "            await turn.persist(user_message, role='user',\n"
-         "                               sender_name=sender_name)\n", 1),
+         "                               sender_name=sender_name,\n"
+         "                               turn_context=_turn_ids(update, chat_id))\n", 1),
     ]),
 ]
 
