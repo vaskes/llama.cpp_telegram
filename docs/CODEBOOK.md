@@ -2130,7 +2130,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_size_budget.py` | 11 | S-1, S-6 — function and module size budgets |
 | `test_changelog_structure.py` | 7 | One `[Unreleased]` section; sections and tags agree |
 | `test_no_duplicate_definitions.py` | 4 | T-4 — repeated top-level definitions |
-| `test_no_model_attribution.py` | 6 | No false attribution in the history |
+| `test_no_model_attribution.py` | 7 | No false attribution in the history |
 | `test_dispatch_group_seam.py` | 4 | The seam a group-absorb extraction needs |
 | `test_signal_handler_ownership.py` | 3 | One signal policy, two modes |
 | `test_c3_initialize_failure.py` | 2 | The publish-after-initialize ordering |

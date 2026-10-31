@@ -51,6 +51,24 @@ arithmetic behind it was not reproduced here) does not change the rule.
 The rule is about **membership**: the model is on the panel or it is
 not, and these are the slots that put it there.
 
+**Which address the check reads, and why it is the raw one.** The
+author field is read **as the commit carries it** (`%ae`), not as
+`.mailmap` rewrites it (`%aE`). GitHub's own criterion for a
+contribution is that "the email address used to make or co-author the
+commits is associated with your account on GitHub" -- the address in the
+commit. Whether the contributors tile honours `.mailmap` is not
+documented, and this repository's `.mailmap` maps
+`noreply@anthropic.com` to the operator's own address, so a check that
+trusted the mapping would be trusting something unmeasured.
+
+The two mistakes are not the same size. A check that trusts the
+mapping and GitHub does not honour it puts the model back on the panel
+-- the exact failure this rule exists to prevent. A check that ignores
+the mapping when GitHub does honour it asks the operator to amend one
+commit. So the check reads the raw address, and a commit authored with
+a model address is flagged even though the repository's `.mailmap` would
+redirect it.
+
 **Which addresses.** A credit only reaches the panel if GitHub can
 resolve the address to an account. Measured on 2026-10-31, by asking
 GitHub which account a commit's address belongs to:
@@ -89,6 +107,7 @@ has to be: a depth-1 pull-request checkout is the merge ref alone, so
 carries the trailer. `tests/test_ci_history_depth.py` is what keeps
 that from happening again.
 """
+import os
 import subprocess
 from pathlib import Path
 
@@ -235,6 +254,59 @@ def test_the_detector_can_see_an_author_field():
     assert _credits_model("noreply@anthropic.com"), (
         "the detector cannot see the author field, so a commit authored "
         "by a model account would pass")
+
+
+def test_the_author_field_is_read_as_the_commit_carries_it(tmp_path):
+    """The boundary on the author slot: `.mailmap` is not a defence.
+
+    This repository's `.mailmap` maps `noreply@anthropic.com` to the
+    operator's own address, so a commit authored with that address is
+    claimed by the operator there. The check reads the address **as the
+    commit carries it** and does not take the mapping as an alibi.
+
+    The reason is the size of the two mistakes. GitHub's own criterion
+    for a contribution names "the email address used to make or
+    co-author the commits"; whether the contributors tile honours
+    `.mailmap` is not documented. A check that trusted the mapping and
+    GitHub did not honour it would put the model back on the panel --
+    the exact failure this rule exists to prevent. The opposite mistake
+    costs one amended commit.
+
+    The test pins the choice in both directions: with the mapping, the
+    address is still flagged; without the mapping it is flagged too.
+    """
+    def _repo(with_mailmap: bool) -> Path:
+        path = tmp_path / ("mapped" if with_mailmap else "bare")
+        path.mkdir()
+        run = lambda *args: subprocess.run(
+            ["git", "-C", str(path), *args], capture_output=True, text=True,
+            check=True)
+        run("init", "-q")
+        run("config", "user.name", "dev")
+        run("config", "user.email", "dev@example.com")
+        if with_mailmap:
+            (path / ".mailmap").write_text(
+                "<vaskes@kuduza.com> <noreply@anthropic.com>\n",
+                encoding="utf-8")
+        (path / "f.txt").write_text("x\n", encoding="utf-8")
+        run("add", "-A")
+        env = dict(os.environ,
+                   GIT_AUTHOR_EMAIL="noreply@anthropic.com",
+                   GIT_COMMITTER_EMAIL="noreply@anthropic.com")
+        subprocess.run(
+            ["git", "-C", str(path), "commit", "-q", "-m", "chore: x"],
+            capture_output=True, text=True, check=True, env=env)
+        return path
+
+    for with_mailmap in (True, False):
+        repo = _repo(with_mailmap)
+        raw = subprocess.run(
+            ["git", "-C", str(repo), "log", "--format=%ae"],
+            capture_output=True, text=True, check=True).stdout
+        assert "noreply@anthropic.com" in raw, (
+            "the fixture does not carry the address it is supposed to")
+        assert _credits_model(raw), (
+            "the detector cannot see the address the commit carries")
 
 
 def test_a_mention_in_the_body_is_not_a_trailer():

@@ -105,6 +105,21 @@ credited commits, and the reason was not pinned down. The rule does not
 need it: the rule is about **membership** -- is the account on the
 panel -- and that was measured directly.
 
+**Which address the author slot is read from.** As the commit carries
+it, not as `.mailmap` rewrites it. GitHub's own criterion for a
+contribution names "the email address used to make or co-author the
+commits", and whether the contributors tile honours `.mailmap` is not
+documented anywhere. This repository's `.mailmap` maps
+`noreply@anthropic.com` to the operator's own address, so a check that
+trusted the mapping would be trusting something unmeasured -- and the
+two mistakes are not the same size: trusting it and being wrong puts the
+model back on the panel, which is the failure the rule exists to
+prevent; ignoring it and being wrong asks for one amended commit.
+
+The choice is pinned by a test that builds the two repositories -- with
+the mapping and without it -- and asks the detector to find the address
+in both.
+
 ### The panel itself, audited
 
 The tripwire guards the history. It cannot see the panel -- and the
