@@ -2138,7 +2138,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_edit_removal.py` | 6 | The edit-replace feature is gone, and stays gone |
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
 | `test_ci_history_depth.py` | 5 | The gate sees the history it judges |
-| `test_contributor_panel_audit.py` | 16 | The contributors panel holds no model account |
+| `test_contributor_panel_audit.py` | 19 | The contributors panel holds no model account |
 
 | `test_console_output_in_chat.py` | 10 | The console output goes into the chat; it is not a file; and the comparison that decides it runs against what the model saw |
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
@@ -2392,6 +2392,20 @@ endpoint the tile is actually drawn from. **Not** the documented one.
 An earlier check in this repository read the contributors *graph* and
 declared the task done while the tile still showed the account, because
 the graph and the tile are different snapshots.
+
+**The scope is derived, not written down.** The audit asks GitHub which
+repositories the owner has and checks every one of them. A written list
+is a list that stops being true the day the next repository is
+created -- and a credit nobody looks for is a credit that hangs. That
+is not hypothetical: `vaskes/minimax-h3-fp16-exact-star7` was created
+on 2026-10-31, hours after the census that produced the written list,
+and the written list would have missed it. The written file stays as
+the *declaration* of what should be covered: a repository that is
+enumerated but not declared is still audited, and is marked UNDECLARED,
+because the scope of the check is the operator's decision.
+
+If the enumeration cannot be read, the run fails. An audit that could
+not find the repositories is not an audit that found them clean.
 
 Three properties make the audit hold:
 

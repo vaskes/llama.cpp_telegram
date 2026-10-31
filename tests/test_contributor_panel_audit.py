@@ -183,6 +183,86 @@ def test_the_run_passes_on_a_clean_panel(monkeypatch):
     assert status == 0, f"the run exited {status} on a clean panel"
 
 
+def test_the_scope_is_derived_and_not_only_the_written_list(monkeypatch):
+    """A repository nobody remembered to write down is still audited.
+
+    The written list is the operator's declaration of what should be
+    covered. The enumeration is what GitHub says exists. A repository
+    that is in the second and not in the first is a repository created
+    after the list was written -- and a credit nobody looks for is a
+    credit that hangs.
+    """
+    def _fake_fetch(owner, repo, timeout=30):
+        return _panel("panel_green.json")["contributors"]
+
+    monkeypatch.setattr(AUDIT, "fetch_panel", _fake_fetch)
+    monkeypatch.setattr(AUDIT, "fetch_owner_repos",
+                        lambda owner, token=None, timeout=30:
+                        ["vaskes/written", "vaskes/brand-new"])
+    monkeypatch.setattr(AUDIT, "parse_repos",
+                        lambda args: ["vaskes/written"])
+
+    scope, absent = AUDIT.resolve_scope(
+        ["vaskes/written"], ["vaskes/written", "vaskes/brand-new"])
+    assert absent == [], f"nothing is absent here: {absent}"
+    assert "vaskes/brand-new" in scope, (
+        f"a repository that is not in the written list was not in scope: "
+        f"{scope}")
+
+    report = AUDIT.audit(scope, baseline={},
+                         declared={"vaskes/written"})
+    audited = [record["repo"] for record in report["results"]]
+    assert "vaskes/brand-new" in audited, (
+        f"a repository that is not in the written list was not audited: "
+        f"{audited}")
+    undeclared = [r for r in report["results"] if r.get("declared") is False]
+    assert [r["repo"] for r in undeclared] == ["vaskes/brand-new"], (
+        "the repository that is not in the written list was not marked as "
+        "such -- the operator cannot see that the scope drifted")
+
+
+def test_a_scope_that_cannot_be_read_fails_the_run(monkeypatch):
+    """An audit that could not find the repositories found nothing clean.
+
+    The enumeration is what makes the audit complete. If it cannot be
+    read, the run must not pass on the shorter list it happened to have.
+    """
+    def _boom(owner, token=None, timeout=30):
+        raise AUDIT.PanelError(f"the repository list of {owner} could not be read")
+
+    monkeypatch.setattr(AUDIT, "fetch_owner_repos", _boom)
+    status = AUDIT.main(["--owner", "vaskes", "--repos", "vaskes/whatever"])
+    assert status == 2, (
+        f"the run exited {status} with an unreadable scope; a check that "
+        "cannot see must not pass")
+
+
+def test_a_repository_that_is_gone_is_reported_and_not_counted_clean(monkeypatch):
+    """Deleted, renamed, or private: reported, and not passed over.
+
+    Such a repository has no panel to read, so it is not audited and it
+    does not fail the run. But it IS named in the report: a project of
+    the operator's that the audit cannot see is worth knowing about.
+    """
+    def _fake_fetch(owner, repo, timeout=30):
+        return _panel("panel_green.json")["contributors"]
+
+    monkeypatch.setattr(AUDIT, "fetch_panel", _fake_fetch)
+    monkeypatch.setattr(AUDIT, "fetch_owner_repos",
+                        lambda owner, token=None, timeout=30:
+                        ["vaskes/here"])
+    monkeypatch.setattr(AUDIT, "parse_repos",
+                        lambda args: ["vaskes/here", "vaskes/gone"])
+
+    audited, absent = AUDIT.resolve_scope(
+        ["vaskes/here", "vaskes/gone"], ["vaskes/here"])
+    assert absent == ["vaskes/gone"], (
+        f"the repository that is gone was not reported: {absent}")
+    assert "vaskes/gone" not in audited, (
+        "a repository with no panel was audited as if it had one")
+    assert "vaskes/here" in audited
+
+
 def test_the_denied_list_is_exactly_the_measured_accounts():
     """The deny list is measured, not remembered.
 

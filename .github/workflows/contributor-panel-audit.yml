@@ -8,7 +8,13 @@
 # So the panel is audited on its own, on a schedule, and a model-owned
 # account on any panel is a failure that names itself.
 #
-# The repositories are listed in scripts/contributor-panel-audit.txt.
+# The scope is derived: the audit asks GitHub which repositories the
+# owner has and checks every one of them, so a repository created
+# yesterday is covered today. scripts/contributor-panel-audit.txt is the
+# operator's DECLARATION of what should be covered, not the limit of
+# the check -- a repository that is enumerated and not declared is
+# audited anyway and marked UNDECLARED.
+#
 # The exemptions -- repositories whose credit belongs to someone else
 # and cannot be erased without destroying their attribution -- are in
 # scripts/contributor-panel-baseline.json, and are reported as KNOWN,
@@ -47,13 +53,17 @@ jobs:
 
       - name: Audit the contributors panels
         id: audit
+        env:
+          # The token raises the API rate limit. The audit needs no
+          # secret of its own: the data it reads is public.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
-          args="--repos-file scripts/contributor-panel-audit.txt"
+          args="--owner ${{ github.repository_owner }} --repos-file scripts/contributor-panel-audit.txt"
           if [ -n "${{ inputs.repos }}" ]; then
             args="--repos ${{ inputs.repos }}"
           fi
-          python3 scripts/audit_contributor_panels.py $args \
+          python3 scripts/audit_contributor_panels.py $args --token "$GH_TOKEN" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           status=${PIPESTATUS[0]}
           echo "exit_status=$status" >> "$GITHUB_OUTPUT"

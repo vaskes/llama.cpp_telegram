@@ -162,6 +162,30 @@ with the account named in the output, not hidden behind the word
 next run. The debt, its trigger and the alternatives are in
 `docs/tech-debt/15-model-credit-in-mirrored-repositories.md`.
 
+**The scope is derived, not written down.** The first version of the
+audit took its list of repositories from a file. A written list is a
+list that stops being true the day the next repository is created -- and
+a credit nobody looks for is a credit that hangs.
+
+So the audit asks GitHub which repositories the owner has
+(`GET /users/{owner}/repos`) and checks every one of them. The written
+file stays, as the operator's *declaration* of what should be covered:
+a repository that is enumerated and not declared is still audited, and
+is marked UNDECLARED, because the scope of the check is the operator's
+decision and not the script's. A repository in the written scope that
+the enumeration does not list -- deleted, renamed, or private -- is
+reported as ABSENT and is **not** covered: there is no panel to read,
+and a project the audit cannot see must not be passed over in silence.
+
+If the enumeration cannot be read, the run fails. An audit that could
+not find the repositories is not an audit that found them clean.
+
+This was not hypothetical. `vaskes/minimax-h3-fp16-exact-star7` was
+created on 2026-10-31, hours after the census that produced the
+written list; a written list would have missed it. It is a fork of
+someone else's project and its panel is empty, but it is now in the
+declared scope and audited like the rest.
+
 ## [v0.29.0-stable] — 2026-10-30 — The workspace is a mailbox, and the bot stops posting letters into it
 
 **After `v0.28.0-stable`.** The next cycle starts here.

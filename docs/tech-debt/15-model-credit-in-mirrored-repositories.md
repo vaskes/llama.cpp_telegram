@@ -37,6 +37,13 @@ date it was recorded. The audit reports those repositories as **KNOWN**
 "expected" -- and the run still passes. Withdraw an entry and the same
 repository turns red on the next run.
 
+**The scope of the audit is not this list.** The audit asks GitHub
+which repositories the owner has and checks every one of them, so a
+repository created today is covered today -- a credit in a repository
+that nobody remembered to add to a list would be a credit nobody
+looked for. The two repositories above are the ones that need a
+decision; the rest are clean today.
+
 **The trigger for revisiting this.** The exemption stops being honest
 if any of these become true:
 

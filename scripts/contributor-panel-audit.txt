@@ -1,14 +1,25 @@
-# The repositories whose contributors panel is audited.
+# The declared scope: the repositories this operator owns and publishes.
 #
-# Every repository this operator owns and publishes. The panel is the
-# avatar strip on the repository's front page; a model-owned account on
-# it is the thing the operator asked to be prevented.
+# The panel is the avatar strip on the repository's front page; a
+# model-owned account on it is the thing the operator asked to be
+# prevented.
 #
-# A repository that cannot be read (private, renamed, gone) is reported
-# as UNREADABLE and fails the run. Add the repository to
+# This file is a DECLARATION, not the limit of the check. The audit also
+# asks GitHub which repositories the owner has, and audits every one of
+# them -- a repository created after this file was written is audited
+# anyway and reported as UNDECLARED, so the scope drift is visible
+# instead of silent.
+#
+# That is not hypothetical: `vaskes/minimax-h3-fp16-exact-star7` was
+# created on 2026-10-31, hours after the census that produced this
+# list, and a written list would have missed it.
+#
+# A repository that cannot be read is reported as UNREADABLE and fails
+# the run. A repository that is gone, renamed, or private is reported as
+# ABSENT and is NOT covered by the check -- add a repository to
 # scripts/contributor-panel-baseline.json only if it is a copy of
-# someone else's project whose credit cannot be erased -- not to quiet
-# a failure.
+# someone else's project whose credit cannot be erased, not to quiet a
+# failure.
 
 vaskes/llama.cpp_telegram
 vaskes/OpenWebUI-bash-sandbox
@@ -23,3 +34,4 @@ vaskes/strata-780m
 vaskes/tempera
 vaskes/greenboost
 vaskes/rtx-5090-strata-nvfp4
+vaskes/minimax-h3-fp16-exact-star7
