@@ -17,6 +17,38 @@ this file is the human-readable summary.
 
 **After `v0.29.0-stable`.** The next cycle starts here.
 
+### The gate that could not see the history it was judging
+
+The tripwire that keeps a model out of this repository's contributors
+list reads `git log --all`. In a pull-request checkout, that read was
+partial: `actions/checkout` fetches a **depth-1** slice of the merge
+ref by default, so the log held exactly one commit -- the merge commit
+-- and the commits of the branch itself were not in it.
+
+Measured on this repository on 2026-10-31: with a depth-1 merge-ref
+checkout the tripwire was **GREEN** on a tree that carried the trailer;
+with the full history it was **RED**. The check was not wrong about
+what it saw. It was blind, and it did not know it.
+
+Two changes, in this order:
+
+* both workflows that run the suite now check out the whole history
+  (`fetch-depth: 0`) -- `lint.yml` (the gate on every push and pull
+  request) and `mutation-nightly.yml` (the harnesses run the suite
+  inside the image, against that checkout);
+* `tests/test_ci_history_depth.py` is the new tripwire. It holds the
+  workflows to the setting, and it asks git directly whether the
+  checkout it runs in is shallow
+  (`git rev-parse --is-shallow-repository`). That second half is the
+  one that matters: the first half is a fact about a YAML file that
+  anyone can edit away, and the second half is a property of the check
+  itself. It turns "the gate was blind" from a mystery into a named
+  failure.
+
+The check was verified by mutation, in the same commit that wrote it:
+removing `fetch-depth: 0` from the pytest job turns the tripwire RED,
+and putting it back turns it green.
+
 ## [v0.29.0-stable] — 2026-10-30 — The workspace is a mailbox, and the bot stops posting letters into it
 
 **After `v0.28.0-stable`.** The next cycle starts here.

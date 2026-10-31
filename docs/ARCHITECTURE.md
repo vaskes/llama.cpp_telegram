@@ -56,7 +56,7 @@ telegram-bot/
     └── file_upload.py    # the file door: push bytes in, never overwrite
 ```
 
-65 top-level modules, 188 test files. The size of the suite is the
+65 top-level modules, 189 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.

@@ -43,6 +43,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # The whole history here too, and for the same reason as in
+          # lint.yml: the harnesses run the suite against this checkout,
+          # and the suite includes the tripwire that reads the history.
+          # A depth-1 checkout would run that tripwire against a tree it
+          # cannot see, and it would pass.
+          fetch-depth: 0
 
       - name: Build the image the harnesses run in
         run: |

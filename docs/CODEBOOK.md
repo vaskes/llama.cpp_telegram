@@ -2137,6 +2137,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_application_readiness.py` | 6 | A bot that cannot answer must not accept traffic |
 | `test_edit_removal.py` | 6 | The edit-replace feature is gone, and stays gone |
 | `test_codebook_test_table.py` | 6 | The table above names files that exist |
+| `test_ci_history_depth.py` | 5 | The gate sees the history it judges |
 
 | `test_console_output_in_chat.py` | 10 | The console output goes into the chat; it is not a file; and the comparison that decides it runs against what the model saw |
 | `test_trace_not_duplicating_a_delivered_file.py` | 6 | A delivered file is not delivered a second time as a transcript |
@@ -2185,7 +2186,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_docstring_surrogates.py` | 1 | No docstring carries a lone surrogate, so the tree still compiles on Python 3.14 |
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 
-188 test files in total; the table above is the ones that guard a rule in
+189 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate
