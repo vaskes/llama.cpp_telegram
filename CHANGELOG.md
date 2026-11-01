@@ -17,6 +17,56 @@ this file is the human-readable summary.
 
 **After `v0.31.0-stable`.** The next cycle starts here.
 
+### A document that arrives in the chat is a file
+
+Measured on the production bot on 2026-11-01. The operator sent a JSON
+file of 16 515 bytes and said -- twice -- that he wanted it in the
+workspace as a binary. The bot read the **first 16 000 characters** of
+it and pasted them into the prompt instead.
+
+The rest of the file was gone, and nothing said that the text in front
+of the model was a piece of a file rather than the file. The model
+answered from the fragment, re-typed the fragment into the sandbox, and
+reported the result -- with a byte count and a sha256 -- as the file
+the operator had sent. It was not the file: the JSON had been
+re-serialised on the way through, and a scene was cut in the middle of a
+word.
+
+The chat had no way in. The bot's file channel was one-way: `send_file`
+carried a file OUT, and nothing carried a file IN.
+
+What changed:
+
+  * **every document lands in the sandbox**, text and binary alike, with
+    the bytes exactly as they arrived -- the same door (`POST /files`,
+    sandbox v2.15.0) a binary document has used since 2026-10-29;
+  * **the turn carries a pointer, not the file**: the name, the path in
+    the sandbox, the size, the sha256, and -- for a text file -- a
+    preview bounded by `DOCUMENT_PREVIEW_CHARS` (4 000 characters by
+    default, a new knob). The prompt was already 43 000 tokens before
+    this, and a document pasted into it was the largest single thing in
+    it;
+  * **a piece says it is a piece.** The quoted text is labelled as the
+    first N characters of a file of M bytes, and the turn says where the
+    complete file is. A fragment the model cannot tell from a whole file
+    is not a preview, it is a lie -- and the model will answer from it;
+  * **there is no silent cut anywhere.** When the file cannot be stored
+    -- the sandbox is off in this profile, or it refused the upload --
+    the turn says so, with the reason, and the text that is quoted says
+    it is a piece;
+  * the temporary copy of the document is gone with the paste: the file
+    is uploaded as the bytes it is, and the model is given a pointer to
+    it.
+
+The model is told where the whole file is, so it never re-types it; and
+if the file could not be stored at all, the model is told THAT instead
+of being handed a fragment and left to believe it had the file.
+
+Tripwires: `tests/test_document_file_channel.py` (7 -- six are red on
+the tree of 2026-10-31, the seventh guards the binary path), and the
+mutation harness `scripts/mutation_harness_document_channel.py`, which
+holds both directions.
+
 ## [v0.31.0-stable] — 2026-11-01 — The engine's prefix cache, earned instead of lost
 
 **After `v0.30.0-stable`.** The next cycle starts here.

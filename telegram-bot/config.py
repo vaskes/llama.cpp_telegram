@@ -221,6 +221,28 @@ EMPTY_RESPONSE_USER_FALLBACK = (
 )
 
 MAX_DOC_BYTES = int(os.environ.get("MAX_DOC_BYTES", "52428800"))        # 50 MB
+
+#: How much of a TEXT document goes into the model's turn as a preview.
+#:
+#: The file itself goes into the sandbox -- that is the file channel,
+#: and it carries the bytes as they arrived -- so what the model reads
+#: in its prompt is a pointer to that file plus a preview of it, not
+#: the file pasted into the prompt.
+#:
+#: Measured 2026-11-01: the operator sent a JSON file of 16 515 bytes
+#: and said he wanted it in the workspace. The bot pasted the first
+#: 16 000 characters of it into the prompt instead, with nothing in
+#: the prompt saying it was cut. The model answered from the fragment,
+#: re-typed the fragment into the sandbox, and reported -- with a byte
+#: count and a sha256 -- a file that was not the file the operator had
+#: sent. A preview with a pointer beside it cannot do that: the model
+#: is told where the whole file is, and what it is looking at is
+#: labelled as a piece of it.
+#:
+#: 4 000 characters is about a page: a short note arrives whole and
+#: needs no tool round trip, and a big file does not flood the context
+#: (the prompt was already 43 000 tokens before this knob existed).
+DOCUMENT_PREVIEW_CHARS = int(os.environ.get("DOCUMENT_PREVIEW_CHARS", "4000"))
 MAX_VOICE_BYTES = int(os.environ.get("MAX_VOICE_BYTES", "20000000"))    # 20 MB
 MAX_VIDEO_NOTE_BYTES = int(os.environ.get("MAX_VIDEO_NOTE_BYTES", "50000000"))  # 50 MB
 

@@ -5,6 +5,14 @@ try so that the finally's `if tmp_path and os.path.exists(tmp_path)`
 cannot raise UnboundLocalError. Removing the hoist leaves 36 tests green
 -- the guard is working and nothing tests it.
 
+That hoist is gone as of 2026-11-01, together with the temporary file
+it guarded: a document is uploaded to the sandbox as the bytes it is
+now, so there is no temporary copy to unlink and nothing to hoist. The
+invariant below did not move with it -- the AST walk still covers every
+name every finally reads -- and the shape of the old case is pinned by
+`test_handle_document_has_no_temporary_file`, so a change that brings
+the temporary file back has to bring the hoist with it.
+
 The failure it prevents is worse than a raised error. UnboundLocalError
 raised *inside* a finally skips the statements after it in that same
 finally, which is where the per-user slot is released; it also flies
@@ -168,19 +176,36 @@ def test_release_is_not_behind_anything_that_can_raise(handler):
     assert not problems, "\n".join(problems)
 
 
-def test_the_tmp_path_hoist_is_present_and_load_bearing():
-    """A regression check on the exact hoist the review probed.
+def test_handle_document_has_no_temporary_file():
+    """The temporary file is gone, and with it the hoist that guarded it.
 
-    Removing `tmp_path = None` left 36 tests green.
+    This test used to pin `tmp_path = None` in handle_document: the
+    handler wrote the document to a temporary file so that it could read
+    the first 16 000 characters back out of it, and the finally unlinked
+    it. The document is not read that way any more -- it is uploaded to
+    the sandbox as the bytes it is, and the model is given a pointer to
+    that file -- so the temporary file, the hoist and the finally's
+    unlink are gone together.
+
+    The property the old test guarded -- nothing a finally reads may be
+    unbound when that finally is entered -- is still guarded, by the
+    AST walk in `test_finally_reads_only_names_bound_before_its_try`,
+    for every name in every finally of all four handlers. What this
+    test adds is the shape: there is no temporary copy of a document
+    any more, and a change that brings one back has to bring the hoist
+    with it.
     """
     fn = _fn("handle_document")
-    hoists = [n for n in ast.walk(fn)
-              if isinstance(n, ast.Assign)
-              and any(getattr(t, "id", "") == "tmp_path" for t in n.targets)
-              and isinstance(n.value, ast.Constant) and n.value.value is None]
-    assert hoists, "the tmp_path = None hoist is gone from handle_document"
-    for h in hoists:
-        outer = [t for t in _tries(fn) if t.lineno < h.lineno]
-        assert not any(t.lineno < h.lineno <= t.end_lineno for t in outer), (
-            f"the tmp_path = None hoist at line {h.lineno} is back inside a "
-            f"try it is meant to guard")
+    tmp_names = {n.id for n in ast.walk(fn)
+                 if isinstance(n, ast.Name) and n.id == "tmp_path"}
+    assert not tmp_names, (
+        "handle_document carries a tmp_path again -- the document is not "
+        "read from a temporary file any more, and a temporary file "
+        "without its hoist would make the finally raise UnboundLocalError "
+        "and skip sem.release()")
+    calls = [n for n in ast.walk(fn)
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "id", "") == "NamedTemporaryFile"]
+    assert not calls, (
+        "handle_document writes a temporary file again -- the document "
+        "goes to the sandbox as the bytes it is")

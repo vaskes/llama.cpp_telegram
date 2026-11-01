@@ -23,9 +23,7 @@
 import asyncio
 import base64
 import json
-import os
 import re
-import tempfile
 
 # TECH-DEBT #13: this block was hand-copied into all four handlers --
 # four times for the primary result and three for the empty-response
@@ -108,7 +106,8 @@ import rating
 from typing import NamedTuple
 
 from config import (
-    BOT_TOKEN, EMPTY_RESPONSE_FALLBACK, EMPTY_RESPONSE_PREFIX,
+    BOT_TOKEN, DOCUMENT_PREVIEW_CHARS, EMPTY_RESPONSE_FALLBACK,
+    EMPTY_RESPONSE_PREFIX,
     EMPTY_RESPONSE_USER_FALLBACK,
     MAX_DOC_BYTES, MAX_PHOTO_BYTES,
     document_limit_bytes,
@@ -966,10 +965,11 @@ async def _download_with_limit(file, max_bytes: int, kind: str, update: Update):
 def _reads_as_text(data: bytes) -> bool:
     """True when the bytes can be read as text.
 
-    The bot reads a document as text -- the first 16 000 characters of
-    it. A file that is not text at all is not a document the bot can
-    read, and handing its first 16 000 bytes to the model as mojibake
-    turns a binary artifact into a puzzle instead of a file.
+    A text document is still a file: it goes into the sandbox like any
+    other, and the model is told where it is. What this answer decides
+    is narrower -- whether the turn may quote the file's own text as a
+    preview, or whether the file is binary and there is nothing to
+    quote.
 
     Measured 2026-10-29: the operator uploaded a 47.6 MiB binary and
     asked for it to be put in the sandbox. The bot read its first 16 000
@@ -987,31 +987,159 @@ def _reads_as_text(data: bytes) -> bool:
     return True
 
 
-# === _put_document_in_sandbox ===
-async def _put_document_in_sandbox(update, doc, doc_bytes, caption) -> str | None:
-    """Put a binary document in the sandbox and say where it landed.
+# === _document_preview ===
 
-    A document the bot cannot read as text is not a document the bot
-    cannot use: the sandbox is where files live, and the model has
-    tools there. So the bytes go in through the door's upload half
-    (sandbox v2.15.0) and the model's context gets the path.
 
-    Returns the text for the model's turn, or None after the user has
-    already been answered.
+def _document_preview(data: bytes, limit: int) -> tuple[str, bool]:
+    """The first `limit` characters of a text file, and whether that is all.
+
+    The second value is the one that matters. A fragment the model
+    cannot tell from a whole file is not a preview, it is a lie: on
+    2026-11-01 a JSON file of 16 515 bytes arrived in the chat and was
+    pasted into the prompt instead, cut at 16 000 characters with
+    nothing in the prompt saying so. The model answered from the piece
+    it had, re-typed that piece into the sandbox and reported it -- with
+    a byte count and a sha256 -- as the file the user had sent.
+
+    The decode is bounded on purpose: a 50 MB file must not become
+    50 MB of str just to learn that it does not fit in the preview.
+    Four bytes per character is the UTF-8 maximum, so a window of that
+    size holds `limit` characters plus the slack for a character cut in
+    half at the edge.
+    """
+    if limit <= 0:
+        return "", False
+    window = limit * 4 + 4
+    if len(data) > window:
+        return data[:window].decode("utf-8", errors="ignore")[:limit], False
+    text = data.decode("utf-8", errors="ignore")
+    if len(text) <= limit:
+        return text, True
+    return text[:limit], False
+
+
+# === _sandbox_document_text ===
+
+
+def _sandbox_document_text(*, caption, name, path, size, sha256, is_text,
+                           preview, whole, renamed="") -> str:
+    """What the model reads when the document is in the sandbox.
+
+    The file is there, whole, at a path it can be read from. The turn
+    says so, and says which part of it is quoted -- so the model never
+    has to guess whether the text in front of it is the file.
+    """
+    if not is_text:
+        return (
+            f"{caption}\n\n--- Document ---\n"
+            f"The file `{name}` is a binary file, so it cannot be "
+            f"read as text. It is now in the sandbox at `{path}` "
+            f"({size} bytes, sha256 {sha256}). Work with it there -- "
+            f"the sandbox's own tools are the way to look at it."
+            f"{renamed}"
+        )
+    head = (
+        f"The file `{name}` is a text file ({size} bytes). It is now in "
+        f"the sandbox at `{path}` (sha256 {sha256}) -- that is the whole "
+        f"file, byte for byte, and it is the copy to work with.{renamed}"
+    )
+    if whole:
+        return (
+            f"{caption}\n\n--- Document ---\n{head}\n\n"
+            f"--- Contents ---\n{preview}"
+        )
+    return (
+        f"{caption}\n\n--- Document ---\n{head}\n\n"
+        f"Only the first {len(preview)} characters of it are quoted below. "
+        f"The file in the sandbox is the complete one: read it there "
+        f"before you say anything about its contents. The excerpt is not "
+        f"the file.\n\n"
+        f"--- First {len(preview)} characters ---\n{preview}"
+    )
+
+
+# === _inline_document_text ===
+
+
+def _inline_document_text(*, caption, name, size, reason, preview,
+                          whole) -> str:
+    """What the model reads when the document could NOT be stored.
+
+    The file is lost either way -- that is what the refusal means --
+    but the model must be told two things: that it is looking at a
+    piece, and why the piece is all there is. A silent cut is how the
+    2026-11-01 answer about a cut JSON file was wrong without anybody
+    noticing.
+    """
+    if whole:
+        label = "Contents"
+        body = "Its whole text is below."
+    else:
+        label = f"First {len(preview)} characters"
+        body = (f"Only the first {len(preview)} characters of it are below. "
+                f"The rest was not passed on, so anything past that point "
+                f"is unknown to you -- say so when the question needs it.")
+    return (
+        f"{caption}\n\n--- Document ---\n"
+        f"The file `{name}` ({size} bytes) could not be put in the "
+        f"sandbox: {reason.rstrip('.')}. Tell the user that plainly.\n\n"
+        f"{body}\n\n--- {label} ---\n{preview}"
+    )
+
+
+# === _document_to_sandbox ===
+
+
+async def _document_to_sandbox(update, doc, doc_bytes, caption, *,
+                               is_text) -> str | None:
+    """Put the document in the sandbox and say where it landed.
+
+    A document is a file, and the sandbox is the bot's file channel --
+    the one place where a file can be whole, addressed, and worked on
+    with tools. So every document goes in there, the bytes as they
+    arrived, and what the model gets in its turn is a pointer to that
+    file (plus a preview, for a text file) rather than the file pasted
+    into the prompt.
+
+    On 2026-11-01 the operator sent a JSON file and said, twice, that
+    he wanted it in the workspace as a binary. The bot read the first
+    16 000 characters of it and pasted them into the prompt: the model
+    answered from that fragment, re-typed it into the sandbox, and
+    reported -- with a byte count and a sha256 -- a file that was not
+    the file the operator had sent. The chat had no way in, and the
+    paste was all that was left.
+
+    Returns the text for the model's turn. Returns None only when the
+    turn cannot go on at all: a binary the sandbox would not take, with
+    the user already answered.
     """
     from personal_tools import bash_command as _bc
     from personal_tools import file_upload as _fu
 
     name = getattr(doc, "file_name", None) or "document"
+    size = len(doc_bytes)
+    preview, whole = "", False
+    if is_text:
+        preview, whole = _document_preview(doc_bytes, DOCUMENT_PREVIEW_CHARS)
+
     if not _bc.is_enabled_for_active_profile():
         log.info("[handle_document] the sandbox is not enabled in this "
-                 "profile; the document cannot be stored")
+                 "profile")
+        if is_text:
+            return _inline_document_text(
+                caption=caption, name=name, size=size,
+                reason="the sandbox is not enabled in this profile",
+                preview=preview, whole=whole)
         await _reply(update, SANDBOX_UNAVAILABLE_MESSAGE)
         return None
     try:
         uploaded = await _fu.upload_to_sandbox(doc_bytes, name)
     except _fu.FileUploadError as e:
         log.info(f"[handle_document] the sandbox refused the upload: {e}")
+        if is_text:
+            return _inline_document_text(
+                caption=caption, name=name, size=size, reason=e.message,
+                preview=preview, whole=whole)
         await _reply(update, sandbox_upload_failed_message(e.message))
         return None
     log.info(f"[handle_document] stored {uploaded.path} "
@@ -1027,14 +1155,10 @@ async def _put_document_in_sandbox(update, doc, doc_bytes, caption) -> str | Non
         renamed = (f" (The name `{requested}` was taken, so this one was "
                    f"stored as `{uploaded.name}` -- the file that was "
                    f"already there was not touched.)")
-    return (
-        f"{caption}\n\n--- Document ---\n"
-        f"The file `{uploaded.name}` is a binary file, so it cannot be "
-        f"read as text. It is now in the sandbox at `{uploaded.path}` "
-        f"({uploaded.size} bytes, sha256 {uploaded.sha256}). Work with it "
-        f"there -- the sandbox's own tools are the way to look at it."
-        f"{renamed}"
-    )
+    return _sandbox_document_text(
+        caption=caption, name=uploaded.name, path=uploaded.path,
+        size=uploaded.size, sha256=uploaded.sha256, is_text=is_text,
+        preview=preview, whole=whole, renamed=renamed)
 
 
 # === handle_voice ===
@@ -1205,10 +1329,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2026-10-22: built above the try whose except calls turn.rollback().
     # Inside it, an exception during the download left `turn` unbound and
     # the rollback turned into an UnboundLocalError that replaced the real
-    # error. tmp_path is here for the same reason: the main finally reads
-    # it, so an early return before its assignment raised inside the
-    # finally and skipped the slot release.
-    tmp_path = None
+    # error.
+    #
+    # There is no `tmp_path` here any more: the document used to be
+    # written to a temporary file so that the first 16 000 characters of
+    # a text file could be read back out of it. The document is not read
+    # any more -- it is uploaded to the sandbox as the bytes it is, and
+    # the model is given a pointer to that file -- so the temporary file
+    # and the finally that unlinked it are both gone.
     thinking = None
     turn = Turn(chat_id, thread_id, "handle_document")
     try:
@@ -1243,23 +1371,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             caption = update.message.caption or 'Read the document and answer questions.'
-            if _reads_as_text(doc_bytes):
-                ext = doc.file_name.split('.')[-1] if '.' in doc.file_name else 'txt'
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
-                    tmp.write(doc_bytes)
-                    tmp_path = tmp.name
-                with open(tmp_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    doc_text = f.read()[:16000]
-                user_content = f"{caption}\n\n--- Document ---\n{doc_text}"
-            else:
-                # A binary is not a document the bot can read -- but it
-                # is a file the sandbox can work on. So it goes in
-                # through the door's upload half, and the model is told
-                # where it landed.
-                user_content = await _put_document_in_sandbox(
-                    update, doc, doc_bytes, caption)
-                if user_content is None:
-                    return
+            # Every document goes into the sandbox -- text and binary
+            # alike -- and the model gets a pointer to it. The old
+            # branch pasted the first 16 000 characters of a text file
+            # into the prompt instead, which lost the rest of the file
+            # and told the model nothing about what it had lost.
+            user_content = await _document_to_sandbox(
+                update, doc, doc_bytes, caption,
+                is_text=_reads_as_text(doc_bytes))
+            if user_content is None:
+                return
             # v0.9.2: persist AFTER thinking+abort_event are wired so a
             # Stop click during the LLM call can roll the document back.
             opened = await _open_thinking(update, label='handle_document')
@@ -1367,8 +1488,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 log.exception("[ERR doc] error reply failed")
         finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
             # T46: revert T45. See handle_text for rationale.
             try:
                 await close_thinking(thinking)

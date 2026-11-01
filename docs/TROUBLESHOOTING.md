@@ -444,6 +444,35 @@ fence is not extracted. If the file arrived in General instead of the
 forum topic, the topic id was not carried through; that path is
 `llm_files.py`.
 
+### A document that arrives in the chat
+
+A document (any file the user attaches) is a FILE. The bot uploads it
+into the sandbox with the bytes exactly as they arrived, and the model
+is given a pointer to it: the name, the path, the size and the sha256.
+For a text file the turn also quotes a preview -- the first
+`DOCUMENT_PREVIEW_CHARS` characters (4 000 by default) -- and says so.
+
+- the file lands in the sandbox at `/workspace/<name>`. If that name
+  was taken, the door refuses to overwrite and the file is stored under
+  a numbered name (`report (1).json`); the turn says which name it
+  actually got, and the file that was already there is untouched;
+- the log says where it went: `[handle_document] stored
+  /workspace/<name> (<bytes> bytes, sha256 <digest>)`;
+- a text file's preview is a PIECE. The model is told the complete file
+  is in the sandbox and is what to read. If you see the model answering
+  about a document from a fragment, the turn did not carry the pointer
+  -- that was the behaviour before 2026-11-01, when the bot pasted the
+  first 16 000 characters of a text file into the prompt and lost the
+  rest;
+- if the file could not be stored (the sandbox is off in this profile,
+  or it refused the upload), the turn says that with the reason, and
+  the quoted text says it is a piece. The file is lost in that case --
+  what must not happen is losing it quietly.
+
+To see what the model was actually given: the turn is the user's row
+in the database (`messages`, the newest row for the chat), and the
+`--- Document ---` block inside it is the whole of the turn's text.
+
 ### The Stop button
 
 The Stop button stops **the turn the button belongs to**, and only the

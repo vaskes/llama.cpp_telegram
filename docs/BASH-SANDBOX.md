@@ -551,10 +551,14 @@ user is told which name the new file actually has.
 
 The bot's courier is `telegram-bot/personal_tools/file_upload.py`: it
 posts the raw bytes, hashes them on the way through, and refuses to
-overwrite. A document that is not text now goes straight into the
-sandbox workspace, and the model's turn is told the path, the size and
-the sha256 -- a file the model cannot see is a file the model cannot
-work with.
+overwrite. **A document now goes straight into the sandbox workspace,
+text and binary alike** (2026-11-01), and the model's turn is told the
+path, the size and the sha256 -- a file the model cannot see is a file
+the model cannot work with. For a text file the turn also quotes a
+preview of it, bounded by `DOCUMENT_PREVIEW_CHARS`, and says that what
+is quoted is a piece: before that, a text document was pasted into the
+prompt as its first 16 000 characters and the rest of the file was
+lost.
 
 **Two ceilings, and they are different kinds of thing.** The file
 policy is the rule (what the side-car is willing to keep), and the

@@ -107,7 +107,7 @@ EXCEPTIONS = {
     ),
     "handle_document": (
         "handlers.py",
-        210,
+        205,
         "2026-10-29",
         "Not a debt item -- same shape as handle_photo and handle_text, and "
         "registered only because it crossed 200 lines while nobody was "
@@ -118,7 +118,13 @@ EXCEPTIONS = {
         "are in this body. Open debt item 13 -- the item about the four "
         "handlers sharing one shape. It grew on 2026-11-01 by one line: "
         "the ids of the turn are stored with the row, so the next turn "
-        "re-renders the message exactly as the engine holds it.",
+        "re-renders the message exactly as the engine holds it. It SHRANK "
+        "by five lines the same day, when the document path stopped "
+        "reading the file into a temporary file and pasting 16 000 "
+        "characters of it into the prompt: the file goes into the sandbox "
+        "as the bytes it is, and the model is given a pointer to it. The "
+        "branch that decides it moved out of this body into the file "
+        "channel's own function.",
         "Split only together with the other three handlers, never alone.",
     ),
     "handle_text": (
