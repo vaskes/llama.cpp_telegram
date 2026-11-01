@@ -197,6 +197,29 @@ DONSETCH_WEB_TOOL_DEFS: list = [
 ]
 
 
+def file_door_names(tool_defs: list[dict],
+                    chat_id=None) -> tuple[str, ...]:
+    """The file doors this turn's tool list actually carries.
+
+    Two questions, and the answer is their INTERSECTION: the registry
+    knows which imported tool is the side-car's file door, and the tool
+    list knows which of the imported tools this chat is shown. A name
+    that is in only one of them is not a door this turn -- the model
+    would be told about a tool it cannot call, and a name it cannot
+    call is a name it invents.
+
+    Sorted, and therefore stable from turn to turn: the section that
+    names these doors lives in the system prompt, and the beginning of
+    the prompt must not move (CODEBOOK 3.17).
+    """
+    shown = {t.get("function", {}).get("name") for t in tool_defs}
+    return tuple(
+        name for name in
+        mcp_registry.get_registry().file_door_public_names(chat_id)
+        if name in shown
+    )
+
+
 async def build_tool_defs(*, bot, chat_id, chat_type) -> list[dict]:
     """The tools the model is shown this turn.
 

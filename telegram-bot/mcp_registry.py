@@ -53,7 +53,8 @@ from mcp_client import (
     McpResult,
     McpServerConfig,
 )
-from personal_tools.sandbox_contract import MCP_MAX_READ_BYTES
+from personal_tools.sandbox_contract import (MCP_FILE_DOOR_TOOL,
+                                           MCP_MAX_READ_BYTES)
 from tool_isolation import register_imported_tool_names
 
 log = get_logger(__name__)
@@ -124,9 +125,38 @@ def _tool_def(public_name: str, tool: dict, server: str) -> dict:
     it -- and the description keeps the server's words, with one line
     added saying where the tool came from, so the model can tell an
     imported tool from a native one.
+
+    The file door gets a second bot-owned line, and it needs one. The
+    server describes its own `read_file` this way: "A file over the
+    read limit is refused, and the refusal names the file's size and
+    the limit -- use bash (head, tail, sed) to read a piece of a big
+    file instead." That advice points at a tool the bot does NOT
+    import: the side-car's `bash` is excluded from the import on
+    purpose (the bot already has a shell of its own, and two shells on
+    one machine are two policies). So the model is told to use a tool
+    it does not have, and the nearest thing in its list is the bot's
+    own console -- whose output is capped and whose middle is dropped.
+    That is how a 603 675-byte file became 1 742 characters on
+    2026-11-01.
+
+    So the door's own description says what the door is in the bot's
+    world: the whole file, up to the limit the bot believes the server
+    has, and the console is not a door. The bot's facts about the
+    server it trusts belong in the door's description -- the schema
+    stays the server's, and the words about what the server refuses
+    stay the server's.
     """
     description = (tool.get("description") or "").strip()
     description += f"\n\n(Imported from the MCP server '{server}'.)"
+    if str(tool.get("name") or "") == MCP_FILE_DOOR_TOOL:
+        description += (
+            f"\n\n(This is the file door: it hands over the WHOLE file, "
+            f"every byte from the first to the last, up to "
+            f"{MCP_MAX_READ_BYTES} bytes (1 MiB). The console is not a "
+            f"door -- its output is capped and the middle is dropped, so "
+            f"a file printed by a command reaches you as a fragment. To "
+            f"read a file, call this.)"
+        )
     return {
         "type": "function",
         "function": {
@@ -226,6 +256,30 @@ class McpRegistry:
     def server_names(self) -> tuple[str, ...]:
         """The servers this registry talks to."""
         return tuple(self._configs)
+
+    def file_door_public_names(self,
+                               chat_id: Optional[int] = None) -> tuple[str, ...]:
+        """The imported file doors this chat may call.
+
+        A door is the server's own file-reading tool: the side-car
+        calls it `read_file`, and the bot shows it to the model as
+        `<server>_read_file`. The registry knows the bare name behind
+        every public name it handed out, so this is an exact question
+        and not a guess at the spelling -- and the gate is applied here
+        exactly as it is at advertisement, so a door this chat may not
+        call is not named.
+
+        Sorted, so the answer does not move from turn to turn: the
+        section that names these doors lives in the system prompt, and
+        the beginning of the prompt must not move (CODEBOOK 3.17).
+        """
+        out = []
+        for public, (server, bare) in sorted(self._inventory.items()):
+            if bare != MCP_FILE_DOOR_TOOL:
+                continue
+            if server_allowed(self._configs[server], chat_id):
+                out.append(public)
+        return tuple(out)
 
     async def ensure_ready(self, chat_id: Optional[int] = None) -> list[dict]:
         """The definitions, refreshed if the inventory went stale."""

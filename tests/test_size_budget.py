@@ -47,7 +47,7 @@ MODULE_LIMIT = 1000
 EXCEPTIONS = {
     "call_llama": (
         "call_llama.py",
-        220,
+        239,
         "2026-10-22",
         "Carries a DO NOT REFACTOR notice with its own trigger; the "
         "transport, the four response buffers and the abort state across "
@@ -62,7 +62,11 @@ EXCEPTIONS = {
         "definition stopped taking the turn's ids: the tools block has to "
         "be the same bytes on every turn, or the engine's prefix cache "
         "never matches and the whole prompt is read again (measured on the "
-        "production engine: 41.3 s a turn instead of 1.1 s).",
+        "production engine: 41.3 s a turn instead of 1.1 s). It grew "
+        "again on 2026-11-01 by the file door section: the system "
+        "prompt now names the door this chat has, which is one more "
+        "thing the model is told it can do (19 lines). Same kind of "
+        "change, same reason to ask the question again.",
         "Split when the engine transport can be moved behind a seam "
         "without the abort state crossing the boundary with it.",
     ),

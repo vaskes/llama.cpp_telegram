@@ -114,6 +114,7 @@ __all__ = [
     "PROXY_WAIT_GRACE_SECONDS",
     "CLIENT_TIMEOUT_SECONDS",
     "MCP_MAX_READ_BYTES",
+    "MCP_FILE_DOOR_TOOL",
 ]
 
 SANDBOX_REPO = "vaskes/OpenWebUI-bash-sandbox"
@@ -284,6 +285,18 @@ PROXY_WAIT_GRACE_SECONDS = 15
 #: override it. The HTTP door's own limit is a different axis -- there
 #: the bytes land in a file on the caller's disk, not in a prompt.
 MCP_MAX_READ_BYTES = 1024 * 1024
+
+#: The side-car's own name for the tool that reads a file out of the
+#: workspace. Measured on the deployed side-car v2.15.0 (and on every
+#: version since v2.12.1): `tools/list` offers `bash`, `read_file`,
+#: `file_info` and `delete_file` -- the same list config.py names. The
+#: bot shows the tool to the model as `<server>_read_file`, and that is
+#: the name the model has to call.
+#:
+#: It is here because this module is what the bot BELIEVES about the
+#: sandbox it talks to, and this is a belief about the sandbox's tool
+#: surface: the name is the side-car's, and the bot only prefixes it.
+MCP_FILE_DOOR_TOOL = "read_file"
 
 #: The bot's own HTTP timeout. It has to be strictly larger than the
 #: proxy's wait (the limit plus the grace), or the bot gives up before

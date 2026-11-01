@@ -84,7 +84,8 @@ from llm_request import (
 )
 from llm_thinking import ThinkingThrottle, push_thinking
 from llm_tools import (_bash_command_tool_enabled, build_tool_defs,
-                         fetch_tools_from_llama)  # noqa: F401
+                         fetch_tools_from_llama, file_door_names)  # noqa: F401
+from llm_filedoor import console_name_for, instruction_for
 
 
 # === Default model discovery ===
@@ -298,6 +299,14 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 + 'user asked for, and it does not have to fit in a '
                 + 'message. The user sees what your commands printed, '
                 + 'so do not repeat the console output either. '
+                # A command written out in an answer is not a tool
+                # call. The operator's own chat on 2026-11-01 held
+                # 49 198 characters of it -- and the model answered
+                # from a file it had never read.
+                + 'CALL the tool: a command you write out in your '
+                + 'answer was never run, and the chat shows what your '
+                + 'tools printed, not what you say they printed. '
+                + 'Make the call; do not write the call out as text. '
                 + 'Use a tool when the user asks for fresh data, '
                 + 'real-world facts you cannot be sure about, weather, '
                 + 'news, prices, sports results, or any web content. '
@@ -309,6 +318,17 @@ shutdown_event: optional asyncio.Event; checked at the top of every iteration
                 + 'If no tool is needed (greetings, opinions, math, '
                 + 'code review, chitchat), just answer directly — do '
                 + 'not call a tool unnecessarily.'
+                # The file door, named when this chat has one. The
+                # section is empty when it has none, so a chat without
+                # a door is never told about a tool it cannot call.
+                # Measured on production, 2026-11-01: the model read a
+                # window size out of the chat, decided the file would
+                # not fit, and answered that reading it whole is
+                # "physically impossible" -- without calling a tool.
+                # llm_filedoor.py says why this section exists.
+                + instruction_for(
+                    file_door_names(all_tools, chat_id),
+                    console_name=console_name_for(all_tools))
             )
         }
         # T2 (P0-2): drop the standalone _group_ctx_msg we added

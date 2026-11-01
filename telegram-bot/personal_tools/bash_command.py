@@ -90,9 +90,15 @@ BASH_COMMAND_TOOL_DEF: dict[str, Any] = {
             "or capability requests into it; say what you need in the "
             "chat and the operator decides. "
             "Use it for: "
-            "running scripts, inspecting files in /workspace, "
+            "running scripts, looking at the NAMES and SIZES of files in "
+            "/workspace, "
             "git operations, building projects, fetching public "
-            "web pages with curl/wget. " + SUDO_POLICY
+            "web pages with curl/wget. It is NOT a way to read a file's "
+            "contents: the console's output is capped and the middle is "
+            "dropped, so a file printed by a command reaches you as a "
+            "fragment and you cannot tell what you are missing -- to read "
+            "a file, use the file door (an imported `*_read_file` tool, "
+            "if your tool list has one). " + SUDO_POLICY
         ),
         "parameters": {
             "type": "object",

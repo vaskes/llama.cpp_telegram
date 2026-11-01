@@ -131,8 +131,8 @@ MUTATIONS = [
     ]),
     ("the description the model reads drops the sudo policy", "CAUGHT", [
         (BASH,
-         r'"web pages with curl/wget\. " \+ SUDO_POLICY',
-         '"web pages with curl/wget. Do NOT use it for: anything that would need sudo."', 1),
+         r'"if your tool list has one\)\. " \+ SUDO_POLICY',
+         '"if your tool list has one). Do NOT use it for: anything that would need sudo."', 1),
     ]),
     ("the description claims sudo is impossible while it is not", "CAUGHT", [
         (CONTRACT,
