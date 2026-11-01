@@ -2098,6 +2098,54 @@ again.
 
 ---
 
+### 3.19 A file the model reads is read whole, or it is not read
+
+The file door is the side-car's MCP `read_file`. It is a door of its
+own, and it has a budget of its own: the SERVER'S, not the bot's.
+
+Four rules, all of them learned on production on 2026-11-01, when the
+operator asked the bot to read `/workspace/characters.json` (511 949
+bytes) and the model answered as if it had:
+
+  * **the wire says what the session is; the data does not.** The
+    session detector reads the status code, the body of a failed
+    request and a JSON-RPC error envelope -- and never the content of
+    a successful answer, because that content is DATA, and data may
+    talk about sessions. That file carries the words "session",
+    "unknown" and "expired"; the detector read them out of the ANSWER,
+    called the session forgotten, and killed the door on a read that
+    had succeeded. The model then fell back to the shell, got a
+    fragment, and said it had read the file;
+  * **a file has the file's budget.** The side-car refuses a file over
+    `AGENT_MCP_MAX_READ_BYTES` by name -- "the file is N bytes, which
+    is over the limit of M bytes" -- instead of handing over a piece.
+    So the bot's ceiling for a file is that number and not the tool
+    budget of 24 000 characters: a bot that were stricter would cut a
+    file the server deliberately allowed;
+  * **"this is the whole file" is a fact, not a hope.** The server
+    declares the file's size in bytes; the client counts its own bytes
+    and compares. Equal means the whole file is here, and the result
+    carries it as a file. A file that cannot be vouched for is a tool
+    output like any other: capped, with the cut marked;
+  * **the ledger keeps what the MODEL saw.** A quote from the middle
+    of a file is output, not a deliverable -- the failure of
+    2026-10-30, which the console had and the file door did not.
+
+The console is not the file door. `bash_command` output keeps its own
+budgets -- the console is noise, and 44 commands once produced 77 044
+characters of transcript -- and a cut there is marked. A file read
+through the file door is not cut at all.
+
+Checked by `tests/test_mcp_file_body.py` (12). All twelve are RED on
+the tree of 2026-11-01, and the first of them is RED with the bug
+itself: the door answered "the server does not know our session" to a
+read that had succeeded. The mutation harness
+`scripts/mutation_harness_file_body.py` holds both directions: breaking
+the property has to turn the suite red, and removing the tripwire
+together with the behaviour has to turn it green again.
+
+---
+
 ## 4. Rules for the reviewer and the harness
 
 These are the ones that cost me personally, three waves running. They are about
@@ -2346,8 +2394,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_storage_checkpoint.py` | 5 | The database file is the truth: a copy of it is not a stale snapshot |
 | `test_llm_endpoint_failover.py` | 13 | The engine can move: the bot tries the other endpoint only when the active one fails, and the engine that answers is the one it keeps |
 | `test_document_file_channel.py` | 7 | A document is a file: it lands in the sandbox as the bytes that arrived, the turn carries a pointer and not the file, and a piece of a file says it is a piece |
+| `test_mcp_file_body.py` | 12 | A file the model reads is read whole: the transport does not read the data, the file has the file's budget, and the ledger keeps what the model saw |
 
-193 test files in total; the table above is the ones that guard a rule in
+194 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

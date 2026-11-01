@@ -151,8 +151,8 @@ MUTATIONS = [
     ]),
     ("the tool result the model reads is cut without a word", "CAUGHT", [
         (ITERATION,
-         r"'content': condense\(outcome\.text, MAX_TOOL_RESULT_CHARS\),",
-         "'content': outcome.text[:MAX_TOOL_RESULT_CHARS],", 1),
+         r"    return condense\(outcome\.text, MAX_TOOL_RESULT_CHARS\)\n",
+         "    return outcome.text[:MAX_TOOL_RESULT_CHARS]\n", 1),
     ]),
     ("the ledger keeps the tail, and the sandbox's marker with it", "CAUGHT", [
         (DISPATCH,
@@ -292,8 +292,8 @@ MUTATIONS = [
          r"def test_the_result_cap_is_applied_by_the_caller\(\):",
          "def _disabled_test_the_result_cap_is_applied_by_the_caller():", 1),
         (ITERATION,
-         r"'content': condense\(outcome\.text, MAX_TOOL_RESULT_CHARS\),",
-         "'content': outcome.text[:MAX_TOOL_RESULT_CHARS],", 1),
+         r"    return condense\(outcome\.text, MAX_TOOL_RESULT_CHARS\)\n",
+         "    return outcome.text[:MAX_TOOL_RESULT_CHARS]\n", 1),
     ]),
     ("the tripwires for the ledger are gone, and so is the mark",
      "SURVIVED", [

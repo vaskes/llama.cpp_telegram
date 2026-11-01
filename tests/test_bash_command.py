@@ -19,6 +19,53 @@ _REPO = os.path.join(os.path.dirname(__file__), "..", "telegram-bot")
 sys.path.insert(0, _REPO)
 
 
+def _reimport_bash_command():
+    """A fresh copy of bash_command, read with the env as it is NOW.
+
+    The module reads AGENT_STACK_TOKEN at IMPORT time, so a test that
+    wants a different answer has to import it again.
+
+    The copy it leaves behind used to be the leak: the module the
+    session had was deleted and never put back, so the rest of the
+    session carried a copy that says "the sandbox is enabled" -- with
+    the token THIS test set. A later test, expecting the sandbox to be
+    off (there is no token on this host), got the opposite answer and
+    took a path it never meant to take.
+
+    Measured on 2026-11-01: that leak is what made
+    `test_blockers.py::test_handler_survives_reply_returning_none`
+    fail in a full suite run and pass in isolation.
+
+    So the displaced module goes back when the test is over.
+    """
+    saved = sys.modules.pop("personal_tools.bash_command", None)
+    import personal_tools.bash_command as m
+    return m, saved
+
+
+def _restore_bash_command(saved):
+    """Put the module the session had back where it was.
+
+    Two places, not one: the entry in ``sys.modules`` AND the attribute
+    on the package. ``import personal_tools.bash_command as bc`` binds
+    the package's attribute, and the registry's gate does the same --
+    so a session whose two places disagree hands out two different
+    modules, and a patch on one of them is a patch on nothing.
+
+    Measured on 2026-11-01: with only ``sys.modules`` restored, six
+    tests went red that had nothing to do with the sandbox -- they
+    patched one copy and the code read the other.
+    """
+    import personal_tools
+    if saved is None:
+        sys.modules.pop("personal_tools.bash_command", None)
+        if hasattr(personal_tools, "bash_command"):
+            del personal_tools.bash_command
+    else:
+        sys.modules["personal_tools.bash_command"] = saved
+        personal_tools.bash_command = saved
+
+
 @pytest.fixture
 def personal_with_token(monkeypatch):
     """Set the env to personal + token. Yields the module."""
@@ -26,33 +73,27 @@ def personal_with_token(monkeypatch):
     monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token-abc")
     monkeypatch.setenv("AGENT_STACK_URL", "http://sandbox.test:8090")
     # Re-import to pick up env
-    for mod in list(sys.modules):
-        if mod == "personal_tools.bash_command":
-            del sys.modules[mod]
-    import personal_tools.bash_command as m
-    yield m
+    module, saved = _reimport_bash_command()
+    yield module
+    _restore_bash_command(saved)
 
 
 @pytest.fixture
 def public_with_token(monkeypatch):
     monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "public")
     monkeypatch.setenv("AGENT_STACK_TOKEN", "test-token-abc")
-    for mod in list(sys.modules):
-        if mod == "personal_tools.bash_command":
-            del sys.modules[mod]
-    import personal_tools.bash_command as m
-    yield m
+    module, saved = _reimport_bash_command()
+    yield module
+    _restore_bash_command(saved)
 
 
 @pytest.fixture
 def personal_no_token(monkeypatch):
     monkeypatch.setenv("LLAMABOT_DEPLOYMENT_PROFILE", "personal")
     monkeypatch.delenv("AGENT_STACK_TOKEN", raising=False)
-    for mod in list(sys.modules):
-        if mod == "personal_tools.bash_command":
-            del sys.modules[mod]
-    import personal_tools.bash_command as m
-    yield m
+    module, saved = _reimport_bash_command()
+    yield module
+    _restore_bash_command(saved)
 
 
 def test_is_enabled_in_personal_with_token(personal_with_token):
@@ -335,3 +376,25 @@ def test_the_tool_description_does_not_carry_the_stdin_workaround(
     assert "standard input" not in desc, (
         "the tool description still warns about the stdin trap, which "
         "the pinned side-car no longer has")
+
+
+def test_the_reimported_module_does_not_outlive_the_test():
+    """The copy a fixture imports must not decide the gate for the rest
+    of the session.
+
+    The module reads AGENT_STACK_TOKEN at import time, so the fixtures
+    above import it again to make it read a different env. The copy
+    they leave behind used to be the session's copy -- and it says
+    "the sandbox is enabled", with the token this file's own fixture
+    set. Every test after this one then believed the sandbox was on.
+
+    Measured on 2026-11-01: that is what made
+    ``test_blockers.py::test_handler_survives_reply_returning_none``
+    red in a full suite run and green in isolation.
+    """
+    import personal_tools.bash_command as bc
+
+    assert bc.AGENT_STACK_TOKEN == os.environ.get("AGENT_STACK_TOKEN", ""), (
+        "the module the session holds does not match the env: it is a "
+        "copy left behind by a fixture, and it decides the sandbox gate "
+        "for every test that follows")

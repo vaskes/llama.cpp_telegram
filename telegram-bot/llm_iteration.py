@@ -73,6 +73,25 @@ ITERATION_LIMIT_MESSAGE = (
     'Please try a simpler question, /reset, or a different model.]')
 
 
+def tool_result_content(outcome) -> str:
+    """What the model is shown of one tool result.
+
+    An ordinary result is bounded, and the cut is marked rather than
+    silent: a model that cannot see that it is looking at a fragment
+    answers as if it had seen the whole thing.
+
+    A FILE is the exception, and the exception is the point of the file
+    door. The server sent the whole file, the client checked that it
+    holds every byte of it, and the registry gave it the file's own
+    budget -- so the model is shown the file from its first byte to its
+    last. Cutting it here would make the file unreadable in exactly
+    the way the operator's test (2026-11-01) refused to accept.
+    """
+    if getattr(outcome, "file", None) is not None:
+        return outcome.text
+    return condense(outcome.text, MAX_TOOL_RESULT_CHARS)
+
+
 @dataclass(frozen=True)
 class IterationResult:
     """Either the turn ends here, or the loop goes round again.
@@ -457,8 +476,8 @@ class ToolLoop:
                 # shorter than the text says nothing about what is
                 # missing, and a model that cannot see that it is
                 # looking at a fragment answers as if it had seen the
-                # whole thing.
-                'content': condense(outcome.text, MAX_TOOL_RESULT_CHARS),
+                # whole thing. A whole file is not cut at all.
+                'content': tool_result_content(outcome),
             })
 
         # T49: removed the early-return on saw_unavailable_tool. The

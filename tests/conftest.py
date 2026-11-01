@@ -113,6 +113,40 @@ def sandbox_token():
     return os.environ.get("AGENT_STACK_TOKEN", "")
 
 
+@pytest.fixture(autouse=True)
+def _the_sandbox_module_follows_the_env():
+    """After every test, the sandbox module's copy of the token must
+    match the env again.
+
+    ``personal_tools.bash_command`` reads ``AGENT_STACK_TOKEN`` at
+    IMPORT time. Several tests re-import or reload it to make it read
+    a different env -- and the copy they leave behind says "the
+    sandbox is enabled" for the rest of the session, because the env
+    they set is gone by then.
+
+    Measured on 2026-11-01: that leak is what made
+    ``test_blockers.py::test_handler_survives_reply_returning_none``
+    red in a full suite run and green in isolation -- the handler took
+    the upload path (the sandbox "was" enabled) with a fake document
+    that has no name, raised, and swallowed it.
+
+    One guard for the whole class, in the one place every test passes
+    through. The fixtures that re-import the module also put the
+    session's copy back (see tests/test_bash_command.py); this guard
+    covers the reloads, which mutate the module in place and cannot
+    be undone by handing back an old object.
+    """
+    yield
+    try:
+        import personal_tools.bash_command as bc
+    except ImportError:
+        # A materialised tree may carry no personal_tools at all (the
+        # deploy-artifact backtests copy part of the tree and run pytest
+        # inside it). There is nothing to sync there.
+        return
+    bc.AGENT_STACK_TOKEN = os.environ.get("AGENT_STACK_TOKEN", "")
+
+
 @pytest.fixture
 def sandbox_url():
     # Loopback by default: the side-car is published on 127.0.0.1, not

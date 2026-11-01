@@ -34,7 +34,7 @@ import llm_tools  # noqa: E402
 import mcp_registry  # noqa: E402
 import tool_isolation  # noqa: E402
 from llm_dispatch import DispatchDeps, execute_tool  # noqa: E402
-from mcp_client import McpServerConfig  # noqa: E402
+from mcp_client import McpResult, McpServerConfig  # noqa: E402
 from mcp_registry import McpRegistry  # noqa: E402
 
 pytestmark = pytest.mark.asyncio
@@ -77,7 +77,7 @@ class FakeClient:
 
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
-        return f"[MCP OUTPUT] {name}"
+        return McpResult(text=f"[MCP OUTPUT] {name}")
 
 
 def _engine_tools():

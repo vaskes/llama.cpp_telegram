@@ -106,6 +106,16 @@ def _common(monkeypatch, tmp_path, call_llama, thinking=None,
     monkeypatch.setattr("handlers._check_user_slot", slot or fake_slot)
     monkeypatch.setattr("handlers._is_rating_active", lambda u: False)
     monkeypatch.setattr("handlers._stop_button_markup", lambda: None)
+    # The sandbox is OFF for these tests, and it is pinned rather than
+    # left to the host. The suite must give the same result on a machine
+    # with a live side-car and on one without, and the handlers reach
+    # the sandbox only when the token and the profile say so. Left to
+    # the host, this file took the upload path on a credentialed host
+    # (a real upload, into a real sandbox) and the no-sandbox path on
+    # every other one -- and the fake document has no name to upload
+    # under, so the upload path raised and the handler swallowed it.
+    monkeypatch.setattr("personal_tools.bash_command."
+                        "is_enabled_for_active_profile", lambda: False)
     # Prove the stub is the one in use, so the release check below is
     # about the handler and not about an object nobody touched.
     assert handlers._check_user_slot is (slot or fake_slot)

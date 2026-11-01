@@ -17,6 +17,77 @@ this file is the human-readable summary.
 
 **After `v0.32.0-stable`.** The next cycle starts here.
 
+### A file the model reads is read whole, or it is not read
+
+Measured on the production bot on 2026-11-01. The operator asked the
+bot to read a file of 511 949 bytes out of the sandbox and said: "this
+is a test -- read it from beginning to end, all of it fits". The model
+answered as if it had.
+
+It had not. The file never arrived, and three things of the bot's own
+doing stood in the way:
+
+  * **the session detector read the DATA.** It looked at the answer's
+    text and asked whether the answer mentioned a session that was
+    unknown or expired. The file mentions all three words -- "session",
+    "unknown", "expired" -- so the detector called the session
+    forgotten, re-initialized, and killed the file door on a read that
+    had SUCCEEDED. The model fell back to the shell, got a fragment of
+    the file, and said it had read the file;
+  * **the registry cut every tool result to 24 000 characters**, and
+  * **the iteration cut it again to 12 000**, dropping the middle --
+    so even a file that got through arrived without its tail.
+
+What changed:
+
+  * **the transport does not read the data.** The session detector
+    reads the status code, the body of a failed request and a JSON-RPC
+    error envelope -- and never the content of a successful answer. A
+    session the server forgot is still retried exactly once, after a
+    fresh handshake, because that is what the WIRE said;
+  * **a file has the file's budget.** The side-car refuses a file over
+    `AGENT_MCP_MAX_READ_BYTES` (1 MiB) BY NAME instead of handing over
+    a piece, so the bot's ceiling for a file is that number and not the
+    tool budget. The bot is not stricter than the server it trusts;
+  * **"this is the whole file" is a fact, not a hope.** The server
+    declares the file's size in bytes, the client counts its own bytes
+    and compares. Equal means the whole file is here, and the turn says
+    so: "[FILE: characters.json, 511949 bytes, application/json -- this
+    is the complete file, from its first byte to its last.]";
+  * **the ledger keeps what the MODEL saw**, so a quote from the middle
+    of a file is output and not a document nobody asked for -- the
+    failure of 2026-10-30, which the console had and the file door did
+    not.
+
+The console is not the file door: `bash_command` output keeps its own
+budgets, and a cut there is marked. A file read through the file door is
+not cut at all.
+
+### And the suite is green again
+
+The full suite has been red since the previous wave, and the wave
+before it did not notice: one test
+(`test_blockers.py::test_handler_survives_reply_returning_none`) fails
+in a full run and passes in isolation.
+
+The reason was a leak, not the handler. The fixtures in
+`tests/test_bash_command.py` re-import `personal_tools.bash_command` --
+the module reads `AGENT_STACK_TOKEN` at import time, so a test that
+wants a different answer has to import it again -- and the copy they
+left behind said "the sandbox is enabled", with the token that fixture
+had set. Every test after them believed the sandbox was on, and one of
+them took the upload path it never meant to take, with a fake document
+that has no name to upload under.
+
+The displaced module goes back now, in both places it lives (the
+`sys.modules` entry and the attribute on the package -- a session whose
+two places disagree hands out two different modules). One guard in
+`conftest.py` covers the reloads, which mutate the module in place and
+cannot be undone by handing back an old object. The blockers file pins
+the sandbox off instead of leaving it to the host: the suite has to
+give the same answer on a machine with a live side-car and on one
+without.
+
 ## [v0.32.0-stable] — 2026-11-01 — A document that arrives in the chat is a file
 
 **After `v0.31.0-stable`.** The next cycle starts here.

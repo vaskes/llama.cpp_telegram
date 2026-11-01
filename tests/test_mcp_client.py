@@ -187,7 +187,7 @@ async def test_a_tool_result_is_flattened_into_text(monkeypatch):
     ]})])
     client = McpClient(_config())
 
-    assert await client.call_tool("t", {}) == "hello\nworld"
+    assert (await client.call_tool("t", {})).text == "hello\nworld"
 
 
 async def test_an_image_block_becomes_a_line_and_not_a_blob(monkeypatch):
@@ -196,7 +196,7 @@ async def test_an_image_block_becomes_a_line_and_not_a_blob(monkeypatch):
     ]})])
     client = McpClient(_config())
 
-    out = await client.call_tool("t", {})
+    out = (await client.call_tool("t", {})).text
 
     assert "image/png" in out
     assert "40 bytes" in out
@@ -225,7 +225,7 @@ async def test_a_binary_file_becomes_its_facts_and_not_a_base64_blob(monkeypatch
                              "mime": "application/octet-stream"}})])
     client = McpClient(_config())
 
-    out = await client.call_tool("t", {})
+    out = (await client.call_tool("t", {})).text
 
     assert "probe.bin" in out
     assert "application/octet-stream" in out
@@ -250,7 +250,7 @@ async def test_a_resource_without_structured_content_still_names_the_file(monkey
     ]})])
     client = McpClient(_config())
 
-    out = await client.call_tool("t", {})
+    out = (await client.call_tool("t", {})).text
 
     assert "file://probe.bin" in out
     assert "application/octet-stream" in out
@@ -269,7 +269,7 @@ async def test_a_text_resource_is_read_as_text(monkeypatch):
     ]})])
     client = McpClient(_config())
 
-    out = await client.call_tool("t", {})
+    out = (await client.call_tool("t", {})).text
 
     assert "the contents of the note" in out
 
@@ -280,7 +280,7 @@ async def test_a_result_the_server_marked_as_an_error_says_so(monkeypatch):
     ], "isError": True})])
     client = McpClient(_config())
 
-    out = await client.call_tool("t", {})
+    out = (await client.call_tool("t", {})).text
 
     assert out.startswith("[mcp tool error:")
     assert "no such file" in out
@@ -290,7 +290,7 @@ async def test_an_empty_result_is_named_and_not_invented(monkeypatch):
     _install(monkeypatch, [_ok({"content": []})])
     client = McpClient(_config())
 
-    assert await client.call_tool("t", {}) == "[mcp: empty result]"
+    assert (await client.call_tool("t", {})).text == "[mcp: empty result]"
 
 
 async def test_a_session_the_server_forgot_is_re_initialized_once(monkeypatch):
@@ -308,7 +308,7 @@ async def test_a_session_the_server_forgot_is_re_initialized_once(monkeypatch):
     ])
     client = McpClient(_config())
 
-    out = await client.call_tool("t", {})
+    out = (await client.call_tool("t", {})).text
 
     assert out == "second try"
     assert [r["json"].get("method") for r in fake.requests] == [
@@ -340,7 +340,7 @@ async def test_an_sse_answer_is_read_as_well_as_a_json_one(monkeypatch):
     _install(monkeypatch, [response])
     client = McpClient(_config())
 
-    assert await client.call_tool("t", {}) == "from sse"
+    assert (await client.call_tool("t", {})).text == "from sse"
 
 
 async def test_an_http_error_is_named_with_its_status(monkeypatch):

@@ -42,6 +42,7 @@ from typing import Any, NamedTuple, Optional
 
 import mcp_registry
 from llm_truncation import condense
+from mcp_client import McpFile
 from rating import _execute_react_to_message
 from tool_isolation import known_tool_names
 
@@ -118,6 +119,7 @@ class ToolExecution(NamedTuple):
     empty: bool = False             # does not count as a real result
     unavailable: bool = False       # the name was not recognised
     ledger: Optional[dict] = None   # what to record for this turn
+    file: Optional[McpFile] = None  # the server sent a COMPLETE file
 
 
 def result_is_empty(text: str) -> bool:
@@ -429,11 +431,13 @@ async def _execute_mcp(name: str, args, deps: DispatchDeps) -> ToolExecution:
     reaches the wire.
     """
     registry = mcp_registry.get_registry()
-    text = await registry.call(name, args, chat_id=deps.chat_id)
-    return _finish(text, _entry(name, args, deps.iteration), deps)
+    result = await registry.call(name, args, chat_id=deps.chat_id)
+    return _finish(result.text, _entry(name, args, deps.iteration), deps,
+                   file=result.file)
 
 
-def _finish(result, ledger: dict, deps: DispatchDeps) -> ToolExecution:
+def _finish(result, ledger: dict, deps: DispatchDeps, *,
+            file: Optional[McpFile] = None) -> ToolExecution:
     """Wrap an executor's return value into the outcome the loop reads.
 
     `str(result)` is applied here so every executor may return whatever
@@ -453,8 +457,20 @@ def _finish(result, ledger: dict, deps: DispatchDeps) -> ToolExecution:
     long output is invisible to it.
     """
     text = str(result)
-    ledger["output"] = _ledger_output(text)
-    return ToolExecution(text=text, empty=result_is_empty(text), ledger=ledger)
+    if file is not None:
+        # A complete file: the model sees it whole, so the ledger keeps
+        # it whole. The comparison the file-extractor runs has to be
+        # against what the model saw, or a quote from the middle of the
+        # file looks like a deliverable -- the failure of 2026-10-30,
+        # which the console had and the file door did not.
+        ledger["output"] = text
+        # A file is a result, whatever its content happens to say: "0
+        # results" inside a JSON file is not an empty search.
+        empty = False
+    else:
+        ledger["output"] = _ledger_output(text)
+        empty = result_is_empty(text)
+    return ToolExecution(text=text, empty=empty, ledger=ledger, file=file)
 
 
 #: How much of a tool's result the ledger keeps for the comparison.

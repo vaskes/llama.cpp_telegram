@@ -16,8 +16,8 @@ telegram-bot/
 ├── handlers.py            # handle_text/photo/voice/document (1740 lines)
 ├── call_llama.py          # the turn: build the request, drive the loop
 │                          #   381 lines file, 220 in the function, 349 in the loop
-├── mcp_client.py # MCP protocol for ONE server (382)
-├── mcp_registry.py # the tools imported from the MCP servers (318)
+├── mcp_client.py # MCP protocol for ONE server (491)
+├── mcp_registry.py # the tools imported from the MCP servers (361)
 ├── dispatch.py            # routing, lifecycle, concurrency caps (355)
 ├── dispatch_group.py # human-to-human reply absorb (165)
 ├── dispatch_polling.py    # startup + getUpdates loop (352)
@@ -56,7 +56,7 @@ telegram-bot/
     └── file_upload.py    # the file door: push bytes in, never overwrite
 ```
 
-66 top-level modules, 193 test files. The size of the suite is the
+66 top-level modules, 194 test files. The size of the suite is the
 README's badge — one number, one place, recomputed from the tree by
 `tests/test_readme_release_claims.py`; CI collects the same suite minus
 the sandbox-marked file, which it excludes by name.
@@ -71,10 +71,10 @@ tests, none of which build a full `call_llama`.
 
 ```
   module                lines  public surface
-  llm_dispatch.py       478  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
+  llm_dispatch.py       494  DispatchDeps, ToolExecution, result_is_empty, _entry, execute_tool, _execute_bash, _execute_send_file, _execute_mcp, unavailable_tool_message, _finish
   llm_endpoint.py       281  engine_post, engine_get, engine_stream, active_url, endpoints, set_endpoints, reset_endpoints
   llm_finish.py         166  Ending, _answer_dict, finish_without_tool_calls, refuse_hallucinated_tools, finish_fallback_empty
-  llm_iteration.py      579  IterationResult, ToolLoop, _scrub_sse_dict, _has_tool_calls
+  llm_iteration.py      598  IterationResult, ToolLoop, tool_result_content, _scrub_sse_dict, _has_tool_calls
   llm_json.py            53  scrub_surrogates, dumps_body
   call_llama.py         381  call_llama
   llm_loop_guard.py     185  Nudge, Abort, LoopGuard
@@ -224,6 +224,42 @@ server objects (`name`, `url`, and optionally `token`, `include`,
 servers are the operator's, and the model cannot add one. (Production
 has had one since 2026-10-27: the bot's own side-car, read-only tools
 only, gated to the allowlisted chat.)
+
+### The file door, and what a file costs
+
+One imported tool is a door of its own: the side-car's `read_file`. It
+reads a file out of the workspace and hands the model the whole thing,
+and the rules around it are the rules of a file and not the rules of a
+tool result.
+
+* **The budget is the server's.** The side-car refuses a file over
+  `AGENT_MCP_MAX_READ_BYTES` (1 MiB) BY NAME -- "the file is N bytes,
+  which is over the limit of M bytes" -- instead of handing over a
+  piece. So the bot's ceiling for a file is that number
+  (`mcp_registry.MAX_FILE_RESULT_CHARS`, taken from the belief about
+  the server in `personal_tools/sandbox_contract.py`) and not the tool
+  budget of 24 000 characters. A bot that were stricter would cut a
+  file the server deliberately allowed.
+* **"This is the whole file" is checked, not assumed.** The server
+  declares the file's size in bytes; the client counts its own bytes
+  and compares. Equal means the whole file is here, and the result
+  carries an `McpFile`. A file that cannot be vouched for is a tool
+  output like any other: capped, with the cut marked.
+* **The transport does not read the data.** The session detector reads
+  the status code, the body of a failed request and a JSON-RPC error
+  envelope -- and never the content of a successful answer. Measured on
+  production on 2026-11-01: the file `/workspace/characters.json`
+  carries the words "session", "unknown" and "expired", and the
+  detector read them out of the ANSWER, called the session forgotten
+  and killed the door on a read that had succeeded.
+* **The ledger keeps what the model saw.** A quote from the middle of
+  a file is output, not a deliverable -- the failure of 2026-10-30,
+  which the console had and the file door did not.
+
+The console is not the file door. `bash_command` output keeps its own
+budgets -- the console is noise, and 44 commands once produced 77 044
+characters of transcript -- and a cut there is marked. A file read
+through the file door is not cut at all.
 
 ## bash_command — the sandboxed shell, defence in depth
 

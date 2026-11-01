@@ -473,6 +473,34 @@ To see what the model was actually given: the turn is the user's row
 in the database (`messages`, the newest row for the chat), and the
 `--- Document ---` block inside it is the whole of the turn's text.
 
+### A file the model is supposed to read
+
+A file in the sandbox is read through the FILE DOOR: the side-car's MCP
+`read_file`. The model gets the whole file -- from the first byte to the
+last -- and the turn says so in the tool result: `[FILE:
+characters.json, 511949 bytes, application/json -- this is the complete
+file, from its first byte to its last.]`
+
+- if the turn says `[mcp: ... failed: ... the server does not know our
+  session]`, the transport detector fired on the DATA: it read the
+  answer and found the words "session" and "unknown" IN THE FILE.
+  Measured on production on 2026-11-01: `/workspace/characters.json`
+  carries all three words ("session", "unknown", "expired"). The
+  detector reads only the wire now;
+- if the model answers as if it had read the file and the tool result
+  says `truncated at N characters`, the file did not fit the budget it
+  was given. The side-car's own limit is 1 MiB
+  (`AGENT_MCP_MAX_READ_BYTES`), and the bot's ceiling for a file is the
+  same number;
+- if the file arrived whole and the model still talks about only the
+  beginning of it, that is the model and not the bot: the file is in
+  the turn's context, from the first byte to the last.
+
+To see what the model was actually given: the tool result lives in the
+turn's PROMPT, not in the database -- the database keeps the model's
+ANSWER, not the file. The file itself is in the sandbox, at the path
+the turn named.
+
 ### The Stop button
 
 The Stop button stops **the turn the button belongs to**, and only the

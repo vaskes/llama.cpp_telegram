@@ -127,9 +127,9 @@ MUTATIONS = [
     ]),
     ("an imported call is not routed to the server", "CAUGHT", [
         (DISPATCH,
-         r'    registry = mcp_registry\.get_registry\(\)\n' 
-         r'    text = await registry\.call\(name, args, chat_id=deps\.chat_id\)\n' ,
-         "    text = \"no such tool\"\n", 1),
+         r'    registry = mcp_registry\.get_registry\(\)\n'
+         r'    result = await registry\.call\(name, args, chat_id=deps\.chat_id\)\n' ,
+         "    result = mcp_registry.McpResult(text=\"no such tool\")\n", 1),
     ]),
 
     # --- group B: the tripwires ------------------------------------
