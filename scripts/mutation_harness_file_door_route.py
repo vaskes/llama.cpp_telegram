@@ -74,6 +74,7 @@ CALL_LLAMA = ROOT / "telegram-bot" / "call_llama.py"
 FILEDOOR = ROOT / "telegram-bot" / "llm_filedoor.py"
 MCP_REGISTRY = ROOT / "telegram-bot" / "mcp_registry.py"
 LLM_TOOLS = ROOT / "telegram-bot" / "llm_tools.py"
+BASH_COMMAND = ROOT / "telegram-bot" / "personal_tools" / "bash_command.py"
 TEST_FILE = ROOT / "tests" / "test_file_door_route.py"
 
 #: The def line of every tripwire, exactly as the file has it. A group
@@ -106,6 +107,11 @@ SILENCE = {
     "limit": ("async def test_the_section_gives_the_limit(monkeypatch):"),
     "stable": ("async def test_the_section_does_not_move_from_turn_to_turn("
                "monkeypatch):"),
+    "cut": ("def test_a_cut_output_says_it_is_a_fragment_and_names_the_"
+            "door():"),
+    "cutbot": ("def test_the_bot_own_cut_counts_as_a_cut():"),
+    "cutquiet": ("def test_an_uncut_output_carries_no_such_notice():"),
+    "cutfrag": ("def test_a_cut_still_returns_what_reached_the_bot():"),
 }
 
 
@@ -136,6 +142,8 @@ CAUGHT_BY = {
     "nowhole": ["console"],
     "noarbiter": ["arbiter"],
     "nodesc": ["desc"],
+    "nocutnotice": ["cut", "cutbot"],
+    "cutnodname": ["cut"],
 }
 
 
@@ -179,6 +187,20 @@ BEHAVIOUR = {
                r"    if str\(tool\.get\(\"name\"\) or \"\"\) == "
                r"MCP_FILE_DOOR_TOOL:\n",
                "    if False:\n", 1),
+    # The console's cut carries no notice: the model finds out that
+    # the output was cut and finds no door in the message, so it keeps
+    # measuring the channel -- which is what it did on production on
+    # 2026-11-01, 23:00-23:20 MSK.
+    "nocutnotice": (BASH_COMMAND,
+                    r"        if _output_was_cut\(out, stdout_text\):\n",
+                    "        if False:\n", 1),
+    # The notice names no door: the model is told the output is a
+    # fragment and is not told what to do about it.
+    "cutnodname": (BASH_COMMAND,
+                   r"imported tool whose name ends in `_read_file` -- "
+                   r"which hands you ",
+                   "imported tool whose name ends in `_read_anything` -- "
+                   "which hands you ", 1),
     # The section loses the sentence that says the server is the
     # arbiter -- which is the sentence that stops the model from
     # deciding in advance that the file will not fit.
@@ -208,6 +230,10 @@ MUTATIONS = [
      [BEHAVIOUR["noarbiter"]]),
     ("the door's description loses the bot's line", "CAUGHT",
      [BEHAVIOUR["nodesc"]]),
+    ("the console's cut carries no notice", "CAUGHT",
+     [BEHAVIOUR["nocutnotice"]]),
+    ("the console's notice names no door", "CAUGHT",
+     [BEHAVIOUR["cutnodname"]]),
 
     # --- group B: the tripwires -------------------------------------
     ("the tripwires are gone, and the section is not in the prompt",
@@ -227,6 +253,12 @@ MUTATIONS = [
     ("the tripwire is gone, and the door's description loses the bot's "
      "line", "SURVIVED",
      _group_b(CAUGHT_BY["nodesc"], BEHAVIOUR["nodesc"])),
+    ("the tripwires are gone, and the console's cut carries no notice",
+     "SURVIVED",
+     _group_b(CAUGHT_BY["nocutnotice"], BEHAVIOUR["nocutnotice"])),
+    ("the tripwire is gone, and the console's notice names no door",
+     "SURVIVED",
+     _group_b(CAUGHT_BY["cutnodname"], BEHAVIOUR["cutnodname"])),
 ]
 
 

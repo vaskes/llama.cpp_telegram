@@ -48,6 +48,7 @@ from personal_tools.bash_policy import check_command, refusal_text
 from personal_tools.sandbox_contract import (
     CLIENT_TIMEOUT_SECONDS,
     EXEC_TIMEOUT_SECONDS,
+    MCP_MAX_READ_BYTES,
     PROXY_WAIT_GRACE_SECONDS,
     SUDO_POLICY,
 )
@@ -660,6 +661,61 @@ async def call_bash_command(
     }
 
 
+#: The sandbox's own marker: it prints it on the FIRST line of an
+#: output that did not fit in the session scrollback, and what follows
+#: is only the tail. The bot does not own that string -- it is the
+#: side-car's -- but it knows it (llm_truncation says so), and a cut
+#: the bot cannot see is a cut the model cannot see either.
+_SANDBOX_CUT_MARKER = "no longer fits in the session scrollback"
+
+#: The bot's own condenser says what it dropped in the middle.
+_BOT_CUT_MARKER = "characters were dropped from the middle"
+
+
+def _output_was_cut(raw: str, condensed: str) -> bool:
+    """Was this output cut on the way to the model?
+
+    Two cuts can happen to a command's output, and the model has to be
+    told about both:
+
+      * the sandbox's session scrollback keeps the tail and says so on
+        the first line -- the bot sees the tail and does not see that
+        anything is missing;
+      * the bot's own condenser keeps the head and the tail and marks
+        the middle it dropped.
+
+    Measured on production, 2026-11-01, 23:00-23:20 MSK: the model
+    read the operator's "прочитай файл целиком" as a limits experiment
+    and measured the CHANNEL with `cat`. The cut said only "the
+    beginning of this output no longer fits in the session scrollback",
+    the model had no idea a door existed, and the fragment it got was
+    enough for it to answer as if it had read the file.
+    """
+    if _SANDBOX_CUT_MARKER in raw:
+        return True
+    return _BOT_CUT_MARKER in condensed
+
+
+#: What the console says about itself when it hands the model a
+#: fragment. The console is not a door: its output is capped, and the
+#: part that is missing is exactly the part the model would have
+#: answered from. So the console says what it is, and says which tool
+#: is the one that reads a file whole.
+#:
+#: The name is given as a PATTERN, not as a name: the console does not
+#: know which chat it is in, and a name it cannot guarantee is worse
+#: than no name. The imported tool whose name ends in `_read_file` is
+#: the door -- and it is the same wording the console's own description
+#: uses, so the model meets one name for it and not two.
+CUT_NOTICE = (
+    "[the console cut this output] This is a FRAGMENT: part of it is "
+    "gone and you have NOT read the whole thing. If this command "
+    "printed a file, read the file through the file door -- the "
+    "imported tool whose name ends in `_read_file` -- which hands you "
+    f"the WHOLE file, up to {MCP_MAX_READ_BYTES} bytes (1 MiB)."
+)
+
+
 def tool_result_to_text(result: dict[str, Any]) -> str:
     """Render the result dict as a string suitable for the tool
     message we send back to the LLM. Truncate stdout/stderr to
@@ -700,5 +756,8 @@ def tool_result_to_text(result: dict[str, Any]) -> str:
     if err:
         parts.append(f"stderr:\n{condense(err, 2000)}")
     if out:
-        parts.append(f"stdout:\n{condense(out, 8000)}")
+        stdout_text = condense(out, 8000)
+        parts.append(f"stdout:\n{stdout_text}")
+        if _output_was_cut(out, stdout_text):
+            parts.append(CUT_NOTICE)
     return "\n".join(parts)
