@@ -89,6 +89,7 @@ it was removed rather than kept as a permanent gap.
 | T66 | Time-based window (7 days) — semantics | ✅ done inside T70.2 | T67 |
 | T68 | Daily re-anchor | ✅ code shipped; **timer install is the operator's** | T70.2 |
 | **T69** | Bot personality in system prompt | ✅ **shipped** (file-based, configurable) | — |
+| **T71** | Context compression: an index of the chat instead of the raw history | 📋 **spec under review** (2026-11-01) | T70 |
 
 Shipped in `main`: T70.1, T70.2, T70.4a (overflow), T70.4b (`/stats`),
 T67.1–67.3, T68 (`soft`/`process`/`process+engine` + ADR-0003),
@@ -202,6 +203,7 @@ gets rebuilt from SQLite, so SQLite must be complete.
 | `TICKET-T65-context-memory.md` | Reply-to-human + history loading |
 | `TICKET-T66-time-based-context-limit.md` | 7-day anchored window |
 | `TICKET-T68-daily-restart.md` | Daily 05:00 restart |
+| `TICKET-T71-context-compression.md` | 📋 Context compression: index instead of raw history |
 
 **T69** (bot personality) shipped as a file-based, configurable feature and
 has no ticket file of its own: `telegram-bot/personality.py`, the
