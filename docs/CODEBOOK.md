@@ -2227,9 +2227,12 @@ already carrying the bot's line:
     no name. The same wording the console's description uses, so the
     model meets one name for the door and not two.
 
-Checked by `tests/test_file_door_route.py` (19). Seventeen of them are
+Checked by `tests/test_file_door_route.py` (19). Fifteen of them are
 RED on the tree of 2026-11-01, and the red ones say what broke rather
-than that something is missing. The mutation harness
+than that something is missing. The four that are green there are the
+guards of what must NOT change: the fragment is still returned (the
+tail of a long log is what the command printed last), an uncut output
+carries no notice, and the section does not move from turn to turn. The mutation harness
 `scripts/mutation_harness_file_door_route.py` holds both directions:
 breaking the property has to turn the suite red, and removing the
 tripwire together with the behaviour has to turn it green again.
