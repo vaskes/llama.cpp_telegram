@@ -17,6 +17,71 @@ this file is the human-readable summary.
 
 **After `v0.32.0-stable`.** The next cycle starts here.
 
+### The model is told which tool reads a file
+
+Measured on the production bot on 2026-11-01, 19:20-19:26 MSK. The
+operator sent a 603 675-byte JSON file, had it put in the sandbox, and
+asked for it to be read into the model's context whole. The file never
+arrived, and the reason was not the door:
+
+  * **the model did not try.** It read a window size out of a screenshot
+    the operator had posted earlier in the chat, did the arithmetic on
+    the file's size against that number, and answered that reading the
+    file whole is "physically impossible" -- without calling one tool;
+  * **when it did try, it took the wrong door.** It called
+    `bash_command` with `cat`, and the console cut the file twice: the
+    side-car at 524 288 bytes and the bot itself at 8 000 characters.
+    The model saw 1 742 characters of a 474 071-character file, and
+    then reported on the fragment as if it were the file;
+  * **the door was in the tool list the whole time.** The side-car
+    answered 200 with the whole file, and its read budget (1 MiB) was
+    four times the size of the file.
+
+The file was never lost on the way to the model. It was lost on the way
+to the TOOL. Three things of the bot's own doing stood in the way:
+
+  * **the side-car's own description sends the model to a tool the bot
+    does not import.** It says of its `read_file`: "A file over the
+    read limit is refused -- use bash (head, tail, sed) to read a piece
+    of a big file instead." That bash is EXCLUDED from the import on
+    purpose (the bot has a shell of its own, and two shells on one
+    machine are two policies), so the model was told to reach for a
+    tool it did not have -- and the nearest thing in its list is the
+    bot's console, whose output is capped and whose middle is dropped.
+    The door's description now says what the door is in the bot's
+    world: the WHOLE file, up to the limit the bot believes the server
+    has (1 048 576 bytes), and the console is not a door. The schema
+    stays the server's, and so do the words about what the server
+    refuses;
+  * **nothing told the model which tool reads a file.** The system
+    prompt now carries one section that names the door this chat has,
+    says it delivers a file whole, gives the limit so the model can
+    compare the file's size with it, says the console is not a door,
+    and says the server -- not the model's own arithmetic about a
+    window size it cannot see -- decides whether a file fits. The
+    section is EMPTY when the chat has no door: a name the model cannot
+    call is a name it invents;
+  * **the console's own description invited the wrong use.** It said
+    "inspecting files in /workspace". It now says that the console is
+    not a way to read a file's CONTENTS, and where the door is.
+
+And the model was told one more thing, because the operator's chat on
+that day held 49 198 characters of the model writing a command out as
+text -- and then answering from a file it had never read: **a command
+written out in an answer was never run.** Call the tool.
+
+Measured on the production engine, by replaying the operator's own turn
+-- his own history, his own words, the real tool list, the real
+dispatcher: before the change the model never once went to the door (it
+wrote `cat` out as text, or called the console, in every run). After
+it, the model calls `sandbox_read_file` and the file arrives whole:
+"603 675 bytes through the file door, from the first byte to the last".
+
+Checked by `tests/test_file_door_route.py` (15). The mutation harness
+`scripts/mutation_harness_file_door_route.py` holds both directions:
+breaking the property has to turn the suite red, and removing the
+tripwire together with the behaviour has to turn it green again.
+
 ## [v0.33.0-stable] — 2026-11-01 — A file the model reads is read whole, or it is not read
 
 **After `v0.32.0-stable`.** The next cycle starts here.

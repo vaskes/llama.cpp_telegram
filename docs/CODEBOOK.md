@@ -93,7 +93,7 @@ only thing anyone could write was a test that read the source text and hoped.
 
 `run_one` at 349 lines, nine concerns. `handle_photo` at 258 lines, one concern
 plus a media path. `handle_document` at 205 lines, the same shape with the
-binary path under it. `call_llama` at 220 lines, four concerns and a documented
+binary path under it. `call_llama` at 239 lines, four concerns and a documented
 `DO NOT REFACTOR` with a trigger. Length is a proxy. Concern count is the
 signal. Where they disagree, count the concerns.
 
@@ -409,7 +409,7 @@ There are four, and it is worth reading what they are:
 
 | Function | Lines | What it is |
 |---|---|---|
-| `call_llama` | 220 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
+| `call_llama` | 239 | Three unrelated concerns. `DO NOT REFACTOR`, debt item 03. |
 | `run_one` | 349 | One tool-loop iteration, nine concerns. Debt item 08. |
 | `handle_photo` | 258 | One concern plus a media path. Debt item 13. |
 | `handle_text` | 212 | Not debt. Same shape as `handle_photo`. |
@@ -2144,6 +2144,72 @@ read that had succeeded. The mutation harness
 the property has to turn the suite red, and removing the tripwire
 together with the behaviour has to turn it green again.
 
+### 3.20 The model is told which tool reads a file
+
+The file door exists (3.19), the file arrives whole through it, and the
+engine's window takes it. On 2026-11-01 the model still never went
+there. Two turns of the operator's own, on the production bot:
+
+  * the operator sent a 603 675-byte JSON file, had it put in the
+    sandbox, and asked for it to be read into the context whole. The
+    model read a window size out of a screenshot the operator had
+    posted earlier in the chat, did the arithmetic on the file's size
+    against that number, and answered that reading the file whole is
+    "physically impossible" -- without calling one tool;
+  * when it did try, in the next turn, it called `bash_command` with
+    `cat`. The console cut the file twice -- the side-car at 524 288
+    bytes, the bot at 8 000 characters -- and the model saw 1 742
+    characters of a 474 071-character file.
+
+The file was never lost on the way to the model. It was lost on the way
+to the TOOL. Five rules, all of them learned that day:
+
+  * **the door's own description says what the door is.** The server
+    describes its `read_file` this way: "A file over the read limit is
+    refused -- use bash (head, tail, sed) to read a piece of a big file
+    instead". That advice points at a tool the bot does NOT import:
+    the side-car's `bash` is excluded on purpose (the bot has a shell
+    of its own, and two shells on one machine are two policies). So the
+    model is told to reach for a tool it does not have, and the nearest
+    thing in its list is the bot's console -- whose output is capped
+    and whose middle is dropped. The bot's own line goes into the
+    door's description: the WHOLE file, up to the limit the bot
+    believes the server has, and the console is not a door. The schema
+    stays the server's, and so do the words about what the server
+    refuses -- the bot adds its own facts about the server it trusts;
+  * **the route is named in the system prompt.** The chat's messages
+    are data, and the model's own earlier turns are data too: a model
+    that analysed a file with `python` three turns ago will reach for
+    the console again, and a rule it only meets in the chat is a rule
+    it can talk itself out of. The rule that says WHICH TOOL reads a
+    file belongs where the rules live -- the system message -- and it
+    names the door THIS chat has;
+  * **a tool the chat does not have is not named.** The public profile
+    has no sandbox and no door, so the section is empty there: a name
+    the model cannot call is a name it invents. The name is the
+    intersection of two questions -- the registry knows which imported
+    tool is the door (the side-car's own `read_file`), and the tool
+    list knows which of them this chat is shown;
+  * **the model needs the NUMBER to choose the door.** The side-car's
+    description says a file over the limit is refused, and the limit
+    was nowhere in the prompt: the model read "603 675 bytes", called
+    that "a big file", and reached for bash. The section carries the
+    limit (1 048 576 bytes), because the size of the file IS in the
+    conversation -- the pointer says it -- and without the limit there
+    is nothing to compare;
+  * **a command written out in an answer was never run.** The
+    operator's chat that day held 49 198 characters of the model
+    writing a command out as text, and then answering from a file it
+    had never read. The tools block says it now, and the door's
+    section says it again.
+
+Checked by `tests/test_file_door_route.py` (15). Thirteen of them are
+RED on the tree of 2026-11-01, and the red ones say what broke rather
+than that something is missing. The mutation harness
+`scripts/mutation_harness_file_door_route.py` holds both directions:
+breaking the property has to turn the suite red, and removing the
+tripwire together with the behaviour has to turn it green again.
+
 ---
 
 ## 4. Rules for the reviewer and the harness
@@ -2395,8 +2461,9 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_llm_endpoint_failover.py` | 13 | The engine can move: the bot tries the other endpoint only when the active one fails, and the engine that answers is the one it keeps |
 | `test_document_file_channel.py` | 7 | A document is a file: it lands in the sandbox as the bytes that arrived, the turn carries a pointer and not the file, and a piece of a file says it is a piece |
 | `test_mcp_file_body.py` | 12 | A file the model reads is read whole: the transport does not read the data, the file has the file's budget, and the ledger keeps what the model saw |
+| `test_file_door_route.py` | 15 | The model is told which tool reads a file: the door is named in the system prompt, a door the chat does not have is not named, and the server decides whether a file fits |
 
-194 test files in total; the table above is the ones that guard a rule in
+195 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.
 
 **One known deliberate bypass:** the ruff CI job is advisory and does not gate

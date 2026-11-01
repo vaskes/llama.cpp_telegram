@@ -73,7 +73,7 @@ dispatch_polling.py   352 lines, startup + getUpdates loop
 dispatch_webhook.py   443 lines, PTB assembly + handlers
 webhook.py             267 lines, aiohttp server + secret check
 selftest.py     239 lines, _selftest = 111 lines  <- was 1940
-call_llama.py   381 lines, ToolLoop owns the iteration, 25 llm_* leaf modules
+call_llama.py   401 lines, ToolLoop owns the iteration, 26 llm_* leaf modules
 handlers.py    1740 lines
 prompts.py      75 lines, 0 functions (module constants)
 storage.py      938 lines, class Storage encapsulated, get_store() sole entry
