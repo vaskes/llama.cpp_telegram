@@ -67,14 +67,10 @@ The console is not the file door: `bash_command` output keeps its own
 budgets, and a cut there is marked. A file read through the file door is
 not cut at all.
 
-### And the suite is green again
+### And the leak in the fixtures is closed
 
-The full suite has been red since the previous wave, and the wave
-before it did not notice: one test
-(`test_blockers.py::test_handler_survives_reply_returning_none`) fails
-in a full run and passes in isolation.
-
-The reason was a leak, not the handler. The fixtures in
+The reason a test that expects the sandbox to be off can end up on the
+upload path is a leak, not the handler. The fixtures in
 `tests/test_bash_command.py` re-import `personal_tools.bash_command` --
 the module reads `AGENT_STACK_TOKEN` at import time, so a test that
 wants a different answer has to import it again -- and the copy they
@@ -91,6 +87,17 @@ cannot be undone by handing back an old object. The blockers file pins
 the sandbox off instead of leaving it to the host: the suite has to
 give the same answer on a machine with a live side-car and on one
 without.
+
+**A correction to the record.** The message of the code commit
+(`37739aa`) says the full suite "has been red since the previous wave".
+That is not supported, and the sentence is withdrawn: the CI run of
+the `v0.32.0-stable` tag was green (3290 passed, 1 skipped), and on
+this wave's tree with the leak deliberately re-armed the suite is green
+as well -- the only red test is the new tripwire that catches the leak.
+The leak itself is real: it is what the tripwire catches, and it is how
+a test that expects the sandbox to be off can take the upload path. What
+was wrong was the date it was put on. It was found by the full suite in
+this wave, in an intermediate state of this wave's own tree.
 
 ## [v0.32.0-stable] — 2026-11-01 — A document that arrives in the chat is a file
 
