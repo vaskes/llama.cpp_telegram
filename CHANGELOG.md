@@ -15,7 +15,61 @@ this file is the human-readable summary.
 
 ## [Unreleased]
 
-**After `v0.32.0-stable`.** The next cycle starts here.
+**After `v0.34.0-stable`.** The next cycle starts here.
+
+### The console names the door where the cut happens
+
+Measured on the production engine on 2026-11-01, 23:00-23:20 MSK, with
+v0.34.0-stable already deployed -- the section in the system prompt
+and the bot's own line in the door's description were both in place,
+and the model still did not go to the door.
+
+The model's own reasoning, replaying the operator's turn:
+
+    I should comply -- run `cat /workspace/all_char_states.json` via
+    bash_command, and observe what gets through. The tool's output is
+    truncated on the bot side ... In the previous turn: out of 463,378
+    characters, only 7,810 got through, and the middle 455,568 were
+    dropped.
+
+It read the operator's "загрузи файл целиком в контекст он влезет
+тест лимитов нужен" as a LIMITS EXPERIMENT, and for that experiment
+the console is the right instrument: it measures the channel. The
+system prompt says the door is the instrument for the other question
+("will the file fit?"), and the operator was asking this one.
+
+The console's cut is where the model finds out that the console is not
+a door -- so the console's cut is where the door has to be named. A
+cut now says, in the bot's words:
+
+    [the console cut this output] This is a FRAGMENT: part of it is
+    gone and you have NOT read the whole thing. If this command
+    printed a file, read the file through the file door -- the
+    imported tool whose name ends in `_read_file` -- which hands you
+    the WHOLE file, up to 1048576 bytes (1 MiB).
+
+Two cuts count: the sandbox's session scrollback (the tail, with the
+sandbox's own marker on the first line) and the bot's own condenser
+(the head and the tail, with the middle marked). The fragment is still
+returned -- the tail of a long log is what the command printed last --
+and the notice says what the fragment is not.
+
+Measured by replaying the operator's OWN turn (his history, his words,
+the real tool list, the real engine):
+
+  * before: the door was called in 0 of 4 replays of the turn
+    "ну вот этот епта аккурат в окно влезает. грузи его";
+  * after: the door was called in 3 of 3, and the file arrived whole
+    -- "Доехал. Целиком, без разрывов -- все 155 объектов, от
+    `char_01` до `char_155`".
+
+The same history, the same words, the same code but a reworded system
+prompt: 0 of 3. So the section in the system prompt was not the lever;
+the place where the model decides what to do next is.
+
+Checked by `tests/test_file_door_route.py` (19) and by the mutation
+harness `scripts/mutation_harness_file_door_route.py` (9 caught, 9
+survived).
 
 ## [v0.34.0-stable] — 2026-11-01 — The model is told which tool reads a file
 

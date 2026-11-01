@@ -2203,7 +2203,31 @@ to the TOOL. Five rules, all of them learned that day:
     had never read. The tools block says it now, and the door's
     section says it again.
 
-Checked by `tests/test_file_door_route.py` (15). Thirteen of them are
+And one more, measured at 23:00-23:20 MSK the same day, with the
+section already in the system prompt and the door's own description
+already carrying the bot's line:
+
+  * **the console names the door WHERE THE CUT HAPPENS.** The model
+    read the operator's "прочитай файл целиком" as a limits
+    experiment -- "I should comply, run `cat` and observe what gets
+    through" -- and measured the CHANNEL. The console's cut said
+    only "the beginning of this output no longer fits in the session
+    scrollback": no numbers, no door, and a fragment good enough for
+    the model to answer from. A rule the model meets at the point of
+    the failure is worth more than the same rule in the system
+    prompt, because that is where the model is deciding what to do
+    next. So the console's own result now says: this is a FRAGMENT,
+    you have NOT read the whole thing, and the door is the imported
+    tool whose name ends in `_read_file`. The same replay then called
+    `sandbox_read_file` on the next iteration, and the file arrived
+    whole -- "Доехал. Целиком, без разрывов".
+
+    The name is a PATTERN and not a name: the console does not know
+    which chat it is in, and a name it cannot guarantee is worse than
+    no name. The same wording the console's description uses, so the
+    model meets one name for the door and not two.
+
+Checked by `tests/test_file_door_route.py` (19). Seventeen of them are
 RED on the tree of 2026-11-01, and the red ones say what broke rather
 than that something is missing. The mutation harness
 `scripts/mutation_harness_file_door_route.py` holds both directions:
@@ -2461,7 +2485,7 @@ It would have fired if items 1, 3 and 5 had been closed when they were done.
 | `test_llm_endpoint_failover.py` | 13 | The engine can move: the bot tries the other endpoint only when the active one fails, and the engine that answers is the one it keeps |
 | `test_document_file_channel.py` | 7 | A document is a file: it lands in the sandbox as the bytes that arrived, the turn carries a pointer and not the file, and a piece of a file says it is a piece |
 | `test_mcp_file_body.py` | 12 | A file the model reads is read whole: the transport does not read the data, the file has the file's budget, and the ledger keeps what the model saw |
-| `test_file_door_route.py` | 15 | The model is told which tool reads a file: the door is named in the system prompt, a door the chat does not have is not named, and the server decides whether a file fits |
+| `test_file_door_route.py` | 19 | The model is told which tool reads a file: the door is named in the system prompt, a door the chat does not have is not named, and the server decides whether a file fits |
 
 195 test files in total; the table above is the ones that guard a rule in
 this document, not all of them.

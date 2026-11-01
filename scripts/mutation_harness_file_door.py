@@ -171,8 +171,8 @@ MUTATIONS = [
     ]),
     ("the command output the model reads is cut without a word", "CAUGHT", [
         (BASH,
-         r"        parts\.append\(f\"stdout:\\n\{condense\(out, 8000\)\}\"\)\n",
-         "        parts.append(f\"stdout:\\n{out[-8000:]}\")\n", 1),
+         r"        stdout_text = condense\(out, 8000\)\n",
+         "        stdout_text = out[-8000:]\n", 1),
     ]),
 
     ("a name that is taken is not renumbered", "CAUGHT", [
@@ -334,8 +334,8 @@ MUTATIONS = [
          r"def test_the_model_view_of_the_output_is_marked\(\):",
          "def _disabled_test_the_model_view_of_the_output_is_marked():", 1),
         (BASH,
-         r"        parts\.append\(f\"stdout:\\n\{condense\(out, 8000\)\}\"\)\n",
-         "        parts.append(f\"stdout:\\n{out[-8000:]}\")\n", 1),
+         r"        stdout_text = condense\(out, 8000\)\n",
+         "        stdout_text = out[-8000:]\n", 1),
     ]),
 ]
 

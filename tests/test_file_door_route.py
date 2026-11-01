@@ -333,6 +333,75 @@ async def test_the_console_says_it_is_not_a_way_to_read_a_file(monkeypatch):
     assert "capped" in description
 
 
+def _console_result(stdout: str) -> dict:
+    return {"ok": True, "stdout": stdout, "stderr": "",
+            "exit_code": 0, "duration_ms": 5, "timed_out": False}
+
+
+def test_a_cut_output_says_it_is_a_fragment_and_names_the_door():
+    """The console's cut is where the model finds out that the console
+    is not a door -- so the cut is where the door has to be named.
+
+    Measured on production, 2026-11-01, 23:00-23:20 MSK, with the
+    section already in the system prompt: the model read the operator's
+    "прочитай файл целиком" as a LIMITS experiment and measured the
+    channel with `cat`. The cut said only "the beginning of this output
+    no longer fits in the session scrollback -- what follows is only
+    its tail": no numbers, no door, and a fragment good enough for the
+    model to answer from. With the cut naming the door, the same replay
+    called `sandbox_read_file` on the next iteration and the file
+    arrived whole ("Доехал. Целиком, без разрывов").
+
+    The name is a PATTERN and not a name: the console does not know
+    which chat it is in, and a name it cannot guarantee is worse than
+    no name."""
+    from personal_tools.bash_command import tool_result_to_text
+    cut = ("[the beginning of this output no longer fits in the session "
+           "scrollback -- what follows is only its tail]\n"
+           + "the tail of the file\n")
+    text = tool_result_to_text(_console_result(cut))
+    assert "FRAGMENT" in text
+    assert "NOT read the whole thing" in text
+    assert "_read_file" in text
+    assert "1048576 bytes" in text
+
+
+def test_the_bot_own_cut_counts_as_a_cut():
+    """The bot's own condenser keeps the head and the tail and marks
+    the middle it dropped. That marker is a cut too -- the model is
+    looking at a fragment either way, and the fragment is what it
+    answers from."""
+    from personal_tools.bash_command import tool_result_to_text
+    long_output = "".join(f"line {i}\n" for i in range(4000))
+    text = tool_result_to_text(_console_result(long_output))
+    assert "characters were dropped from the middle" in text
+    assert "FRAGMENT" in text
+
+
+def test_an_uncut_output_carries_no_such_notice():
+    """The notice is for a cut. A command that printed what it had to
+    print gets its output and nothing else -- otherwise every command
+    in every turn ends with a paragraph about a file door, and the
+    model stops reading it."""
+    from personal_tools.bash_command import tool_result_to_text
+    text = tool_result_to_text(_console_result("hello\n"))
+    assert "FRAGMENT" not in text
+    assert "_read_file" not in text
+
+
+def test_a_cut_still_returns_what_reached_the_bot():
+    """The fragment is still returned: the tail of a long log is what
+    the command printed last, and the model quotes it back. The notice
+    says what the fragment is not -- it does not take the fragment
+    away."""
+    from personal_tools.bash_command import tool_result_to_text
+    cut = ("[the beginning of this output no longer fits in the session "
+           "scrollback -- what follows is only its tail]\n"
+           "the tail of the file\n")
+    text = tool_result_to_text(_console_result(cut))
+    assert "the tail of the file" in text
+
+
 @pytest.mark.asyncio
 async def test_a_chat_without_a_door_is_told_about_no_door(monkeypatch):
     """The public profile has no sandbox and no door. A section that
