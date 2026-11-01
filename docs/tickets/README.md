@@ -89,7 +89,7 @@ it was removed rather than kept as a permanent gap.
 | T66 | Time-based window (7 days) — semantics | ✅ done inside T70.2 | T67 |
 | T68 | Daily re-anchor | ✅ code shipped; **timer install is the operator's** | T70.2 |
 | **T69** | Bot personality in system prompt | ✅ **shipped** (file-based, configurable) | — |
-| **T71** | Context compression: an index of the chat instead of the raw history | 📋 **spec under review** (2026-11-01) | T70 |
+| **T71** | Context compression: an index of the chat instead of the raw history | 📋 **spec parked by the operator** (2026-11-01; branch `feature/t71-context-compression`, no code, no decision yet) | T70 |
 
 Shipped in `main`: T70.1, T70.2, T70.4a (overflow), T70.4b (`/stats`),
 T67.1–67.3, T68 (`soft`/`process`/`process+engine` + ADR-0003),
