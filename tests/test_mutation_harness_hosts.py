@@ -160,3 +160,39 @@ def test_a_harness_the_nightly_job_picks_runs_its_suite_in_the_image():
         "fail on their nights with a red that says nothing about the "
         "harness, and the harness would measure nothing."
     )
+
+
+def test_the_nightly_jobs_image_can_read_the_tree_through_git():
+    """The pin tripwires read the tree with git, so the image needs git.
+
+    The bot's own image is a runtime image: it carries no git. The
+    harnesses run their suites inside THAT image, and two of the
+    tripwires the exec timeout harness judges read the pinned
+    side-car's commit with `git ls-tree` -- so in that image they
+    cannot run at all, and the preflight is red for a reason that has
+    nothing to do with the mutation.
+
+    Measured on 2026-11-12: the mutation-nightly job went red with
+    "2 failed, 73 passed", and the two were the pin tripwires --
+    `test_the_contract_names_the_version_the_pinned_sandbox_declares`
+    and `test_the_compatibility_table_names_the_pinned_commit`.
+
+    Git also has to be allowed to read the tree it is mounted on: the
+    container runs as root and the tree belongs to the runner, so git
+    would refuse it as dubious ownership.
+    """
+    workflow = (ROOT / ".github" / "workflows" /
+                "mutation-nightly.yml").read_text(encoding="utf-8")
+    assert "FROM mutation-bot-base" in workflow, (
+        "the nightly job's image block moved -- this tripwire reads the "
+        "recipe by its first line")
+    block = workflow.split("FROM mutation-bot-base", 1)[-1].split("EOF", 1)[0]
+    assert "git" in block, (
+        "the nightly job's test image does not install git -- the "
+        "tripwires that read the pinned side-car's commit cannot run "
+        "there, and the preflight will be red on a reason that has "
+        "nothing to do with the mutation")
+    assert "safe.directory" in block, (
+        "the nightly job's image does not let git read the tree it is "
+        "mounted on: the container runs as root and the tree belongs to "
+        "the runner, so git refuses it as dubious ownership")

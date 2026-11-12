@@ -61,6 +61,17 @@ jobs:
           mkdir -p /tmp/test-image
           cat > /tmp/test-image/Dockerfile <<'EOF'
           FROM mutation-bot-base
+          # The tripwires the harnesses judge read the tree THROUGH git:
+          # the pinned side-car's commit is the gitlink, and that pin is
+          # what the contract and the compatibility table are checked
+          # against. The bot's own image is a runtime image and carries
+          # no git, so without this the preflight goes red on a test
+          # that cannot run there at all -- measured on 2026-11-12:
+          # "2 failed, 73 passed", and both of them were the pin.
+          RUN apt-get update \
+              && apt-get install -y --no-install-recommends git \
+              && rm -rf /var/lib/apt/lists/* \
+              && git config --system --add safe.directory '*'
           RUN pip install --no-cache-dir pytest pytest-asyncio
           EOF
           docker build -t bot-testimg311 /tmp/test-image
