@@ -80,9 +80,12 @@ jobs:
           RUN pip install --no-cache-dir pytest pytest-asyncio
           EOF
           docker build -t bot-testimg311 /tmp/test-image
-          # Thirty-one harnesses take the image from the environment;
+          # Thirty-five harnesses take the image from the environment;
           # two name it themselves. Both get the same image, so the
-          # name is the one the harness expects.
+          # name is the one the harness expects. A harness that takes
+          # neither runs its suite on the runner's own Python, where
+          # pytest is not installed -- it measures nothing and takes
+          # the job red; tests/test_mutation_harness_hosts.py says so.
           echo "MUTATION_HARNESS_IMAGE=bot-testimg311" >> "$GITHUB_ENV"
 
       - name: Pick the harness of the night
