@@ -46,6 +46,7 @@ The rules this harness holds itself to:
 
     python3 scripts/mutation_harness_document_channel.py [ROOT]
 """
+import os
 import re
 import subprocess
 import sys
@@ -53,6 +54,9 @@ from pathlib import Path
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else
             Path(__file__).resolve().parent.parent).resolve()
+#: The image the nightly job built for the harnesses. Empty
+#: means "run on this interpreter" -- the local way.
+IMAGE = os.environ.get("MUTATION_HARNESS_IMAGE", "")
 
 #: The files that carry the rule and the tests that catch it.
 TARGETS = ["tests/test_document_file_channel.py"]
@@ -187,6 +191,27 @@ MUTATIONS = [
 ]
 
 def _command():
+    """The suite runs in the image, when the nightly job gave us one.
+
+    The nightly job builds the bot's own image and hands its name in
+    `MUTATION_HARNESS_IMAGE`, because the harnesses have to run in the
+    environment the code ships into -- the image the bot runs in, with
+    its dependencies, not the runner's own Python.
+
+    A harness that runs on the runner's Python instead measures
+    something else: the runner has no pytest, so the suite does not
+    even start, the preflight reads "(no summary)", and the job goes
+    red on a night this harness was supposed to measure. That is what
+    happened to this harness on 2026-11-07 (mutation-nightly, the
+    document channel's night) -- and it would happen to every night
+    this harness is picked.
+    """
+    if IMAGE:
+        return ["docker", "run", "--rm", "-v", f"{ROOT}:/w", "-w", "/w",
+                "-e", "CONVERSATIONS_DB=/tmp/mut.db",
+                "-e", "ALLOWED_USER_IDS=1",
+                IMAGE, "python", "-m", "pytest", *TARGETS, "-q", "-rf",
+                "-p", "no:cacheprovider"]
     return [sys.executable, "-m", "pytest", *TARGETS, "-q", "-rf",
             "-p", "no:cacheprovider"]
 
@@ -223,11 +248,18 @@ def _restore(path: Path, before: bytes):
 
 def main():
     print(f"root: {ROOT}")
-    print(f"runner: {sys.executable}")
+    print(f"runner: {'docker ' + IMAGE if IMAGE else sys.executable}")
     print("=== preflight on the CLEAN tree ===", flush=True)
-    verdict, summary, _who = run_tests()
+    verdict, summary, who = run_tests()
     print("  ", summary, flush=True)
     if verdict != "pass":
+        # The names, not just the count. A preflight that says "2 failed"
+        # and nothing else sends the reader to the tree; one that says
+        # WHICH two sent them to the test. Measured on 2026-11-12: the
+        # mutation-nightly job went red with "2 failed, 73 passed" and
+        # nothing to look at -- the log had no way to name the two.
+        for name in who:
+            print(f"    RED: {name}", flush=True)
         print("PREFLIGHT FAILED -- the harness would be measuring itself")
         return 2
 

@@ -193,9 +193,16 @@ def main():
     print(f"root: {ROOT}")
     print(f"runner: {'docker ' + IMAGE if IMAGE else sys.executable}")
     print("=== preflight on the CLEAN tree ===", flush=True)
-    verdict, summary, _who = run_tests()
+    verdict, summary, who = run_tests()
     print("  ", summary, flush=True)
     if verdict != "pass":
+        # The names, not just the count. A preflight that says "2 failed"
+        # and nothing else sends the reader to the tree; one that says
+        # WHICH two sent them to the test. Measured on 2026-11-12: the
+        # mutation-nightly job went red with "2 failed, 73 passed" and
+        # nothing to look at -- the log had no way to name the two.
+        for name in who:
+            print(f"    RED: {name}", flush=True)
         print("PREFLIGHT FAILED -- the harness would be measuring itself")
         return 2
 

@@ -107,3 +107,56 @@ def test_a_harness_that_says_it_needs_the_host_reaches_the_host():
         f"to ssh/scp: {unjustified}. A marker without the behaviour is a "
         "silent skip: the harness stops running and nobody notices."
     )
+
+
+def _runs_the_suite_in_an_image(tree):
+    """Does the harness run its suite inside the image?
+
+    Two shapes count: it takes the image's name from the environment
+    (`MUTATION_HARNESS_IMAGE`, the way the nightly job hands it over),
+    or it names an image itself.
+    """
+    for value in _string_constants(tree):
+        if "MUTATION_HARNESS_IMAGE" in value:
+            return True
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "IMAGE":
+                if isinstance(node.value, ast.Constant) and \
+                        isinstance(node.value.value, str) and \
+                        node.value.value.strip():
+                    return True
+    return False
+
+
+def test_a_harness_the_nightly_job_picks_runs_its_suite_in_the_image():
+    """A harness that runs on the runner's own Python measures nothing.
+
+    The runner has no pytest: the suite does not start, the preflight
+    reads "(no summary)", and the nightly job goes red on the night
+    that harness was supposed to measure -- and the red says nothing
+    about the harness, because the harness never ran.
+
+    Measured on 2026-11-07: the document channel's night went red with
+    exactly that, and on 2026-11-12 the file door's harness was one
+    step away from the same thing (it ran on the runner's Python
+    because it never asked for the image).
+
+    So every harness the nightly job can pick -- every harness that
+    does not declare REQUIRES_HOST -- has to run its suite in the
+    image the job built.
+    """
+    dead = [
+        p.name for p in HARNESSES
+        if not _declares_host(ast.parse(p.read_text(encoding="utf-8")))
+        and not _runs_the_suite_in_an_image(
+            ast.parse(p.read_text(encoding="utf-8")))
+    ]
+    assert not dead, (
+        "these harnesses run their suite on the runner's own Python, "
+        f"where pytest is not installed: {dead}. The nightly job would "
+        "fail on their nights with a red that says nothing about the "
+        "harness, and the harness would measure nothing."
+    )
