@@ -68,10 +68,15 @@ jobs:
           # no git, so without this the preflight goes red on a test
           # that cannot run there at all -- measured on 2026-11-12:
           # "2 failed, 73 passed", and both of them were the pin.
+          # The bot's image drops privileges to the `bot` user, and apt
+          # cannot lock its lists as a non-root user -- so the step
+          # takes root for the install and gives it back.
+          USER root
           RUN apt-get update \
               && apt-get install -y --no-install-recommends git \
               && rm -rf /var/lib/apt/lists/* \
               && git config --system --add safe.directory '*'
+          USER bot
           RUN pip install --no-cache-dir pytest pytest-asyncio
           EOF
           docker build -t bot-testimg311 /tmp/test-image
