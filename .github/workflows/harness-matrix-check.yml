@@ -1,0 +1,89 @@
+name: harness-matrix-check
+
+# One-off verification: every harness the nightly rotation can pick, run
+# the way the nightly job runs it, in parallel, in one workflow run.
+#
+# The reason it is a matrix and not 36 dispatches: a dispatch per harness
+# means 36 workflow runs, and a red one is 36 failure emails to the
+# operator. Here it is ONE run, and the matrix says which harness failed.
+#
+# It lives on a branch and goes away with it -- the nightly workflow
+# itself is not changed by this.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  harness:
+    name: ${{ matrix.harness }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        harness:
+          - mutation_harness.py
+          - mutation_harness_artifact.py
+          - mutation_harness_bash_policy.py
+          - mutation_harness_chunking.py
+          - mutation_harness_context_reuse.py
+          - mutation_harness_delete_tool.py
+          - mutation_harness_document_channel.py
+          - mutation_harness_edit_removal.py
+          - mutation_harness_empty_fallback.py
+          - mutation_harness_engine_failover.py
+          - mutation_harness_error.py
+          - mutation_harness_exec_timeout.py
+          - mutation_harness_file_body.py
+          - mutation_harness_file_door.py
+          - mutation_harness_file_door_route.py
+          - mutation_harness_formatting.py
+          - mutation_harness_history_search.py
+          - mutation_harness_iteration.py
+          - mutation_harness_mcp_import.py
+          - mutation_harness_mcp_resource_token.py
+          - mutation_harness_message_id_context.py
+          - mutation_harness_one_name.py
+          - mutation_harness_readiness.py
+          - mutation_harness_readme_claims.py
+          - mutation_harness_record_once.py
+          - mutation_harness_release_workflow.py
+          - mutation_harness_rules_not_overwritable.py
+          - mutation_harness_sandbox_contract.py
+          - mutation_harness_selftest.py
+          - mutation_harness_send_file_copy.py
+          - mutation_harness_stream.py
+          - mutation_harness_t70_5.py
+          - mutation_harness_telegram_api.py
+          - mutation_harness_trace_dup.py
+          - mutation_harness_transcript.py
+          - mutation_harness_typing_indicator.py
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build the image the harnesses run in
+        run: |
+          set -euo pipefail
+          docker build -t mutation-bot-base telegram-bot/
+          mkdir -p /tmp/test-image
+          cat > /tmp/test-image/Dockerfile <<'EOF'
+          FROM mutation-bot-base
+          USER root
+          RUN apt-get update \
+              && apt-get install -y --no-install-recommends git \
+              && rm -rf /var/lib/apt/lists/* \
+              && git config --system --add safe.directory '*'
+          USER bot
+          RUN pip install --no-cache-dir pytest pytest-asyncio
+          EOF
+          docker build -t bot-testimg311 /tmp/test-image
+
+      - name: Run the harness
+        env:
+          MUTATION_HARNESS_IMAGE: bot-testimg311
+        run: |
+          set -euo pipefail
+          python3 "scripts/${{ matrix.harness }}" "$GITHUB_WORKSPACE"
