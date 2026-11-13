@@ -13,8 +13,10 @@ name: mutation-nightly
 # This job is the deep half: the mutation is actually applied and the
 # suite has to catch it.
 #
-# The rotation is by day of the month, so a harness runs once per month
-# and a skipped night shifts the rest rather than dropping one.
+# The rotation is by the run counter, so every harness comes back once
+# per cycle and a cycle is as long as there are harnesses. The weekly
+# sweep (harness-sweep.yml) runs all of them, so a harness that breaks
+# between its nights is caught within a week instead of a month.
 
 on:
   schedule:
@@ -108,8 +110,17 @@ jobs:
             HARNESS="${{ inputs.harness }}"
             echo "running $HARNESS on request"
           else
-            DAY=$(date -u +%d)
-            INDEX=$(( (10#$DAY - 1) % COUNT ))
+            # The index comes from the run counter, not from the day of
+            # the month. The calendar gives thirty slots a month and
+            # there are thirty-six runnable harnesses, so six of them
+            # could never come up: the slots 30..35 had never run in
+            # this job at all. The counter gives as many slots as there
+            # are harnesses, and every harness comes back every
+            # thirty-six nights. A night whose run is skipped does not
+            # shift the rest -- the counter moves on and that harness
+            # waits for its next turn, which is what the weekly sweep
+            # (harness-sweep.yml) is there to cover.
+            INDEX=$(( (${{ github.run_number }} - 1) % COUNT ))
             HARNESS="${RUNNABLE[$INDEX]}"
             echo "rotation slot $INDEX of $COUNT -> $HARNESS"
           fi

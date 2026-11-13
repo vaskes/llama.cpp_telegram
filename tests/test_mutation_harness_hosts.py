@@ -196,3 +196,32 @@ def test_the_nightly_jobs_image_can_read_the_tree_through_git():
         "the nightly job's image does not let git read the tree it is "
         "mounted on: the container runs as root and the tree belongs to "
         "the runner, so git refuses it as dubious ownership")
+
+
+def test_the_nightly_rotation_reaches_every_runnable_harness():
+    """The rotation has to come back to every harness, not to the first thirty.
+
+    The slot used to be the day of the month, and the calendar gives
+    thirty slots while there are thirty-six runnable harnesses: the
+    slots 30..35 could never come up, so six harnesses had never run in
+    this job at all. They looked accounted for -- they are in the list,
+    and the tripwires above count them -- and they measured nothing,
+    because the night that would have picked them did not exist.
+
+    Measured on 2026-11-13, by running the whole list at once instead
+    of waiting for the rotation to come around.
+
+    The slot comes from the run counter now, so every harness comes back
+    once per cycle of thirty-six nights. The weekly sweep runs all of
+    them anyway; this tripwire says the rotation itself has no hole.
+    """
+    workflow = (ROOT / ".github" / "workflows" /
+                "mutation-nightly.yml").read_text(encoding="utf-8")
+    assert "date -u +%d" not in workflow, (
+        "the nightly job's rotation is on the day of the month again: the "
+        "calendar gives thirty slots a month and there are more runnable "
+        "harnesses than that, so the tail of the list never comes up and "
+        "those harnesses never run at all")
+    assert "run_number" in workflow, (
+        "the nightly job's rotation does not use the run counter -- a slot "
+        "that comes from the calendar cannot reach every harness")

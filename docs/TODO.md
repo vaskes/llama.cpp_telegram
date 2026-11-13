@@ -506,6 +506,15 @@ second tripwire was still standing, and the rules-not-overwritable
 harness had a mutation that no longer compiled into valid Python, so it
 came out INVALID instead of CAUGHT. Both are fixed.
 
+**The rotation had a hole of its own.** The slot came from the day of
+the month, and the calendar gives thirty slots while there are
+thirty-six runnable harnesses: slots 30..35 could never come up, so
+**six harnesses had never run in this job at all** -- they were in the
+list, the tripwires counted them, and they measured nothing. The slot
+comes from the run counter now, so every harness comes back once per
+cycle of thirty-six nights, and a tripwire holds it
+(`tests/test_mutation_harness_hosts.py`).
+
 What is left in that section is named as what is left: the CI job that
 would run the harnesses end to end, and the section-pointer convention
 that is not covered. `dispatch_split` is still not a CI candidate -- it
