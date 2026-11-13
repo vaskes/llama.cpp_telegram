@@ -1,0 +1,113 @@
+name: harness-sweep
+
+# Every harness the nightly rotation can pick, in one run, once a week.
+#
+# Why this exists: the nightly job runs ONE harness per night, rotating
+# by the day of the month, so a full cycle is about a month. That is
+# cheap and it is the deep check, but it means a harness that cannot
+# measure -- because its environment broke, or because its own
+# expectation rotted -- stays broken for weeks, and the operator finds
+# out as a red email on a night that was broken long ago. Measured on
+# 2026-11-12 and 2026-11-13: the job's image carried no git, three
+# harnesses ran their suite on the runner's Python where pytest is not
+# installed, and two harnesses' own expectations had rotted.
+#
+# This sweep is the detector. It is a matrix, not one job per harness,
+# so the whole thing is one workflow run: a failure is one email, and
+# the matrix says which harness failed. The rotation above it stays --
+# it is the deep, slow, one-harness-per-night check, and this one does
+# not replace it, it watches it.
+#
+# The list is computed, not written out: a harness that joins the
+# collection is swept the same week.
+
+on:
+  schedule:
+    # 04:17 UTC on Mondays -- an hour after the nightly's slot, off
+    # the hour on purpose.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  list:
+    name: the harnesses to sweep
+    runs-on: ubuntu-latest
+    outputs:
+      harnesses: ${{ steps.list.outputs.harnesses }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: |
+          set -euo pipefail
+          # A harness that needs the production host cannot run here:
+          # it has no key and no image over there. Those carry the
+          # marker REQUIRES_HOST = True, and
+          # tests/test_mutation_harness_hosts.py checks that the marker
+          # and the harness's own behaviour agree.
+          mapfile -t RUNNABLE < <(grep -L 'REQUIRES_HOST = True' \
+            scripts/mutation_harness*.py | sort)
+          COUNT=${#RUNNABLE[@]}
+          if [ "$COUNT" -eq 0 ]; then
+            echo "no runnable harness found" >&2
+            exit 1
+          fi
+          echo "sweeping $COUNT harnesses"
+          echo "harnesses=$(printf '%s\n' "${RUNNABLE[@]}" \
+            | python3 -c 'import json,os,sys; print(json.dumps([os.path.basename(p) for p in sys.stdin.read().split()]))')" \
+            >> "$GITHUB_OUTPUT"
+
+  sweep:
+    name: ${{ matrix.harness }}
+    needs: list
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJson(needs.list.outputs.harnesses) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # The whole history here too, and for the same reason as in
+          # the nightly: the harnesses run the suite against this
+          # checkout, and the suite includes the tripwire that reads
+          # the history.
+          fetch-depth: 0
+
+      - name: Build the image the harnesses run in
+        run: |
+          set -euo pipefail
+          # The same recipe the nightly job uses, down to the image
+          # name: a harness that names the image itself has to get the
+          # one the job built.
+          docker build -t mutation-bot-base telegram-bot/
+          mkdir -p /tmp/test-image
+          cat > /tmp/test-image/Dockerfile <<'EOF'
+          FROM mutation-bot-base
+          # The tripwires the harnesses judge read the tree THROUGH git:
+          # the pinned side-car's commit is the gitlink. The bot's own
+          # image is a runtime image and carries no git, so without this
+          # the preflight goes red on a test that cannot run there at
+          # all. The bot's image drops privileges to the `bot` user and
+          # apt cannot lock its lists as a non-root user, so the step
+          # takes root for the install and gives it back.
+          USER root
+          RUN apt-get update \
+              && apt-get install -y --no-install-recommends git \
+              && rm -rf /var/lib/apt/lists/* \
+              && git config --system --add safe.directory '*'
+          USER bot
+          RUN pip install --no-cache-dir pytest pytest-asyncio
+          EOF
+          docker build -t bot-testimg311 /tmp/test-image
+
+      - name: Run the harness
+        env:
+          MUTATION_HARNESS_IMAGE: bot-testimg311
+        run: |
+          set -euo pipefail
+          # The harness gets the repository root as its argument, and it
+          # mounts that same path into the container -- so the mutation
+          # is applied to the tree the runner checked out.
+          python3 "scripts/${{ matrix.harness }}" "$GITHUB_WORKSPACE"
