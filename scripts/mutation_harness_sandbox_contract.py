@@ -172,10 +172,22 @@ MUTATIONS = [
     ]),
 
     # --- group B: the tripwires ------------------------------------
-    ("the version tripwire is gone, and the version is wrong", "SURVIVED", [
+    # The version has two guards, not one: the contract test and the
+    # compatibility table both read the pinned version, and both have to
+    # be switched off for the mutation to survive. Until 2026-11-12 the
+    # second one could not run in the nightly's image at all -- it reads
+    # the pin through git, and the image carried no git -- so the
+    # mutation survived with one guard still standing, and the harness
+    # counted that as the expected verdict. The image has git now, the
+    # second guard runs, and it catches the mutation: a group B
+    # mutation that leaves a guard standing is not a group B mutation.
+    ("the version tripwires are gone, and the version is wrong", "SURVIVED", [
         (TEST_CONTRACT,
          r"(?m)^def test_the_contract_names_the_version_the_pinned_sandbox_declares\(\):\n",
          "def test_the_contract_names_the_version_the_pinned_sandbox_declares():\n    return\n", 1),
+        (TEST_CONTRACT,
+         r"(?m)^def test_the_compatibility_table_names_the_pinned_commit\(\):\n",
+         "def test_the_compatibility_table_names_the_pinned_commit():\n    return\n", 1),
         (CONTRACT,
          rf'SANDBOX_PINNED_VERSION = "{re.escape(PINNED_VERSION)}"',
          f'SANDBOX_PINNED_VERSION = "{WRONG_VERSION}"', 1),
