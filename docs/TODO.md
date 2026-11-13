@@ -34,7 +34,7 @@
 | Production interpreter | Python **3.11** (`telegram-bot/Dockerfile` pins `python:3.11-slim`) |
 | Production modules | the top-level modules of `telegram-bot/` -- the map and the count are in `docs/ARCHITECTURE.md`, recomputed from the tree by `tests/test_docs_current.py` (plus `personal_tools/`, `prompt_text/`, `commands/`) -- the sandbox contract lives in `personal_tools/`, so the top-level count does not move for that |
 | In-tree selftest | `selftest.py` (239 lines) + 7 leaf modules, `_selftest` = 111 lines |
-| Open review cycle | none — the cycle of the TODO's code items (6 to 10) closed on 2026-10-27, the operator answered the four open questions on 2026-10-28, and the refusal list is in production since 2026-10-28 (`v0.15.1-stable`). What is left is the measurement backlog and the CI job that would run the harnesses. **The measurement backlog is closed** (2026-10-29): the "five harnesses that still measure nothing" is corrected here -- a scanner that reads every shape the harnesses use finds **692 anchors, 0 dead** (it found 39 dead anchors and 17 unreadable ones before), and a refused or invalid mutation now **fails the run** in all 37 harnesses instead of being counted, printed and ignored. **The CI job now exists** (2026-10-29, `.github/workflows/mutation-nightly.yml`): it builds the test image and runs one harness per night, rotating, so a full cycle takes about a month -- the cheap freshness half was already in the pytest job. The one harness that needs the production host carries a `REQUIRES_HOST` marker and stays a manual run |
+| Open review cycle | none — the cycle of the TODO's code items (6 to 10) closed on 2026-10-27, the operator answered the four open questions on 2026-10-28, and the refusal list is in production since 2026-10-28 (`v0.15.1-stable`). What is left is the measurement backlog and the CI job that would run the harnesses. **The measurement backlog is closed** (2026-10-29): the "five harnesses that still measure nothing" is corrected here -- a scanner that reads every shape the harnesses use finds **693 anchors, 0 dead** (it found 39 dead anchors and 17 unreadable ones before), and a refused or invalid mutation now **fails the run** in all 37 harnesses instead of being counted, printed and ignored. **The CI job now exists** (2026-10-29, `.github/workflows/mutation-nightly.yml`): it builds the test image and runs one harness per night, rotating, so a full cycle takes about a month -- the cheap freshness half was already in the pytest job. The one harness that needs the production host carries a `REQUIRES_HOST` marker and stays a manual run |
 
 The numbers in `TECH-DEBT.md` are `splitlines()`-based and are recomputed by
 `tests/test_tech_debt_index.py`, which fails if they go stale.
@@ -433,7 +433,7 @@ true here and are not true any more:
   the umbrella form, the per-feature form with and without an expected
   count, the dispatch-split form with its literal patterns, and the
   readme-claims harness that builds its mutations from the tree -- finds
-  **692 anchors, 0 dead**. The first pass of the scanner read two shapes
+  **693 anchors, 0 dead**. The first pass of the scanner read two shapes
   of six and called the rest "unknown", which is "not measured", not "in
   order"; the count is the second pass, and it is recomputed whenever a
   harness joins the collection.
@@ -447,7 +447,7 @@ true here and are not true any more:
 **The cheap half of the CI job is in the tree** (`19044a2`): the
 freshness tripwire the TODO named as the alternative -- a check that
 goes red when a harness's pattern stops matching its tree -- runs on
-every pytest now, in a second, and covers 692 anchors. What is left
+every pytest now, in a second, and covers 693 anchors. What is left
 is the expensive half: a job that actually *runs* the harnesses and
 sees the mutations caught.
 
@@ -484,6 +484,27 @@ and measured on the production host: **8 of 8 caught**. The selftest
 harness had the same shape of problem -- it needed docker to run its
 suite -- and now runs the suite with the current interpreter
 (`940ea66`).
+
+**The environment under the job rotted, and the rotation hid it for a
+month** (2026-11-12, 2026-11-13). The red email was not a defect in the
+code the job measures. Three harnesses ran their suite on the runner's
+own Python, where pytest is not installed: they measured nothing and took
+the job red on their nights. And the image the harnesses run in carried
+no git, so the tripwires that read the side-car's pin could not run
+there at all -- "2 failed, 73 passed", and both of them were the pin.
+Both are fixed (`7b0b50d`, `5960307`, `949a1bd`), and a tripwire holds
+the shape now (`tests/test_mutation_harness_hosts.py`).
+
+**The lesson is the rotation itself.** One harness per night means a
+broken environment stays hidden for a month, and the email that finally
+arrives names a night that was broken weeks earlier. What says whether
+the next month is green is a sweep of all thirty-six runnable harnesses
+in one workflow run -- not the four that happen to come up first. That
+sweep also found two harnesses whose own expectations had rotted: the
+sandbox-contract harness expected a group B mutation to survive while a
+second tripwire was still standing, and the rules-not-overwritable
+harness had a mutation that no longer compiled into valid Python, so it
+came out INVALID instead of CAUGHT. Both are fixed.
 
 What is left in that section is named as what is left: the CI job that
 would run the harnesses end to end, and the section-pointer convention

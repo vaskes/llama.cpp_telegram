@@ -195,10 +195,19 @@ MUTATIONS = [
     ]),
     ("the handlers carry the generic sentence themselves again", "CAUGHT", [
         (HANDLERS, r"failure_message\(e\)", "GENERIC_FAILURE_MESSAGE", 4),
+        # The import line grew a third name after this mutation was
+        # written, and the old pattern matched only the first two of
+        # them: the rewrite landed in the middle of the line and left
+        # ", too_large_message" behind the closing bracket, so the
+        # mutated file stopped compiling and the mutation came out
+        # INVALID instead of CAUGHT -- measured 2026-11-13 in the
+        # nightly's own image. The pattern now covers the whole line,
+        # and the replacement keeps every name the line had.
         (HANDLERS,
-         r"from user_notice import DOWNLOAD_FAILURE_MESSAGE, failure_message",
+         r"(?m)^from user_notice import DOWNLOAD_FAILURE_MESSAGE, failure_message, too_large_message$",
          "from user_notice import (DOWNLOAD_FAILURE_MESSAGE,\n"
-         "                          GENERIC_FAILURE_MESSAGE, failure_message)",
+         "                          GENERIC_FAILURE_MESSAGE, failure_message,\n"
+         "                          too_large_message)",
          1),
     ]),
 
